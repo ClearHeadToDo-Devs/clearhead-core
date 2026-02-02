@@ -569,7 +569,7 @@ pub fn lint_document(doc: &ParsedDocument) -> LintResults {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::get_parsed_document;
+    use crate::parse_document as get_parsed_document;
 
     #[test]
     fn test_lint_missing_id() {
