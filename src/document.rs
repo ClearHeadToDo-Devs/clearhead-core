@@ -75,9 +75,7 @@ pub fn process_save(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::entities::{Action, ActionState};
     use tempfile::TempDir;
-    use uuid::Uuid;
 
     fn setup_test_repo() -> (TempDir, ActionRepository) {
         let temp_dir = TempDir::new().unwrap();
@@ -89,27 +87,6 @@ mod tests {
 
         let repo = ActionRepository::test_repo(file_path, workspace_dir).unwrap();
         (temp_dir, repo)
-    }
-
-    fn make_action(state: ActionState, name: &str) -> Action {
-        Action {
-            id: Uuid::new_v4(),
-            parent_id: None,
-            state,
-            name: name.to_string(),
-            description: None,
-            priority: None,
-            context_list: None,
-            do_date_time: None,
-            do_duration: None,
-            recurrence: None,
-            completed_date_time: None,
-            created_date_time: None,
-            predecessors: None,
-            story: None,
-            alias: None,
-            is_sequential: None,
-        }
     }
 
     #[test]

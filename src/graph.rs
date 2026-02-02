@@ -295,10 +295,9 @@ pub fn query_actions(store: &Store, sparql: &str) -> Result<Vec<String>, String>
     if let QueryResults::Solutions(solutions) = results {
         for solution in solutions {
             let s = solution.map_err(|e| e.to_string())?;
-            if let Some(term) = s.get("id") {
-                if let Term::Literal(lit) = term {
-                    ids.push(lit.value().to_string());
-                }
+            if let Some(term) = s.get("id")
+                && let Term::Literal(lit) = term {
+                ids.push(lit.value().to_string());
             }
         }
     }
@@ -321,10 +320,9 @@ pub fn get_actions_from_query(store: &Store, sparql: &str) -> Result<ActionList,
     let mut actions = ActionList::new();
 
     for id_str in ids {
-        if let Ok(uuid) = Uuid::parse_str(&id_str) {
-            if let Ok(action) = get_action_by_id(store, uuid) {
-                actions.push(action);
-            }
+        if let Ok(uuid) = Uuid::parse_str(&id_str)
+            && let Ok(action) = get_action_by_id(store, uuid) {
+            actions.push(action);
         }
     }
 
@@ -373,7 +371,7 @@ fn get_action_by_id(store: &Store, id: Uuid) -> Result<Action, String> {
 
     let state_term = find_one(action_pred("hasState"));
     let state = if let Some(Term::NamedNode(nn)) = state_term {
-        match nn.as_str().split('#').last() {
+        match nn.as_str().split('#').next_back() {
             Some("Completed") => ActionState::Completed,
             Some("InProgress") => ActionState::InProgress,
             Some("Blocked") => ActionState::BlockedorAwaiting,
@@ -434,11 +432,8 @@ fn get_action_by_id(store: &Store, id: Uuid) -> Result<Action, String> {
     let parent_id = find_one(action_pred("parentAction")).and_then(|t| match t {
         Term::NamedNode(nn) => {
             let s = nn.as_str();
-            if s.starts_with("urn:uuid:") {
-                Uuid::parse_str(&s[9..]).ok()
-            } else {
-                None
-            }
+            s.strip_prefix("urn:uuid:")
+                .and_then(|stripped| Uuid::parse_str(stripped).ok())
         }
         _ => None,
     });
@@ -615,10 +610,10 @@ fn phase_node(phase: &ActPhase) -> NamedNode {
 /// This inserts Plans and PlannedActs as separate entities with proper
 /// CCO-aligned types and relationships.
 pub fn load_domain_model(store: &Store, model: &DomainModel) -> Result<(), String> {
-    for (_id, plan) in &model.plans {
+    for plan in model.plans.values() {
         insert_plan(store, plan)?;
     }
-    for (_id, act) in &model.acts {
+    for act in model.acts.values() {
         insert_planned_act(store, act)?;
     }
     Ok(())

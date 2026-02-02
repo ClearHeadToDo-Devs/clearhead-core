@@ -229,20 +229,19 @@ fn format_as_table(
     filters: Option<&TableFormatOptions>,
 ) -> Result<String, String> {
     // Handle --list-columns flag
-    if let Some(opts) = filters {
-        if opts.list_columns {
-            println!("Available columns for --columns and --hide-columns:");
-            println!("  state       - Action state ( [x], [-], [=], [_] )");
-            println!("  name        - Action name with indentation");
-            println!("  priority    - Numerical priority (1-9, higher = more important)");
-            println!("  due         - Due date/time");
-            println!("  dur         - Estimated duration in minutes");
-            println!("  recurrence  - Recurrence pattern (DAILY, WEEKLY, etc.)");
-            println!("  context     - Context tags");
-            println!("  description - Task description");
-            println!("  id          - First 8 chars of UUID");
-            return Ok(String::new());
-        }
+    if let Some(opts) = filters
+        && opts.list_columns {
+        println!("Available columns for --columns and --hide-columns:");
+        println!("  state       - Action state ( [x], [-], [=], [_] )");
+        println!("  name        - Action name with indentation");
+        println!("  priority    - Numerical priority (1-9, higher = more important)");
+        println!("  due         - Due date/time");
+        println!("  dur         - Estimated duration in minutes");
+        println!("  recurrence  - Recurrence pattern (DAILY, WEEKLY, etc.)");
+        println!("  context     - Context tags");
+        println!("  description - Task description");
+        println!("  id          - First 8 chars of UUID");
+        return Ok(String::new());
     }
 
     // Column names in fixed order

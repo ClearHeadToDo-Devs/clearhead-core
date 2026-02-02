@@ -296,7 +296,7 @@ impl ActionRepository {
         // Try to make relative to root
         let file_key = file_abs
             .strip_prefix(&root)
-            .unwrap_or_else(|_| {
+            .unwrap_or({
                 // Fallback: use filename if outside root (shouldn't happen in normal usage)
                 // or just use the full path string if we can't strip.
                 // For safety in this MVP, let's use the full string if strip fails,

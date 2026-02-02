@@ -332,11 +332,7 @@ impl Action {
         // RFC 5545 requires DTSTART.
 
         let recurrence_str = recurrence.to_string();
-        let clean_recurrence = if recurrence_str.starts_with("R:") {
-            &recurrence_str[2..]
-        } else {
-            &recurrence_str
-        };
+        let clean_recurrence = recurrence_str.strip_prefix("R:").unwrap_or(&recurrence_str);
 
         let rrule_str = format!(
             "DTSTART:{}\nRRULE:{}",
@@ -383,18 +379,18 @@ pub fn parse_iso8601_datetime(datetime_str: &str) -> Option<DateTime<Local>> {
 
     // Try YYYY-MM-DDTHH:MM:SS format (without timezone)
     if let Ok(naive_dt) = NaiveDateTime::parse_from_str(trimmed, "%Y-%m-%dT%H:%M:%S") {
-        return Some(Local.from_local_datetime(&naive_dt).earliest()?);
+        return Local.from_local_datetime(&naive_dt).earliest();
     }
 
     // Try YYYY-MM-DDTHH:MM format (without timezone, no seconds)
     if let Ok(naive_dt) = NaiveDateTime::parse_from_str(trimmed, "%Y-%m-%dT%H:%M") {
-        return Some(Local.from_local_datetime(&naive_dt).earliest()?);
+        return Local.from_local_datetime(&naive_dt).earliest();
     }
 
     // Try YYYY-MM-DD format (date only, default to start of day)
     if let Ok(naive_date) = NaiveDate::parse_from_str(trimmed, "%Y-%m-%d") {
         let naive_dt = naive_date.and_time(NaiveTime::from_hms_opt(0, 0, 0)?);
-        return Some(Local.from_local_datetime(&naive_dt).earliest()?);
+        return Local.from_local_datetime(&naive_dt).earliest();
     }
 
     None
@@ -517,7 +513,7 @@ pub fn parse_action_recursive(
     let is_id_generated = id.is_none();
 
     // Generate ID if not present (using UUIDv7 for embedded timestamp)
-    let action_id = id.unwrap_or_else(|| Uuid::now_v7());
+    let action_id = id.unwrap_or_else(Uuid::now_v7);
 
     // When generating an ID, also inject created_date if missing
     // This makes logical sense: the action is "created" when it gets its formal ID
@@ -686,9 +682,7 @@ fn parse_rrule(rrule_str: &str) -> Option<Recurrence> {
     };
 
     for part in clean_rrule.split(';') {
-        let mut kv = part.splitn(2, '=');
-        let key = kv.next()?;
-        let value = kv.next()?;
+        let (key, value) = part.split_once('=')?;
 
         match key {
             "FREQ" => frequency = value.to_lowercase(),
@@ -954,7 +948,7 @@ mod tests {
     #[test]
     fn test_parse_with_predecessor_name() {
         let source = "[ ] Task B < Task A";
-        let actions = parse_actions(&source);
+        let actions = parse_actions(source);
 
         assert_eq!(actions.len(), 1);
         assert_eq!(actions[0].name, "Task B");

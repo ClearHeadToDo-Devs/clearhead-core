@@ -209,19 +209,18 @@ fn check_hierarchy_levels(doc: &ParsedDocument) -> Vec<LintDiagnostic> {
             }
 
             // E011: Skipped Hierarchy Level
-            if let Some(parent_id) = action.parent_id {
-                if let Some(parent) = doc.actions.iter().find(|a| a.id == parent_id) {
-                    let parent_depth = parent.depth(&doc.actions);
-                    if depth > parent_depth + 1 {
-                        diagnostics.push(LintDiagnostic::error(
-                            "E011",
-                            format!(
-                                "Skipped hierarchy level: parent is depth {}, child is depth {} (E011).",
-                                parent_depth, depth
-                            ),
-                            metadata.root,
-                        ));
-                    }
+            if let Some(parent_id) = action.parent_id
+                && let Some(parent) = doc.actions.iter().find(|a| a.id == parent_id) {
+                let parent_depth = parent.depth(&doc.actions);
+                if depth > parent_depth + 1 {
+                    diagnostics.push(LintDiagnostic::error(
+                        "E011",
+                        format!(
+                            "Skipped hierarchy level: parent is depth {}, child is depth {} (E011).",
+                            parent_depth, depth
+                        ),
+                        metadata.root,
+                    ));
                 }
             }
         }
@@ -343,14 +342,13 @@ fn check_duplicate_ids(doc: &ParsedDocument) -> Vec<LintDiagnostic> {
     let mut seen_ids = HashSet::<Uuid>::new();
 
     for action in &doc.actions {
-        if let Some(metadata) = doc.source_map.get(&action.id) {
-            if !metadata.is_id_generated && !seen_ids.insert(action.id) {
-                diagnostics.push(LintDiagnostic::info(
-                    "I004",
-                    format!("Duplicate action ID found: {} (I004)", action.id),
-                    metadata.root,
-                ));
-            }
+        if let Some(metadata) = doc.source_map.get(&action.id)
+            && !metadata.is_id_generated && !seen_ids.insert(action.id) {
+            diagnostics.push(LintDiagnostic::info(
+                "I004",
+                format!("Duplicate action ID found: {} (I004)", action.id),
+                metadata.root,
+            ));
         }
     }
     diagnostics
