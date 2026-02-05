@@ -1,8 +1,8 @@
 use crate::entities::{Action, ActionList};
-use comfy_table::{presets::UTF8_FULL, Cell, Color, ContentArrangement, Table};
+use comfy_table::{Cell, Color, ContentArrangement, Table, presets::UTF8_FULL};
 use serde::{Deserialize, Serialize};
 use std::io::Cursor;
-use topiary_core::{formatter, Language, Operation, TopiaryQuery};
+use topiary_core::{Language, Operation, TopiaryQuery, formatter};
 use topiary_tree_sitter_facade::Language as TreeSitterLanguage;
 
 /// Table column filtering options (defined in library for reusability)
@@ -230,7 +230,8 @@ fn format_as_table(
 ) -> Result<String, String> {
     // Handle --list-columns flag
     if let Some(opts) = filters
-        && opts.list_columns {
+        && opts.list_columns
+    {
         println!("Available columns for --columns and --hide-columns:");
         println!("  state       - Action state ( [x], [-], [=], [_] )");
         println!("  name        - Action name with indentation");
