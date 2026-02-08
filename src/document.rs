@@ -6,7 +6,7 @@
 use crate::crdt::ActionRepository;
 use crate::diff::Diff;
 use crate::parse_document;
-use crate::sync::{should_sync, SyncDecision};
+use crate::sync::{SyncDecision, should_sync};
 
 /// Result of processing a document save
 #[derive(Debug)]
