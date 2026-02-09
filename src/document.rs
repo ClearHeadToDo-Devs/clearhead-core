@@ -5,8 +5,9 @@
 
 use crate::crdt::ActionRepository;
 use crate::diff::Diff;
+use crate::domain::{DomainDiff, DomainModel};
 use crate::parse_document;
-use crate::sync::{SyncDecision, should_sync};
+use crate::sync::{DomainSyncDecision, SyncDecision, should_sync, should_sync_model};
 
 /// Result of processing a document save
 #[derive(Debug)]
@@ -72,6 +73,59 @@ pub fn process_save(
     }
 }
 
+// ============================================================================
+// Domain-centric save processing
+// ============================================================================
+
+/// Result of processing a domain-centric document save.
+#[derive(Debug)]
+pub enum DomainSaveResult {
+    /// No semantic changes detected - preserve user's formatting
+    NoChange,
+    /// Semantic changes detected and synced - new content available
+    Changed {
+        /// The new formatted content from CRDT
+        new_content: String,
+        /// Detailed domain-level changes that were made
+        changes: DomainDiff,
+    },
+}
+
+/// Process a document save using domain model comparison.
+///
+/// Like `process_save()`, but compares at the DomainModel level rather than
+/// the ActionList level, giving more precise change tracking (plan vs act changes).
+pub fn process_save_model(
+    current_content: &str,
+    _file_path: &str,
+    crdt_repo: &mut ActionRepository,
+) -> Result<DomainSaveResult, String> {
+    // 1. Parse current content → DomainModel
+    let parsed = parse_document(current_content)?;
+    let current_model = DomainModel::from_actions(&parsed.actions);
+
+    // 2. Get CRDT state as DomainModel
+    let crdt_model = crdt_repo
+        .get_domain_model()
+        .map_err(|e| format!("Failed to get CRDT state: {}", e))?;
+
+    // 3. Check if sync is needed (domain-level comparison)
+    match should_sync_model(&current_model, &crdt_model) {
+        DomainSyncDecision::NoChange => Ok(DomainSaveResult::NoChange),
+        DomainSyncDecision::SyncNeeded { changes } => {
+            // 4. Sync to CRDT
+            let canonical = crdt_repo
+                .save_model(&current_model)
+                .map_err(|e| format!("Failed to save to CRDT: {}", e))?;
+
+            Ok(DomainSaveResult::Changed {
+                new_content: canonical,
+                changes,
+            })
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -105,6 +159,43 @@ mod tests {
                 panic!("Expected Changed on initial save");
             }
         }
+    }
+
+    #[test]
+    fn test_process_save_model_initial_save() {
+        let (_temp, mut repo) = setup_test_repo();
+        let content = "[ ] Task 1\n[ ] Task 2\n";
+
+        let result = process_save_model(content, "test.actions", &mut repo).unwrap();
+
+        match result {
+            DomainSaveResult::Changed { new_content, changes } => {
+                assert!(!new_content.is_empty());
+                // Should have 2 plans and 2 acts added
+                assert_eq!(changes.plans_added.len(), 2);
+                assert_eq!(changes.acts_added.len(), 2);
+            }
+            DomainSaveResult::NoChange => {
+                panic!("Expected Changed on initial save");
+            }
+        }
+    }
+
+    #[test]
+    fn test_process_save_model_no_semantic_change() {
+        let (_temp, mut repo) = setup_test_repo();
+        let content = "[ ] Task 1\n";
+
+        // Initial save
+        let first_result = process_save_model(content, "test.actions", &mut repo).unwrap();
+        let content_with_id = match first_result {
+            DomainSaveResult::Changed { new_content, .. } => new_content,
+            _ => panic!("Expected Changed on first save"),
+        };
+
+        // Save again — should be NoChange
+        let result = process_save_model(&content_with_id, "test.actions", &mut repo).unwrap();
+        assert!(matches!(result, DomainSaveResult::NoChange));
     }
 
     #[test]

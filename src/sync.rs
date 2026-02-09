@@ -3,7 +3,8 @@
 //! This module provides pure functions for semantic comparison of ActionLists
 //! and determining whether CRDT synchronization is needed.
 
-use crate::diff::{diff_actions, Diff};
+use crate::diff::{diff_actions, diff_domain_models, Diff};
+use crate::domain::{DomainDiff, DomainModel};
 use crate::entities::ActionList;
 
 /// Compare two action lists semantically (ignoring formatting/whitespace)
@@ -41,6 +42,43 @@ impl SyncDecision {
     /// Returns true if sync is needed
     pub fn needs_sync(&self) -> bool {
         matches!(self, SyncDecision::SyncNeeded { .. })
+    }
+}
+
+// ============================================================================
+// Domain Model Sync
+// ============================================================================
+
+/// Compare two DomainModels semantically.
+///
+/// Returns true if the models are semantically identical.
+pub fn domain_semantically_equal(a: &DomainModel, b: &DomainModel) -> bool {
+    diff_domain_models(a, b).is_empty()
+}
+
+/// Determine if sync is needed based on domain model comparison.
+pub fn should_sync_model(current: &DomainModel, crdt_state: &DomainModel) -> DomainSyncDecision {
+    if domain_semantically_equal(current, crdt_state) {
+        DomainSyncDecision::NoChange
+    } else {
+        DomainSyncDecision::SyncNeeded {
+            changes: diff_domain_models(crdt_state, current),
+        }
+    }
+}
+
+/// Decision about whether to sync based on domain model comparison.
+#[derive(Debug, Clone)]
+pub enum DomainSyncDecision {
+    /// No semantic changes detected
+    NoChange,
+    /// Semantic changes detected - sync is needed
+    SyncNeeded { changes: DomainDiff },
+}
+
+impl DomainSyncDecision {
+    pub fn needs_sync(&self) -> bool {
+        matches!(self, DomainSyncDecision::SyncNeeded { .. })
     }
 }
 
@@ -115,6 +153,48 @@ mod tests {
 
         if let SyncDecision::SyncNeeded { changes } = decision {
             assert!(!changes.modified.is_empty());
+        } else {
+            panic!("Expected SyncNeeded");
+        }
+    }
+
+    // ====================================================================
+    // Domain sync tests
+    // ====================================================================
+
+    #[test]
+    fn test_domain_semantically_equal_same_model() {
+        let actions = vec![make_action(ActionState::NotStarted, "Task 1")];
+        let model = DomainModel::from_actions(&actions);
+        assert!(domain_semantically_equal(&model, &model));
+    }
+
+    #[test]
+    fn test_domain_sync_no_change() {
+        let actions = vec![make_action(ActionState::NotStarted, "Task 1")];
+        let model = DomainModel::from_actions(&actions);
+
+        let decision = should_sync_model(&model, &model);
+        assert!(!decision.needs_sync());
+        assert!(matches!(decision, DomainSyncDecision::NoChange));
+    }
+
+    #[test]
+    fn test_domain_sync_detects_plan_change() {
+        let id = Uuid::new_v4();
+        let mut action1 = make_action(ActionState::NotStarted, "Task 1");
+        action1.id = id;
+        let mut action2 = make_action(ActionState::NotStarted, "Task 1 Updated");
+        action2.id = id;
+
+        let model1 = DomainModel::from_actions(&vec![action1]);
+        let model2 = DomainModel::from_actions(&vec![action2]);
+
+        let decision = should_sync_model(&model2, &model1);
+        assert!(decision.needs_sync());
+
+        if let DomainSyncDecision::SyncNeeded { changes } = decision {
+            assert!(!changes.plans_modified.is_empty());
         } else {
             panic!("Expected SyncNeeded");
         }

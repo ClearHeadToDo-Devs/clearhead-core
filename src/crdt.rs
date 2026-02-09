@@ -198,38 +198,49 @@ impl WorkspaceDoc {
         Ok(WorkspaceDoc { doc, workspace })
     }
 
-    /// Get the ActionList for a specific file key
-    pub fn get_actions_for_file(&self, key: &str) -> Result<ActionList, String> {
+    /// Get the DomainModel for a specific file key.
+    ///
+    /// This is the primary method — returns the domain model directly.
+    pub fn get_domain_model(&self, key: &str) -> Result<DomainModel, String> {
         let state: WorkspaceState =
             hydrate(&self.doc).map_err(|e| format!("Failed to hydrate workspace: {}", e))?;
 
         if let Some(domain) = state.files.get(key) {
-            Ok(domain.to_action_list())
+            Ok(domain.clone())
         } else {
-            Ok(Vec::new()) // New/Empty file
+            Ok(DomainModel::new())
         }
     }
 
-    /// Update the DomainModel for a specific file key
-    pub fn update_file(&mut self, key: &str, actions: &ActionList) -> Result<(), String> {
-        // 1. Hydrate current state (we need the map to update just one entry)
-        // Note: Ideally we'd do a partial update, but autosurgeon is declarative.
-        // We must load the map, modify it, and reconcile back.
-        // Autosurgeon diffing should handle efficiency.
+    /// Update the DomainModel for a specific file key directly.
+    ///
+    /// This is the primary method — accepts a DomainModel without conversion.
+    pub fn update_file_model(&mut self, key: &str, model: &DomainModel) -> Result<(), String> {
         let mut state: WorkspaceState = hydrate(&self.doc)
             .map_err(|e| format!("Failed to hydrate workspace for update: {}", e))?;
 
-        // 2. Convert ActionList -> DomainModel
-        let domain = DomainModel::from_actions(actions);
+        state.files.insert(key.to_string(), model.clone());
 
-        // 3. Update Map
-        state.files.insert(key.to_string(), domain);
-
-        // 4. Reconcile
         reconcile(&mut self.doc, &state)
             .map_err(|e| format!("Failed to reconcile workspace update: {}", e))?;
 
         Ok(())
+    }
+
+    /// Get the ActionList for a specific file key.
+    ///
+    /// Convenience wrapper — delegates to `get_domain_model()`.
+    pub fn get_actions_for_file(&self, key: &str) -> Result<ActionList, String> {
+        let model = self.get_domain_model(key)?;
+        Ok(model.to_action_list())
+    }
+
+    /// Update the DomainModel for a specific file key from an ActionList.
+    ///
+    /// Convenience wrapper — converts to DomainModel, then delegates to `update_file_model()`.
+    pub fn update_file(&mut self, key: &str, actions: &ActionList) -> Result<(), String> {
+        let model = DomainModel::from_actions(actions);
+        self.update_file_model(key, &model)
     }
 
     /// Project all files in the CRDT back to the filesystem
@@ -341,27 +352,44 @@ impl ActionRepository {
         })
     }
 
-    pub fn get_actions(&self) -> Result<ActionList, String> {
-        self.doc.get_actions_for_file(&self.file_key)
+    /// Get the DomainModel from the CRDT.
+    ///
+    /// This is the primary method — returns the domain model directly.
+    pub fn get_domain_model(&self) -> Result<DomainModel, String> {
+        self.doc.get_domain_model(&self.file_key)
     }
 
-    /// Save actions to CRDT and return formatted content.
+    /// Save a DomainModel to the CRDT and return formatted content.
     ///
-    /// This method updates the CRDT and persists it, then returns the formatted
-    /// content for the LSP to apply via workspace/applyEdit. It does NOT write
-    /// directly to the file to avoid race conditions with the editor.
-    pub fn save(&mut self, actions: &ActionList) -> Result<String, String> {
+    /// This is the primary method — accepts a DomainModel without conversion.
+    pub fn save_model(&mut self, model: &DomainModel) -> Result<String, String> {
         // 1. Update CRDT
-        self.doc.update_file(&self.file_key, actions)?;
+        self.doc.update_file_model(&self.file_key, model)?;
 
         // 2. Persist CRDT
         self.storage.save(&mut self.doc)?;
 
         // 3. Format actions with UUIDs (but don't write to file)
         use crate::{format, OutputFormat};
-        let formatted = format(actions, OutputFormat::Actions, None, None)?;
+        let actions = model.to_action_list();
+        let formatted = format(&actions, OutputFormat::Actions, None, None)?;
 
         Ok(formatted)
+    }
+
+    /// Get actions from the CRDT.
+    ///
+    /// Convenience wrapper — delegates to `get_domain_model()`.
+    pub fn get_actions(&self) -> Result<ActionList, String> {
+        self.doc.get_actions_for_file(&self.file_key)
+    }
+
+    /// Save actions to CRDT and return formatted content.
+    ///
+    /// Convenience wrapper — converts to DomainModel, then delegates to `save_model()`.
+    pub fn save(&mut self, actions: &ActionList) -> Result<String, String> {
+        let model = DomainModel::from_actions(actions);
+        self.save_model(&model)
     }
 
     /// Project actions to file (used by CLI commands, not LSP).
@@ -486,5 +514,43 @@ mod tests {
         let actions_b = loaded_doc.get_actions_for_file("file_b.actions").unwrap();
         assert_eq!(actions_b.len(), 1);
         assert_eq!(actions_b[0].name, "Task B");
+    }
+
+    #[test]
+    fn test_domain_model_roundtrip_through_crdt() {
+        let temp_dir = TempDir::new().unwrap();
+        let root = temp_dir.path().to_path_buf();
+        let workspace = Workspace {
+            state_dir: root.clone(),
+            data_dir: root.clone(),
+        };
+        let storage = CrdtStorage::new(workspace.clone()).unwrap();
+
+        let mut doc = WorkspaceDoc::new(workspace).unwrap();
+
+        // Create a model with specific data
+        let mut action = Action::new("Round-trip Task");
+        action.priority = Some(3);
+        action.description = Some("Test description".to_string());
+        let original_model = DomainModel::from_actions(&vec![action]);
+
+        // Save via DomainModel API
+        doc.update_file_model("test.actions", &original_model)
+            .unwrap();
+        storage.save(&mut doc).unwrap();
+
+        // Reload and verify
+        let loaded_doc = storage.load().unwrap();
+        let loaded_model = loaded_doc.get_domain_model("test.actions").unwrap();
+
+        assert_eq!(loaded_model.plans.len(), original_model.plans.len());
+        assert_eq!(loaded_model.acts.len(), original_model.acts.len());
+
+        for (key, plan) in &original_model.plans {
+            let loaded_plan = loaded_model.plans.get(key).expect("Plan should exist");
+            assert_eq!(loaded_plan.name, plan.name);
+            assert_eq!(loaded_plan.priority, plan.priority);
+            assert_eq!(loaded_plan.description, plan.description);
+        }
     }
 }

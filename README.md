@@ -21,15 +21,15 @@ ClearHead Core is the foundational library for the ClearHead ecosystem. It provi
 
 ClearHead Core is **environment-agnostic** by design. It contains:
 
-✅ Pure business logic  
-✅ Domain models and algorithms  
-✅ Data transformations  
-✅ Validation rules  
+- Pure business logic  
+- Domain models and algorithms  
+- Data transformations  
+- Validation rules  
 
-❌ No filesystem access  
-❌ No network operations  
-❌ No configuration management  
-❌ No environment variables  
+- No filesystem access  
+-No network operations  
+-No configuration management  
+-No environment variables  
 
 This makes it suitable for use in:
 - CLI tools (like [clearhead-cli](https://github.com/ClearHeadToDo-Devs/clearhead-cli))
@@ -90,7 +90,7 @@ fn main() -> Result<(), String> {
         }
     "#;
     
-    let results = graph::query_actions(&store, sparql)?;
+    let result\s = graph::query_actions(&store, sparql)?;
     println!("Matching actions: {:?}", results);
     
     Ok(())
@@ -118,12 +118,13 @@ clearhead_core/
 
 ### Data Flow
 
-```
-DSL String → parse_actions() → ActionList → format() → JSON/TTL/Table
-                                    ↓
-                              CRDT sync → Merge conflicts
-                                    ↓
-                              RDF Store → SPARQL queries
+```mmd
+graph TD
+    DSL[Actions DSL] -->|parse file| actions[ActionList]
+    actions -->|Transform| domain[Domain Structs]
+    domain -->|autosurgeon| crdt[CRDT State]
+    domain -->|oxigraph| graph[Graph Store]
+    domain -->|format| output[Formatted Output]
 ```
 
 ### Core Types
@@ -132,6 +133,8 @@ DSL String → parse_actions() → ActionList → format() → JSON/TTL/Table
 - **`ActionList`**: Collection of actions (alias for `Vec<Action>`)
 - **`Plan`**: Template for an action (what it is)
 - **`PlannedAct`**: Execution of a plan (when/how it happened)
+- **`Charter`**: Scope of concern for a set of plans
+- **`Objective`**: Desired outcome that plans serve
 - **`ActionState`**: State enum (Todo, InProgress, Done, Cancelled, etc.)
 
 ## Boundary Principles
@@ -140,8 +143,7 @@ To maintain environment-agnostic design, core follows these rules:
 
 1. **No I/O**: All functions take strings or data structures as input
 2. **No side effects**: Functions are pure where possible
-3. **No configuration**: Accept parameters explicitly, don't read from files/env
-4. **No assumptions**: Don't assume filesystem paths, URLs, or system calls exist
+3. **No assumptions**: Don't assume filesystem paths, URLs, or system calls exist
 
 For environment integration (filesystem, config, network), use [clearhead-cli](https://github.com/ClearHeadToDo-Devs/clearhead-cli) or build your own wrapper.
 
@@ -154,7 +156,7 @@ cargo test
 ```
 
 Run with verbose output:
-
+c
 ```bash
 cargo test -- --nocapture
 ```

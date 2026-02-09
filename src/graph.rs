@@ -23,7 +23,10 @@
 use crate::domain::{ActPhase, DomainModel, Plan, PlannedAct};
 use crate::entities::{Action, ActionList, ActionState, Recurrence};
 use chrono::DateTime;
-use oxigraph::model::{BlankNode, GraphName, Literal, NamedNode, NamedOrBlankNode, Quad, Term};
+use oxigraph::io::RdfFormat;
+use oxigraph::model::{
+    BlankNode, GraphName, GraphNameRef, Literal, NamedNode, NamedOrBlankNode, Quad, Term,
+};
 use oxigraph::sparql::{QueryResults, SparqlEvaluator};
 use oxigraph::store::Store;
 use std::collections::HashMap;
@@ -82,11 +85,13 @@ fn state_node(state: &ActionState) -> NamedNode {
 }
 
 /// Load an ActionList into the store
+#[deprecated(note = "Use load_domain_model instead")]
 pub fn load_actions(store: &Store, actions: &ActionList) -> Result<(), String> {
     load_actions_with_source(store, actions, None, None)
 }
 
 /// Load an ActionList into the store with source metadata
+#[deprecated(note = "Use load_domain_model instead")]
 pub fn load_actions_with_source(
     store: &Store,
     actions: &ActionList,
@@ -832,6 +837,325 @@ fn insert_planned_act(store: &Store, act: &PlannedAct) -> Result<(), String> {
     Ok(())
 }
 
+// ============================================================================
+// Turtle Serialization
+// ============================================================================
+
+/// Serialize all PlannedActs from a DomainModel to Turtle format.
+///
+/// Loads the full model (Plans + Acts) into a temporary store,
+/// then serializes the default graph to Turtle.
+pub fn serialize_acts_to_turtle(model: &DomainModel) -> Result<String, String> {
+    let store = create_store()?;
+    load_domain_model(&store, model)?;
+    store_to_turtle(&store)
+}
+
+/// Serialize only completed/cancelled acts (and their plans) to Turtle format.
+///
+/// Useful for generating a "closed acts" archive file.
+pub fn serialize_closed_acts_to_turtle(model: &DomainModel) -> Result<String, String> {
+    let filtered = filter_model_by_phase(model, |phase| {
+        matches!(phase, ActPhase::Completed | ActPhase::Cancelled)
+    });
+    let store = create_store()?;
+    load_domain_model(&store, &filtered)?;
+    store_to_turtle(&store)
+}
+
+/// Serialize only open (non-completed, non-cancelled) acts to Turtle format.
+///
+/// Useful for generating an "upcoming acts" file.
+pub fn serialize_open_acts_to_turtle(model: &DomainModel) -> Result<String, String> {
+    let filtered = filter_model_by_phase(model, |phase| {
+        !matches!(phase, ActPhase::Completed | ActPhase::Cancelled)
+    });
+    let store = create_store()?;
+    load_domain_model(&store, &filtered)?;
+    store_to_turtle(&store)
+}
+
+/// Filter a DomainModel to only include acts matching the predicate,
+/// and the plans referenced by those acts.
+fn filter_model_by_phase(
+    model: &DomainModel,
+    predicate: impl Fn(&ActPhase) -> bool,
+) -> DomainModel {
+    let mut filtered = DomainModel::new();
+
+    for (id, act) in &model.acts {
+        if predicate(&act.phase) {
+            filtered.acts.insert(id.clone(), act.clone());
+            // Include the plan this act references
+            let plan_key = act.plan_id.to_string();
+            if let Some(plan) = model.plans.get(&plan_key) {
+                filtered.plans.insert(plan_key, plan.clone());
+            }
+        }
+    }
+
+    filtered
+}
+
+/// Serialize an Oxigraph store's default graph to Turtle.
+fn store_to_turtle(store: &Store) -> Result<String, String> {
+    let mut buffer = Vec::new();
+    store
+        .dump_graph_to_writer(GraphNameRef::DefaultGraph, RdfFormat::Turtle, &mut buffer)
+        .map_err(|e| format!("Failed to serialize to Turtle: {}", e))?;
+    String::from_utf8(buffer).map_err(|e| format!("Invalid UTF-8 in Turtle output: {}", e))
+}
+
+// ============================================================================
+// Domain-centric Query Functions
+// ============================================================================
+
+/// Query Plans from a store using SPARQL.
+///
+/// The query should return `?id` (plan UUID as string literal).
+/// Each matching plan is reconstructed from the store.
+pub fn query_plans(store: &Store, sparql: &str) -> Result<Vec<Plan>, String> {
+    let ids = query_action_ids(store, sparql, "id")?;
+    let mut plans = Vec::new();
+
+    for id_str in ids {
+        if let Ok(uuid) = Uuid::parse_str(&id_str) {
+            if let Ok(plan) = get_plan_by_id(store, uuid) {
+                plans.push(plan);
+            }
+        }
+    }
+
+    Ok(plans)
+}
+
+/// Query PlannedActs from a store using SPARQL.
+///
+/// The query should return `?id` (act UUID as string literal).
+/// Each matching act is reconstructed from the store.
+pub fn query_acts(store: &Store, sparql: &str) -> Result<Vec<PlannedAct>, String> {
+    let ids = query_action_ids(store, sparql, "id")?;
+    let mut acts = Vec::new();
+
+    for id_str in ids {
+        if let Ok(uuid) = Uuid::parse_str(&id_str) {
+            if let Ok(act) = get_planned_act_by_id(store, uuid) {
+                acts.push(act);
+            }
+        }
+    }
+
+    Ok(acts)
+}
+
+/// Generic SPARQL query that returns string values of a named variable.
+fn query_action_ids(store: &Store, sparql: &str, var_name: &str) -> Result<Vec<String>, String> {
+    let results = SparqlEvaluator::new()
+        .parse_query(sparql)
+        .map_err(|e| e.to_string())?
+        .on_store(store)
+        .execute()
+        .map_err(|e| e.to_string())?;
+
+    let mut ids = Vec::new();
+    if let QueryResults::Solutions(solutions) = results {
+        for solution in solutions {
+            let s = solution.map_err(|e| e.to_string())?;
+            if let Some(term) = s.get(var_name)
+                && let Term::Literal(lit) = term
+            {
+                ids.push(lit.value().to_string());
+            }
+        }
+    }
+    Ok(ids)
+}
+
+/// Reconstruct a Plan from the store by UUID.
+fn get_plan_by_id(store: &Store, id: Uuid) -> Result<Plan, String> {
+    let subject =
+        NamedOrBlankNode::NamedNode(NamedNode::new(format!("urn:uuid:{}", id)).unwrap());
+    let graph = GraphName::DefaultGraph;
+
+    let find_one = |pred: NamedNode| -> Option<Term> {
+        store
+            .quads_for_pattern(
+                Some(subject.as_ref()),
+                Some(pred.as_ref()),
+                None,
+                Some(graph.as_ref()),
+            )
+            .next()
+            .map(|q| q.unwrap().object)
+    };
+
+    let find_many = |pred: NamedNode| -> Vec<Term> {
+        store
+            .quads_for_pattern(
+                Some(subject.as_ref()),
+                Some(pred.as_ref()),
+                None,
+                Some(graph.as_ref()),
+            )
+            .map(|q| q.unwrap().object)
+            .collect()
+    };
+
+    let name = match find_one(schema_pred("name")) {
+        Some(Term::Literal(l)) => l.value().to_string(),
+        _ => return Err(format!("Plan {} missing name", id)),
+    };
+
+    let description = find_one(schema_pred("description")).and_then(|t| match t {
+        Term::Literal(l) => Some(l.value().to_string()),
+        _ => None,
+    });
+
+    let priority = find_one(v4_pred("hasPriority")).and_then(|t| match t {
+        Term::Literal(l) => l.value().parse::<u32>().ok(),
+        _ => None,
+    });
+
+    let contexts: Vec<String> = find_many(v4_pred("hasContext"))
+        .into_iter()
+        .filter_map(|t| match t {
+            Term::Literal(l) => Some(l.value().to_string()),
+            _ => None,
+        })
+        .collect();
+
+    let objective = find_one(v4_pred("hasObjective")).and_then(|t| match t {
+        Term::Literal(l) => Some(l.value().to_string()),
+        _ => None,
+    });
+
+    let parent = find_one(v4_pred("partOf")).and_then(|t| match t {
+        Term::NamedNode(nn) => nn
+            .as_str()
+            .strip_prefix("urn:uuid:")
+            .and_then(|s| Uuid::parse_str(s).ok()),
+        _ => None,
+    });
+
+    let alias = find_one(v4_pred("alias")).and_then(|t| match t {
+        Term::Literal(l) => Some(l.value().to_string()),
+        _ => None,
+    });
+
+    let is_sequential = find_one(v4_pred("isSequential")).and_then(|t| match t {
+        Term::Literal(l) => l.value().parse::<bool>().ok(),
+        _ => None,
+    });
+
+    let depends_on: Vec<Uuid> = find_many(v4_pred("dependsOn"))
+        .into_iter()
+        .filter_map(|t| match t {
+            Term::NamedNode(nn) => nn
+                .as_str()
+                .strip_prefix("urn:uuid:")
+                .and_then(|s| Uuid::parse_str(s).ok()),
+            _ => None,
+        })
+        .collect();
+
+    Ok(Plan {
+        id,
+        name,
+        description,
+        priority,
+        contexts: if contexts.is_empty() {
+            None
+        } else {
+            Some(contexts)
+        },
+        recurrence: None, // TODO: Full recurrence hydration from blank node
+        parent,
+        objective,
+        alias,
+        is_sequential,
+        depends_on: if depends_on.is_empty() {
+            None
+        } else {
+            Some(depends_on)
+        },
+    })
+}
+
+/// Reconstruct a PlannedAct from the store by UUID.
+fn get_planned_act_by_id(store: &Store, id: Uuid) -> Result<PlannedAct, String> {
+    let subject =
+        NamedOrBlankNode::NamedNode(NamedNode::new(format!("urn:uuid:{}", id)).unwrap());
+    let graph = GraphName::DefaultGraph;
+
+    let find_one = |pred: NamedNode| -> Option<Term> {
+        store
+            .quads_for_pattern(
+                Some(subject.as_ref()),
+                Some(pred.as_ref()),
+                None,
+                Some(graph.as_ref()),
+            )
+            .next()
+            .map(|q| q.unwrap().object)
+    };
+
+    let plan_id = match find_one(v4_pred("prescribedBy")) {
+        Some(Term::NamedNode(nn)) => nn
+            .as_str()
+            .strip_prefix("urn:uuid:")
+            .and_then(|s| Uuid::parse_str(s).ok())
+            .ok_or_else(|| format!("PlannedAct {} has invalid prescribedBy URI", id))?,
+        _ => return Err(format!("PlannedAct {} missing prescribedBy", id)),
+    };
+
+    let phase = match find_one(v4_pred("hasPhase")) {
+        Some(Term::NamedNode(nn)) => match nn.as_str().split('#').next_back() {
+            Some("Completed") => ActPhase::Completed,
+            Some("InProgress") => ActPhase::InProgress,
+            Some("Blocked") => ActPhase::Blocked,
+            Some("Cancelled") => ActPhase::Cancelled,
+            _ => ActPhase::NotStarted,
+        },
+        _ => ActPhase::NotStarted,
+    };
+
+    let scheduled_at = find_one(v4_pred("scheduledAt")).and_then(|t| match t {
+        Term::Literal(l) => DateTime::parse_from_rfc3339(l.value())
+            .ok()
+            .map(|dt| dt.with_timezone(&chrono::Local)),
+        _ => None,
+    });
+
+    let duration = find_one(v4_pred("duration")).and_then(|t| match t {
+        Term::Literal(l) => l.value().parse::<u32>().ok(),
+        _ => None,
+    });
+
+    let completed_at = find_one(v4_pred("completedAt")).and_then(|t| match t {
+        Term::Literal(l) => DateTime::parse_from_rfc3339(l.value())
+            .ok()
+            .map(|dt| dt.with_timezone(&chrono::Local)),
+        _ => None,
+    });
+
+    let created_at = find_one(v4_pred("createdAt")).and_then(|t| match t {
+        Term::Literal(l) => DateTime::parse_from_rfc3339(l.value())
+            .ok()
+            .map(|dt| dt.with_timezone(&chrono::Local)),
+        _ => None,
+    });
+
+    Ok(PlannedAct {
+        id,
+        plan_id,
+        phase,
+        scheduled_at,
+        duration,
+        completed_at,
+        created_at,
+    })
+}
+
 #[cfg(test)]
 mod v4_tests {
     use super::*;
@@ -865,6 +1189,74 @@ mod v4_tests {
                 .collect();
             assert_eq!(names.len(), 1);
         }
+    }
+
+    #[test]
+    fn test_serialize_acts_to_turtle() {
+        let actions = vec![Action::new("Turtle task")];
+        let model = DomainModel::from_actions(&actions);
+
+        let turtle = serialize_acts_to_turtle(&model).unwrap();
+
+        // Should contain plan and act data
+        assert!(turtle.contains("Plan"));
+        assert!(turtle.contains("PlannedAct"));
+        // Should be valid turtle (non-empty)
+        assert!(!turtle.is_empty());
+    }
+
+    #[test]
+    fn test_serialize_open_closed_split() {
+        let action_open = Action::new("Open task");
+        let mut action_done = Action::new("Done task");
+        action_done.state = ActionState::Completed;
+
+        let model = DomainModel::from_actions(&vec![action_open, action_done]);
+
+        let open_turtle = serialize_open_acts_to_turtle(&model).unwrap();
+        let closed_turtle = serialize_closed_acts_to_turtle(&model).unwrap();
+
+        // Open turtle should have NotStarted but not Completed
+        assert!(open_turtle.contains("NotStarted"));
+        assert!(!open_turtle.contains("Completed"));
+
+        // Closed turtle should have Completed but not NotStarted
+        assert!(closed_turtle.contains("Completed"));
+        assert!(!closed_turtle.contains("NotStarted"));
+    }
+
+    #[test]
+    fn test_query_plans_from_store() {
+        let store = create_store().unwrap();
+        let actions = vec![Action::new("Queryable plan")];
+        let model = DomainModel::from_actions(&actions);
+        load_domain_model(&store, &model).unwrap();
+
+        let sparql = format!(
+            "SELECT ?id WHERE {{ ?s a <{}Plan> . ?s <{}id> ?id }}",
+            CCO_NS, ACTIONS_V4_NS
+        );
+        let plans = query_plans(&store, &sparql).unwrap();
+
+        assert_eq!(plans.len(), 1);
+        assert_eq!(plans[0].name, "Queryable plan");
+    }
+
+    #[test]
+    fn test_query_acts_from_store() {
+        let store = create_store().unwrap();
+        let actions = vec![Action::new("Queryable act")];
+        let model = DomainModel::from_actions(&actions);
+        load_domain_model(&store, &model).unwrap();
+
+        let sparql = format!(
+            "SELECT ?id WHERE {{ ?s a <{}PlannedAct> . ?s <{}id> ?id }}",
+            CCO_NS, ACTIONS_V4_NS
+        );
+        let acts = query_acts(&store, &sparql).unwrap();
+
+        assert_eq!(acts.len(), 1);
+        assert_eq!(acts[0].plan_id, model.plans.values().next().unwrap().id);
     }
 
     #[test]

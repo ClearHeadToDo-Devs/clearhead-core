@@ -27,25 +27,30 @@ pub mod treesitter;
 use treesitter::{SourceMetadata, SourceRange};
 
 pub mod domain;
-pub use domain::{ActPhase, DomainModel, Plan, PlannedAct};
+pub use domain::{
+    ActDiff, ActFieldChange, ActPhase, DomainDiff, DomainModel, Plan, PlanDiff, PlanFieldChange,
+    PlannedAct,
+};
 
 pub mod crdt;
 
 pub mod format;
-pub use format::{format, FormatConfig, FormatStyle, IndentStyle, OutputFormat};
+pub use format::{FormatConfig, FormatStyle, IndentStyle, OutputFormat, format};
 
 pub mod diff;
 
 pub mod sync;
+pub use sync::DomainSyncDecision;
 
 pub mod document;
+pub use document::DomainSaveResult;
 
 pub mod graph;
 
 pub mod sync_utils;
 
 pub mod lint;
-pub use lint::{lint_document, LintDiagnostic, LintResults, LintSeverity};
+pub use lint::{LintDiagnostic, LintResults, LintSeverity, lint_document};
 
 #[derive(Debug, Clone)]
 pub struct ParsedDocument {
@@ -95,6 +100,12 @@ pub fn parse_tree(actions: &str) -> Result<Tree, String> {
     action_parser
         .parse(actions, None)
         .ok_or("Failed to parse tree".to_string())
+}
+
+/// Parse a .actions file into a DomainModel
+pub fn parse_domain_model(content: &str) -> Result<DomainModel, String> {
+    let actions = parse_actions(content)?;
+    Ok(DomainModel::from_actions(&actions))
 }
 
 /// Patch a primary ActionList with updates from a secondary list

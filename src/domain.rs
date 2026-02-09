@@ -177,7 +177,7 @@ impl DomainModel {
                 } else {
                     // Placeholder act
                     let dummy_act = PlannedAct {
-                        id: Uuid::now_v7(),
+                        id: Uuid::new_v5(&plan.id, b"act-0"),
                         plan_id: plan.id,
                         phase: ActPhase::NotStarted,
                         scheduled_at: None,
@@ -259,7 +259,7 @@ fn merge_to_action(plan: &Plan, act: &PlannedAct, target_id: Uuid) -> Action {
 /// The PlannedAct gets a new UUID (it's a specific occurrence).
 fn split_action(action: &Action) -> (Plan, PlannedAct) {
     let plan_id = action.id;
-    let act_id = Uuid::now_v7();
+    let act_id = Uuid::new_v5(&plan_id, b"act-0");
 
     let plan = Plan {
         id: plan_id,
@@ -289,6 +289,72 @@ fn split_action(action: &Action) -> (Plan, PlannedAct) {
     };
 
     (plan, act)
+}
+
+// ============================================================================
+// Domain Diff Types
+// ============================================================================
+
+/// A change to a single field on a Plan.
+#[derive(Debug, Clone, PartialEq)]
+pub enum PlanFieldChange {
+    Name { old: String, new: String },
+    Description { old: Option<String>, new: Option<String> },
+    Priority { old: Option<u32>, new: Option<u32> },
+    Contexts { old: Option<Vec<String>>, new: Option<Vec<String>> },
+    Parent { old: Option<Uuid>, new: Option<Uuid> },
+    Objective { old: Option<String>, new: Option<String> },
+    Alias { old: Option<String>, new: Option<String> },
+    IsSequential { old: Option<bool>, new: Option<bool> },
+    Recurrence { old: Option<Recurrence>, new: Option<Recurrence> },
+    DependsOn { old: Option<Vec<Uuid>>, new: Option<Vec<Uuid>> },
+}
+
+/// A change to a single field on a PlannedAct.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ActFieldChange {
+    Phase { old: ActPhase, new: ActPhase },
+    ScheduledAt { old: Option<DateTime<Local>>, new: Option<DateTime<Local>> },
+    Duration { old: Option<u32>, new: Option<u32> },
+    CompletedAt { old: Option<DateTime<Local>>, new: Option<DateTime<Local>> },
+    CreatedAt { old: Option<DateTime<Local>>, new: Option<DateTime<Local>> },
+}
+
+/// Changes detected for a single Plan.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PlanDiff {
+    pub id: Uuid,
+    pub changes: Vec<PlanFieldChange>,
+}
+
+/// Changes detected for a single PlannedAct.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ActDiff {
+    pub id: Uuid,
+    pub plan_id: Uuid,
+    pub changes: Vec<ActFieldChange>,
+}
+
+/// Complete diff between two DomainModels.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct DomainDiff {
+    pub plans_added: Vec<Plan>,
+    pub plans_removed: Vec<Plan>,
+    pub plans_modified: Vec<PlanDiff>,
+    pub acts_added: Vec<PlannedAct>,
+    pub acts_removed: Vec<PlannedAct>,
+    pub acts_modified: Vec<ActDiff>,
+}
+
+impl DomainDiff {
+    pub fn is_empty(&self) -> bool {
+        self.plans_added.is_empty()
+            && self.plans_removed.is_empty()
+            && self.plans_modified.is_empty()
+            && self.acts_added.is_empty()
+            && self.acts_removed.is_empty()
+            && self.acts_modified.is_empty()
+    }
 }
 
 #[cfg(test)]
@@ -346,5 +412,30 @@ mod tests {
 
         let acts = model.acts_for_plan(action.id);
         assert_eq!(acts.len(), 1);
+    }
+
+    #[test]
+    fn test_deterministic_act_ids() {
+        let actions = vec![Action::new("Task 1"), Action::new("Task 2")];
+
+        let model1 = DomainModel::from_actions(&actions);
+        let model2 = DomainModel::from_actions(&actions);
+
+        // Same ActionList should produce same act IDs every time
+        let mut ids1: Vec<String> = model1.acts.keys().cloned().collect();
+        let mut ids2: Vec<String> = model2.acts.keys().cloned().collect();
+        ids1.sort();
+        ids2.sort();
+        assert_eq!(ids1, ids2);
+    }
+
+    #[test]
+    fn test_act_id_derived_from_plan_id() {
+        let action = Action::new("Test");
+        let (plan, act) = split_action(&action);
+
+        // Act ID should be deterministic v5 UUID based on plan ID
+        let expected_act_id = Uuid::new_v5(&plan.id, b"act-0");
+        assert_eq!(act.id, expected_act_id);
     }
 }
