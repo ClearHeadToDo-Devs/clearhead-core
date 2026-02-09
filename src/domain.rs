@@ -75,6 +75,25 @@ pub struct Plan {
     pub is_sequential: Option<bool>,
     /// Plans this plan depends on (predecessor relationships)
     pub depends_on: Option<Vec<Uuid>>,
+    /// Charter reference (resolved at workspace layer)
+    pub charter: Option<String>,
+}
+
+/// A charter — a directive that organizes plans under a shared purpose.
+///
+/// Maps to `actions:Charter` (subclass of cco:DirectiveInformationContentEntity).
+/// Charters are the highest-level organizational unit. Plans reference charters
+/// via the `charter` field.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Charter {
+    pub id: Uuid,
+    pub title: String,
+    pub description: Option<String>,
+    pub alias: Option<String>,
+    /// Reference string for parent charter, resolved at workspace layer
+    pub parent: Option<String>,
+    /// References to objectives, resolved at workspace layer
+    pub objectives: Option<Vec<String>>,
 }
 
 /// Actual execution / occurrence of a Plan.
@@ -276,6 +295,7 @@ fn split_action(action: &Action) -> (Plan, PlannedAct) {
             .predecessors
             .as_ref()
             .map(|preds| preds.iter().filter_map(|p| p.resolved_uuid).collect()),
+        charter: None, // charter doesn't round-trip through Action
     };
 
     let act = PlannedAct {
@@ -308,6 +328,7 @@ pub enum PlanFieldChange {
     IsSequential { old: Option<bool>, new: Option<bool> },
     Recurrence { old: Option<Recurrence>, new: Option<Recurrence> },
     DependsOn { old: Option<Vec<Uuid>>, new: Option<Vec<Uuid>> },
+    Charter { old: Option<String>, new: Option<String> },
 }
 
 /// A change to a single field on a PlannedAct.

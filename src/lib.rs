@@ -28,9 +28,12 @@ use treesitter::{SourceMetadata, SourceRange};
 
 pub mod domain;
 pub use domain::{
-    ActDiff, ActFieldChange, ActPhase, DomainDiff, DomainModel, Plan, PlanDiff, PlanFieldChange,
-    PlannedAct,
+    ActDiff, ActFieldChange, ActPhase, Charter, DomainDiff, DomainModel, Plan, PlanDiff,
+    PlanFieldChange, PlannedAct,
 };
+
+pub mod charter;
+pub use charter::{format_charter, implicit_charter, parse_charter};
 
 pub mod crdt;
 

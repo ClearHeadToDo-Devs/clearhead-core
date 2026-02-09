@@ -271,6 +271,12 @@ fn compare_plans(old: &Plan, new: &Plan) -> Vec<PlanFieldChange> {
             new: new.depends_on.clone(),
         });
     }
+    if old.charter != new.charter {
+        changes.push(PlanFieldChange::Charter {
+            old: old.charter.clone(),
+            new: new.charter.clone(),
+        });
+    }
 
     changes
 }

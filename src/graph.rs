@@ -301,7 +301,8 @@ pub fn query_actions(store: &Store, sparql: &str) -> Result<Vec<String>, String>
         for solution in solutions {
             let s = solution.map_err(|e| e.to_string())?;
             if let Some(term) = s.get("id")
-                && let Term::Literal(lit) = term {
+                && let Term::Literal(lit) = term
+            {
                 ids.push(lit.value().to_string());
             }
         }
@@ -326,7 +327,8 @@ pub fn get_actions_from_query(store: &Store, sparql: &str) -> Result<ActionList,
 
     for id_str in ids {
         if let Ok(uuid) = Uuid::parse_str(&id_str)
-            && let Ok(action) = get_action_by_id(store, uuid) {
+            && let Ok(action) = get_action_by_id(store, uuid)
+        {
             actions.push(action);
         }
     }
@@ -973,8 +975,7 @@ fn query_action_ids(store: &Store, sparql: &str, var_name: &str) -> Result<Vec<S
 
 /// Reconstruct a Plan from the store by UUID.
 fn get_plan_by_id(store: &Store, id: Uuid) -> Result<Plan, String> {
-    let subject =
-        NamedOrBlankNode::NamedNode(NamedNode::new(format!("urn:uuid:{}", id)).unwrap());
+    let subject = NamedOrBlankNode::NamedNode(NamedNode::new(format!("urn:uuid:{}", id)).unwrap());
     let graph = GraphName::DefaultGraph;
 
     let find_one = |pred: NamedNode| -> Option<Term> {
@@ -1078,13 +1079,13 @@ fn get_plan_by_id(store: &Store, id: Uuid) -> Result<Plan, String> {
         } else {
             Some(depends_on)
         },
+        charter: None, // TODO: charter hydration from graph
     })
 }
 
 /// Reconstruct a PlannedAct from the store by UUID.
 fn get_planned_act_by_id(store: &Store, id: Uuid) -> Result<PlannedAct, String> {
-    let subject =
-        NamedOrBlankNode::NamedNode(NamedNode::new(format!("urn:uuid:{}", id)).unwrap());
+    let subject = NamedOrBlankNode::NamedNode(NamedNode::new(format!("urn:uuid:{}", id)).unwrap());
     let graph = GraphName::DefaultGraph;
 
     let find_one = |pred: NamedNode| -> Option<Term> {
