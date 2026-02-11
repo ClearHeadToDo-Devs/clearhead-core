@@ -1,7 +1,7 @@
 use crate::domain::DomainModel;
 use crate::entities::ActionList;
 use automerge::AutoCommit;
-use autosurgeon::{hydrate, reconcile, Hydrate, Reconcile};
+use autosurgeon::{Hydrate, Reconcile, hydrate, reconcile};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -262,7 +262,7 @@ impl WorkspaceDoc {
 
             let actions = domain.to_action_list();
 
-            use crate::{format, OutputFormat};
+            use crate::{OutputFormat, format};
             let formatted = format(&actions, OutputFormat::Actions, None, None)?;
 
             std::fs::write(&full_path, formatted)
@@ -370,7 +370,7 @@ impl ActionRepository {
         self.storage.save(&mut self.doc)?;
 
         // 3. Format actions with UUIDs (but don't write to file)
-        use crate::{format, OutputFormat};
+        use crate::{OutputFormat, format};
         let actions = model.to_action_list();
         let formatted = format(&actions, OutputFormat::Actions, None, None)?;
 
@@ -402,7 +402,7 @@ impl ActionRepository {
             write_shadow_file(&self.file_path)?;
         }
 
-        use crate::{format, OutputFormat};
+        use crate::{OutputFormat, format};
         let formatted = format(actions, OutputFormat::Actions, None, None)?;
 
         std::fs::write(&self.file_path, formatted)
