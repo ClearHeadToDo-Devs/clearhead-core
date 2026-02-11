@@ -8,6 +8,10 @@ use std::path::{Path, PathBuf};
 /// Name of the CRDT file within a workspace
 const CRDT_FILENAME: &str = "workspace.crdt";
 
+/// Bump this constant any time the Hydrate/Reconcile-derived shape of
+/// WorkspaceState, DomainModel, Plan, PlannedAct, or Recurrence changes.
+pub const CRDT_SCHEMA_VERSION: u32 = 1;
+
 /// Directory for shadow files (used in 3-way merge)
 const SHADOW_DIR: &str = "/tmp/clearhead-shadow";
 
@@ -18,6 +22,8 @@ const SHADOW_DIR: &str = "/tmp/clearhead-shadow";
 /// - Spokes: Each entry in `files` corresponds to an "Anchored View" (a .actions file).
 #[derive(Debug, Clone, Reconcile, Hydrate)]
 struct WorkspaceState {
+    /// Schema version — used to detect stale CRDT files after struct changes
+    version: u32,
     /// Map of file path (relative to workspace root) -> Domain Model
     files: HashMap<String, DomainModel>,
 }
@@ -192,18 +198,37 @@ impl WorkspaceDoc {
     pub fn new(workspace: Workspace) -> Result<Self, String> {
         let mut doc = AutoCommit::new();
         let empty_state = WorkspaceState {
+            version: CRDT_SCHEMA_VERSION,
             files: HashMap::new(),
         };
         reconcile(&mut doc, &empty_state).map_err(|e| format!("Failed to init CRDT: {}", e))?;
         Ok(WorkspaceDoc { doc, workspace })
     }
 
+    /// Hydrate the workspace state and verify the schema version matches.
+    fn hydrate_checked(&self) -> Result<WorkspaceState, String> {
+        let state: WorkspaceState =
+            hydrate(&self.doc).map_err(|e| {
+                format!(
+                    "Failed to hydrate workspace (CRDT may need rebuilding): {}",
+                    e
+                )
+            })?;
+        if state.version != CRDT_SCHEMA_VERSION {
+            return Err(format!(
+                "CRDT schema version mismatch (file: {}, expected: {}). \
+                 Delete the workspace.crdt file to rebuild from .actions files.",
+                state.version, CRDT_SCHEMA_VERSION
+            ));
+        }
+        Ok(state)
+    }
+
     /// Get the DomainModel for a specific file key.
     ///
     /// This is the primary method — returns the domain model directly.
     pub fn get_domain_model(&self, key: &str) -> Result<DomainModel, String> {
-        let state: WorkspaceState =
-            hydrate(&self.doc).map_err(|e| format!("Failed to hydrate workspace: {}", e))?;
+        let state = self.hydrate_checked()?;
 
         if let Some(domain) = state.files.get(key) {
             Ok(domain.clone())
@@ -216,8 +241,7 @@ impl WorkspaceDoc {
     ///
     /// This is the primary method — accepts a DomainModel without conversion.
     pub fn update_file_model(&mut self, key: &str, model: &DomainModel) -> Result<(), String> {
-        let mut state: WorkspaceState = hydrate(&self.doc)
-            .map_err(|e| format!("Failed to hydrate workspace for update: {}", e))?;
+        let mut state = self.hydrate_checked()?;
 
         state.files.insert(key.to_string(), model.clone());
 
@@ -245,8 +269,7 @@ impl WorkspaceDoc {
 
     /// Project all files in the CRDT back to the filesystem
     pub fn project_all(&self) -> Result<(), String> {
-        let state: WorkspaceState =
-            hydrate(&self.doc).map_err(|e| format!("Failed to hydrate workspace: {}", e))?;
+        let state = self.hydrate_checked()?;
 
         let root = self.workspace.root_dir();
 
