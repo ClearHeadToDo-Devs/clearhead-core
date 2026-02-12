@@ -433,27 +433,75 @@ impl DomainModel {
 /// A change to a single field on a Plan.
 #[derive(Debug, Clone, PartialEq)]
 pub enum PlanFieldChange {
-    Name { old: String, new: String },
-    Description { old: Option<String>, new: Option<String> },
-    Priority { old: Option<u32>, new: Option<u32> },
-    Contexts { old: Option<Vec<String>>, new: Option<Vec<String>> },
-    Parent { old: Option<Uuid>, new: Option<Uuid> },
-    Objective { old: Option<String>, new: Option<String> },
-    Alias { old: Option<String>, new: Option<String> },
-    IsSequential { old: Option<bool>, new: Option<bool> },
-    Recurrence { old: Option<Recurrence>, new: Option<Recurrence> },
-    DependsOn { old: Option<Vec<Uuid>>, new: Option<Vec<Uuid>> },
-    Charter { old: Option<String>, new: Option<String> },
+    Name {
+        old: String,
+        new: String,
+    },
+    Description {
+        old: Option<String>,
+        new: Option<String>,
+    },
+    Priority {
+        old: Option<u32>,
+        new: Option<u32>,
+    },
+    Contexts {
+        old: Option<Vec<String>>,
+        new: Option<Vec<String>>,
+    },
+    Parent {
+        old: Option<Uuid>,
+        new: Option<Uuid>,
+    },
+    Objective {
+        old: Option<String>,
+        new: Option<String>,
+    },
+    Alias {
+        old: Option<String>,
+        new: Option<String>,
+    },
+    IsSequential {
+        old: Option<bool>,
+        new: Option<bool>,
+    },
+    Recurrence {
+        old: Option<Recurrence>,
+        new: Option<Recurrence>,
+    },
+    DependsOn {
+        old: Option<Vec<Uuid>>,
+        new: Option<Vec<Uuid>>,
+    },
+    Charter {
+        old: Option<String>,
+        new: Option<String>,
+    },
 }
 
 /// A change to a single field on a PlannedAct.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ActFieldChange {
-    Phase { old: ActPhase, new: ActPhase },
-    ScheduledAt { old: Option<DateTime<Local>>, new: Option<DateTime<Local>> },
-    Duration { old: Option<u32>, new: Option<u32> },
-    CompletedAt { old: Option<DateTime<Local>>, new: Option<DateTime<Local>> },
-    CreatedAt { old: Option<DateTime<Local>>, new: Option<DateTime<Local>> },
+    Phase {
+        old: ActPhase,
+        new: ActPhase,
+    },
+    ScheduledAt {
+        old: Option<DateTime<Local>>,
+        new: Option<DateTime<Local>>,
+    },
+    Duration {
+        old: Option<u32>,
+        new: Option<u32>,
+    },
+    CompletedAt {
+        old: Option<DateTime<Local>>,
+        new: Option<DateTime<Local>>,
+    },
+    CreatedAt {
+        old: Option<DateTime<Local>>,
+        new: Option<DateTime<Local>>,
+    },
 }
 
 /// Changes detected for a single Plan.
