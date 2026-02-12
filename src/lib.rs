@@ -33,7 +33,7 @@ pub use charter::{format_charter, implicit_charter, parse_charter};
 pub mod crdt;
 
 pub mod store;
-pub use store::{DiscoveredCharter, InMemoryStore, ObjectiveRef, WorkspaceStore};
+pub use store::{DiscoveredCharter, FsWorkspaceStore, InMemoryStore, ObjectiveRef, WorkspaceStore};
 
 pub mod format;
 pub use format::{FormatConfig, FormatStyle, IndentStyle, OutputFormat, format};
