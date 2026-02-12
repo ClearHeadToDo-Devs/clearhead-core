@@ -1,4 +1,8 @@
+use crate::actions::parser::parse_action_recursive;
+use crate::lint::LintDiagnostic;
+use std::collections::HashMap;
 use tree_sitter::{Node, Tree};
+use uuid::Uuid;
 
 /// Extract the source text for a node
 pub fn get_node_text(node: &Node, source: &str) -> String {
@@ -113,6 +117,7 @@ impl<'a> NodeWrapper<'a> {
             .into_iter()
     }
 }
+
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct SourceMetadata {
     pub root: SourceRange,
@@ -142,5 +147,85 @@ impl SourceRange {
             end_row: end.row,
             end_col: end.column,
         }
+    }
+}
+
+use crate::actions::ActionList;
+
+#[derive(Debug, Clone)]
+pub struct ParsedDocument {
+    pub actions: ActionList,
+    pub source_map: HashMap<Uuid, SourceMetadata>,
+    pub tag_index: HashMap<String, Vec<SourceRange>>,
+    pub syntax_errors: Vec<LintDiagnostic>,
+}
+
+impl TryFrom<TreeWrapper> for ActionList {
+    type Error = String;
+    fn try_from(value: TreeWrapper) -> Result<Self, Self::Error> {
+        let parsed: ParsedDocument = value.try_into()?;
+        Ok(parsed.actions)
+    }
+}
+
+impl TryFrom<TreeWrapper> for ParsedDocument {
+    type Error = String;
+    fn try_from(value: TreeWrapper) -> Result<Self, Self::Error> {
+        let root = value.tree.root_node();
+        let mut action_list = Vec::new();
+        let mut source_map = HashMap::new();
+        let mut tag_index = HashMap::new();
+        let mut syntax_errors = Vec::new();
+        let mut cursor = root.walk();
+
+        // Collect syntax errors (ERROR and MISSING nodes)
+        if root.has_error() {
+            let mut stack = vec![root];
+            while let Some(node) = stack.pop() {
+                if node.is_error() || node.is_missing() {
+                    let start = node.start_position();
+                    let end = node.end_position();
+                    let message = if node.is_missing() {
+                        format!("missing '{}'", node.kind())
+                    } else {
+                        "unexpected token".to_string()
+                    };
+                    syntax_errors.push(LintDiagnostic::error(
+                        "syntax-error",
+                        message,
+                        SourceRange {
+                            start_row: start.row,
+                            start_col: start.column,
+                            end_row: end.row,
+                            end_col: end.column,
+                        },
+                    ));
+                }
+                // Don't recurse into errors themselves, just find the top-most ones
+                if !node.is_error() {
+                    for child in node.children(&mut cursor) {
+                        stack.push(child);
+                    }
+                }
+            }
+        }
+
+        // Iterate through all root actions
+        for root_action in root.children(&mut cursor) {
+            if root_action.kind() == "root_action" {
+                let wrapper = create_node_wrapper(root_action, value.source.clone());
+                action_list.extend(
+                    parse_action_recursive(wrapper, None, &mut source_map, &mut tag_index)
+                        .map_err(|e| e.to_string())?,
+                );
+            }
+        }
+
+        Ok(ParsedDocument {
+            actions: action_list,
+            source_map,
+            tag_index,
+            syntax_errors,
+        })
     }
 }

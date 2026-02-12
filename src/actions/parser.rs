@@ -1,21 +1,17 @@
-use crate::sync_utils::{hydrate_date, reconcile_date};
-use crate::{ParsedDocument, SourceMetadata, SourceRange};
-use autosurgeon::{Hydrate, Reconcile};
+use crate::actions::source::{
+    NodeWrapper, SourceMetadata, SourceRange, create_node_wrapper, get_node_text, get_prefixed_text,
+};
+use crate::domain::Recurrence;
 use chrono::{DateTime, Local};
-use rrule::Tz;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt;
-
-use crate::treesitter::{
-    NodeWrapper, TreeWrapper, create_node_wrapper, get_node_text, get_prefixed_text,
-};
 use uuid::Uuid;
 
 pub type ActionList = Vec<Action>;
 
 /// Reference to a predecessor action, which can be either a UUID or a name reference
-#[derive(PartialEq, Debug, Clone, Serialize, Deserialize, Reconcile, Hydrate)]
+#[derive(PartialEq, Debug, Clone, Serialize, Deserialize)]
 pub struct PredecessorRef {
     /// The raw reference text from the source (could be a UUID string or an action name)
     pub raw_ref: String,
@@ -24,39 +20,7 @@ pub struct PredecessorRef {
     pub resolved_uuid: Option<Uuid>,
 }
 
-/// Recurrence rule per RFC 5545 RRULE specification
-#[derive(PartialEq, Debug, Clone, Serialize, Deserialize, Reconcile, Hydrate)]
-pub struct Recurrence {
-    pub frequency: String, // FREQ: secondly, minutely, hourly, daily, weekly, monthly, yearly
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub interval: Option<u32>, // INTERVAL: default 1
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub count: Option<u32>, // COUNT: max occurrences
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub until: Option<String>, // UNTIL: end date/time in ISO 8601
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub by_second: Option<Vec<u32>>, // BYSECOND: 0-59
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub by_minute: Option<Vec<u32>>, // BYMINUTE: 0-59
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub by_hour: Option<Vec<u32>>, // BYHOUR: 0-23
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub by_day: Option<Vec<String>>, // BYDAY: MO,TU,WE,TH,FR,SA,SU (with optional modifiers like 1MO, -1FR)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub by_month_day: Option<Vec<i32>>, // BYMONTHDAY: 1-31 or -1 to -31
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub by_year_day: Option<Vec<i32>>, // BYYEARDAY: 1-366 or -1 to -366
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub by_week_no: Option<Vec<i32>>, // BYWEEKNO: 1-53 or -1 to -53
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub by_month: Option<Vec<u32>>, // BYMONTH: 1-12
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub by_set_pos: Option<Vec<i32>>, // BYSETPOS: limits to nth occurrence
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub week_start: Option<String>, // WKST: MO,TU,WE,TH,FR,SA,SU (default MO)
-}
-
-#[derive(PartialEq, Debug, Clone, Serialize, Deserialize, Reconcile, Hydrate)]
+#[derive(PartialEq, Debug, Clone, Serialize, Deserialize)]
 pub struct Action {
     pub id: Uuid,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -70,17 +34,14 @@ pub struct Action {
     #[serde(rename = "contexts", skip_serializing_if = "Option::is_none")]
     pub context_list: Option<Vec<String>>,
     #[serde(rename = "doDateTime", skip_serializing_if = "Option::is_none")]
-    #[autosurgeon(reconcile = "reconcile_date", hydrate = "hydrate_date")]
     pub do_date_time: Option<DateTime<Local>>,
     #[serde(rename = "doDuration", skip_serializing_if = "Option::is_none")]
     pub do_duration: Option<u32>, // Duration in minutes
     #[serde(skip_serializing_if = "Option::is_none")]
     pub recurrence: Option<Recurrence>,
     #[serde(rename = "completedDate", skip_serializing_if = "Option::is_none")]
-    #[autosurgeon(reconcile = "reconcile_date", hydrate = "hydrate_date")]
     pub completed_date_time: Option<DateTime<Local>>,
     #[serde(rename = "createdDate", skip_serializing_if = "Option::is_none")]
-    #[autosurgeon(reconcile = "reconcile_date", hydrate = "hydrate_date")]
     pub created_date_time: Option<DateTime<Local>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub predecessors: Option<Vec<PredecessorRef>>,
@@ -92,118 +53,6 @@ pub struct Action {
     /// When true, all direct children are sequential (each depends on previous sibling)
     #[serde(rename = "isSequential", skip_serializing_if = "Option::is_none")]
     pub is_sequential: Option<bool>,
-}
-
-impl fmt::Display for Recurrence {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "R:FREQ={}", self.frequency.to_uppercase())?;
-
-        if let Some(interval) = self.interval {
-            write!(f, ";INTERVAL={}", interval)?;
-        }
-        if let Some(count) = self.count {
-            write!(f, ";COUNT={}", count)?;
-        }
-        if let Some(until) = &self.until {
-            write!(f, ";UNTIL={}", until)?;
-        }
-        if let Some(by_second) = &self.by_second {
-            write!(
-                f,
-                ";BYSECOND={}",
-                by_second
-                    .iter()
-                    .map(|x| x.to_string())
-                    .collect::<Vec<_>>()
-                    .join(",")
-            )?;
-        }
-        if let Some(by_minute) = &self.by_minute {
-            write!(
-                f,
-                ";BYMINUTE={}",
-                by_minute
-                    .iter()
-                    .map(|x| x.to_string())
-                    .collect::<Vec<_>>()
-                    .join(",")
-            )?;
-        }
-        if let Some(by_hour) = &self.by_hour {
-            write!(
-                f,
-                ";BYHOUR={}",
-                by_hour
-                    .iter()
-                    .map(|x| x.to_string())
-                    .collect::<Vec<_>>()
-                    .join(",")
-            )?;
-        }
-        if let Some(by_day) = &self.by_day {
-            write!(f, ";BYDAY={}", by_day.join(","))?;
-        }
-        if let Some(by_month_day) = &self.by_month_day {
-            write!(
-                f,
-                ";BYMONTHDAY={}",
-                by_month_day
-                    .iter()
-                    .map(|x| x.to_string())
-                    .collect::<Vec<_>>()
-                    .join(",")
-            )?;
-        }
-        if let Some(by_year_day) = &self.by_year_day {
-            write!(
-                f,
-                ";BYYEARDAY={}",
-                by_year_day
-                    .iter()
-                    .map(|x| x.to_string())
-                    .collect::<Vec<_>>()
-                    .join(",")
-            )?;
-        }
-        if let Some(by_week_no) = &self.by_week_no {
-            write!(
-                f,
-                ";BYWEEKNO={}",
-                by_week_no
-                    .iter()
-                    .map(|x| x.to_string())
-                    .collect::<Vec<_>>()
-                    .join(",")
-            )?;
-        }
-        if let Some(by_month) = &self.by_month {
-            write!(
-                f,
-                ";BYMONTH={}",
-                by_month
-                    .iter()
-                    .map(|x| x.to_string())
-                    .collect::<Vec<_>>()
-                    .join(",")
-            )?;
-        }
-        if let Some(by_set_pos) = &self.by_set_pos {
-            write!(
-                f,
-                ";BYSETPOS={}",
-                by_set_pos
-                    .iter()
-                    .map(|x| x.to_string())
-                    .collect::<Vec<_>>()
-                    .join(",")
-            )?;
-        }
-        if let Some(week_start) = &self.week_start {
-            write!(f, ";WKST={}", week_start)?;
-        }
-
-        Ok(())
-    }
 }
 
 impl Default for Action {
@@ -293,6 +142,39 @@ impl Action {
         Ok(())
     }
 
+    /// Expand recurrence rule into a list of occurrence dates.
+    ///
+    /// Uses `do_date_time` as DTSTART and `recurrence` as RRULE.
+    /// Returns an empty vector if no recurrence or do_date_time is present.
+    pub fn expand_occurrences(&self, limit: u16) -> Vec<DateTime<rrule::Tz>> {
+        let dtstart = match self.do_date_time {
+            Some(dt) => dt,
+            None => return Vec::new(),
+        };
+
+        let recurrence = match &self.recurrence {
+            Some(r) => r,
+            None => return Vec::new(),
+        };
+
+        let recurrence_str = recurrence.to_string();
+        let clean_recurrence = recurrence_str.strip_prefix("R:").unwrap_or(&recurrence_str);
+
+        let rrule_str = format!(
+            "DTSTART:{}\nRRULE:{}",
+            dtstart.format("%Y%m%dT%H%M%S"),
+            clean_recurrence
+        );
+
+        match rrule_str.parse::<rrule::RRuleSet>() {
+            Ok(rrule_set) => rrule_set.all(limit).dates,
+            Err(e) => {
+                eprintln!("Failed to parse recurrence rule: {}", e);
+                Vec::new()
+            }
+        }
+    }
+
     /// Compute the depth of this action by walking up the parent chain
     pub fn depth(&self, action_list: &ActionList) -> u32 {
         let mut depth = 0;
@@ -306,61 +188,11 @@ impl Action {
         }
         depth
     }
-
-    /// Expand recurrence rule into a list of occurrence dates
-    ///
-    /// Uses the do_date_time as DTSTART and the recurrence field as RRULE.
-    /// Returns an empty vector if no recurrence is present or if parsing fails.
-    ///
-    /// # Arguments
-    /// * `limit` - Maximum number of occurrences to generate
-    pub fn expand_occurrences(&self, limit: u16) -> Vec<DateTime<Tz>> {
-        let recurrence = match &self.recurrence {
-            Some(r) => r,
-            None => return Vec::new(),
-        };
-
-        let dt_start = match self.do_date_time {
-            Some(dt) => dt,
-            None => return Vec::new(),
-        };
-
-        // Construct the full RRULE string: "DTSTART:...\nRRULE:..."
-        // Note: rrule crate expects specific format.
-        // We need to convert Local DateTime to a specific timezone or UTC for rrule.
-        // For simplicity in this CLI, we'll try to treat it as local/unspecified or UTC.
-        // RFC 5545 requires DTSTART.
-
-        let recurrence_str = recurrence.to_string();
-        let clean_recurrence = recurrence_str.strip_prefix("R:").unwrap_or(&recurrence_str);
-
-        let rrule_str = format!(
-            "DTSTART:{}\nRRULE:{}",
-            dt_start.format("%Y%m%dT%H%M%S"),
-            clean_recurrence
-        );
-
-        match rrule_str.parse::<rrule::RRuleSet>() {
-            Ok(rrule_set) => rrule_set.all(limit).dates,
-            Err(e) => {
-                eprintln!("Failed to parse recurrence rule: {}", e);
-                Vec::new()
-            }
-        }
-    }
 }
 
 impl fmt::Display for Action {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.fmt_content(f, true)
-    }
-}
-
-impl TryFrom<TreeWrapper> for ActionList {
-    type Error = String;
-    fn try_from(value: TreeWrapper) -> Result<Self, Self::Error> {
-        let parsed: ParsedDocument = value.try_into()?;
-        Ok(parsed.actions)
     }
 }
 
@@ -580,7 +412,7 @@ pub fn parse_action_recursive(
 }
 
 #[derive(
-    Default, Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Reconcile, Hydrate,
+    Default, Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum ActionState {
@@ -732,6 +564,7 @@ fn parse_int_list<T: std::str::FromStr>(s: &str) -> Vec<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::actions::source::TreeWrapper;
 
     fn parse_actions(source: &str) -> ActionList {
         let mut parser = tree_sitter::Parser::new();
@@ -861,60 +694,6 @@ mod tests {
         assert!(formatted.contains("R:FREQ=WEEKLY"));
         assert!(formatted.contains(";INTERVAL=2"));
         assert!(formatted.contains(";BYDAY=MO"));
-    }
-
-    #[test]
-    fn test_expand_occurrences() {
-        use chrono::TimeZone;
-
-        // Create a fixed start date: 2025-01-01 09:00:00 (Wednesday)
-        let dt_start = Local.with_ymd_and_hms(2025, 1, 1, 9, 0, 0).unwrap();
-
-        let recurrence = Recurrence {
-            frequency: "daily".to_string(),
-            interval: Some(1),
-            count: Some(3), // Expect 3 occurrences
-            until: None,
-            by_second: None,
-            by_minute: None,
-            by_hour: None,
-            by_day: None,
-            by_month_day: None,
-            by_year_day: None,
-            by_week_no: None,
-            by_month: None,
-            by_set_pos: None,
-            week_start: None,
-        };
-
-        let action = Action {
-            id: Uuid::new_v4(),
-            parent_id: None,
-            state: ActionState::NotStarted,
-            name: "Daily Standup".to_string(),
-            description: None,
-            priority: None,
-            context_list: None,
-            do_date_time: Some(dt_start),
-            do_duration: None,
-            recurrence: Some(recurrence),
-            completed_date_time: None,
-            created_date_time: None,
-            predecessors: None,
-            story: None,
-            alias: None,
-            is_sequential: None,
-        };
-
-        let occurrences = action.expand_occurrences(10);
-
-        assert_eq!(occurrences.len(), 3);
-
-        // Verify dates (ignoring time zone specifics for this simple test, just checking sequence)
-        // Note: rrule returns DateTime<Tz>, we can format to check
-        assert_eq!(occurrences[0].format("%Y-%m-%d").to_string(), "2025-01-01");
-        assert_eq!(occurrences[1].format("%Y-%m-%d").to_string(), "2025-01-02");
-        assert_eq!(occurrences[2].format("%Y-%m-%d").to_string(), "2025-01-03");
     }
 
     #[test]

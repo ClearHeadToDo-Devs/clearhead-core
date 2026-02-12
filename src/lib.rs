@@ -6,30 +6,24 @@
 //!
 //! # Modules
 //!
-//! - `entities`: Core domain types (Action, ActionList, ActionState)
-//! - `treesitter`: Tree-sitter parsing integration
+//! - `actions`: Actions DSL types (Action, ActionList, ActionState) and parsing
+//! - `domain`: Higher-level domain models (Plan, Act, phases, Recurrence)
 //! - `format`: Formatting actions to various output formats
 //! - `diff`: Diffing action lists to detect changes
 //! - `sync`: Semantic comparison and sync decision logic
 //! - `document`: Document save pipeline orchestration
 //! - `crdt`: CRDT operations for distributed synchronization
 //! - `graph`: RDF/SPARQL integration for semantic queries
-//! - `domain`: Higher-level domain models (Plan, Act, phases)
 
-use std::collections::HashMap;
 use tree_sitter::Tree;
-use uuid::Uuid;
 
-pub mod entities;
-pub use entities::{Action, ActionList, ActionState};
-
-pub mod treesitter;
-use treesitter::{SourceMetadata, SourceRange};
+pub mod actions;
+pub use actions::{Action, ActionList, ActionState, ParsedDocument, SourceMetadata, SourceRange};
 
 pub mod domain;
 pub use domain::{
     ActDiff, ActFieldChange, ActPhase, Charter, DomainDiff, DomainModel, Plan, PlanDiff,
-    PlanFieldChange, PlannedAct,
+    PlanFieldChange, PlannedAct, Recurrence,
 };
 
 pub mod charter;
@@ -55,17 +49,9 @@ pub mod sync_utils;
 pub mod lint;
 pub use lint::{LintDiagnostic, LintResults, LintSeverity, lint_document};
 
-#[derive(Debug, Clone)]
-pub struct ParsedDocument {
-    pub actions: ActionList,
-    pub source_map: HashMap<Uuid, SourceMetadata>,
-    pub tag_index: HashMap<String, Vec<SourceRange>>,
-    pub syntax_errors: Vec<LintDiagnostic>,
-}
-
 /// Parse a .actions file into a structured ActionList
-pub fn parse_actions(actions: &str) -> Result<ActionList, String> {
-    let parsed_doc = parse_document(actions)?;
+pub fn parse_actions(input: &str) -> Result<ActionList, String> {
+    let parsed_doc = parse_document(input)?;
 
     // Check for syntax errors
     if !parsed_doc.syntax_errors.is_empty() {
@@ -82,18 +68,18 @@ pub fn parse_actions(actions: &str) -> Result<ActionList, String> {
 }
 
 /// Parse a .actions file into a ParsedDocument (Actions + Source Metadata)
-pub fn parse_document(actions: &str) -> Result<ParsedDocument, String> {
-    let tree = parse_tree(actions)?;
-    let tree_wrapper = treesitter::TreeWrapper {
+pub fn parse_document(input: &str) -> Result<ParsedDocument, String> {
+    let tree = parse_tree(input)?;
+    let tree_wrapper = actions::TreeWrapper {
         tree,
-        source: actions.to_string(),
+        source: input.to_string(),
     };
     let parsed_doc: ParsedDocument = tree_wrapper.try_into()?;
     Ok(parsed_doc)
 }
 
 /// Parse a .actions file into a tree-sitter Tree
-pub fn parse_tree(actions: &str) -> Result<Tree, String> {
+pub fn parse_tree(input: &str) -> Result<Tree, String> {
     let mut action_parser = tree_sitter::Parser::new();
 
     action_parser
@@ -101,7 +87,7 @@ pub fn parse_tree(actions: &str) -> Result<Tree, String> {
         .expect("Failed to set language for tree-sitter parser");
 
     action_parser
-        .parse(actions, None)
+        .parse(input, None)
         .ok_or("Failed to parse tree".to_string())
 }
 

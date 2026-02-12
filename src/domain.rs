@@ -17,10 +17,155 @@
 use autosurgeon::{Hydrate, Reconcile};
 use chrono::{DateTime, Local};
 use serde::{Deserialize, Serialize};
+use std::fmt;
 use uuid::Uuid;
 
-use crate::entities::{Action, ActionList, ActionState, Recurrence};
+use crate::actions::{ActionList, ActionState};
 use crate::sync_utils::{hydrate_date, reconcile_date};
+
+/// Recurrence rule per RFC 5545 RRULE specification
+#[derive(PartialEq, Debug, Clone, Serialize, Deserialize, Reconcile, Hydrate)]
+pub struct Recurrence {
+    pub frequency: String, // FREQ: secondly, minutely, hourly, daily, weekly, monthly, yearly
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub interval: Option<u32>, // INTERVAL: default 1
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub count: Option<u32>, // COUNT: max occurrences
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub until: Option<String>, // UNTIL: end date/time in ISO 8601
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub by_second: Option<Vec<u32>>, // BYSECOND: 0-59
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub by_minute: Option<Vec<u32>>, // BYMINUTE: 0-59
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub by_hour: Option<Vec<u32>>, // BYHOUR: 0-23
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub by_day: Option<Vec<String>>, // BYDAY: MO,TU,WE,TH,FR,SA,SU (with optional modifiers like 1MO, -1FR)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub by_month_day: Option<Vec<i32>>, // BYMONTHDAY: 1-31 or -1 to -31
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub by_year_day: Option<Vec<i32>>, // BYYEARDAY: 1-366 or -1 to -366
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub by_week_no: Option<Vec<i32>>, // BYWEEKNO: 1-53 or -1 to -53
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub by_month: Option<Vec<u32>>, // BYMONTH: 1-12
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub by_set_pos: Option<Vec<i32>>, // BYSETPOS: limits to nth occurrence
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub week_start: Option<String>, // WKST: MO,TU,WE,TH,FR,SA,SU (default MO)
+}
+
+impl fmt::Display for Recurrence {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "R:FREQ={}", self.frequency.to_uppercase())?;
+
+        if let Some(interval) = self.interval {
+            write!(f, ";INTERVAL={}", interval)?;
+        }
+        if let Some(count) = self.count {
+            write!(f, ";COUNT={}", count)?;
+        }
+        if let Some(until) = &self.until {
+            write!(f, ";UNTIL={}", until)?;
+        }
+        if let Some(by_second) = &self.by_second {
+            write!(
+                f,
+                ";BYSECOND={}",
+                by_second
+                    .iter()
+                    .map(|x| x.to_string())
+                    .collect::<Vec<_>>()
+                    .join(",")
+            )?;
+        }
+        if let Some(by_minute) = &self.by_minute {
+            write!(
+                f,
+                ";BYMINUTE={}",
+                by_minute
+                    .iter()
+                    .map(|x| x.to_string())
+                    .collect::<Vec<_>>()
+                    .join(",")
+            )?;
+        }
+        if let Some(by_hour) = &self.by_hour {
+            write!(
+                f,
+                ";BYHOUR={}",
+                by_hour
+                    .iter()
+                    .map(|x| x.to_string())
+                    .collect::<Vec<_>>()
+                    .join(",")
+            )?;
+        }
+        if let Some(by_day) = &self.by_day {
+            write!(f, ";BYDAY={}", by_day.join(","))?;
+        }
+        if let Some(by_month_day) = &self.by_month_day {
+            write!(
+                f,
+                ";BYMONTHDAY={}",
+                by_month_day
+                    .iter()
+                    .map(|x| x.to_string())
+                    .collect::<Vec<_>>()
+                    .join(",")
+            )?;
+        }
+        if let Some(by_year_day) = &self.by_year_day {
+            write!(
+                f,
+                ";BYYEARDAY={}",
+                by_year_day
+                    .iter()
+                    .map(|x| x.to_string())
+                    .collect::<Vec<_>>()
+                    .join(",")
+            )?;
+        }
+        if let Some(by_week_no) = &self.by_week_no {
+            write!(
+                f,
+                ";BYWEEKNO={}",
+                by_week_no
+                    .iter()
+                    .map(|x| x.to_string())
+                    .collect::<Vec<_>>()
+                    .join(",")
+            )?;
+        }
+        if let Some(by_month) = &self.by_month {
+            write!(
+                f,
+                ";BYMONTH={}",
+                by_month
+                    .iter()
+                    .map(|x| x.to_string())
+                    .collect::<Vec<_>>()
+                    .join(",")
+            )?;
+        }
+        if let Some(by_set_pos) = &self.by_set_pos {
+            write!(
+                f,
+                ";BYSETPOS={}",
+                by_set_pos
+                    .iter()
+                    .map(|x| x.to_string())
+                    .collect::<Vec<_>>()
+                    .join(",")
+            )?;
+        }
+        if let Some(week_start) = &self.week_start {
+            write!(f, ";WKST={}", week_start)?;
+        }
+
+        Ok(())
+    }
+}
 
 /// Lifecycle phase of a PlannedAct.
 ///
@@ -73,10 +218,50 @@ pub struct Plan {
     pub alias: Option<String>,
     /// Whether children execute sequentially
     pub is_sequential: Option<bool>,
+    /// Duration in minutes (template for acts)
+    pub duration: Option<u32>,
     /// Plans this plan depends on (predecessor relationships)
     pub depends_on: Option<Vec<Uuid>>,
     /// Charter reference (resolved at workspace layer)
     pub charter: Option<String>,
+}
+
+impl Plan {
+    /// Expand recurrence rule into a list of occurrence dates.
+    ///
+    /// Uses the provided `dtstart` as DTSTART and `self.recurrence` as RRULE.
+    /// Returns an empty vector if no recurrence is present or if parsing fails.
+    ///
+    /// # Arguments
+    /// * `dtstart` - The start date/time for the recurrence series
+    /// * `limit` - Maximum number of occurrences to generate
+    pub fn expand_occurrences(
+        &self,
+        dtstart: DateTime<Local>,
+        limit: u16,
+    ) -> Vec<DateTime<rrule::Tz>> {
+        let recurrence = match &self.recurrence {
+            Some(r) => r,
+            None => return Vec::new(),
+        };
+
+        let recurrence_str = recurrence.to_string();
+        let clean_recurrence = recurrence_str.strip_prefix("R:").unwrap_or(&recurrence_str);
+
+        let rrule_str = format!(
+            "DTSTART:{}\nRRULE:{}",
+            dtstart.format("%Y%m%dT%H%M%S"),
+            clean_recurrence
+        );
+
+        match rrule_str.parse::<rrule::RRuleSet>() {
+            Ok(rrule_set) => rrule_set.all(limit).dates,
+            Err(e) => {
+                eprintln!("Failed to parse recurrence rule: {}", e);
+                Vec::new()
+            }
+        }
+    }
 }
 
 /// A charter — a directive that organizes plans under a shared purpose.
@@ -152,64 +337,19 @@ impl DomainModel {
     /// Each Action becomes one Plan and one PlannedAct.
     /// For recurring actions, additional PlannedActs can be expanded later.
     pub fn from_actions(actions: &ActionList) -> Self {
-        let mut model = DomainModel::new();
-
-        for action in actions {
-            let (plan, act) = split_action(action);
-            model.plans.insert(plan.id.to_string(), plan);
-            model.acts.insert(act.id.to_string(), act);
-        }
-
-        model
+        crate::actions::convert::from_actions(actions)
     }
 
     /// Convert the domain model back to an ActionList.
     ///
     /// This reconstructs Actions from Plans and their PlannedActs.
     pub fn to_action_list(&self) -> ActionList {
-        // Default to arbitrary order if no specific order is requested
-        let plan_ids: Vec<String> = self.plans.keys().cloned().collect();
-        self.to_action_list_ordered(&plan_ids)
+        crate::actions::convert::to_action_list(self)
     }
 
     /// Convert the domain model back to an ActionList in a specific order.
     pub fn to_action_list_ordered(&self, plan_order: &[String]) -> ActionList {
-        let mut actions = Vec::new();
-
-        // Group acts by plan_id (as string)
-        let mut acts_by_plan: std::collections::HashMap<String, Vec<&PlannedAct>> =
-            std::collections::HashMap::new();
-        for act in self.acts.values() {
-            acts_by_plan
-                .entry(act.plan_id.to_string())
-                .or_default()
-                .push(act);
-        }
-
-        // Iterate over requested plans
-        for plan_id_str in plan_order {
-            if let Some(plan) = self.plans.get(plan_id_str) {
-                if let Some(acts) = acts_by_plan.get(&plan.id.to_string()) {
-                    for act in acts {
-                        actions.push(merge_to_action(plan, act, plan.id));
-                    }
-                } else {
-                    // Placeholder act
-                    let dummy_act = PlannedAct {
-                        id: Uuid::new_v5(&plan.id, b"act-0"),
-                        plan_id: plan.id,
-                        phase: ActPhase::NotStarted,
-                        scheduled_at: None,
-                        duration: None,
-                        completed_at: None,
-                        created_at: None,
-                    };
-                    actions.push(merge_to_action(plan, &dummy_act, plan.id));
-                }
-            }
-        }
-
-        actions
+        crate::actions::convert::to_action_list_ordered(self, plan_order)
     }
 
     /// Find a Plan by ID
@@ -232,83 +372,58 @@ impl DomainModel {
             .filter(|a| !matches!(a.phase, ActPhase::Completed | ActPhase::Cancelled))
             .collect()
     }
-}
 
-/// Merge a Plan and PlannedAct into a single Action.
-fn merge_to_action(plan: &Plan, act: &PlannedAct, target_id: Uuid) -> Action {
-    use crate::entities::PredecessorRef;
+    /// Expand recurring plans into multiple PlannedActs up to a limit of days.
+    pub fn expand_recurring_plans(&mut self, days: u32) {
+        use chrono::Duration;
 
-    Action {
-        id: target_id,
-        parent_id: plan.parent,
-        state: match act.phase {
-            ActPhase::NotStarted => ActionState::NotStarted,
-            ActPhase::InProgress => ActionState::InProgress,
-            ActPhase::Completed => ActionState::Completed,
-            ActPhase::Blocked => ActionState::BlockedorAwaiting,
-            ActPhase::Cancelled => ActionState::Cancelled,
-        },
-        name: plan.name.clone(),
-        description: plan.description.clone(),
-        priority: plan.priority,
-        context_list: plan.contexts.clone(),
-        do_date_time: act.scheduled_at,
-        do_duration: act.duration,
-        recurrence: plan.recurrence.clone(),
-        completed_date_time: act.completed_at,
-        created_date_time: act.created_at,
-        predecessors: plan.depends_on.as_ref().map(|uuids| {
-            uuids
-                .iter()
-                .map(|u| PredecessorRef {
-                    raw_ref: u.to_string(),
-                    resolved_uuid: Some(*u),
-                })
-                .collect()
-        }),
-        story: plan.objective.clone(),
-        alias: plan.alias.clone(),
-        is_sequential: plan.is_sequential,
+        let now = Local::now();
+        let end_date = now + Duration::days(days as i64);
+
+        let mut new_acts = Vec::new();
+
+        for plan in self.plans.values() {
+            if plan.recurrence.is_some() {
+                // Find an existing act to get dtstart, or skip if no scheduled time
+                let dtstart = self
+                    .acts
+                    .values()
+                    .find(|a| a.plan_id == plan.id)
+                    .and_then(|a| a.scheduled_at);
+
+                let dtstart = match dtstart {
+                    Some(dt) => dt,
+                    None => continue,
+                };
+
+                let occurrences = plan.expand_occurrences(dtstart, 1000);
+                for (i, occ) in occurrences.iter().enumerate() {
+                    let occ_local = occ.with_timezone(&Local);
+                    if occ_local > end_date {
+                        break;
+                    }
+
+                    let act_id = Uuid::new_v5(&plan.id, format!("act-{}", i).as_bytes());
+
+                    if !self.acts.contains_key(&act_id.to_string()) {
+                        new_acts.push(PlannedAct {
+                            id: act_id,
+                            plan_id: plan.id,
+                            phase: ActPhase::NotStarted,
+                            scheduled_at: Some(occ_local),
+                            duration: plan.duration,
+                            completed_at: None,
+                            created_at: Some(now),
+                        });
+                    }
+                }
+            }
+        }
+
+        for act in new_acts {
+            self.acts.insert(act.id.to_string(), act);
+        }
     }
-}
-
-/// Split an Action into its Plan and PlannedAct components.
-///
-/// The Action.id becomes the Plan.id (it identifies the task definition).
-/// The PlannedAct gets a new UUID (it's a specific occurrence).
-fn split_action(action: &Action) -> (Plan, PlannedAct) {
-    let plan_id = action.id;
-    let act_id = Uuid::new_v5(&plan_id, b"act-0");
-
-    let plan = Plan {
-        id: plan_id,
-        name: action.name.clone(),
-        description: action.description.clone(),
-        priority: action.priority,
-        contexts: action.context_list.clone(),
-        recurrence: action.recurrence.clone(),
-        parent: action.parent_id,
-        objective: action.story.clone(),
-        alias: action.alias.clone(),
-        is_sequential: action.is_sequential,
-        depends_on: action
-            .predecessors
-            .as_ref()
-            .map(|preds| preds.iter().filter_map(|p| p.resolved_uuid).collect()),
-        charter: None, // charter doesn't round-trip through Action
-    };
-
-    let act = PlannedAct {
-        id: act_id,
-        plan_id,
-        phase: action.state.into(),
-        scheduled_at: action.do_date_time,
-        duration: action.do_duration,
-        completed_at: action.completed_date_time,
-        created_at: action.created_date_time,
-    };
-
-    (plan, act)
 }
 
 // ============================================================================
@@ -381,7 +496,7 @@ impl DomainDiff {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::entities::Action;
+    use crate::actions::Action;
 
     #[test]
     fn test_split_simple_action() {
@@ -392,7 +507,7 @@ mod tests {
             ..Default::default()
         };
 
-        let (plan, act) = split_action(&action);
+        let (plan, act) = crate::actions::convert::split_action(&action);
 
         assert_eq!(plan.id, action.id);
         assert_eq!(plan.name, "Buy milk");
@@ -410,7 +525,7 @@ mod tests {
             ..Default::default()
         };
 
-        let (_, act) = split_action(&action);
+        let (_, act) = crate::actions::convert::split_action(&action);
 
         assert_eq!(act.phase, ActPhase::Completed);
         assert!(act.completed_at.is_some());
@@ -453,10 +568,57 @@ mod tests {
     #[test]
     fn test_act_id_derived_from_plan_id() {
         let action = Action::new("Test");
-        let (plan, act) = split_action(&action);
+        let (plan, act) = crate::actions::convert::split_action(&action);
 
         // Act ID should be deterministic v5 UUID based on plan ID
         let expected_act_id = Uuid::new_v5(&plan.id, b"act-0");
         assert_eq!(act.id, expected_act_id);
+    }
+
+    #[test]
+    fn test_expand_occurrences() {
+        use chrono::TimeZone;
+
+        let dt_start = Local.with_ymd_and_hms(2025, 1, 1, 9, 0, 0).unwrap();
+
+        let recurrence = Recurrence {
+            frequency: "daily".to_string(),
+            interval: Some(1),
+            count: Some(3),
+            until: None,
+            by_second: None,
+            by_minute: None,
+            by_hour: None,
+            by_day: None,
+            by_month_day: None,
+            by_year_day: None,
+            by_week_no: None,
+            by_month: None,
+            by_set_pos: None,
+            week_start: None,
+        };
+
+        let plan = Plan {
+            id: Uuid::new_v4(),
+            name: "Daily Standup".to_string(),
+            description: None,
+            priority: None,
+            contexts: None,
+            recurrence: Some(recurrence),
+            parent: None,
+            objective: None,
+            alias: None,
+            is_sequential: None,
+            duration: None,
+            depends_on: None,
+            charter: None,
+        };
+
+        let occurrences = plan.expand_occurrences(dt_start, 10);
+
+        assert_eq!(occurrences.len(), 3);
+        assert_eq!(occurrences[0].format("%Y-%m-%d").to_string(), "2025-01-01");
+        assert_eq!(occurrences[1].format("%Y-%m-%d").to_string(), "2025-01-02");
+        assert_eq!(occurrences[2].format("%Y-%m-%d").to_string(), "2025-01-03");
     }
 }

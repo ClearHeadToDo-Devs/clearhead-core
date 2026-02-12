@@ -21,7 +21,8 @@
 //! ```
 
 use crate::domain::{ActPhase, DomainModel, Plan, PlannedAct};
-use crate::entities::{Action, ActionList, ActionState, Recurrence};
+use crate::actions::{Action, ActionList, ActionState};
+use crate::domain::Recurrence;
 use chrono::DateTime;
 use oxigraph::io::RdfFormat;
 use oxigraph::model::{
@@ -1079,6 +1080,7 @@ fn get_plan_by_id(store: &Store, id: Uuid) -> Result<Plan, String> {
         } else {
             Some(depends_on)
         },
+        duration: None, // TODO: duration hydration from graph
         charter: None, // TODO: charter hydration from graph
     })
 }
@@ -1160,7 +1162,7 @@ fn get_planned_act_by_id(store: &Store, id: Uuid) -> Result<PlannedAct, String> 
 #[cfg(test)]
 mod v4_tests {
     use super::*;
-    use crate::entities::Action;
+    use crate::actions::Action;
 
     #[test]
     fn test_load_domain_model() {

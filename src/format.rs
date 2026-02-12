@@ -1,4 +1,4 @@
-use crate::entities::{Action, ActionList};
+use crate::actions::{Action, ActionList};
 use comfy_table::{Cell, Color, ContentArrangement, Table, presets::UTF8_FULL};
 use serde::{Deserialize, Serialize};
 use std::io::Cursor;
@@ -393,7 +393,7 @@ fn columns_without(hide: &[String], available: &[usize]) -> Vec<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::entities::{Action, ActionState};
+    use crate::actions::{Action, ActionState};
     use uuid::Uuid;
 
     fn create_test_action(name: &str, state: ActionState, parent_id: Option<Uuid>) -> Action {

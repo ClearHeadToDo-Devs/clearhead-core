@@ -1,7 +1,7 @@
 use crate::domain::{
     ActDiff, ActFieldChange, DomainDiff, DomainModel, Plan, PlanDiff, PlanFieldChange, PlannedAct,
 };
-use crate::entities::{Action, ActionList, ActionState};
+use crate::actions::{Action, ActionList, ActionState};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use uuid::Uuid;
@@ -341,7 +341,7 @@ fn compare_acts(old: &PlannedAct, new: &PlannedAct) -> Vec<ActFieldChange> {
 mod tests {
     use super::*;
     use crate::domain::ActPhase;
-    use crate::entities::ActionState;
+    use crate::actions::ActionState;
 
     fn make_action(id: &str, name: &str) -> Action {
         Action {

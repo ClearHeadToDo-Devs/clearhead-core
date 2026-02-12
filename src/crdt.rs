@@ -1,5 +1,5 @@
 use crate::domain::DomainModel;
-use crate::entities::ActionList;
+use crate::actions::ActionList;
 use automerge::AutoCommit;
 use autosurgeon::{Hydrate, Reconcile, hydrate, reconcile};
 use std::collections::HashMap;
@@ -501,7 +501,7 @@ fn write_shadow_file(file_path: &Path) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::entities::Action;
+    use crate::actions::Action;
     use tempfile::TempDir;
 
     #[test]

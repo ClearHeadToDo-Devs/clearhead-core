@@ -5,7 +5,7 @@
 
 use crate::diff::{diff_actions, diff_domain_models, Diff};
 use crate::domain::{DomainDiff, DomainModel};
-use crate::entities::ActionList;
+use crate::actions::ActionList;
 
 /// Compare two action lists semantically (ignoring formatting/whitespace)
 ///
@@ -85,7 +85,7 @@ impl DomainSyncDecision {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::entities::{Action, ActionState};
+    use crate::actions::{Action, ActionState};
     use uuid::Uuid;
 
     fn make_action(state: ActionState, name: &str) -> Action {
