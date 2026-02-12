@@ -13,6 +13,7 @@
 //! - `sync`: Semantic comparison and sync decision logic
 //! - `document`: Document save pipeline orchestration
 //! - `crdt`: CRDT operations for distributed synchronization
+//! - `store`: Storage abstraction trait for workspace persistence
 //! - `graph`: RDF/SPARQL integration for semantic queries
 
 use tree_sitter::Tree;
@@ -30,6 +31,9 @@ pub mod charter;
 pub use charter::{format_charter, implicit_charter, parse_charter};
 
 pub mod crdt;
+
+pub mod store;
+pub use store::{DiscoveredCharter, InMemoryStore, ObjectiveRef, WorkspaceStore};
 
 pub mod format;
 pub use format::{FormatConfig, FormatStyle, IndentStyle, OutputFormat, format};
