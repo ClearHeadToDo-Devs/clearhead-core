@@ -618,10 +618,10 @@ fn phase_node(phase: &ActPhase) -> NamedNode {
 /// This inserts Plans and PlannedActs as separate entities with proper
 /// CCO-aligned types and relationships.
 pub fn load_domain_model(store: &Store, model: &DomainModel) -> Result<(), String> {
-    for plan in model.plans.values() {
+    for plan in model.all_plans() {
         insert_plan(store, plan)?;
     }
-    for act in model.acts.values() {
+    for act in model.all_acts() {
         insert_planned_act(store, act)?;
     }
     Ok(())
@@ -879,25 +879,39 @@ pub fn serialize_open_acts_to_turtle(model: &DomainModel) -> Result<String, Stri
 }
 
 /// Filter a DomainModel to only include acts matching the predicate,
-/// and the plans referenced by those acts.
+/// preserving the charter → plan → act hierarchy.
 fn filter_model_by_phase(
     model: &DomainModel,
     predicate: impl Fn(&ActPhase) -> bool,
 ) -> DomainModel {
-    let mut filtered = DomainModel::new();
+    let mut filtered_charters = Vec::new();
 
-    for (id, act) in &model.acts {
-        if predicate(&act.phase) {
-            filtered.acts.insert(id.clone(), act.clone());
-            // Include the plan this act references
-            let plan_key = act.plan_id.to_string();
-            if let Some(plan) = model.plans.get(&plan_key) {
-                filtered.plans.insert(plan_key, plan.clone());
+    for charter in &model.charters {
+        let mut filtered_plans = Vec::new();
+        for plan in &charter.plans {
+            let filtered_acts: Vec<PlannedAct> = plan
+                .acts
+                .iter()
+                .filter(|a| predicate(&a.phase))
+                .cloned()
+                .collect();
+            if !filtered_acts.is_empty() {
+                let mut filtered_plan = plan.clone();
+                filtered_plan.acts = filtered_acts;
+                filtered_plans.push(filtered_plan);
             }
+        }
+        if !filtered_plans.is_empty() {
+            let mut filtered_charter = charter.clone();
+            filtered_charter.plans = filtered_plans;
+            filtered_charters.push(filtered_charter);
         }
     }
 
-    filtered
+    DomainModel {
+        objectives: model.objectives.clone(),
+        charters: filtered_charters,
+    }
 }
 
 /// Serialize an Oxigraph store's default graph to Turtle.
@@ -1081,7 +1095,7 @@ fn get_plan_by_id(store: &Store, id: Uuid) -> Result<Plan, String> {
             Some(depends_on)
         },
         duration: None, // TODO: duration hydration from graph
-        charter: None, // TODO: charter hydration from graph
+        acts: vec![],
     })
 }
 
@@ -1259,7 +1273,7 @@ mod v4_tests {
         let acts = query_acts(&store, &sparql).unwrap();
 
         assert_eq!(acts.len(), 1);
-        assert_eq!(acts[0].plan_id, model.plans.values().next().unwrap().id);
+        assert_eq!(acts[0].plan_id, model.all_plans()[0].id);
     }
 
     #[test]
@@ -1268,7 +1282,7 @@ mod v4_tests {
 
         let actions = vec![Action::new("Linked task")];
         let model = DomainModel::from_actions(&actions);
-        let plan_id = model.plans.values().next().unwrap().id;
+        let plan_id = model.all_plans()[0].id;
 
         load_domain_model(&store, &model).unwrap();
 

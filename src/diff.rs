@@ -161,12 +161,21 @@ fn compare_action(old: &Action, new: &Action) -> Vec<FieldChange> {
 /// Diff two DomainModels, producing a DomainDiff.
 ///
 /// Plans are matched by `plan.id`. Acts are matched by `act.id`.
+/// Uses the `all_plans()` / `all_acts()` helpers to flatten the hierarchy.
 pub fn diff_domain_models(old: &DomainModel, new: &DomainModel) -> DomainDiff {
     let mut diff = DomainDiff::default();
 
+    // Build lookup maps from flattened views
+    let old_plans: HashMap<Uuid, &Plan> = old.all_plans().into_iter().map(|p| (p.id, p)).collect();
+    let new_plans: HashMap<Uuid, &Plan> = new.all_plans().into_iter().map(|p| (p.id, p)).collect();
+    let old_acts: HashMap<Uuid, &PlannedAct> =
+        old.all_acts().into_iter().map(|a| (a.id, a)).collect();
+    let new_acts: HashMap<Uuid, &PlannedAct> =
+        new.all_acts().into_iter().map(|a| (a.id, a)).collect();
+
     // Plans: added, removed, modified
-    for (id, new_plan) in &new.plans {
-        if let Some(old_plan) = old.plans.get(id) {
+    for (id, new_plan) in &new_plans {
+        if let Some(old_plan) = old_plans.get(id) {
             let changes = compare_plans(old_plan, new_plan);
             if !changes.is_empty() {
                 diff.plans_modified.push(PlanDiff {
@@ -175,18 +184,18 @@ pub fn diff_domain_models(old: &DomainModel, new: &DomainModel) -> DomainDiff {
                 });
             }
         } else {
-            diff.plans_added.push(new_plan.clone());
+            diff.plans_added.push((*new_plan).clone());
         }
     }
-    for (id, old_plan) in &old.plans {
-        if !new.plans.contains_key(id) {
-            diff.plans_removed.push(old_plan.clone());
+    for (id, old_plan) in &old_plans {
+        if !new_plans.contains_key(id) {
+            diff.plans_removed.push((*old_plan).clone());
         }
     }
 
     // Acts: added, removed, modified
-    for (id, new_act) in &new.acts {
-        if let Some(old_act) = old.acts.get(id) {
+    for (id, new_act) in &new_acts {
+        if let Some(old_act) = old_acts.get(id) {
             let changes = compare_acts(old_act, new_act);
             if !changes.is_empty() {
                 diff.acts_modified.push(ActDiff {
@@ -196,12 +205,12 @@ pub fn diff_domain_models(old: &DomainModel, new: &DomainModel) -> DomainDiff {
                 });
             }
         } else {
-            diff.acts_added.push(new_act.clone());
+            diff.acts_added.push((*new_act).clone());
         }
     }
-    for (id, old_act) in &old.acts {
-        if !new.acts.contains_key(id) {
-            diff.acts_removed.push(old_act.clone());
+    for (id, old_act) in &old_acts {
+        if !new_acts.contains_key(id) {
+            diff.acts_removed.push((*old_act).clone());
         }
     }
 
@@ -269,12 +278,6 @@ fn compare_plans(old: &Plan, new: &Plan) -> Vec<PlanFieldChange> {
         changes.push(PlanFieldChange::DependsOn {
             old: old.depends_on.clone(),
             new: new.depends_on.clone(),
-        });
-    }
-    if old.charter != new.charter {
-        changes.push(PlanFieldChange::Charter {
-            old: old.charter.clone(),
-            new: new.charter.clone(),
         });
     }
 
@@ -494,7 +497,7 @@ mod tests {
         let old = DomainModel::from_actions(&vec![make_action(id, "Old Name")]);
 
         let mut new = old.clone();
-        let plan = new.plans.values_mut().next().unwrap();
+        let plan = new.charters[0].plans.first_mut().unwrap();
         plan.name = "New Name".to_string();
 
         let diff = diff_domain_models(&old, &new);
@@ -512,7 +515,7 @@ mod tests {
         let old = DomainModel::from_actions(&vec![make_action(id, "Task")]);
 
         let mut new = old.clone();
-        let act = new.acts.values_mut().next().unwrap();
+        let act = new.charters[0].plans[0].acts.first_mut().unwrap();
         act.phase = ActPhase::Completed;
 
         let diff = diff_domain_models(&old, &new);

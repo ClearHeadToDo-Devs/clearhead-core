@@ -21,7 +21,7 @@ const CRDT_FILENAME: &str = "workspace.crdt";
 
 /// Bump this constant any time the Hydrate/Reconcile-derived shape of
 /// WorkspaceState, DomainModel, Plan, PlannedAct, or Recurrence changes.
-pub const CRDT_SCHEMA_VERSION: u32 = 1;
+pub const CRDT_SCHEMA_VERSION: u32 = 2;
 
 /// The root state of the CRDT, representing the entire workspace.
 ///
@@ -462,14 +462,21 @@ mod tests {
         let loaded_doc = storage.load().unwrap();
         let loaded_model = loaded_doc.get_domain_model("test.actions").unwrap();
 
-        assert_eq!(loaded_model.plans.len(), original_model.plans.len());
-        assert_eq!(loaded_model.acts.len(), original_model.acts.len());
+        assert_eq!(
+            loaded_model.all_plans().len(),
+            original_model.all_plans().len()
+        );
+        assert_eq!(
+            loaded_model.all_acts().len(),
+            original_model.all_acts().len()
+        );
 
-        for (key, plan) in &original_model.plans {
-            let loaded_plan = loaded_model.plans.get(key).expect("Plan should exist");
-            assert_eq!(loaded_plan.name, plan.name);
-            assert_eq!(loaded_plan.priority, plan.priority);
-            assert_eq!(loaded_plan.description, plan.description);
+        let original_plans = original_model.all_plans();
+        let loaded_plans = loaded_model.all_plans();
+        for (orig, loaded) in original_plans.iter().zip(loaded_plans.iter()) {
+            assert_eq!(loaded.name, orig.name);
+            assert_eq!(loaded.priority, orig.priority);
+            assert_eq!(loaded.description, orig.description);
         }
     }
 }

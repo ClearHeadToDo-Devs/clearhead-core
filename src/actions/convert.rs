@@ -1,6 +1,12 @@
 use crate::actions::{Action, ActionList, ActionState, PredecessorRef};
-use crate::domain::{ActPhase, DomainModel, Plan, PlannedAct};
+use crate::domain::{ActPhase, Charter, DomainModel, Plan, PlannedAct};
 use uuid::Uuid;
+
+/// Namespace UUID for the synthetic inbox charter.
+const INBOX_CHARTER_NS: Uuid = Uuid::from_bytes([
+    0x69, 0x6e, 0x62, 0x6f, 0x78, 0x2d, 0x63, 0x68,
+    0x61, 0x72, 0x74, 0x65, 0x72, 0x2d, 0x6e, 0x73,
+]);
 
 /// Split an Action into its Plan and PlannedAct components.
 ///
@@ -9,6 +15,16 @@ use uuid::Uuid;
 pub fn split_action(action: &Action) -> (Plan, PlannedAct) {
     let plan_id = action.id;
     let act_id = Uuid::new_v5(&plan_id, b"act-0");
+
+    let act = PlannedAct {
+        id: act_id,
+        plan_id,
+        phase: action.state.into(),
+        scheduled_at: action.do_date_time,
+        duration: action.do_duration,
+        completed_at: action.completed_date_time,
+        created_at: action.created_date_time,
+    };
 
     let plan = Plan {
         id: plan_id,
@@ -26,20 +42,12 @@ pub fn split_action(action: &Action) -> (Plan, PlannedAct) {
             .predecessors
             .as_ref()
             .map(|preds| preds.iter().filter_map(|p| p.resolved_uuid).collect()),
-        charter: None, // charter doesn't round-trip through Action
+        acts: vec![act],
     };
 
-    let act = PlannedAct {
-        id: act_id,
-        plan_id,
-        phase: action.state.into(),
-        scheduled_at: action.do_date_time,
-        duration: action.do_duration,
-        completed_at: action.completed_date_time,
-        created_at: action.created_date_time,
-    };
-
-    (plan, act)
+    // Return the act separately too for callers that need it
+    let act_copy = plan.acts[0].clone();
+    (plan, act_copy)
 }
 
 /// Merge a Plan and PlannedAct into a single Action.
@@ -78,48 +86,58 @@ pub fn merge_to_action(plan: &Plan, act: &PlannedAct, target_id: Uuid) -> Action
     }
 }
 
-/// Convert an ActionList into a DomainModel.
+/// Convert an ActionList into a hierarchical DomainModel.
+///
+/// All plans are wrapped in a synthetic "inbox" charter.
 pub fn from_actions(actions: &ActionList) -> DomainModel {
-    let mut model = DomainModel::new();
+    let mut plans = Vec::new();
 
     for action in actions {
-        let (plan, act) = split_action(action);
-        model.plans.insert(plan.id.to_string(), plan);
-        model.acts.insert(act.id.to_string(), act);
+        let (plan, _act) = split_action(action);
+        plans.push(plan);
     }
 
-    model
+    let inbox_charter = Charter {
+        id: Uuid::new_v5(&INBOX_CHARTER_NS, b"inbox"),
+        title: "inbox".to_string(),
+        description: None,
+        alias: None,
+        parent: None,
+        objectives: None,
+        plans,
+    };
+
+    DomainModel {
+        objectives: vec![],
+        charters: vec![inbox_charter],
+    }
 }
 
 /// Convert a DomainModel back to an ActionList.
+///
+/// Walks the charter → plan → act hierarchy.
 pub fn to_action_list(model: &DomainModel) -> ActionList {
-    let plan_ids: Vec<String> = model.plans.keys().cloned().collect();
+    let plan_ids: Vec<String> = model.all_plans().iter().map(|p| p.id.to_string()).collect();
     to_action_list_ordered(model, &plan_ids)
 }
 
 /// Convert a DomainModel back to an ActionList in a specific order.
+///
+/// Only includes plans whose ID appears in `plan_order`.
 pub fn to_action_list_ordered(model: &DomainModel, plan_order: &[String]) -> ActionList {
     let mut actions = Vec::new();
 
-    // Group acts by plan_id (as string)
-    let mut acts_by_plan: std::collections::HashMap<String, Vec<&PlannedAct>> =
-        std::collections::HashMap::new();
-    for act in model.acts.values() {
-        acts_by_plan
-            .entry(act.plan_id.to_string())
-            .or_default()
-            .push(act);
-    }
+    // Build a lookup from plan ID string → &Plan
+    let plan_map: std::collections::HashMap<String, &Plan> = model
+        .all_plans()
+        .into_iter()
+        .map(|p| (p.id.to_string(), p))
+        .collect();
 
-    // Iterate over requested plans
     for plan_id_str in plan_order {
-        if let Some(plan) = model.plans.get(plan_id_str) {
-            if let Some(acts) = acts_by_plan.get(&plan.id.to_string()) {
-                for act in acts {
-                    actions.push(merge_to_action(plan, act, plan.id));
-                }
-            } else {
-                // Placeholder act
+        if let Some(plan) = plan_map.get(plan_id_str) {
+            if plan.acts.is_empty() {
+                // Placeholder act for plans with no acts
                 let dummy_act = PlannedAct {
                     id: Uuid::new_v5(&plan.id, b"act-0"),
                     plan_id: plan.id,
@@ -130,6 +148,10 @@ pub fn to_action_list_ordered(model: &DomainModel, plan_order: &[String]) -> Act
                     created_at: None,
                 };
                 actions.push(merge_to_action(plan, &dummy_act, plan.id));
+            } else {
+                for act in &plan.acts {
+                    actions.push(merge_to_action(plan, act, plan.id));
+                }
             }
         }
     }

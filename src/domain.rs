@@ -23,6 +23,30 @@ use uuid::Uuid;
 use crate::actions::{ActionList, ActionState};
 use crate::sync_utils::{hydrate_date, reconcile_date};
 
+/// A measurable indicator tied to an objective.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Reconcile, Hydrate)]
+pub struct Metric {
+    pub name: String,
+    pub description: Option<String>,
+    pub target: Option<String>,
+    pub review_date: Option<String>,
+}
+
+/// A high-level goal that organizes charters.
+///
+/// Maps to `actions:Objective` — the topmost organizational layer.
+/// Objectives sit above charters in the hierarchy:
+/// Objectives → Charters → Plans → Acts
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Reconcile, Hydrate)]
+pub struct Objective {
+    pub id: Uuid,
+    pub title: Option<String>,
+    pub description: Option<String>,
+    pub alias: Option<String>,
+    pub parent: Option<String>,
+    pub metrics: Option<Vec<Metric>>,
+}
+
 /// Recurrence rule per RFC 5545 RRULE specification
 #[derive(PartialEq, Debug, Clone, Serialize, Deserialize, Reconcile, Hydrate)]
 pub struct Recurrence {
@@ -222,8 +246,8 @@ pub struct Plan {
     pub duration: Option<u32>,
     /// Plans this plan depends on (predecessor relationships)
     pub depends_on: Option<Vec<Uuid>>,
-    /// Charter reference (resolved at workspace layer)
-    pub charter: Option<String>,
+    /// PlannedActs that realize this plan (nested hierarchy)
+    pub acts: Vec<PlannedAct>,
 }
 
 impl Plan {
@@ -269,7 +293,7 @@ impl Plan {
 /// Maps to `actions:Charter` (subclass of cco:DirectiveInformationContentEntity).
 /// Charters are the highest-level organizational unit. Plans reference charters
 /// via the `charter` field.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Reconcile, Hydrate)]
 pub struct Charter {
     pub id: Uuid,
     pub title: String,
@@ -279,6 +303,8 @@ pub struct Charter {
     pub parent: Option<String>,
     /// References to objectives, resolved at workspace layer
     pub objectives: Option<Vec<String>>,
+    /// Plans organized under this charter (nested hierarchy)
+    pub plans: Vec<Plan>,
 }
 
 /// Actual execution / occurrence of a Plan.
@@ -307,24 +333,15 @@ pub struct PlannedAct {
     pub created_at: Option<DateTime<Local>>,
 }
 
-/// A Plan together with its PlannedAct(s).
+/// Hierarchical domain model: Objectives → Charters → Plans → Acts.
 ///
-/// For non-recurring plans: one Plan, one PlannedAct.
-/// For recurring plans: one Plan, potentially multiple PlannedActs.
-#[derive(Debug, Clone, PartialEq)]
-pub struct PlanWithActs {
-    pub plan: Plan,
-    pub acts: Vec<PlannedAct>,
-}
-
-/// Domain model containing all Plans and PlannedActs.
-///
-/// Uses String keys (UUID strings) for CRDT compatibility.
-/// autosurgeon requires HashMap keys to implement AsRef<str> + From<String>.
+/// Each charter contains its plans, and each plan contains its acts.
+/// This structure reflects the ontology hierarchy and eliminates the
+/// need for separate flat HashMaps.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, Reconcile, Hydrate)]
 pub struct DomainModel {
-    pub plans: std::collections::HashMap<String, Plan>,
-    pub acts: std::collections::HashMap<String, PlannedAct>,
+    pub objectives: Vec<Objective>,
+    pub charters: Vec<Charter>,
 }
 
 impl DomainModel {
@@ -334,15 +351,16 @@ impl DomainModel {
 
     /// Convert an ActionList into the domain model.
     ///
-    /// Each Action becomes one Plan and one PlannedAct.
-    /// For recurring actions, additional PlannedActs can be expanded later.
+    /// Each Action becomes one Plan and one PlannedAct, wrapped in a
+    /// synthetic inbox charter.
     pub fn from_actions(actions: &ActionList) -> Self {
         crate::actions::convert::from_actions(actions)
     }
 
     /// Convert the domain model back to an ActionList.
     ///
-    /// This reconstructs Actions from Plans and their PlannedActs.
+    /// This reconstructs Actions from Plans and their PlannedActs,
+    /// walking the charter → plan → act hierarchy.
     pub fn to_action_list(&self) -> ActionList {
         crate::actions::convert::to_action_list(self)
     }
@@ -352,23 +370,45 @@ impl DomainModel {
         crate::actions::convert::to_action_list_ordered(self, plan_order)
     }
 
-    /// Find a Plan by ID
+    /// Flatten all plans across all charters.
+    pub fn all_plans(&self) -> Vec<&Plan> {
+        self.charters.iter().flat_map(|c| c.plans.iter()).collect()
+    }
+
+    /// Flatten all acts across all charters and plans.
+    pub fn all_acts(&self) -> Vec<&PlannedAct> {
+        self.charters
+            .iter()
+            .flat_map(|c| c.plans.iter())
+            .flat_map(|p| p.acts.iter())
+            .collect()
+    }
+
+    /// Find a Plan by ID, searching across the hierarchy.
     pub fn plan(&self, id: Uuid) -> Option<&Plan> {
-        self.plans.get(&id.to_string())
+        self.all_plans().into_iter().find(|p| p.id == id)
+    }
+
+    /// Find the charter that contains a given plan.
+    pub fn charter_for_plan(&self, plan_id: Uuid) -> Option<&Charter> {
+        self.charters
+            .iter()
+            .find(|c| c.plans.iter().any(|p| p.id == plan_id))
     }
 
     /// Find all PlannedActs for a given Plan
     pub fn acts_for_plan(&self, plan_id: Uuid) -> Vec<&PlannedAct> {
-        self.acts
-            .values()
-            .filter(|a| a.plan_id == plan_id)
-            .collect()
+        self.all_plans()
+            .into_iter()
+            .find(|p| p.id == plan_id)
+            .map(|p| p.acts.iter().collect())
+            .unwrap_or_default()
     }
 
-    /// Get all incomplete acts
+    /// Get all incomplete acts across the hierarchy.
     pub fn incomplete_acts(&self) -> Vec<&PlannedAct> {
-        self.acts
-            .values()
+        self.all_acts()
+            .into_iter()
             .filter(|a| !matches!(a.phase, ActPhase::Completed | ActPhase::Cancelled))
             .collect()
     }
@@ -380,48 +420,41 @@ impl DomainModel {
         let now = Local::now();
         let end_date = now + Duration::days(days as i64);
 
-        let mut new_acts = Vec::new();
+        for charter in &mut self.charters {
+            for plan in &mut charter.plans {
+                if plan.recurrence.is_some() {
+                    let dtstart = plan.acts.first().and_then(|a| a.scheduled_at);
+                    let dtstart = match dtstart {
+                        Some(dt) => dt,
+                        None => continue,
+                    };
 
-        for plan in self.plans.values() {
-            if plan.recurrence.is_some() {
-                // Find an existing act to get dtstart, or skip if no scheduled time
-                let dtstart = self
-                    .acts
-                    .values()
-                    .find(|a| a.plan_id == plan.id)
-                    .and_then(|a| a.scheduled_at);
+                    let existing_ids: std::collections::HashSet<Uuid> =
+                        plan.acts.iter().map(|a| a.id).collect();
 
-                let dtstart = match dtstart {
-                    Some(dt) => dt,
-                    None => continue,
-                };
+                    let occurrences = plan.expand_occurrences(dtstart, 1000);
+                    for (i, occ) in occurrences.iter().enumerate() {
+                        let occ_local = occ.with_timezone(&Local);
+                        if occ_local > end_date {
+                            break;
+                        }
 
-                let occurrences = plan.expand_occurrences(dtstart, 1000);
-                for (i, occ) in occurrences.iter().enumerate() {
-                    let occ_local = occ.with_timezone(&Local);
-                    if occ_local > end_date {
-                        break;
-                    }
+                        let act_id = Uuid::new_v5(&plan.id, format!("act-{}", i).as_bytes());
 
-                    let act_id = Uuid::new_v5(&plan.id, format!("act-{}", i).as_bytes());
-
-                    if !self.acts.contains_key(&act_id.to_string()) {
-                        new_acts.push(PlannedAct {
-                            id: act_id,
-                            plan_id: plan.id,
-                            phase: ActPhase::NotStarted,
-                            scheduled_at: Some(occ_local),
-                            duration: plan.duration,
-                            completed_at: None,
-                            created_at: Some(now),
-                        });
+                        if !existing_ids.contains(&act_id) {
+                            plan.acts.push(PlannedAct {
+                                id: act_id,
+                                plan_id: plan.id,
+                                phase: ActPhase::NotStarted,
+                                scheduled_at: Some(occ_local),
+                                duration: plan.duration,
+                                completed_at: None,
+                                created_at: Some(now),
+                            });
+                        }
                     }
                 }
             }
-        }
-
-        for act in new_acts {
-            self.acts.insert(act.id.to_string(), act);
         }
     }
 }
@@ -472,10 +505,6 @@ pub enum PlanFieldChange {
     DependsOn {
         old: Option<Vec<Uuid>>,
         new: Option<Vec<Uuid>>,
-    },
-    Charter {
-        old: Option<String>,
-        new: Option<String>,
     },
 }
 
@@ -585,8 +614,8 @@ mod tests {
 
         let model = DomainModel::from_actions(&actions);
 
-        assert_eq!(model.plans.len(), 2);
-        assert_eq!(model.acts.len(), 2);
+        assert_eq!(model.all_plans().len(), 2);
+        assert_eq!(model.all_acts().len(), 2);
     }
 
     #[test]
@@ -606,8 +635,8 @@ mod tests {
         let model2 = DomainModel::from_actions(&actions);
 
         // Same ActionList should produce same act IDs every time
-        let mut ids1: Vec<String> = model1.acts.keys().cloned().collect();
-        let mut ids2: Vec<String> = model2.acts.keys().cloned().collect();
+        let mut ids1: Vec<String> = model1.all_acts().iter().map(|a| a.id.to_string()).collect();
+        let mut ids2: Vec<String> = model2.all_acts().iter().map(|a| a.id.to_string()).collect();
         ids1.sort();
         ids2.sort();
         assert_eq!(ids1, ids2);
@@ -659,7 +688,7 @@ mod tests {
             is_sequential: None,
             duration: None,
             depends_on: None,
-            charter: None,
+            acts: vec![],
         };
 
         let occurrences = plan.expand_occurrences(dt_start, 10);

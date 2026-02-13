@@ -23,8 +23,8 @@ pub use actions::{Action, ActionList, ActionState, ParsedDocument, SourceMetadat
 
 pub mod domain;
 pub use domain::{
-    ActDiff, ActFieldChange, ActPhase, Charter, DomainDiff, DomainModel, Plan, PlanDiff,
-    PlanFieldChange, PlannedAct, Recurrence,
+    ActDiff, ActFieldChange, ActPhase, Charter, DomainDiff, DomainModel, Metric, Objective, Plan,
+    PlanDiff, PlanFieldChange, PlannedAct, Recurrence,
 };
 
 pub mod charter;

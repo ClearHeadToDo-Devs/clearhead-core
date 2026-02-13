@@ -169,7 +169,10 @@ mod tests {
         let result = process_save_model(content, "test.actions", &mut repo).unwrap();
 
         match result {
-            DomainSaveResult::Changed { new_content, changes } => {
+            DomainSaveResult::Changed {
+                new_content,
+                changes,
+            } => {
                 assert!(!new_content.is_empty());
                 // Should have 2 plans and 2 acts added
                 assert_eq!(changes.plans_added.len(), 2);

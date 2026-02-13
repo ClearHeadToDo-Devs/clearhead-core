@@ -73,6 +73,7 @@ pub fn parse_charter(content: &str) -> Result<Charter, String> {
         alias: fm.alias,
         parent: fm.parent,
         objectives: fm.objectives,
+        plans: vec![],
     })
 }
 
@@ -87,6 +88,7 @@ pub fn implicit_charter(name: &str) -> Charter {
         alias: None,
         parent: None,
         objectives: None,
+        plans: vec![],
     }
 }
 
@@ -290,6 +292,7 @@ Stay healthy and fit through regular exercise and diet.
             alias: Some("test".to_string()),
             parent: None,
             objectives: Some(vec!["obj1".to_string()]),
+            plans: vec![],
         };
 
         let formatted = format_charter(&charter);

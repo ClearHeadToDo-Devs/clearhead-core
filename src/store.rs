@@ -27,7 +27,7 @@
 //! store.save_domain_model(&objective, &model).unwrap();
 //!
 //! let loaded = store.load_domain_model(&objective).unwrap();
-//! assert_eq!(loaded.plans.len(), 0);
+//! assert_eq!(loaded.all_plans().len(), 0);
 //! ```
 
 use crate::domain::{Charter, DomainModel};
@@ -751,7 +751,7 @@ mod tests {
 
         // Initially empty
         let model = store.load_domain_model(&obj).unwrap();
-        assert!(model.plans.is_empty());
+        assert!(model.all_plans().is_empty());
 
         // Save a model with one action
         let action = Action::new("Test task");
@@ -760,7 +760,7 @@ mod tests {
 
         // Load it back
         let loaded = store.load_domain_model(&obj).unwrap();
-        assert_eq!(loaded.plans.len(), 1);
+        assert_eq!(loaded.all_plans().len(), 1);
     }
 
     #[test]
@@ -799,6 +799,7 @@ mod tests {
             alias: Some("health".to_string()),
             parent: None,
             objectives: None,
+            plans: vec![],
         };
         store.save_charter(&obj, &charter).unwrap();
 
@@ -822,6 +823,7 @@ mod tests {
             alias: None,
             parent: None,
             objectives: None,
+            plans: vec![],
         };
         let charter_b = Charter {
             id: uuid::Uuid::new_v4(),
@@ -830,6 +832,7 @@ mod tests {
             alias: None,
             parent: None,
             objectives: None,
+            plans: vec![],
         };
 
         store.save_charter(&health, &charter_a).unwrap();
@@ -859,6 +862,7 @@ mod tests {
             alias: None,
             parent: None,
             objectives: None,
+            plans: vec![],
         };
         store.save_charter(&health, &charter).unwrap();
 
@@ -914,7 +918,7 @@ mod tests {
 
         // Load it back
         let loaded = store.load_domain_model(&obj).unwrap();
-        assert_eq!(loaded.plans.len(), 1);
+        assert_eq!(loaded.all_plans().len(), 1);
     }
 
     #[test]
@@ -924,7 +928,7 @@ mod tests {
         let obj = ObjectiveRef::new("nonexistent.actions");
 
         let model = store.load_domain_model(&obj).unwrap();
-        assert!(model.plans.is_empty());
+        assert!(model.all_plans().is_empty());
     }
 
     #[test]
@@ -991,6 +995,7 @@ mod tests {
             alias: Some("health".to_string()),
             parent: None,
             objectives: None,
+            plans: vec![],
         };
         store.save_charter(&obj, &charter).unwrap();
 
