@@ -7,7 +7,7 @@
 //! # Modules
 //!
 //! - `actions`: Actions DSL types (Action, ActionList, ActionState) and parsing
-//! - `domain`: Higher-level domain models (Plan, Act, phases, Recurrence)
+//! - `domain`: Higher-level domain models (Objectives, Charters, Plan, Act, phases, Recurrence)
 //! - `format`: Formatting actions to various output formats
 //! - `diff`: Diffing action lists to detect changes
 //! - `sync`: Semantic comparison and sync decision logic
