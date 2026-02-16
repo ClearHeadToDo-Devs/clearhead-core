@@ -8,8 +8,6 @@
 //!
 //! - `actions`: Actions DSL types (Action, ActionList, ActionState) and parsing
 //! - `domain`: Higher-level domain models (Objectives, Charters, Plan, Act, phases, Recurrence)
-//! - `format`: Formatting actions to various output formats
-//! - `diff`: Diffing action lists to detect changes
 //! - `sync`: Semantic comparison and sync decision logic
 //! - `document`: Document save pipeline orchestration
 //! - `crdt`: CRDT operations for distributed synchronization
@@ -19,7 +17,13 @@
 use tree_sitter::Tree;
 
 pub mod actions;
-pub use actions::{Action, ActionList, ActionState, ParsedDocument, SourceMetadata, SourceRange};
+pub use actions::{
+    Action, ActionList, ActionState, Diff, OutputFormat, ParsedDocument, SourceMetadata,
+    SourceRange, diff_actions, format,
+};
+
+pub mod diff;
+pub use diff::diff_domain_models;
 
 pub mod domain;
 pub use domain::{
@@ -34,11 +38,6 @@ pub mod crdt;
 
 pub mod store;
 pub use store::{DiscoveredCharter, FsWorkspaceStore, InMemoryStore, ObjectiveRef, WorkspaceStore};
-
-pub mod format;
-pub use format::{FormatConfig, FormatStyle, IndentStyle, OutputFormat, format};
-
-pub mod diff;
 
 pub mod sync;
 pub use sync::DomainSyncDecision;

@@ -3,8 +3,8 @@
 //! This module coordinates the parse → sync → format pipeline for document saves.
 //! It delegates to specialized modules for parsing, CRDT operations, and formatting.
 
+use crate::Diff;
 use crate::crdt::ActionRepository;
-use crate::diff::Diff;
 use crate::domain::{DomainDiff, DomainModel};
 use crate::parse_document;
 use crate::sync::{DomainSyncDecision, SyncDecision, should_sync, should_sync_model};

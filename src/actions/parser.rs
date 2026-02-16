@@ -411,9 +411,7 @@ pub fn parse_action_recursive(
     Ok(actions)
 }
 
-#[derive(
-    Default, Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize,
-)]
+#[derive(Default, Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ActionState {
     #[default]

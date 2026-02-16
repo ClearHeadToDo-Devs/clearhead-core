@@ -142,10 +142,7 @@ impl CrdtStorage {
         let crdt_path = self.workspace.crdt_path();
 
         if !crdt_path.exists() {
-            return Err(format!(
-                "CRDT file does not exist: {}",
-                crdt_path.display()
-            ));
+            return Err(format!("CRDT file does not exist: {}", crdt_path.display()));
         }
 
         let bytes =
