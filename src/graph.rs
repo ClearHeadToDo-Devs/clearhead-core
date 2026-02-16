@@ -20,9 +20,9 @@
 //! let ids = graph::query_actions(&store, "SELECT ?id WHERE { ... }")?;
 //! ```
 
-use crate::domain::{ActPhase, DomainModel, Plan, PlannedAct};
 use crate::actions::{Action, ActionList, ActionState};
 use crate::domain::Recurrence;
+use crate::domain::{ActPhase, DomainModel, Plan, PlannedAct};
 use chrono::DateTime;
 use oxigraph::io::RdfFormat;
 use oxigraph::model::{
@@ -83,26 +83,6 @@ fn state_node(state: &ActionState) -> NamedNode {
         ActionState::Cancelled => "Cancelled",
     };
     action_pred(name)
-}
-
-/// Load an ActionList into the store
-#[deprecated(note = "Use load_domain_model instead")]
-pub fn load_actions(store: &Store, actions: &ActionList) -> Result<(), String> {
-    load_actions_with_source(store, actions, None, None)
-}
-
-/// Load an ActionList into the store with source metadata
-#[deprecated(note = "Use load_domain_model instead")]
-pub fn load_actions_with_source(
-    store: &Store,
-    actions: &ActionList,
-    file_path: Option<&str>,
-    project: Option<&str>,
-) -> Result<(), String> {
-    for action in actions {
-        insert_action(store, action, file_path, project)?;
-    }
-    Ok(())
 }
 
 fn insert_action(

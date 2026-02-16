@@ -23,6 +23,14 @@ use uuid::Uuid;
 use crate::actions::{ActionList, ActionState};
 use crate::sync_utils::{hydrate_date, reconcile_date};
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Reconcile, Hydrate)]
+pub enum Reference {
+    UUID(Uuid),
+    Prefix(String),
+    Name(String),
+    Alias(String),
+}
+
 /// A measurable indicator tied to an objective.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Reconcile, Hydrate)]
 pub struct Metric {
