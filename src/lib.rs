@@ -47,7 +47,8 @@ pub use document::DomainSaveResult;
 
 pub mod graph;
 
-pub mod sync_utils;
+// sync_utils lives in crdt module; re-export temporarily while domain.rs still uses autosurgeon
+pub use crdt::sync_utils;
 
 pub mod lint;
 pub use lint::{LintDiagnostic, LintResults, LintSeverity, lint_document};

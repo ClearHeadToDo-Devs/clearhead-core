@@ -1,48 +1,37 @@
 //! CRDT operations for distributed synchronization.
 //!
 //! This module manages the Automerge CRDT document that serves as the
-//! source of truth for workspace state. It is intentionally limited to
-//! CRDT concerns: loading, saving, hydrating, and reconciling the
-//! Automerge document.
+//! source of truth for workspace state. It speaks only `DomainModel`
+//! at its public boundary — no ActionList, no formatting, no parsing.
 //!
 //! Filesystem projection (writing .actions files) is handled by
 //! [`WorkspaceStore`](crate::store::WorkspaceStore) implementations.
 //! File import (seeding CRDT from disk) is the caller's responsibility.
 
-use crate::actions::ActionList;
+pub mod convert;
+pub mod sync_utils;
+pub mod types;
+
 use crate::domain::DomainModel;
 use automerge::AutoCommit;
-use autosurgeon::{Hydrate, Reconcile, hydrate, reconcile};
-use std::collections::HashMap;
+use autosurgeon::{hydrate, reconcile};
 use std::path::{Path, PathBuf};
+use types::{SyncModel, SyncWorkspaceState};
 
 /// Name of the CRDT file within a workspace
 const CRDT_FILENAME: &str = "workspace.crdt";
 
 /// Bump this constant any time the Hydrate/Reconcile-derived shape of
-/// WorkspaceState, DomainModel, Plan, PlannedAct, or Recurrence changes.
+/// the Sync* types changes. The domain model can now evolve independently.
 pub const CRDT_SCHEMA_VERSION: u32 = 2;
 
-/// The root state of the CRDT, representing the entire workspace.
+// ============================================================================
+// Workspace — directory configuration
+// ============================================================================
+
+/// Represents the user-level workspace configuration.
 ///
-/// Implements the "Hub-and-Spoke" model:
-/// - Hub: The `files` map containing the source of truth for all files.
-/// - Spokes: Each entry in `files` corresponds to an "Anchored View" (a .actions file).
-#[derive(Debug, Clone, Reconcile, Hydrate)]
-struct WorkspaceState {
-    /// Schema version — used to detect stale CRDT files after struct changes
-    version: u32,
-    /// Map of file path (relative to workspace root) -> Domain Model
-    files: HashMap<String, DomainModel>,
-}
-
-/// Wrapper around an Automerge document containing the WorkspaceState
-#[derive(Debug)]
-pub struct WorkspaceDoc {
-    doc: AutoCommit,
-}
-
-/// Represents the user-level workspace configuration
+/// Holds paths for CRDT storage (hub) and action files (spokes).
 #[derive(Debug, Clone)]
 pub struct Workspace {
     /// Hub: Where the CRDT lives (XDG_STATE_HOME/clearhead)
@@ -52,11 +41,7 @@ pub struct Workspace {
 }
 
 impl Workspace {
-    /// Create a new workspace with explicit paths
-    ///
-    /// # Arguments
-    /// * `state_dir` - Directory where CRDT file lives (hub)
-    /// * `data_dir` - Directory where action files live (spokes)
+    /// Create a new workspace with explicit paths.
     pub fn new(state_dir: PathBuf, data_dir: PathBuf) -> Self {
         Workspace {
             state_dir,
@@ -64,7 +49,7 @@ impl Workspace {
         }
     }
 
-    /// Validates that a file is within the workspace data directory
+    /// Validates that a file is within the workspace data directory.
     pub fn validate_file(&self, file_path: &Path) -> Result<(), String> {
         let canonical_file = file_path
             .canonicalize()
@@ -85,15 +70,6 @@ impl Workspace {
         Ok(())
     }
 
-    /// Create a test workspace with custom paths (bypasses boundary validation)
-    #[cfg(test)]
-    pub fn test_workspace(dir: PathBuf) -> Self {
-        Workspace {
-            state_dir: dir.clone(),
-            data_dir: dir,
-        }
-    }
-
     pub fn crdt_path(&self) -> PathBuf {
         self.state_dir.join(CRDT_FILENAME)
     }
@@ -102,7 +78,7 @@ impl Workspace {
         self.state_dir.clone()
     }
 
-    /// Get the logical root for file paths in this workspace
+    /// Get the logical root for file paths in this workspace.
     pub fn root_dir(&self) -> PathBuf {
         self.data_dir.clone()
     }
@@ -117,7 +93,20 @@ impl Workspace {
             )
         })
     }
+
+    /// Create a test workspace with custom paths (bypasses boundary validation).
+    #[cfg(test)]
+    pub fn test_workspace(dir: PathBuf) -> Self {
+        Workspace {
+            state_dir: dir.clone(),
+            data_dir: dir,
+        }
+    }
 }
+
+// ============================================================================
+// CrdtStorage — file-level I/O for the Automerge document
+// ============================================================================
 
 #[derive(Debug, Clone)]
 pub struct CrdtStorage {
@@ -130,7 +119,7 @@ impl CrdtStorage {
         Ok(CrdtStorage { workspace })
     }
 
-    /// Create storage for a specific file within a workspace
+    /// Create storage for a specific file within a workspace.
     ///
     /// Validates that the file is within the workspace data directory.
     pub fn for_file(workspace: &Workspace, file_path: &Path) -> Result<Self, String> {
@@ -154,7 +143,7 @@ impl CrdtStorage {
         // Check whether the stored schema version matches the current one.
         // If hydration fails or the version doesn't match, the CRDT was written
         // by an older (or newer) struct layout — delete and bootstrap fresh.
-        let hydrate_result: Result<WorkspaceState, _> = hydrate(&doc);
+        let hydrate_result: Result<SyncWorkspaceState, _> = hydrate(&doc);
         let needs_rebuild = match hydrate_result {
             Ok(state) => state.version != CRDT_SCHEMA_VERSION,
             Err(_) => true,
@@ -203,21 +192,34 @@ impl CrdtStorage {
     }
 }
 
+// ============================================================================
+// WorkspaceDoc — in-memory Automerge document
+// ============================================================================
+
+/// Wrapper around an Automerge document containing the workspace state.
+///
+/// Speaks `DomainModel` at its public boundary. Internally hydrates/reconciles
+/// through the `Sync*` mirror types.
+#[derive(Debug)]
+pub struct WorkspaceDoc {
+    doc: AutoCommit,
+}
+
 impl WorkspaceDoc {
-    /// Initialize a new empty workspace doc
+    /// Initialize a new empty workspace doc.
     pub fn new() -> Result<Self, String> {
         let mut doc = AutoCommit::new();
-        let empty_state = WorkspaceState {
+        let empty_state = SyncWorkspaceState {
             version: CRDT_SCHEMA_VERSION,
-            files: HashMap::new(),
+            files: std::collections::HashMap::new(),
         };
         reconcile(&mut doc, &empty_state).map_err(|e| format!("Failed to init CRDT: {}", e))?;
         Ok(WorkspaceDoc { doc })
     }
 
     /// Hydrate the workspace state and verify the schema version matches.
-    fn hydrate_checked(&self) -> Result<WorkspaceState, String> {
-        let state: WorkspaceState = hydrate(&self.doc).map_err(|e| {
+    fn hydrate_checked(&self) -> Result<SyncWorkspaceState, String> {
+        let state: SyncWorkspaceState = hydrate(&self.doc).map_err(|e| {
             format!(
                 "Failed to hydrate workspace (CRDT may need rebuilding): {}",
                 e
@@ -234,53 +236,44 @@ impl WorkspaceDoc {
     }
 
     /// Get the DomainModel for a specific file key.
-    pub fn get_domain_model(&self, key: &str) -> Result<DomainModel, String> {
+    ///
+    /// Hydrates CRDT sync types and converts to domain types at the boundary.
+    pub fn get_model(&self, key: &str) -> Result<DomainModel, String> {
         let state = self.hydrate_checked()?;
 
-        if let Some(domain) = state.files.get(key) {
-            Ok(domain.clone())
+        if let Some(sync_model) = state.files.get(key) {
+            Ok(DomainModel::from(sync_model))
         } else {
             Ok(DomainModel::new())
         }
     }
 
-    /// Update the DomainModel for a specific file key directly.
-    pub fn update_file_model(&mut self, key: &str, model: &DomainModel) -> Result<(), String> {
+    /// Save a DomainModel for a specific file key.
+    ///
+    /// Converts domain types to CRDT sync types before reconciling.
+    pub fn save_model(&mut self, key: &str, model: &DomainModel) -> Result<(), String> {
         let mut state = self.hydrate_checked()?;
 
-        state.files.insert(key.to_string(), model.clone());
+        let sync_model = SyncModel::from(model);
+        state.files.insert(key.to_string(), sync_model);
 
         reconcile(&mut self.doc, &state)
             .map_err(|e| format!("Failed to reconcile workspace update: {}", e))?;
 
         Ok(())
     }
-
-    /// Get the ActionList for a specific file key.
-    ///
-    /// Convenience wrapper — delegates to `get_domain_model()`.
-    pub fn get_actions_for_file(&self, key: &str) -> Result<ActionList, String> {
-        let model = self.get_domain_model(key)?;
-        Ok(model.to_action_list())
-    }
-
-    /// Update the DomainModel for a specific file key from an ActionList.
-    ///
-    /// Convenience wrapper — converts to DomainModel, then delegates to `update_file_model()`.
-    pub fn update_file(&mut self, key: &str, actions: &ActionList) -> Result<(), String> {
-        let model = DomainModel::from_actions(actions);
-        self.update_file_model(key, &model)
-    }
 }
 
-/// Repository pattern for managing the lifecycle of Actions for a SINGLE file
-/// backed by the Global Workspace CRDT.
+// ============================================================================
+// SyncRepo — per-file handle to the workspace CRDT
+// ============================================================================
+
+/// Per-file handle to the workspace CRDT.
 ///
-/// This is a pure CRDT layer — it does not read or write `.actions` files.
-/// Callers who want to seed the CRDT from disk should load via a
-/// [`WorkspaceStore`](crate::store::WorkspaceStore) and call
-/// [`save_model`](ActionRepository::save_model) explicitly.
-pub struct ActionRepository {
+/// Manages the lifecycle of a single file's DomainModel within the
+/// global workspace CRDT document. Speaks only `DomainModel` — callers
+/// are responsible for any ActionList conversion or formatting.
+pub struct SyncRepo {
     storage: CrdtStorage,
     file_path: PathBuf,
     /// The relative path used as the key in the CRDT map
@@ -288,12 +281,11 @@ pub struct ActionRepository {
     doc: WorkspaceDoc,
 }
 
-impl ActionRepository {
-    /// Load an action repository for a file within a workspace.
+impl SyncRepo {
+    /// Open (or bootstrap) a sync repo for a file within a workspace.
     ///
-    /// Opens (or bootstraps) the CRDT document. Does NOT import from disk —
-    /// if the CRDT is empty for this key, callers should seed it via a
-    /// `WorkspaceStore` if desired.
+    /// Does NOT import from disk — if the CRDT is empty for this key,
+    /// callers should seed it via a `WorkspaceStore` if desired.
     pub fn load(workspace: Workspace, file_path: PathBuf) -> Result<Self, String> {
         let storage = CrdtStorage::for_file(&workspace, &file_path)?;
 
@@ -329,44 +321,28 @@ impl ActionRepository {
     }
 
     /// Get the DomainModel from the CRDT.
-    pub fn get_domain_model(&self) -> Result<DomainModel, String> {
-        self.doc.get_domain_model(&self.file_key)
+    pub fn get_model(&self) -> Result<DomainModel, String> {
+        self.doc.get_model(&self.file_key)
     }
 
-    /// Save a DomainModel to the CRDT and return formatted content.
-    pub fn save_model(&mut self, model: &DomainModel) -> Result<String, String> {
-        self.doc.update_file_model(&self.file_key, model)?;
+    /// Save a DomainModel to the CRDT.
+    pub fn save_model(&mut self, model: &DomainModel) -> Result<(), String> {
+        self.doc.save_model(&self.file_key, model)?;
         self.storage.save(&mut self.doc)?;
-
-        use crate::{OutputFormat, format};
-        let actions = model.to_action_list();
-        let formatted = format(&actions, OutputFormat::Actions, None, None)?;
-
-        Ok(formatted)
+        Ok(())
     }
 
-    /// Get actions from the CRDT.
-    pub fn get_actions(&self) -> Result<ActionList, String> {
-        self.doc.get_actions_for_file(&self.file_key)
-    }
-
-    /// Save actions to CRDT and return formatted content.
-    pub fn save(&mut self, actions: &ActionList) -> Result<String, String> {
-        let model = DomainModel::from_actions(actions);
-        self.save_model(&model)
-    }
-
-    /// The file path this repository manages.
+    /// The file path this repo manages.
     pub fn file_path(&self) -> &Path {
         &self.file_path
     }
 
-    /// The CRDT file key for this repository.
+    /// The CRDT file key for this repo.
     pub fn file_key(&self) -> &str {
         &self.file_key
     }
 
-    /// Create an ActionRepository for testing with a custom workspace directory.
+    /// Create a SyncRepo for testing with a custom workspace directory.
     ///
     /// Bypasses workspace boundary validation.
     #[doc(hidden)]
@@ -398,6 +374,10 @@ impl ActionRepository {
     }
 }
 
+// ============================================================================
+// Tests
+// ============================================================================
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -416,23 +396,23 @@ mod tests {
 
         let mut doc = WorkspaceDoc::new().unwrap();
 
-        let action_a = Action::new("Task A");
-        doc.update_file("file_a.actions", &vec![action_a]).unwrap();
+        let model_a = DomainModel::from_actions(&vec![Action::new("Task A")]);
+        doc.save_model("file_a.actions", &model_a).unwrap();
 
-        let action_b = Action::new("Task B");
-        doc.update_file("file_b.actions", &vec![action_b]).unwrap();
+        let model_b = DomainModel::from_actions(&vec![Action::new("Task B")]);
+        doc.save_model("file_b.actions", &model_b).unwrap();
 
         storage.save(&mut doc).unwrap();
 
         let loaded_doc = storage.load().unwrap();
 
-        let actions_a = loaded_doc.get_actions_for_file("file_a.actions").unwrap();
-        assert_eq!(actions_a.len(), 1);
-        assert_eq!(actions_a[0].name, "Task A");
+        let loaded_a = loaded_doc.get_model("file_a.actions").unwrap();
+        assert_eq!(loaded_a.all_plans().len(), 1);
+        assert_eq!(loaded_a.all_plans()[0].name, "Task A");
 
-        let actions_b = loaded_doc.get_actions_for_file("file_b.actions").unwrap();
-        assert_eq!(actions_b.len(), 1);
-        assert_eq!(actions_b[0].name, "Task B");
+        let loaded_b = loaded_doc.get_model("file_b.actions").unwrap();
+        assert_eq!(loaded_b.all_plans().len(), 1);
+        assert_eq!(loaded_b.all_plans()[0].name, "Task B");
     }
 
     #[test]
@@ -452,12 +432,11 @@ mod tests {
         action.description = Some("Test description".to_string());
         let original_model = DomainModel::from_actions(&vec![action]);
 
-        doc.update_file_model("test.actions", &original_model)
-            .unwrap();
+        doc.save_model("test.actions", &original_model).unwrap();
         storage.save(&mut doc).unwrap();
 
         let loaded_doc = storage.load().unwrap();
-        let loaded_model = loaded_doc.get_domain_model("test.actions").unwrap();
+        let loaded_model = loaded_doc.get_model("test.actions").unwrap();
 
         assert_eq!(
             loaded_model.all_plans().len(),
