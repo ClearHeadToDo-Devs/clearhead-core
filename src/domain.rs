@@ -31,6 +31,17 @@ pub enum Reference {
     Alias(String),
 }
 
+impl fmt::Display for Reference {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Reference::UUID(id) => write!(f, "{}", id),
+            Reference::Prefix(p) => write!(f, "{}", p),
+            Reference::Name(n) => write!(f, "{}", n),
+            Reference::Alias(a) => write!(f, "{}", a),
+        }
+    }
+}
+
 /// A measurable indicator tied to an objective.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Reconcile, Hydrate)]
 pub struct Metric {
