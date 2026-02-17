@@ -4,16 +4,15 @@
 //! It bridges the workspace layer (ActionList, formatting) and the sync layer
 //! (SyncRepo, DomainModel), keeping each ignorant of the other.
 
-use crate::Diff;
 use crate::crdt::SyncRepo;
 use crate::domain::{DomainDiff, DomainModel};
-use crate::parse_document;
 use crate::sync::{DomainSyncDecision, SyncDecision, should_sync, should_sync_model};
-use crate::{OutputFormat, format};
+use crate::workspace::actions::convert;
+use crate::workspace::{Diff, OutputFormat, format, parse_document};
 
 /// Format a DomainModel as .actions file content.
 fn format_model(model: &DomainModel) -> Result<String, String> {
-    let actions = model.to_action_list();
+    let actions = convert::to_action_list(model);
     format(&actions, OutputFormat::Actions, None, None)
 }
 
@@ -50,14 +49,14 @@ pub fn process_save(
     let crdt_model = sync_repo
         .get_model()
         .map_err(|e| format!("Failed to get CRDT state: {}", e))?;
-    let crdt_actions = crdt_model.to_action_list();
+    let crdt_actions = convert::to_action_list(&crdt_model);
 
     // 3. Check if sync is needed (semantic comparison at ActionList level)
     match should_sync(&parsed.actions, &crdt_actions) {
         SyncDecision::NoChange => Ok(SaveResult::NoChange),
         SyncDecision::SyncNeeded { changes } => {
             // 4. Convert to DomainModel, sync to CRDT
-            let model = DomainModel::from_actions(&parsed.actions);
+            let model = convert::from_actions(&parsed.actions);
             sync_repo
                 .save_model(&model)
                 .map_err(|e| format!("Failed to save to CRDT: {}", e))?;
@@ -102,7 +101,7 @@ pub fn process_save_model(
 ) -> Result<DomainSaveResult, String> {
     // 1. Parse current content → DomainModel
     let parsed = parse_document(current_content)?;
-    let current_model = DomainModel::from_actions(&parsed.actions);
+    let current_model = convert::from_actions(&parsed.actions);
 
     // 2. Get CRDT state as DomainModel
     let crdt_model = sync_repo

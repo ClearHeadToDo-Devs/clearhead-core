@@ -3,9 +3,9 @@
 //! This module provides pure functions for semantic comparison of ActionLists
 //! and determining whether CRDT synchronization is needed.
 
-use crate::actions::ActionList;
 use crate::domain::{DomainDiff, DomainModel};
-use crate::{Diff, diff_actions, diff_domain_models};
+use crate::workspace::actions::{ActionList, Diff, diff_actions};
+use crate::diff::diff_domain_models;
 
 /// Compare two action lists semantically (ignoring formatting/whitespace)
 ///
@@ -85,7 +85,7 @@ impl DomainSyncDecision {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::actions::{Action, ActionState};
+    use crate::workspace::actions::{Action, ActionState, convert};
     use uuid::Uuid;
 
     fn make_action(state: ActionState, name: &str) -> Action {
@@ -165,14 +165,14 @@ mod tests {
     #[test]
     fn test_domain_semantically_equal_same_model() {
         let actions = vec![make_action(ActionState::NotStarted, "Task 1")];
-        let model = DomainModel::from_actions(&actions);
+        let model = convert::from_actions(&actions);
         assert!(domain_semantically_equal(&model, &model));
     }
 
     #[test]
     fn test_domain_sync_no_change() {
         let actions = vec![make_action(ActionState::NotStarted, "Task 1")];
-        let model = DomainModel::from_actions(&actions);
+        let model = convert::from_actions(&actions);
 
         let decision = should_sync_model(&model, &model);
         assert!(!decision.needs_sync());
@@ -187,8 +187,8 @@ mod tests {
         let mut action2 = make_action(ActionState::NotStarted, "Task 1 Updated");
         action2.id = id;
 
-        let model1 = DomainModel::from_actions(&vec![action1]);
-        let model2 = DomainModel::from_actions(&vec![action2]);
+        let model1 = convert::from_actions(&vec![action1]);
+        let model2 = convert::from_actions(&vec![action2]);
 
         let decision = should_sync_model(&model2, &model1);
         assert!(decision.needs_sync());

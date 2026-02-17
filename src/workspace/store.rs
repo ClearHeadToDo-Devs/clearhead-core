@@ -17,7 +17,7 @@
 //! # Example
 //!
 //! ```rust
-//! use clearhead_core::store::{InMemoryStore, WorkspaceStore, ObjectiveRef};
+//! use clearhead_core::workspace::store::{InMemoryStore, WorkspaceStore, ObjectiveRef};
 //! use clearhead_core::DomainModel;
 //!
 //! let mut store = InMemoryStore::new();
@@ -30,6 +30,7 @@
 //! assert_eq!(loaded.all_plans().len(), 0);
 //! ```
 
+use super::actions::convert;
 use crate::domain::{Charter, DomainModel};
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -156,7 +157,7 @@ pub trait WorkspaceStore {
 /// # Example
 ///
 /// ```rust
-/// use clearhead_core::store::{InMemoryStore, WorkspaceStore, ObjectiveRef};
+/// use clearhead_core::workspace::store::{InMemoryStore, WorkspaceStore, ObjectiveRef};
 /// use clearhead_core::DomainModel;
 ///
 /// let mut store = InMemoryStore::new();
@@ -447,8 +448,8 @@ impl WorkspaceStore for FsWorkspaceStore {
             return Ok(DomainModel::new());
         }
 
-        let actions = crate::parse_actions(&content).map_err(|e| FsError(e))?;
-        Ok(DomainModel::from_actions(&actions))
+        let actions = super::parse_actions(&content).map_err(|e| FsError(e))?;
+        Ok(convert::from_actions(&actions))
     }
 
     fn save_domain_model(
@@ -468,10 +469,10 @@ impl WorkspaceStore for FsWorkspaceStore {
             })?;
         }
 
-        let actions = model.to_action_list();
-        let formatted = crate::format::format(
+        let actions = convert::to_action_list(model);
+        let formatted = super::actions::format::format(
             &actions,
-            crate::format::OutputFormat::Actions,
+            super::actions::format::OutputFormat::Actions,
             None,
             None,
         )
@@ -492,7 +493,7 @@ impl WorkspaceStore for FsWorkspaceStore {
         let content = std::fs::read_to_string(&charter_path)
             .map_err(|e| FsError(format!("Failed to read '{}': {}", charter_path.display(), e)))?;
 
-        match crate::charter::parse_charter(&content) {
+        match super::charter::parse_charter(&content) {
             Ok(charter) => Ok(Some(charter)),
             Err(_) => Ok(None),
         }
@@ -525,7 +526,7 @@ impl WorkspaceStore for FsWorkspaceStore {
             })?;
         }
 
-        let formatted = crate::charter::format_charter(charter);
+        let formatted = super::charter::format_charter(charter);
         std::fs::write(&path, formatted)
             .map_err(|e| FsError(format!("Failed to write '{}': {}", path.display(), e)))?;
 
@@ -575,7 +576,7 @@ impl WorkspaceStore for FsWorkspaceStore {
                 Ok(c) => c,
                 Err(_) => continue,
             };
-            match crate::charter::parse_charter(&content) {
+            match super::charter::parse_charter(&content) {
                 Ok(charter) => {
                     let name = charter.title.to_lowercase();
                     seen_names.insert(name);
@@ -605,7 +606,7 @@ impl WorkspaceStore for FsWorkspaceStore {
             let readme = dir_path.join("README.md");
             if readme.is_file() {
                 if let Ok(content) = std::fs::read_to_string(&readme) {
-                    if let Ok(charter) = crate::charter::parse_charter(&content) {
+                    if let Ok(charter) = super::charter::parse_charter(&content) {
                         let dir_name = dir_path
                             .file_name()
                             .and_then(|n| n.to_str())
@@ -663,7 +664,7 @@ impl WorkspaceStore for FsWorkspaceStore {
                                 .to_string();
                             if !seen_names.contains(&sub_name.to_lowercase()) {
                                 let mut sub_charter =
-                                    crate::charter::implicit_charter(&sub_name);
+                                    super::charter::implicit_charter(&sub_name);
                                 sub_charter.parent = Some(parent_name.clone());
                                 seen_names.insert(sub_name.to_lowercase());
                                 let relative = sub_path
@@ -697,7 +698,7 @@ impl WorkspaceStore for FsWorkspaceStore {
                         .to_string_lossy()
                         .to_string();
                     charters.push(DiscoveredCharter {
-                        charter: crate::charter::implicit_charter(stem),
+                        charter: super::charter::implicit_charter(stem),
                         source_key: relative,
                         is_explicit: false,
                     });
@@ -720,7 +721,7 @@ impl WorkspaceStore for FsWorkspaceStore {
                             .to_string_lossy()
                             .to_string();
                         charters.push(DiscoveredCharter {
-                            charter: crate::charter::implicit_charter(dir_name),
+                            charter: super::charter::implicit_charter(dir_name),
                             source_key: relative,
                             is_explicit: false,
                         });
@@ -741,7 +742,7 @@ impl WorkspaceStore for FsWorkspaceStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::actions::Action;
+    use crate::workspace::actions::Action;
     use std::fs;
 
     #[test]
@@ -755,7 +756,7 @@ mod tests {
 
         // Save a model with one action
         let action = Action::new("Test task");
-        let model = DomainModel::from_actions(&vec![action]);
+        let model = convert::from_actions(&vec![action]);
         store.save_domain_model(&obj, &model).unwrap();
 
         // Load it back
@@ -910,7 +911,7 @@ mod tests {
 
         // Save a model
         let action = Action::new("Test task");
-        let model = DomainModel::from_actions(&vec![action]);
+        let model = convert::from_actions(&vec![action]);
         store.save_domain_model(&obj, &model).unwrap();
 
         // File should exist

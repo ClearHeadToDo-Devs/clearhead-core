@@ -14,16 +14,12 @@
 //! "Do laundry weekly" is one Plan. Each week's laundry is a separate PlannedAct.
 //! For non-recurring tasks, there's still one Plan and one PlannedAct.
 
-use autosurgeon::{Hydrate, Reconcile};
 use chrono::{DateTime, Local};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use uuid::Uuid;
 
-use crate::actions::{ActionList, ActionState};
-use crate::sync_utils::{hydrate_date, reconcile_date};
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Reconcile, Hydrate)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Reference {
     UUID(Uuid),
     Prefix(String),
@@ -43,7 +39,7 @@ impl fmt::Display for Reference {
 }
 
 /// A measurable indicator tied to an objective.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Reconcile, Hydrate)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Metric {
     pub name: String,
     pub description: Option<String>,
@@ -56,7 +52,7 @@ pub struct Metric {
 /// Maps to `actions:Objective` — the topmost organizational layer.
 /// Objectives sit above charters in the hierarchy:
 /// Objectives → Charters → Plans → Acts
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Reconcile, Hydrate)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Objective {
     pub id: Uuid,
     pub title: Option<String>,
@@ -67,7 +63,7 @@ pub struct Objective {
 }
 
 /// Recurrence rule per RFC 5545 RRULE specification
-#[derive(PartialEq, Debug, Clone, Serialize, Deserialize, Reconcile, Hydrate)]
+#[derive(PartialEq, Debug, Clone, Serialize, Deserialize)]
 pub struct Recurrence {
     pub frequency: String, // FREQ: secondly, minutely, hourly, daily, weekly, monthly, yearly
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -215,7 +211,7 @@ impl fmt::Display for Recurrence {
 /// Maps to `actions:ActPhase` (subclass of bfo:Quality).
 /// The phase inheres in the PlannedAct, not the Plan.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, Reconcile, Hydrate,
+    Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize,
 )]
 pub enum ActPhase {
     #[default]
@@ -226,18 +222,6 @@ pub enum ActPhase {
     Cancelled,
 }
 
-impl From<ActionState> for ActPhase {
-    fn from(state: ActionState) -> Self {
-        match state {
-            ActionState::NotStarted => ActPhase::NotStarted,
-            ActionState::InProgress => ActPhase::InProgress,
-            ActionState::Completed => ActPhase::Completed,
-            ActionState::BlockedorAwaiting => ActPhase::Blocked,
-            ActionState::Cancelled => ActPhase::Cancelled,
-        }
-    }
-}
-
 /// Task definition / template.
 ///
 /// Maps to `cco:Plan` - information content that persists and can be
@@ -245,7 +229,7 @@ impl From<ActionState> for ActPhase {
 ///
 /// Plans hold the "what" - name, description, priority, contexts, recurrence rules.
 /// They don't hold execution state (that's on PlannedAct).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Reconcile, Hydrate)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Plan {
     pub id: Uuid,
     pub name: String,
@@ -312,7 +296,7 @@ impl Plan {
 /// Maps to `actions:Charter` (subclass of cco:DirectiveInformationContentEntity).
 /// Charters are the highest-level organizational unit. Plans reference charters
 /// via the `charter` field.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Reconcile, Hydrate)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Charter {
     pub id: Uuid,
     pub title: String,
@@ -332,7 +316,7 @@ pub struct Charter {
 /// Each realization of a Plan creates a PlannedAct.
 ///
 /// PlannedActs hold the "when" and "status" - scheduled time, completion, phase.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Reconcile, Hydrate)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PlannedAct {
     pub id: Uuid,
     /// The Plan this act realizes (prescribes relationship, inverse)
@@ -340,15 +324,12 @@ pub struct PlannedAct {
     /// Current lifecycle phase
     pub phase: ActPhase,
     /// Scheduled date/time for this occurrence
-    #[autosurgeon(reconcile = "reconcile_date", hydrate = "hydrate_date")]
     pub scheduled_at: Option<DateTime<Local>>,
     /// Duration in minutes
     pub duration: Option<u32>,
     /// When this act was completed
-    #[autosurgeon(reconcile = "reconcile_date", hydrate = "hydrate_date")]
     pub completed_at: Option<DateTime<Local>>,
     /// When this act was created/scheduled
-    #[autosurgeon(reconcile = "reconcile_date", hydrate = "hydrate_date")]
     pub created_at: Option<DateTime<Local>>,
 }
 
@@ -357,7 +338,7 @@ pub struct PlannedAct {
 /// Each charter contains its plans, and each plan contains its acts.
 /// This structure reflects the ontology hierarchy and eliminates the
 /// need for separate flat HashMaps.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, Reconcile, Hydrate)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct DomainModel {
     pub objectives: Vec<Objective>,
     pub charters: Vec<Charter>,
@@ -366,27 +347,6 @@ pub struct DomainModel {
 impl DomainModel {
     pub fn new() -> Self {
         Self::default()
-    }
-
-    /// Convert an ActionList into the domain model.
-    ///
-    /// Each Action becomes one Plan and one PlannedAct, wrapped in a
-    /// synthetic inbox charter.
-    pub fn from_actions(actions: &ActionList) -> Self {
-        crate::actions::convert::from_actions(actions)
-    }
-
-    /// Convert the domain model back to an ActionList.
-    ///
-    /// This reconstructs Actions from Plans and their PlannedActs,
-    /// walking the charter → plan → act hierarchy.
-    pub fn to_action_list(&self) -> ActionList {
-        crate::actions::convert::to_action_list(self)
-    }
-
-    /// Convert the domain model back to an ActionList in a specific order.
-    pub fn to_action_list_ordered(&self, plan_order: &[String]) -> ActionList {
-        crate::actions::convert::to_action_list_ordered(self, plan_order)
     }
 
     /// Flatten all plans across all charters.
@@ -592,7 +552,7 @@ impl DomainDiff {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::actions::Action;
+    use crate::workspace::actions::{Action, ActionState, convert};
 
     #[test]
     fn test_split_simple_action() {
@@ -603,7 +563,7 @@ mod tests {
             ..Default::default()
         };
 
-        let (plan, act) = crate::actions::convert::split_action(&action);
+        let (plan, act) = convert::split_action(&action);
 
         assert_eq!(plan.id, action.id);
         assert_eq!(plan.name, "Buy milk");
@@ -621,7 +581,7 @@ mod tests {
             ..Default::default()
         };
 
-        let (_, act) = crate::actions::convert::split_action(&action);
+        let (_, act) = convert::split_action(&action);
 
         assert_eq!(act.phase, ActPhase::Completed);
         assert!(act.completed_at.is_some());
@@ -631,7 +591,7 @@ mod tests {
     fn test_domain_model_from_actions() {
         let actions = vec![Action::new("Task 1"), Action::new("Task 2")];
 
-        let model = DomainModel::from_actions(&actions);
+        let model = convert::from_actions(&actions);
 
         assert_eq!(model.all_plans().len(), 2);
         assert_eq!(model.all_acts().len(), 2);
@@ -640,7 +600,7 @@ mod tests {
     #[test]
     fn test_acts_for_plan() {
         let action = Action::new("Test task");
-        let model = DomainModel::from_actions(&vec![action.clone()]);
+        let model = convert::from_actions(&vec![action.clone()]);
 
         let acts = model.acts_for_plan(action.id);
         assert_eq!(acts.len(), 1);
@@ -650,8 +610,8 @@ mod tests {
     fn test_deterministic_act_ids() {
         let actions = vec![Action::new("Task 1"), Action::new("Task 2")];
 
-        let model1 = DomainModel::from_actions(&actions);
-        let model2 = DomainModel::from_actions(&actions);
+        let model1 = convert::from_actions(&actions);
+        let model2 = convert::from_actions(&actions);
 
         // Same ActionList should produce same act IDs every time
         let mut ids1: Vec<String> = model1.all_acts().iter().map(|a| a.id.to_string()).collect();
@@ -664,7 +624,7 @@ mod tests {
     #[test]
     fn test_act_id_derived_from_plan_id() {
         let action = Action::new("Test");
-        let (plan, act) = crate::actions::convert::split_action(&action);
+        let (plan, act) = convert::split_action(&action);
 
         // Act ID should be deterministic v5 UUID based on plan ID
         let expected_act_id = Uuid::new_v5(&plan.id, b"act-0");

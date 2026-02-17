@@ -1,4 +1,4 @@
-use crate::actions::source::{
+use super::source::{
     NodeWrapper, SourceMetadata, SourceRange, create_node_wrapper, get_node_text, get_prefixed_text,
 };
 use crate::domain::Recurrence;
@@ -562,7 +562,7 @@ fn parse_int_list<T: std::str::FromStr>(s: &str) -> Vec<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::actions::source::TreeWrapper;
+    use crate::workspace::actions::source::TreeWrapper;
 
     fn parse_actions(source: &str) -> ActionList {
         let mut parser = tree_sitter::Parser::new();

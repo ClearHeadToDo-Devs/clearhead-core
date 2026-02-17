@@ -20,9 +20,8 @@
 //! let ids = graph::query_actions(&store, "SELECT ?id WHERE { ... }")?;
 //! ```
 
-use crate::actions::{Action, ActionList, ActionState};
-use crate::domain::Recurrence;
-use crate::domain::{ActPhase, DomainModel, Plan, PlannedAct};
+use crate::domain::{ActPhase, DomainModel, Plan, PlannedAct, Recurrence};
+use crate::workspace::actions::{Action, ActionList, ActionState};
 use chrono::DateTime;
 use oxigraph::io::RdfFormat;
 use oxigraph::model::{
@@ -1156,14 +1155,14 @@ fn get_planned_act_by_id(store: &Store, id: Uuid) -> Result<PlannedAct, String> 
 #[cfg(test)]
 mod v4_tests {
     use super::*;
-    use crate::actions::Action;
+    use crate::workspace::actions::{Action, convert};
 
     #[test]
     fn test_load_domain_model() {
         let store = create_store().unwrap();
 
         let actions = vec![Action::new("Test task")];
-        let model = DomainModel::from_actions(&actions);
+        let model = convert::from_actions(&actions);
 
         load_domain_model(&store, &model).unwrap();
 
@@ -1191,7 +1190,7 @@ mod v4_tests {
     #[test]
     fn test_serialize_acts_to_turtle() {
         let actions = vec![Action::new("Turtle task")];
-        let model = DomainModel::from_actions(&actions);
+        let model = convert::from_actions(&actions);
 
         let turtle = serialize_acts_to_turtle(&model).unwrap();
 
@@ -1208,7 +1207,7 @@ mod v4_tests {
         let mut action_done = Action::new("Done task");
         action_done.state = ActionState::Completed;
 
-        let model = DomainModel::from_actions(&vec![action_open, action_done]);
+        let model = convert::from_actions(&vec![action_open, action_done]);
 
         let open_turtle = serialize_open_acts_to_turtle(&model).unwrap();
         let closed_turtle = serialize_closed_acts_to_turtle(&model).unwrap();
@@ -1226,7 +1225,7 @@ mod v4_tests {
     fn test_query_plans_from_store() {
         let store = create_store().unwrap();
         let actions = vec![Action::new("Queryable plan")];
-        let model = DomainModel::from_actions(&actions);
+        let model = convert::from_actions(&actions);
         load_domain_model(&store, &model).unwrap();
 
         let sparql = format!(
@@ -1243,7 +1242,7 @@ mod v4_tests {
     fn test_query_acts_from_store() {
         let store = create_store().unwrap();
         let actions = vec![Action::new("Queryable act")];
-        let model = DomainModel::from_actions(&actions);
+        let model = convert::from_actions(&actions);
         load_domain_model(&store, &model).unwrap();
 
         let sparql = format!(
@@ -1261,7 +1260,7 @@ mod v4_tests {
         let store = create_store().unwrap();
 
         let actions = vec![Action::new("Linked task")];
-        let model = DomainModel::from_actions(&actions);
+        let model = convert::from_actions(&actions);
         let plan_id = model.all_plans()[0].id;
 
         load_domain_model(&store, &model).unwrap();

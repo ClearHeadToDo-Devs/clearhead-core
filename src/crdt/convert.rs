@@ -284,7 +284,7 @@ impl From<&SyncRecurrence> for Recurrence {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::actions::Action;
+    use crate::workspace::actions::{Action, convert as action_convert};
     use uuid::Uuid;
 
     #[test]
@@ -304,7 +304,7 @@ mod tests {
         action.description = Some("A description".to_string());
         action.context_list = Some(vec!["home".to_string(), "computer".to_string()]);
 
-        let dm = DomainModel::from_actions(&vec![action]);
+        let dm = action_convert::from_actions(&vec![action]);
         let sync: SyncModel = SyncModel::from(&dm);
         let back: DomainModel = DomainModel::from(&sync);
 
@@ -366,7 +366,7 @@ mod tests {
     #[test]
     fn test_charter_with_plans_roundtrip() {
         let action = Action::new("Charter task");
-        let dm = DomainModel::from_actions(&vec![action]);
+        let dm = action_convert::from_actions(&vec![action]);
 
         // The DomainModel wraps things in a synthetic charter
         let sync: SyncModel = SyncModel::from(&dm);

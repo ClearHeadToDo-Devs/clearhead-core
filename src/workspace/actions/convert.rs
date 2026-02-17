@@ -1,4 +1,4 @@
-use crate::actions::{Action, ActionList, ActionState, PredecessorRef};
+use super::{Action, ActionList, ActionState, PredecessorRef};
 use crate::domain::{ActPhase, Charter, DomainModel, Plan, PlannedAct};
 use uuid::Uuid;
 
@@ -19,7 +19,13 @@ pub fn split_action(action: &Action) -> (Plan, PlannedAct) {
     let act = PlannedAct {
         id: act_id,
         plan_id,
-        phase: action.state.into(),
+        phase: match action.state {
+            ActionState::NotStarted => ActPhase::NotStarted,
+            ActionState::InProgress => ActPhase::InProgress,
+            ActionState::Completed => ActPhase::Completed,
+            ActionState::BlockedorAwaiting => ActPhase::Blocked,
+            ActionState::Cancelled => ActPhase::Cancelled,
+        },
         scheduled_at: action.do_date_time,
         duration: action.do_duration,
         completed_at: action.completed_date_time,

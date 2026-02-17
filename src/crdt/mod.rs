@@ -381,7 +381,7 @@ impl SyncRepo {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::actions::Action;
+    use crate::workspace::actions::{Action, convert};
     use tempfile::TempDir;
 
     #[test]
@@ -396,10 +396,10 @@ mod tests {
 
         let mut doc = WorkspaceDoc::new().unwrap();
 
-        let model_a = DomainModel::from_actions(&vec![Action::new("Task A")]);
+        let model_a = convert::from_actions(&vec![Action::new("Task A")]);
         doc.save_model("file_a.actions", &model_a).unwrap();
 
-        let model_b = DomainModel::from_actions(&vec![Action::new("Task B")]);
+        let model_b = convert::from_actions(&vec![Action::new("Task B")]);
         doc.save_model("file_b.actions", &model_b).unwrap();
 
         storage.save(&mut doc).unwrap();
@@ -430,7 +430,7 @@ mod tests {
         let mut action = Action::new("Round-trip Task");
         action.priority = Some(3);
         action.description = Some("Test description".to_string());
-        let original_model = DomainModel::from_actions(&vec![action]);
+        let original_model = convert::from_actions(&vec![action]);
 
         doc.save_model("test.actions", &original_model).unwrap();
         storage.save(&mut doc).unwrap();

@@ -1,4 +1,4 @@
-use crate::actions::{Action, ActionState, ParsedDocument, SourceMetadata, SourceRange};
+use crate::workspace::actions::{Action, ActionState, ParsedDocument, SourceMetadata, SourceRange};
 use chrono::Local;
 use std::collections::HashSet;
 use uuid::Uuid;
@@ -502,7 +502,7 @@ pub fn lint_document(doc: &ParsedDocument) -> LintResults {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::parse_document as get_parsed_document;
+    use crate::workspace::parse_document as get_parsed_document;
 
     #[test]
     fn test_lint_missing_id() {
@@ -564,7 +564,7 @@ mod tests {
     #[test]
     fn test_check_invalid_uuid_format() {
         // Test the check_invalid_uuid function directly since grammar won't parse invalid formats
-        use crate::actions::Action;
+        use crate::workspace::actions::Action;
         let action = Action {
             id: uuid::Uuid::nil(),
             parent_id: None,
@@ -673,7 +673,7 @@ mod tests {
     #[test]
     fn test_check_empty_context_tag() {
         // Test the check_empty_context function directly since grammar may prevent empty tags
-        use crate::actions::Action;
+        use crate::workspace::actions::Action;
         let action = Action {
             id: uuid::Uuid::parse_str("01942d99-4c27-77f6-9316-107024843939").unwrap(),
             parent_id: None,
@@ -753,7 +753,7 @@ mod tests {
     #[test]
     fn test_check_duration_without_do_date() {
         // Test the function directly since parsing D without @ may not be valid in grammar
-        use crate::actions::Action;
+        use crate::workspace::actions::Action;
         let action = Action {
             id: uuid::Uuid::parse_str("01942d99-4c27-77f6-9316-107024843939").unwrap(),
             parent_id: None,
@@ -801,7 +801,7 @@ mod tests {
 
     #[test]
     fn test_check_duration_with_do_date_ok() {
-        use crate::actions::Action;
+        use crate::workspace::actions::Action;
         let action = Action {
             id: uuid::Uuid::parse_str("01942d99-4c27-77f6-9316-107024843939").unwrap(),
             parent_id: None,
@@ -846,7 +846,7 @@ mod tests {
 
     #[test]
     fn test_check_recurrence_without_do_date() {
-        use crate::actions::Action;
+        use crate::workspace::actions::Action;
         use crate::domain::Recurrence;
         let action = Action {
             id: uuid::Uuid::parse_str("01942d99-4c27-77f6-9316-107024843939").unwrap(),
@@ -911,7 +911,7 @@ mod tests {
 
     #[test]
     fn test_check_recurrence_with_do_date_ok() {
-        use crate::actions::Action;
+        use crate::workspace::actions::Action;
         use crate::domain::Recurrence;
         let action = Action {
             id: uuid::Uuid::parse_str("01942d99-4c27-77f6-9316-107024843939").unwrap(),

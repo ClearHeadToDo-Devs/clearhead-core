@@ -1,4 +1,4 @@
-use crate::actions::parser::parse_action_recursive;
+use super::parser::parse_action_recursive;
 use crate::lint::LintDiagnostic;
 use std::collections::HashMap;
 use tree_sitter::{Node, Tree};
@@ -150,7 +150,7 @@ impl SourceRange {
     }
 }
 
-use crate::actions::ActionList;
+use super::ActionList;
 
 #[derive(Debug, Clone)]
 pub struct ParsedDocument {

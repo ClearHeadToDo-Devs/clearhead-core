@@ -1,4 +1,4 @@
-use crate::actions::{Action, ActionList, ActionState};
+use super::{Action, ActionList, ActionState};
 use serde_json::{Value, json};
 use std::collections::HashMap;
 use uuid::Uuid;
@@ -154,7 +154,7 @@ fn compare_action(old: &Action, new: &Action) -> Vec<FieldChange> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::actions::ActionState;
+    use crate::workspace::actions::ActionState;
 
     fn make_action(id: &str, name: &str) -> Action {
         Action {
