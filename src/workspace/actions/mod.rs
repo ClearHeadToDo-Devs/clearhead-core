@@ -1,6 +1,7 @@
 pub mod convert;
 pub mod diff;
 pub mod format;
+pub mod lint;
 pub mod parser;
 pub mod source;
 
@@ -14,3 +15,4 @@ pub use source::{
 
 pub use diff::*;
 pub use format::*;
+pub use lint::*;

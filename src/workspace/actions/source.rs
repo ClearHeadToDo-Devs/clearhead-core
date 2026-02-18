@@ -1,5 +1,5 @@
+use super::lint::LintDiagnostic;
 use super::parser::parse_action_recursive;
-use crate::lint::LintDiagnostic;
 use std::collections::HashMap;
 use tree_sitter::{Node, Tree};
 use uuid::Uuid;

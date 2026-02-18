@@ -15,11 +15,10 @@
 
 pub mod workspace;
 pub use workspace::{
-    Action, ActionList, ActionState, Diff, OutputFormat, ParsedDocument, SourceMetadata,
-    SourceRange, diff_actions, format,
-    format_charter, implicit_charter, parse_charter,
-    DiscoveredCharter, FsWorkspaceStore, InMemoryStore, ObjectiveRef, WorkspaceStore,
-    parse_actions, parse_document, parse_tree, parse_domain_model, patch_action_list,
+    Action, ActionList, ActionState, Diff, DiscoveredCharter, FsWorkspaceStore, InMemoryStore,
+    ObjectiveRef, OutputFormat, ParsedDocument, SourceMetadata, SourceRange, WorkspaceStore,
+    diff_actions, format, format_charter, implicit_charter, parse_actions, parse_charter,
+    parse_document, parse_domain_model, parse_tree, patch_action_list,
 };
 
 pub mod diff;
@@ -40,6 +39,3 @@ pub mod document;
 pub use document::DomainSaveResult;
 
 pub mod graph;
-
-pub mod lint;
-pub use lint::{LintDiagnostic, LintResults, LintSeverity, lint_document};

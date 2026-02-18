@@ -207,7 +207,8 @@ fn check_hierarchy_levels(doc: &ParsedDocument) -> Vec<LintDiagnostic> {
 
             // E011: Skipped Hierarchy Level
             if let Some(parent_id) = action.parent_id
-                && let Some(parent) = doc.actions.iter().find(|a| a.id == parent_id) {
+                && let Some(parent) = doc.actions.iter().find(|a| a.id == parent_id)
+            {
                 let parent_depth = parent.depth(&doc.actions);
                 if depth > parent_depth + 1 {
                     diagnostics.push(LintDiagnostic::error(
@@ -278,7 +279,9 @@ fn check_duplicate_ids(doc: &ParsedDocument) -> Vec<LintDiagnostic> {
 
     for action in &doc.actions {
         if let Some(metadata) = doc.source_map.get(&action.id)
-            && !metadata.is_id_generated && !seen_ids.insert(action.id) {
+            && !metadata.is_id_generated
+            && !seen_ids.insert(action.id)
+        {
             diagnostics.push(LintDiagnostic::info(
                 "I004",
                 format!("Duplicate action ID found: {} (I004)", action.id),
@@ -846,8 +849,8 @@ mod tests {
 
     #[test]
     fn test_check_recurrence_without_do_date() {
-        use crate::workspace::actions::Action;
         use crate::domain::Recurrence;
+        use crate::workspace::actions::Action;
         let action = Action {
             id: uuid::Uuid::parse_str("01942d99-4c27-77f6-9316-107024843939").unwrap(),
             parent_id: None,
@@ -911,8 +914,8 @@ mod tests {
 
     #[test]
     fn test_check_recurrence_with_do_date_ok() {
-        use crate::workspace::actions::Action;
         use crate::domain::Recurrence;
+        use crate::workspace::actions::Action;
         let action = Action {
             id: uuid::Uuid::parse_str("01942d99-4c27-77f6-9316-107024843939").unwrap(),
             parent_id: None,
