@@ -17,8 +17,8 @@ use actions::*;
 
 // Re-export key types at workspace level
 pub use actions::{
-    Action, ActionList, ActionState, Diff, OutputFormat, ParsedDocument, SourceMetadata,
-    SourceRange, diff_actions, format,
+    Action, ActionList, ActionRepository, ActionSource, ActionState, Diff, OutputFormat,
+    ParsedDocument, SourcedAction, SourceMetadata, SourceRange, diff_actions, format,
 };
 pub use charter::{format_charter, implicit_charter, parse_charter};
 pub use store::{DiscoveredCharter, FsWorkspaceStore, InMemoryStore, ObjectiveRef, WorkspaceStore};
