@@ -13,8 +13,6 @@ pub mod actions;
 pub mod charter;
 pub mod store;
 
-use actions::*;
-
 // Re-export key types at workspace level
 pub use actions::{
     Action, ActionList, ActionRepository, ActionSource, ActionState, Diff, OutputFormat,
