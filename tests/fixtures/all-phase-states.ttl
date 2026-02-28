@@ -1,0 +1,69 @@
+@prefix actions: <https://clearhead.us/vocab/actions/v4#> .
+@prefix cco: <https://www.commoncoreontologies.org/> .
+@prefix bfo: <http://purl.obolibrary.org/obo/> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+# =============================================================================
+# All Event Status States Example
+# =============================================================================
+#
+# Demonstrates all 5 Event Status Nominal ICE individuals:
+# 1. NotStarted - default state for new tasks
+# 2. InProgress - actively being worked on
+# 3. Completed - successfully finished
+# 4. Blocked - cannot proceed due to dependency
+# 5. Cancelled - abandoned without completion
+#
+# Status is linked via CCO is_measured_by_nominal (ont00001868)
+#
+# DSL equivalent:
+# [ ] Not started task
+# [-] In progress task
+# [x] Completed task
+# [=] Blocked task
+# [_] Cancelled task
+# =============================================================================
+
+# NotStarted status
+<urn:uuid:plan-not-started> a cco:ont00000974 ;
+    rdfs:label "Not started task" ;
+    cco:ont00001942 <urn:uuid:act-not-started-001> .
+
+<urn:uuid:act-not-started-001> a cco:ont00000228 ;
+    cco:ont00001868 actions:NotStarted .
+
+# InProgress status
+<urn:uuid:plan-in-progress> a cco:ont00000974 ;
+    rdfs:label "In progress task" ;
+    cco:ont00001942 <urn:uuid:act-in-progress-001> .
+
+<urn:uuid:act-in-progress-001> a cco:ont00000228 ;
+    cco:ont00001868 actions:InProgress .
+
+# Completed status
+<urn:uuid:plan-completed> a cco:ont00000974 ;
+    rdfs:label "Completed task" ;
+    cco:ont00001942 <urn:uuid:act-completed-001> .
+
+<urn:uuid:act-completed-001> a cco:ont00000228 ;
+    cco:ont00001868 actions:Completed ;
+    actions:hasCompletedDateTime "2025-01-14T11:30:00Z"^^xsd:dateTime .
+
+# Blocked status
+<urn:uuid:plan-blocked> a cco:ont00000974 ;
+    rdfs:label "Blocked task" ;
+    rdfs:comment "Waiting for approval from manager" ;
+    cco:ont00001942 <urn:uuid:act-blocked-001> .
+
+<urn:uuid:act-blocked-001> a cco:ont00000228 ;
+    cco:ont00001868 actions:Blocked .
+
+# Cancelled status
+<urn:uuid:plan-cancelled> a cco:ont00000974 ;
+    rdfs:label "Cancelled task" ;
+    rdfs:comment "No longer needed due to project cancellation" ;
+    cco:ont00001942 <urn:uuid:act-cancelled-001> .
+
+<urn:uuid:act-cancelled-001> a cco:ont00000228 ;
+    cco:ont00001868 actions:Cancelled .

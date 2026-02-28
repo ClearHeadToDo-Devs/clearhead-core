@@ -1,0 +1,32 @@
+@prefix actions: <https://clearhead.us/vocab/actions/v4#> .
+@prefix cco: <https://www.commoncoreontologies.org/> .
+@prefix bfo: <http://purl.obolibrary.org/obo/> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+# =============================================================================
+# Simple Plan and PlannedAct Example
+# =============================================================================
+#
+# Demonstrates the core v4 pattern:
+# 1. Plan (CCO Plan) - task definition/template
+# 2. PlannedAct (CCO Planned Act) - execution instance with status
+# 3. prescribes relationship linking Plan → PlannedAct
+# 4. is_measured_by_nominal linking PlannedAct → Event Status
+#
+# DSL equivalent: [ ] Buy milk
+# =============================================================================
+
+# The Plan (task definition)
+<urn:uuid:plan-buy-milk> a cco:ont00000974 ;  # CCO Plan
+    rdfs:label "Buy milk" ;
+    rdfs:comment "Purchase milk from the grocery store" ;
+    cco:ont00001942 <urn:uuid:act-buy-milk-001> .  # prescribes
+
+# The PlannedAct (execution instance)
+<urn:uuid:act-buy-milk-001> a cco:ont00000228 ;  # CCO PlannedAct
+    cco:ont00001868 actions:NotStarted .  # is_measured_by_nominal
+
+# The Event Status individuals are defined in the ontology:
+# actions:NotStarted, actions:InProgress, actions:Completed,
+# actions:Blocked, actions:Cancelled
