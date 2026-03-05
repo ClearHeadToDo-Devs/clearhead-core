@@ -54,8 +54,7 @@ fn test_basic_plan_passes_shacl() {
 #[test]
 fn test_all_phase_states_pass_shacl() {
     // DSL symbols: [ ] = NotStarted, [-] = InProgress, [x] = Completed, [=] = Blocked, [_] = Cancelled
-    let dsl =
-        "[ ] Not started task\n[-] In progress task\n[x] Completed task\n[=] Blocked task\n[_] Cancelled task";
+    let dsl = "[ ] Not started task\n[-] In progress task\n[x] Completed task\n[=] Blocked task\n[_] Cancelled task";
     let model = parse_domain_model(dsl).unwrap();
     let store = graph::create_store().unwrap();
     graph::load_domain_model(&store, &model).unwrap();
@@ -206,7 +205,13 @@ fn test_vendored_all_phases_fixture_covers_all_statuses() {
     // Sanity check: the fixture file itself mentions each of the 5 status values.
     // Combined with test_vendored_all_phases_example_passes_shacl, this confirms
     // the fixture is a complete, valid example of all status states.
-    for status in ["NotStarted", "InProgress", "Completed", "Blocked", "Cancelled"] {
+    for status in [
+        "NotStarted",
+        "InProgress",
+        "Completed",
+        "Blocked",
+        "Cancelled",
+    ] {
         assert!(
             ALL_PHASES_TTL.contains(status),
             "Fixture file all-phase-states.ttl is missing status '{status}'"
@@ -230,5 +235,9 @@ fn test_roundtrip_preserves_plan_name() {
     let store2 = graph::create_store().unwrap();
     graph::load_turtle(&store2, &turtle).unwrap();
     let violations = graph::validate_actions_vocabulary(&store2).unwrap();
-    assert!(violations.is_empty(), "Violations after name roundtrip: {:?}", violations);
+    assert!(
+        violations.is_empty(),
+        "Violations after name roundtrip: {:?}",
+        violations
+    );
 }

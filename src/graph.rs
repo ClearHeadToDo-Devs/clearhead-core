@@ -386,10 +386,10 @@ fn insert_planned_act(store: &Store, act: &PlannedAct) -> Result<(), String> {
     // cco:is_measured_by_nominal (ont00001868) — status as Event Status Nominal ICE
     add(cco_node(CCO_STATUS_PROP), Term::NamedNode(phase_node(&act.phase)))?;
 
-    // actions:scheduledAt
+    // actions:hasDoDateTime
     if let Some(dt) = &act.scheduled_at {
         add(
-            actions_pred("scheduledAt"),
+            actions_pred("hasDoDateTime"),
             Term::Literal(Literal::new_typed_literal(
                 dt.to_rfc3339(),
                 ns(XSD_NS, "dateTime"),
@@ -408,10 +408,10 @@ fn insert_planned_act(store: &Store, act: &PlannedAct) -> Result<(), String> {
         )?;
     }
 
-    // actions:completedAt
+    // actions:hasCompletedDateTime
     if let Some(dt) = &act.completed_at {
         add(
-            actions_pred("completedAt"),
+            actions_pred("hasCompletedDateTime"),
             Term::Literal(Literal::new_typed_literal(
                 dt.to_rfc3339(),
                 ns(XSD_NS, "dateTime"),
@@ -729,7 +729,7 @@ fn get_planned_act_by_id(store: &Store, id: Uuid) -> Result<PlannedAct, String> 
         _ => ActPhase::NotStarted,
     };
 
-    let scheduled_at = find_one(actions_pred("scheduledAt")).and_then(|t| match t {
+    let scheduled_at = find_one(actions_pred("hasDoDateTime")).and_then(|t| match t {
         Term::Literal(l) => DateTime::parse_from_rfc3339(l.value())
             .ok()
             .map(|dt| dt.with_timezone(&chrono::Local)),
@@ -741,7 +741,7 @@ fn get_planned_act_by_id(store: &Store, id: Uuid) -> Result<PlannedAct, String> 
         _ => None,
     });
 
-    let completed_at = find_one(actions_pred("completedAt")).and_then(|t| match t {
+    let completed_at = find_one(actions_pred("hasCompletedDateTime")).and_then(|t| match t {
         Term::Literal(l) => DateTime::parse_from_rfc3339(l.value())
             .ok()
             .map(|dt| dt.with_timezone(&chrono::Local)),
