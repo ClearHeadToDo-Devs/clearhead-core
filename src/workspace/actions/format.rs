@@ -233,8 +233,9 @@ fn format_as_table(
         && opts.list_columns
     {
         println!("Available columns for --columns and --hide-columns:");
-        println!("  state       - Action state ( [x], [-], [=], [_] )");
+        println!("  state       - Action state (Not Started, In Progress, Done, etc.)");
         println!("  name        - Action name with indentation");
+        println!("  charter     - Charter/project this plan belongs to");
         println!("  priority    - Numerical priority (1-9, higher = more important)");
         println!("  due         - Due date/time");
         println!("  dur         - Estimated duration in minutes");
@@ -245,22 +246,8 @@ fn format_as_table(
         return Ok(String::new());
     }
 
-    // Column names in fixed order
-    const COLUMN_NAMES: [&str; 10] = [
-        "State",
-        "Name",
-        "Priority",
-        "Due",
-        "Dur",
-        "Recurrence",
-        "Context",
-        "Description",
-        "ID",
-        "Story",
-    ];
-
-    // Build column index list based on filters
-    let all_idx: Vec<usize> = (0..COLUMN_NAMES.len()).collect();
+    // Build column index list based on filters (exclude index 10 "Story" alias by default)
+    let all_idx: Vec<usize> = (0..COLUMN_NAMES.len() - 1).collect();
     let columns_idx: Vec<usize> = if let Some(opts) = filters {
         match (&opts.columns, &opts.hide_columns) {
             (Some(cols), None) => columns_to_show(cols),
@@ -292,10 +279,20 @@ fn format_as_table(
         let depth = action.depth(list);
         let indent = "  ".repeat(depth.try_into().unwrap());
 
-        // Build all cell values in order
-        let all_cells = vec![
-            format!("{}", action.state),
+        // State cell with color
+        let state_cell = match action.state {
+            super::ActionState::NotStarted => Cell::new("Not Started"),
+            super::ActionState::Completed => Cell::new("Done").fg(Color::Green),
+            super::ActionState::InProgress => Cell::new("In Progress").fg(Color::Yellow),
+            super::ActionState::BlockedorAwaiting => Cell::new("Blocked").fg(Color::Red),
+            super::ActionState::Cancelled => Cell::new("Cancelled").fg(Color::DarkGrey),
+        };
+
+        // Build all cell values in order (matching COLUMN_NAMES)
+        let all_strings: Vec<String> = vec![
+            String::new(), // placeholder for state (rendered as Cell below)
             format!("{}{}", indent, action.name),
+            action.charter.as_deref().unwrap_or("-").to_string(),
             action
                 .priority
                 .map(|p| p.to_string())
@@ -324,15 +321,20 @@ fn format_as_table(
                 .map(|d| d.to_string())
                 .unwrap_or_else(|| "-".to_string()),
             action.id.to_string()[..8].to_string(),
-            action
-                .story
-                .as_ref()
-                .map(|s| s.to_string())
-                .unwrap_or_else(|| "-".to_string()),
+            action.charter.as_deref().unwrap_or("-").to_string(), // "Story" alias → same as Charter
         ];
 
-        // Select only requested columns
-        let row: Vec<String> = columns_idx.iter().map(|&i| all_cells[i].clone()).collect();
+        // Select only requested columns, using colored state cell for index 0
+        let row: Vec<Cell> = columns_idx
+            .iter()
+            .map(|&i| {
+                if i == 0 {
+                    state_cell.clone()
+                } else {
+                    Cell::new(&all_strings[i])
+                }
+            })
+            .collect();
 
         table.add_row(row);
     }
@@ -340,20 +342,21 @@ fn format_as_table(
     Ok(table.to_string())
 }
 
-fn columns_to_show(names: &[String]) -> Vec<usize> {
-    const COLUMN_NAMES: [&str; 10] = [
-        "State",
-        "Name",
-        "Priority",
-        "Due",
-        "Dur",
-        "Recurrence",
-        "Context",
-        "Description",
-        "ID",
-        "Story",
-    ];
+pub const COLUMN_NAMES: [&str; 11] = [
+    "State",
+    "Name",
+    "Charter",
+    "Priority",
+    "Due",
+    "Dur",
+    "Recurrence",
+    "Context",
+    "Description",
+    "ID",
+    "Story",
+];
 
+pub fn columns_to_show(names: &[String]) -> Vec<usize> {
     names
         .iter()
         .filter_map(|name| {
@@ -364,21 +367,10 @@ fn columns_to_show(names: &[String]) -> Vec<usize> {
         .collect()
 }
 
-fn columns_without(hide: &[String], available: &[usize]) -> Vec<usize> {
+pub fn columns_without(hide: &[String], available: &[usize]) -> Vec<usize> {
     available
         .iter()
         .filter(|&i| {
-            const COLUMN_NAMES: [&str; 9] = [
-                "State",
-                "Name",
-                "Priority",
-                "Due",
-                "Dur",
-                "Recurrence",
-                "Context",
-                "Description",
-                "ID",
-            ];
             !hide
                 .iter()
                 .any(|h| h.eq_ignore_ascii_case(COLUMN_NAMES[*i]))

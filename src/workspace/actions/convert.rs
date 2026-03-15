@@ -40,7 +40,7 @@ pub fn split_action(action: &Action) -> (Plan, PlannedAct) {
         contexts: action.context_list.clone(),
         recurrence: action.recurrence.clone(),
         parent: action.parent_id,
-        objective: action.story.clone(),
+        objective: action.charter.clone(),
         alias: action.alias.clone(),
         is_sequential: action.is_sequential,
         duration: action.do_duration,
@@ -86,9 +86,33 @@ pub fn merge_to_action(plan: &Plan, act: &PlannedAct, target_id: Uuid) -> Action
                 })
                 .collect()
         }),
-        story: plan.objective.clone(),
+        charter: plan.objective.clone(),
         alias: plan.alias.clone(),
         is_sequential: plan.is_sequential,
+    }
+}
+
+/// Convert an ActionList into a DomainModel with a charter name derived from
+/// the file path. Pass `None` to get "inbox" (same as `from_actions`).
+pub fn from_actions_with_charter(
+    actions: &ActionList,
+    charter_name: Option<String>,
+) -> DomainModel {
+    let title = charter_name.unwrap_or_else(|| "inbox".to_string());
+    let id = Uuid::new_v5(&INBOX_CHARTER_NS, title.as_bytes());
+    let plans = actions.iter().map(|a| split_action(a).0).collect();
+    let charter = Charter {
+        id,
+        title,
+        description: None,
+        alias: None,
+        parent: None,
+        objectives: None,
+        plans,
+    };
+    DomainModel {
+        objectives: vec![],
+        charters: vec![charter],
     }
 }
 

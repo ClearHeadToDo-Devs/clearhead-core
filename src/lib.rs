@@ -39,3 +39,6 @@ pub mod document;
 pub use document::DomainSaveResult;
 
 pub mod graph;
+
+pub mod display;
+pub use display::format_domain_as_table;

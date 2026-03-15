@@ -45,8 +45,8 @@ pub struct Action {
     pub created_date_time: Option<DateTime<Local>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub predecessors: Option<Vec<PredecessorRef>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub story: Option<String>,
+    #[serde(rename = "story", skip_serializing_if = "Option::is_none")]
+    pub charter: Option<String>,
     /// Alias for stable references that persist even when action name changes
     #[serde(skip_serializing_if = "Option::is_none")]
     pub alias: Option<String>,
@@ -71,7 +71,7 @@ impl Default for Action {
             completed_date_time: None,
             created_date_time: Some(Local::now()),
             predecessors: None,
-            story: None,
+            charter: None,
             alias: None,
             is_sequential: None,
         }
@@ -110,8 +110,8 @@ impl Action {
         if let Some(priority) = &self.priority {
             write!(f, " !{}", priority)?;
         }
-        if let Some(story) = &self.story {
-            write!(f, " *{}", story)?;
+        if let Some(charter) = &self.charter {
+            write!(f, " *{}", charter)?;
         }
         if let Some(context_list) = &self.context_list {
             write!(f, " +{}", context_list.join(","))?;
@@ -255,7 +255,7 @@ pub fn parse_action_recursive(
     let mut priority = None;
     let mut context_list = None;
     let mut id = None;
-    let mut story = None;
+    let mut charter = None;
     let mut do_date_time = None;
     let mut do_duration = None;
     let mut recurrence = None;
@@ -295,7 +295,7 @@ pub fn parse_action_recursive(
             }
             "story" => {
                 let text = get_node_text(&meta, &node.source);
-                story = get_prefixed_text(&meta, &node.source, '*');
+                charter = get_prefixed_text(&meta, &node.source, '*');
                 index_tag(tag_index, text, &meta);
             }
             "context" => {
@@ -391,7 +391,7 @@ pub fn parse_action_recursive(
         } else {
             Some(predecessors)
         },
-        story,
+        charter,
         alias,
         is_sequential,
     });
@@ -682,7 +682,7 @@ mod tests {
             completed_date_time: None,
             created_date_time: None,
             predecessors: None,
-            story: None,
+            charter: None,
             alias: None,
             is_sequential: None,
         };
@@ -761,7 +761,7 @@ mod tests {
             completed_date_time: None,
             created_date_time: None,
             predecessors: Some(vec![pred_ref]),
-            story: None,
+            charter: None,
             alias: None,
             is_sequential: None,
         };

@@ -140,11 +140,11 @@ fn compare_action(old: &Action, new: &Action) -> Vec<FieldChange> {
         });
     }
 
-    if old.story != new.story {
+    if old.charter != new.charter {
         changes.push(FieldChange::Generic {
-            field: "story".to_string(),
-            old: json!(old.story),
-            new: json!(new.story),
+            field: "charter".to_string(),
+            old: json!(old.charter),
+            new: json!(new.charter),
         });
     }
 
@@ -171,7 +171,7 @@ mod tests {
             completed_date_time: None,
             created_date_time: None,
             predecessors: None,
-            story: None,
+            charter: None,
             alias: None,
             is_sequential: None,
         }

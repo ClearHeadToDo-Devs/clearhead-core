@@ -460,7 +460,8 @@ impl WorkspaceStore for FsWorkspaceStore {
         }
 
         let actions = super::parse_actions(&content).map_err(|e| FsError(e))?;
-        Ok(convert::from_actions(&actions))
+        let charter_name = infer_project_name(Path::new(&objective.key));
+        Ok(convert::from_actions_with_charter(&actions, charter_name))
     }
 
     fn save_domain_model(

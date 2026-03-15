@@ -582,7 +582,7 @@ mod tests {
             completed_date_time: None,
             created_date_time: None,
             predecessors: None,
-            story: None,
+            charter: None,
             alias: None,
             is_sequential: None,
         };
@@ -691,7 +691,7 @@ mod tests {
             completed_date_time: None,
             created_date_time: None,
             predecessors: None,
-            story: None,
+            charter: None,
             alias: None,
             is_sequential: None,
         };
@@ -771,7 +771,7 @@ mod tests {
             completed_date_time: None,
             created_date_time: None,
             predecessors: None,
-            story: None,
+            charter: None,
             alias: None,
             is_sequential: None,
         };
@@ -819,7 +819,7 @@ mod tests {
             completed_date_time: None,
             created_date_time: None,
             predecessors: None,
-            story: None,
+            charter: None,
             alias: None,
             is_sequential: None,
         };
@@ -881,7 +881,7 @@ mod tests {
             completed_date_time: None,
             created_date_time: None,
             predecessors: None,
-            story: None,
+            charter: None,
             alias: None,
             is_sequential: None,
         };
@@ -946,7 +946,7 @@ mod tests {
             completed_date_time: None,
             created_date_time: None,
             predecessors: None,
-            story: None,
+            charter: None,
             alias: None,
             is_sequential: None,
         };
