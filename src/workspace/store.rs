@@ -342,10 +342,20 @@ impl FsWorkspaceStore {
     }
 }
 
+/// Strip archive suffixes (`.completed`, `.archived`) from a file stem.
+///
+/// `health.completed` → `"health"`, `health` → `"health"`.
+pub fn strip_archive_suffix(stem: &str) -> &str {
+    stem.strip_suffix(".completed")
+        .or_else(|| stem.strip_suffix(".archived"))
+        .unwrap_or(stem)
+}
+
 /// Infer a human-readable project name from a relative file path.
 ///
 /// Rules:
 /// - `project.actions` → "project"
+/// - `project.completed.actions` → "project"  (archive convention)
 /// - `project/next.actions` → "project"
 /// - `project/logs/2026-01.actions` → "project"
 /// - `inbox.actions` → None (inbox is special, not a project)
@@ -358,10 +368,11 @@ pub fn infer_project_name(relative_path: &Path) -> Option<String> {
 
     if components.len() == 1 {
         let filename = relative_path.file_stem()?.to_str()?;
-        if filename == "inbox" {
+        let base = strip_archive_suffix(filename);
+        if base == "inbox" {
             return None;
         }
-        return Some(filename.to_string());
+        return Some(base.to_string());
     }
 
     let first = components.first()?;
@@ -685,20 +696,25 @@ impl WorkspaceStore for FsWorkspaceStore {
         }
 
         // Phase 2: Implicit charters from .actions files
-        for actions_path in &root_actions_files {
+        // Sort for determinism: primary files (e.g., health.actions) before archive
+        // variants (health.completed.actions), so the primary becomes the source.
+        let mut sorted_actions = root_actions_files.clone();
+        sorted_actions.sort();
+        for actions_path in &sorted_actions {
             if let Some(stem) = actions_path.file_stem().and_then(|s| s.to_str()) {
-                if stem == "inbox" {
+                let base = strip_archive_suffix(stem);
+                if base == "inbox" {
                     continue;
                 }
-                if !seen_names.contains(&stem.to_lowercase()) {
-                    seen_names.insert(stem.to_lowercase());
+                if !seen_names.contains(&base.to_lowercase()) {
+                    seen_names.insert(base.to_lowercase());
                     let relative = actions_path
                         .strip_prefix(&self.root)
                         .unwrap_or(actions_path)
                         .to_string_lossy()
                         .to_string();
                     charters.push(DiscoveredCharter {
-                        charter: super::charter::implicit_charter(stem),
+                        charter: super::charter::implicit_charter(base),
                         source_key: relative,
                         is_explicit: false,
                     });
