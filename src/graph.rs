@@ -1125,4 +1125,78 @@ mod tests {
             assert_eq!(statuses.len(), 1, "PlannedAct should have exactly one status");
         }
     }
+
+    #[test]
+    fn test_charter_stored_with_type_and_name() {
+        let store = create_store().unwrap();
+        let actions = vec![Action::new("Charter plan")];
+        let model = convert::from_actions_with_charter(&actions, Some("build_clearhead".to_string()));
+
+        load_domain_model(&store, &model).unwrap();
+
+        let query = format!(
+            "SELECT ?name WHERE {{ ?c a <{}Charter> . ?c <{}name> ?name }}",
+            ACTIONS_NS, SCHEMA_NS
+        );
+        let results = SparqlEvaluator::new()
+            .parse_query(&query)
+            .unwrap()
+            .on_store(&store)
+            .execute()
+            .unwrap();
+
+        if let QueryResults::Solutions(solutions) = results {
+            let names: Vec<String> = solutions
+                .filter_map(|s| s.ok())
+                .filter_map(|s| s.get("name").cloned())
+                .filter_map(|t| {
+                    if let Term::Literal(l) = t {
+                        Some(l.value().to_string())
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            assert_eq!(names, vec!["build_clearhead"]);
+        } else {
+            panic!("Expected query solutions");
+        }
+    }
+
+    #[test]
+    fn test_charter_has_part_links_to_plans() {
+        let store = create_store().unwrap();
+        let actions = vec![Action::new("Plan A"), Action::new("Plan B")];
+        let model = convert::from_actions_with_charter(&actions, Some("my_project".to_string()));
+
+        load_domain_model(&store, &model).unwrap();
+
+        // Query plans under charter via bfo:has_part — the charter→plan join that
+        // replaces the imperative Rust filtering block in commands/plan.rs
+        let query = format!(
+            "SELECT ?id WHERE {{ \
+                ?charter a <{actions}Charter> . \
+                ?charter <{schema}name> \"my_project\" . \
+                ?charter <{bfo}{has_part}> ?plan . \
+                ?plan <{actions}id> ?id \
+            }}",
+            actions = ACTIONS_NS,
+            schema = SCHEMA_NS,
+            bfo = BFO_NS,
+            has_part = BFO_HAS_PART,
+        );
+        let results = SparqlEvaluator::new()
+            .parse_query(&query)
+            .unwrap()
+            .on_store(&store)
+            .execute()
+            .unwrap();
+
+        if let QueryResults::Solutions(solutions) = results {
+            let ids: Vec<_> = solutions.filter_map(|s| s.ok()).collect();
+            assert_eq!(ids.len(), 2, "Charter should link to both plans via bfo:has_part");
+        } else {
+            panic!("Expected query solutions");
+        }
+    }
 }
