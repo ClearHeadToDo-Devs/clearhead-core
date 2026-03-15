@@ -20,7 +20,7 @@
 //! let ids = graph::query_actions(&store, "SELECT ?id WHERE { ... }")?;
 //! ```
 
-use crate::domain::{ActPhase, DomainModel, Plan, PlannedAct};
+use crate::domain::{ActPhase, Charter, DomainModel, Plan, PlannedAct};
 use chrono::DateTime;
 use oxigraph::io::RdfFormat;
 use oxigraph::model::{
@@ -34,16 +34,20 @@ use uuid::Uuid;
 // Namespace constants
 const ACTIONS_NS: &str = "https://clearhead.us/vocab/actions/v4#";
 const CCO_NS: &str = "https://www.commoncoreontologies.org/";
+const BFO_NS: &str = "http://purl.obolibrary.org/obo/";
 const SCHEMA_NS: &str = "http://schema.org/";
 const RDF_NS: &str = "http://www.w3.org/1999/02/22-rdf-syntax-ns#";
 const XSD_NS: &str = "http://www.w3.org/2001/XMLSchema#";
 const SKOS_NS: &str = "http://www.w3.org/2004/02/skos/core#";
 
+// BFO property identifiers
+const BFO_HAS_PART: &str = "BFO_0000051"; // has_part — Charter → Plan containment
+
 // CCO class and property identifiers (opaque OBO IDs from the CCO ontology)
 const CCO_PLAN: &str = "ont00000974";
 const CCO_PLANNED_ACT: &str = "ont00000228";
 const CCO_PRESCRIBES: &str = "ont00001942";
-const CCO_STATUS_PROP: &str = "ont00001868"; // is_measured_by_nominal
+const CCO_STATUS_PROP: &str = "ont00001868"; // is a nominal measurement of
 
 /// Create an in-memory Oxigraph store
 pub fn create_store() -> Result<Store, String> {
@@ -69,6 +73,10 @@ fn cco_node(id: &str) -> NamedNode {
 
 fn schema_pred(name: &str) -> NamedNode {
     ns(SCHEMA_NS, name)
+}
+
+fn bfo_pred(name: &str) -> NamedNode {
+    ns(BFO_NS, name)
 }
 
 fn rdf_type() -> NamedNode {
@@ -202,15 +210,56 @@ fn phase_node(phase: &ActPhase) -> NamedNode {
 
 /// Load a DomainModel into the store using v4 ontology
 ///
-/// This inserts Plans and PlannedActs as separate entities with proper
-/// CCO-aligned types and relationships.
+/// This inserts Charters, Plans, and PlannedActs with proper CCO/BFO-aligned
+/// types and relationships, including Charter → Plan containment via bfo:has_part.
 pub fn load_domain_model(store: &Store, model: &DomainModel) -> Result<(), String> {
-    for plan in model.all_plans() {
-        insert_plan(store, plan)?;
+    for charter in &model.charters {
+        insert_charter(store, charter)?;
     }
     for act in model.all_acts() {
         insert_planned_act(store, act)?;
     }
+    Ok(())
+}
+
+/// Insert a Charter into the store
+///
+/// Maps to actions:Charter — a Directive ICE declaring scope of directed concern.
+/// Emits bfo:has_part (BFO_0000051) triples linking the charter to each of its plans.
+fn insert_charter(store: &Store, charter: &Charter) -> Result<(), String> {
+    let subject = NamedOrBlankNode::NamedNode(
+        NamedNode::new(format!("urn:uuid:{}", charter.id)).unwrap(),
+    );
+    let graph = GraphName::DefaultGraph;
+
+    let add = |pred: NamedNode, term: Term| {
+        store
+            .insert(&Quad::new(subject.clone(), pred, term, graph.clone()))
+            .map_err(|e| e.to_string())
+    };
+
+    // rdf:type actions:Charter
+    add(rdf_type(), Term::NamedNode(ns(ACTIONS_NS, "Charter")))?;
+
+    // schema:name
+    add(
+        schema_pred("name"),
+        Term::Literal(Literal::new_simple_literal(&charter.title)),
+    )?;
+
+    // actions:id
+    add(
+        actions_pred("id"),
+        Term::Literal(Literal::new_simple_literal(charter.id.to_string())),
+    )?;
+
+    // bfo:has_part (BFO_0000051) → each plan, then insert the plan itself
+    for plan in &charter.plans {
+        let plan_uri = NamedNode::new(format!("urn:uuid:{}", plan.id)).unwrap();
+        add(bfo_pred(BFO_HAS_PART), Term::NamedNode(plan_uri))?;
+        insert_plan(store, plan)?;
+    }
+
     Ok(())
 }
 
