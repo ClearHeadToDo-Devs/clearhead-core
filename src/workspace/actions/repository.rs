@@ -76,9 +76,11 @@ impl ActionRepository {
 ///
 /// Rules:
 /// - `project.actions` -> project
-/// - `project/next.actions` -> project
-/// - `project/logs/2026-01.actions` -> project
 /// - `inbox.actions` -> None (not a project)
+/// - `project/next.actions` -> project  (primary file for that charter)
+/// - `project/subcharter.actions` -> subcharter  (sub-charter)
+/// - `project/subdir/next.actions` -> subdir
+/// - `project/logs/2026-01.actions` -> 2026-01
 pub fn infer_project_name(relative_path: &Path) -> Option<String> {
     let components: Vec<_> = relative_path.components().collect();
 
@@ -86,21 +88,25 @@ pub fn infer_project_name(relative_path: &Path) -> Option<String> {
         return None;
     }
 
+    let filename = relative_path.file_name()?.to_str()?;
+
     // Single file at root: check if it's a project file
     if components.len() == 1 {
-        let filename = relative_path.file_stem()?.to_str()?;
-        // inbox is special - not a project
-        if filename == "inbox" {
+        let stem = relative_path.file_stem()?.to_str()?;
+        if stem == "inbox" {
             return None;
         }
-        return Some(filename.to_string());
+        return Some(stem.to_string());
     }
 
-    // Nested file: first directory is the project
-    let first = components.first()?;
-    if let std::path::Component::Normal(name) = first {
-        return name.to_str().map(String::from);
+    // Nested: next.actions → parent dir is the charter; anything else → file stem is the charter
+    if filename == "next.actions" {
+        if let std::path::Component::Normal(name) = components[components.len() - 2] {
+            return name.to_str().map(String::from);
+        }
+        return None;
     }
 
-    None
+    let stem = relative_path.file_stem()?.to_str()?;
+    Some(stem.to_string())
 }

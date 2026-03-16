@@ -21,6 +21,7 @@
 //! ```
 
 use crate::domain::{ActPhase, Charter, DomainModel, Plan, PlannedAct};
+use crate::workspace::actions::convert::INBOX_CHARTER_NS;
 use chrono::DateTime;
 use oxigraph::io::RdfFormat;
 use oxigraph::model::{
@@ -252,6 +253,22 @@ fn insert_charter(store: &Store, charter: &Charter) -> Result<(), String> {
         actions_pred("id"),
         Term::Literal(Literal::new_simple_literal(charter.id.to_string())),
     )?;
+
+    // actions:hasSubCharter → when a parent charter name is known
+    if let Some(ref parent_title) = charter.parent {
+        let parent_uuid = Uuid::new_v5(&INBOX_CHARTER_NS, parent_title.as_bytes());
+        let parent_uri = NamedOrBlankNode::NamedNode(
+            NamedNode::new(format!("urn:uuid:{}", parent_uuid)).unwrap(),
+        );
+        store
+            .insert(&Quad::new(
+                parent_uri,
+                actions_pred("hasSubCharter"),
+                Term::NamedNode(NamedNode::new(format!("urn:uuid:{}", charter.id)).unwrap()),
+                GraphName::DefaultGraph,
+            ))
+            .map_err(|e| e.to_string())?;
+    }
 
     // bfo:has_part (BFO_0000051) → each plan, then insert the plan itself
     for plan in &charter.plans {

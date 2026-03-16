@@ -356,9 +356,11 @@ pub fn strip_archive_suffix(stem: &str) -> &str {
 /// Rules:
 /// - `project.actions` → "project"
 /// - `project.completed.actions` → "project"  (archive convention)
-/// - `project/next.actions` → "project"
-/// - `project/logs/2026-01.actions` → "project"
 /// - `inbox.actions` → None (inbox is special, not a project)
+/// - `project/next.actions` → "project"  (primary file for that charter)
+/// - `project/subcharter.actions` → "subcharter"  (sub-charter)
+/// - `project/subdir/next.actions` → "subdir"
+/// - `project/logs/2026-01.actions` → "2026-01"
 pub fn infer_project_name(relative_path: &Path) -> Option<String> {
     let components: Vec<_> = relative_path.components().collect();
 
@@ -366,20 +368,62 @@ pub fn infer_project_name(relative_path: &Path) -> Option<String> {
         return None;
     }
 
+    let filename = relative_path.file_name()?.to_str()?;
+
     if components.len() == 1 {
-        let filename = relative_path.file_stem()?.to_str()?;
-        let base = strip_archive_suffix(filename);
+        let stem = relative_path.file_stem()?.to_str()?;
+        let base = strip_archive_suffix(stem);
         if base == "inbox" {
             return None;
         }
         return Some(base.to_string());
     }
 
-    let first = components.first()?;
-    if let std::path::Component::Normal(name) = first {
-        return name.to_str().map(String::from);
+    // Nested: `next.actions` means the parent dir IS the charter name.
+    // Anything else means the file stem IS the charter name (sub-charter).
+    if filename == "next.actions" {
+        if let std::path::Component::Normal(name) = components[components.len() - 2] {
+            return name.to_str().map(String::from);
+        }
+        return None;
     }
 
+    let stem = relative_path.file_stem()?.to_str()?;
+    Some(strip_archive_suffix(stem).to_string())
+}
+
+/// Infer the parent charter name from a file path.
+///
+/// Returns `None` if the file's charter has no structural parent.
+///
+/// - `project.actions` → None
+/// - `project/next.actions` → None  (top-level directory charter)
+/// - `project/subcharter.actions` → Some("project")
+/// - `project/subdir/next.actions` → Some("project")
+/// - `project/subdir/sub.actions` → Some("subdir")
+pub fn infer_parent_charter_name(relative_path: &Path) -> Option<String> {
+    let components: Vec<_> = relative_path.components().collect();
+    let filename = relative_path.file_name()?.to_str()?;
+
+    if components.len() <= 1 {
+        return None;
+    }
+
+    if filename == "next.actions" {
+        // project/next.actions → charter "project", no parent
+        // project/subdir/next.actions → charter "subdir", parent "project"
+        if components.len() == 2 {
+            return None;
+        }
+        if let std::path::Component::Normal(name) = components[components.len() - 3] {
+            return name.to_str().map(String::from);
+        }
+    } else {
+        // project/subcharter.actions → parent "project"
+        if let std::path::Component::Normal(name) = components[components.len() - 2] {
+            return name.to_str().map(String::from);
+        }
+    }
     None
 }
 
@@ -461,7 +505,14 @@ impl WorkspaceStore for FsWorkspaceStore {
 
         let actions = super::parse_actions(&content).map_err(|e| FsError(e))?;
         let charter_name = infer_project_name(Path::new(&objective.key));
-        Ok(convert::from_actions_with_charter(&actions, charter_name))
+        let parent_name = infer_parent_charter_name(Path::new(&objective.key));
+        let mut model = convert::from_actions_with_charter(&actions, charter_name);
+        if let Some(parent) = parent_name {
+            if let Some(charter) = model.charters.first_mut() {
+                charter.parent = Some(parent);
+            }
+        }
+        Ok(model)
     }
 
     fn save_domain_model(
@@ -1053,9 +1104,41 @@ mod tests {
             infer_project_name(Path::new("myproject/next.actions")),
             Some("myproject".to_string())
         );
+        // sub-charter: file stem is the charter name
+        assert_eq!(
+            infer_project_name(Path::new("myproject/subcharter.actions")),
+            Some("subcharter".to_string())
+        );
+        // nested next.actions: parent dir is the charter
+        assert_eq!(
+            infer_project_name(Path::new("myproject/subdir/next.actions")),
+            Some("subdir".to_string())
+        );
+        // nested non-next: file stem is the charter
         assert_eq!(
             infer_project_name(Path::new("myproject/logs/2026-01.actions")),
+            Some("2026-01".to_string())
+        );
+    }
+
+    #[test]
+    fn test_infer_parent_charter_name_rules() {
+        assert_eq!(infer_parent_charter_name(Path::new("work.actions")), None);
+        assert_eq!(
+            infer_parent_charter_name(Path::new("myproject/next.actions")),
+            None
+        );
+        assert_eq!(
+            infer_parent_charter_name(Path::new("myproject/subcharter.actions")),
             Some("myproject".to_string())
+        );
+        assert_eq!(
+            infer_parent_charter_name(Path::new("myproject/subdir/next.actions")),
+            Some("myproject".to_string())
+        );
+        assert_eq!(
+            infer_parent_charter_name(Path::new("myproject/subdir/sub.actions")),
+            Some("subdir".to_string())
         );
     }
 }
