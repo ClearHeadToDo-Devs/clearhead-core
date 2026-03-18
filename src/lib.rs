@@ -42,3 +42,9 @@ pub mod graph;
 
 pub mod display;
 pub use display::format_domain_as_table;
+
+pub mod telemetry;
+pub use telemetry::{
+    NoopEmitter, TelemetryEmitter, TelemetryEvent, TelemetryRecord, Tool, event_from_field_change,
+    event_from_state_change, noop_emitter,
+};

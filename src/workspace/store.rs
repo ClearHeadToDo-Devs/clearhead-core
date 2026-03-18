@@ -664,18 +664,20 @@ impl WorkspaceStore for FsWorkspaceStore {
             }
         }
 
-        // Phase 1b: Explicit charters from README.md in project directories
+        // Phase 1b: Explicit charters from README.md and sub-.md files in project directories
         for dir_path in &directories {
+            let parent_name = dir_path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("")
+                .to_string();
+
             let readme = dir_path.join("README.md");
             if readme.is_file() {
                 if let Ok(content) = std::fs::read_to_string(&readme) {
                     if let Ok(charter) = super::charter::parse_charter(&content) {
-                        let dir_name = dir_path
-                            .file_name()
-                            .and_then(|n| n.to_str())
-                            .unwrap_or("");
                         seen_names.insert(charter.title.to_lowercase());
-                        seen_names.insert(dir_name.to_lowercase());
+                        seen_names.insert(parent_name.to_lowercase());
                         if let Some(ref alias) = charter.alias {
                             seen_names.insert(alias.to_lowercase());
                         }
@@ -693,17 +695,55 @@ impl WorkspaceStore for FsWorkspaceStore {
                 }
             }
 
-            // Check for sub-directory charters
+            // Scan sub-entries: .md files become explicit sub-charters,
+            // sub-directories with .actions files become implicit sub-charters.
             if let Ok(sub_entries) = std::fs::read_dir(dir_path) {
-                let parent_name = dir_path
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("")
-                    .to_string();
-
                 for sub_entry in sub_entries.flatten() {
                     let sub_path = sub_entry.path();
-                    if sub_path.is_dir() {
+
+                    if sub_path.is_file() {
+                        let filename = match sub_path.file_name().and_then(|n| n.to_str()) {
+                            Some(f) => f.to_string(),
+                            None => continue,
+                        };
+                        if filename == "README.md" {
+                            continue;
+                        }
+                        if sub_path.extension().map(|e| e == "md").unwrap_or(false) {
+                            if let Ok(content) = std::fs::read_to_string(&sub_path) {
+                                if let Ok(mut charter) = super::charter::parse_charter(&content) {
+                                    if charter.parent.is_none() {
+                                        charter.parent = Some(parent_name.clone());
+                                    }
+                                    let title_lower = charter.title.to_lowercase();
+                                    let stem = sub_path
+                                        .file_stem()
+                                        .and_then(|s| s.to_str())
+                                        .unwrap_or("")
+                                        .to_lowercase();
+                                    if !seen_names.contains(&title_lower)
+                                        && !seen_names.contains(&stem)
+                                    {
+                                        seen_names.insert(title_lower);
+                                        seen_names.insert(stem);
+                                        if let Some(ref alias) = charter.alias {
+                                            seen_names.insert(alias.to_lowercase());
+                                        }
+                                        let relative = sub_path
+                                            .strip_prefix(&self.root)
+                                            .unwrap_or(&sub_path)
+                                            .to_string_lossy()
+                                            .to_string();
+                                        charters.push(DiscoveredCharter {
+                                            charter,
+                                            source_key: relative,
+                                            is_explicit: true,
+                                        });
+                                    }
+                                }
+                            }
+                        }
+                    } else if sub_path.is_dir() {
                         if let Some(name) = sub_path.file_name() {
                             if name.to_string_lossy().starts_with('.') {
                                 continue;

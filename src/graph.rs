@@ -111,6 +111,60 @@ pub fn query_actions(store: &Store, sparql: &str) -> Result<Vec<String>, String>
     Ok(ids)
 }
 
+/// Execute a raw SPARQL SELECT query and return all variable bindings as string maps
+pub fn query_raw(store: &Store, sparql: &str) -> Result<Vec<HashMap<String, String>>, String> {
+    let results = SparqlEvaluator::new()
+        .parse_query(sparql)
+        .map_err(|e| e.to_string())?
+        .on_store(store)
+        .execute()
+        .map_err(|e| e.to_string())?;
+
+    match results {
+        QueryResults::Solutions(solutions) => {
+            // Collect var names before consuming the iterator (lifetime constraint)
+            let var_names: Vec<String> = solutions
+                .variables()
+                .iter()
+                .map(|v| v.as_str().to_string())
+                .collect();
+            let mut rows = Vec::new();
+            for solution in solutions {
+                let s = solution.map_err(|e| e.to_string())?;
+                let mut row = HashMap::new();
+                for var_name in &var_names {
+                    if let Some(term) = s.get(var_name.as_str()) {
+                        let value = match term {
+                            Term::NamedNode(nn) => nn.as_str().to_string(),
+                            Term::Literal(lit) => lit.value().to_string(),
+                            Term::BlankNode(bn) => format!("_:{}", bn.as_str()),
+                        };
+                        row.insert(var_name.clone(), value);
+                    }
+                }
+                rows.push(row);
+            }
+            Ok(rows)
+        }
+        QueryResults::Boolean(_) => {
+            Err("ASK queries not supported; use SELECT".to_string())
+        }
+        QueryResults::Graph(_) => {
+            Err("CONSTRUCT/DESCRIBE not supported; use SELECT".to_string())
+        }
+    }
+}
+
+/// Build a SELECT * SPARQL query from a WHERE clause with standard prefix injections
+pub fn build_raw_where_query(where_clause: &str) -> String {
+    format!(
+        "PREFIX actions: <{ACTIONS_NS}>\nPREFIX cco: <{CCO_NS}>\n\
+         PREFIX schema: <{SCHEMA_NS}>\nPREFIX rdf: <{RDF_NS}>\n\
+         PREFIX xsd: <{XSD_NS}>\nPREFIX skos: <{SKOS_NS}>\n\
+         SELECT * WHERE {{ {where_clause} }}"
+    )
+}
+
 /// Build a SPARQL query from a WHERE clause
 ///
 /// Wraps the where_clause in `SELECT ?id WHERE { ... }` and injects standard prefixes.
