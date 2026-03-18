@@ -214,8 +214,17 @@ fn phase_node(phase: &ActPhase) -> NamedNode {
 /// This inserts Charters, Plans, and PlannedActs with proper CCO/BFO-aligned
 /// types and relationships, including Charter → Plan containment via bfo:has_part.
 pub fn load_domain_model(store: &Store, model: &DomainModel) -> Result<(), String> {
+    // Build title → UUID map so hasSubCharter triples use the actual charter UUID
+    // rather than re-deriving it (which breaks when explicit .md charters have
+    // their own UUID that differs from the INBOX_CHARTER_NS-derived one).
+    let charter_id_by_title: std::collections::HashMap<String, Uuid> = model
+        .charters
+        .iter()
+        .map(|c| (c.title.to_lowercase(), c.id))
+        .collect();
+
     for charter in &model.charters {
-        insert_charter(store, charter)?;
+        insert_charter(store, charter, &charter_id_by_title)?;
     }
     for act in model.all_acts() {
         insert_planned_act(store, act)?;
@@ -227,7 +236,11 @@ pub fn load_domain_model(store: &Store, model: &DomainModel) -> Result<(), Strin
 ///
 /// Maps to actions:Charter — a Directive ICE declaring scope of directed concern.
 /// Emits bfo:has_part (BFO_0000051) triples linking the charter to each of its plans.
-fn insert_charter(store: &Store, charter: &Charter) -> Result<(), String> {
+fn insert_charter(
+    store: &Store,
+    charter: &Charter,
+    charter_id_by_title: &std::collections::HashMap<String, Uuid>,
+) -> Result<(), String> {
     let subject = NamedOrBlankNode::NamedNode(
         NamedNode::new(format!("urn:uuid:{}", charter.id)).unwrap(),
     );
@@ -254,9 +267,14 @@ fn insert_charter(store: &Store, charter: &Charter) -> Result<(), String> {
         Term::Literal(Literal::new_simple_literal(charter.id.to_string())),
     )?;
 
-    // actions:hasSubCharter → when a parent charter name is known
+    // actions:hasSubCharter → when a parent charter name is known.
+    // Prefer the actual UUID from the model (handles explicit .md charters with
+    // their own UUIDs); fall back to INBOX_CHARTER_NS derivation otherwise.
     if let Some(ref parent_title) = charter.parent {
-        let parent_uuid = Uuid::new_v5(&INBOX_CHARTER_NS, parent_title.as_bytes());
+        let parent_uuid = charter_id_by_title
+            .get(&parent_title.to_lowercase())
+            .copied()
+            .unwrap_or_else(|| Uuid::new_v5(&INBOX_CHARTER_NS, parent_title.as_bytes()));
         let parent_uri = NamedOrBlankNode::NamedNode(
             NamedNode::new(format!("urn:uuid:{}", parent_uuid)).unwrap(),
         );
