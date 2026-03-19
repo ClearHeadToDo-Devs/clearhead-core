@@ -512,6 +512,17 @@ impl WorkspaceStore for FsWorkspaceStore {
                 charter.parent = Some(parent);
             }
         }
+
+        // Load open + closed acts for this charter and merge both
+        let open_path = super::acts::open_acts_path(&path);
+        let closed_path = super::acts::closed_acts_path(&path);
+        let mut loaded_acts = super::acts::read_acts(&open_path).map_err(|e| FsError(e))?;
+        let closed_acts = super::acts::read_acts(&closed_path).map_err(|e| FsError(e))?;
+        loaded_acts.extend(closed_acts);
+        if !loaded_acts.is_empty() {
+            super::acts::merge_acts_into_model(&mut model, loaded_acts);
+        }
+
         Ok(model)
     }
 

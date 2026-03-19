@@ -10,6 +10,7 @@
 use tree_sitter::Tree;
 
 pub mod actions;
+pub mod acts;
 pub mod charter;
 pub mod store;
 
@@ -17,6 +18,10 @@ pub mod store;
 pub use actions::{
     Action, ActionList, ActionRepository, ActionSource, ActionState, Diff, OutputFormat,
     ParsedDocument, SourcedAction, SourceMetadata, SourceRange, diff_actions, format,
+};
+pub use acts::{
+    closed_acts_path, merge_acts_into_model, open_acts_path, read_acts, write_acts,
+    write_acts_for_plans,
 };
 pub use charter::{format_charter, implicit_charter, parse_charter};
 pub use store::{DiscoveredCharter, FsWorkspaceStore, InMemoryStore, ObjectiveRef, WorkspaceStore};
