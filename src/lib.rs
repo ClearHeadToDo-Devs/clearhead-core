@@ -44,6 +44,18 @@ pub mod graph;
 pub mod display;
 pub use display::format_domain_as_table;
 
+pub mod reference;
+pub use reference::{
+    MatchMode,
+    ReferenceError,
+    ReferenceOptions,
+    ReferenceTarget,
+    filter_model_for_act,
+    filter_model_for_charter,
+    filter_model_for_plan,
+    resolve_reference,
+};
+
 pub mod telemetry;
 pub use telemetry::{
     NoopEmitter, TelemetryEmitter, TelemetryEvent, TelemetryRecord, Tool, event_from_field_change,
