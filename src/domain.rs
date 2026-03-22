@@ -210,9 +210,7 @@ impl fmt::Display for Recurrence {
 ///
 /// Maps to `actions:ActPhase` (subclass of bfo:Quality).
 /// The phase inheres in the PlannedAct, not the Plan.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum ActPhase {
     #[default]
     NotStarted,
@@ -676,5 +674,66 @@ mod tests {
         assert_eq!(occurrences[0].format("%Y-%m-%d").to_string(), "2025-01-01");
         assert_eq!(occurrences[1].format("%Y-%m-%d").to_string(), "2025-01-02");
         assert_eq!(occurrences[2].format("%Y-%m-%d").to_string(), "2025-01-03");
+    }
+
+    #[test]
+    fn test_expand_acts_running_twice_should_not_change_structure() {
+        let mut model = DomainModel::new();
+
+        let plan_id = Uuid::new_v4();
+
+        let charter = Charter {
+            id: Uuid::new_v4(),
+            title: "Test Charter".to_string(),
+            description: None,
+            alias: None,
+            parent: None,
+            objectives: None,
+            plans: vec![Plan {
+                id: plan_id,
+                name: "Test Recurring".to_string(),
+                description: None,
+                priority: None,
+                contexts: None,
+                recurrence: Some(Recurrence {
+                    frequency: "daily".to_string(),
+                    interval: Some(1),
+                    count: Some(2),
+                    until: None,
+                    by_second: None,
+                    by_minute: None,
+                    by_hour: None,
+                    by_day: None,
+                    by_month_day: None,
+                    by_year_day: None,
+                    by_week_no: None,
+                    by_month: None,
+                    by_set_pos: None,
+                    week_start: None,
+                }),
+                parent: None,
+                objective: None,
+                alias: None,
+                is_sequential: None,
+                duration: Some(30),
+                depends_on: None,
+                acts: vec![PlannedAct {
+                    id: Uuid::new_v4(),
+                    plan_id: plan_id,
+                    phase: ActPhase::NotStarted,
+                    scheduled_at: Some(Local::now()),
+                    duration: Some(30),
+                    completed_at: None,
+                    created_at: Some(Local::now()),
+                }],
+            }],
+        };
+
+        model.charters.push(charter);
+
+        model.expand_recurring_plans(7);
+        assert_eq!(model.all_acts().len(), 3);
+        model.expand_recurring_plans(7);
+        assert_eq!(model.all_acts().len(), 3); // No duplicates should be created
     }
 }
