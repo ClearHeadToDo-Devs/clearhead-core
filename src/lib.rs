@@ -17,9 +17,9 @@ pub mod workspace;
 pub use workspace::{
     Action, ActionList, ActionState, Diff, DiscoveredCharter, FsWorkspaceStore, InMemoryStore,
     ObjectiveRef, OutputFormat, ParsedDocument, SourceMetadata, SourceRange, WorkspaceStore,
-    closed_acts_path, diff_actions, format, format_charter, implicit_charter, merge_acts_into_model,
-    open_acts_path, parse_actions, parse_charter, parse_document, parse_domain_model, parse_tree,
-    patch_action_list, read_acts, write_acts, write_acts_for_plans,
+    closed_acts_path, diff_actions, format, format_charter, implicit_charter,
+    merge_acts_into_model, open_acts_path, parse_actions, parse_charter, parse_document,
+    parse_domain_model, parse_tree, patch_action_list, read_acts, write_acts, write_acts_for_plans,
 };
 
 pub mod diff;
@@ -46,14 +46,8 @@ pub use display::format_domain_as_table;
 
 pub mod reference;
 pub use reference::{
-    MatchMode,
-    ReferenceError,
-    ReferenceOptions,
-    ReferenceTarget,
-    filter_model_for_act,
-    filter_model_for_charter,
-    filter_model_for_plan,
-    resolve_reference,
+    MatchMode, ReferenceError, ReferenceOptions, ReferenceTarget, filter_model_for_act,
+    filter_model_for_charter, filter_model_for_plan, resolve_reference,
 };
 
 pub mod telemetry;

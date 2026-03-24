@@ -24,8 +24,7 @@ use crate::domain::Charter;
 
 /// Namespace UUID for deterministic charter IDs (v5).
 const CHARTER_NS: Uuid = Uuid::from_bytes([
-    0x63, 0x68, 0x61, 0x72, 0x74, 0x65, 0x72, 0x2d,
-    0x6e, 0x73, 0x2d, 0x75, 0x75, 0x69, 0x64, 0x00,
+    0x63, 0x68, 0x61, 0x72, 0x74, 0x65, 0x72, 0x2d, 0x6e, 0x73, 0x2d, 0x75, 0x75, 0x69, 0x64, 0x00,
 ]);
 
 /// Internal frontmatter representation.
@@ -52,19 +51,21 @@ pub fn parse_charter(content: &str) -> Result<Charter, String> {
     let (frontmatter, body) = split_frontmatter(content);
 
     let fm: CharterFrontmatter = match frontmatter {
-        Some(yaml) => serde_yml::from_str(yaml)
-            .map_err(|e| format!("Invalid charter frontmatter: {}", e))?,
+        Some(yaml) => {
+            serde_yml::from_str(yaml).map_err(|e| format!("Invalid charter frontmatter: {}", e))?
+        }
         None => CharterFrontmatter::default(),
     };
 
     let (h1_title, description) = extract_title_and_description(body);
 
-    let title = fm
-        .title
-        .or(h1_title)
-        .ok_or_else(|| "Charter must have a title (frontmatter `title` or H1 header)".to_string())?;
+    let title = fm.title.or(h1_title).ok_or_else(|| {
+        "Charter must have a title (frontmatter `title` or H1 header)".to_string()
+    })?;
 
-    let id = fm.id.unwrap_or_else(|| Uuid::new_v5(&CHARTER_NS, title.as_bytes()));
+    let id = fm
+        .id
+        .unwrap_or_else(|| Uuid::new_v5(&CHARTER_NS, title.as_bytes()));
 
     Ok(Charter {
         id,
@@ -85,7 +86,7 @@ pub fn implicit_charter(name: &str) -> Charter {
         id: Uuid::new_v5(&CHARTER_NS, name.as_bytes()),
         title: name.to_string(),
         description: None,
-        alias: None,
+        alias: Some(name.to_string()),
         parent: None,
         objectives: None,
         plans: vec![],
@@ -270,7 +271,7 @@ Stay healthy and fit through regular exercise and diet.
         let charter = implicit_charter("health");
         assert_eq!(charter.title, "health");
         assert!(charter.description.is_none());
-        assert!(charter.alias.is_none());
+        assert_eq!(charter.alias.unwrap(), "health");
     }
 
     #[test]

@@ -356,14 +356,14 @@ fn resolve_path(model: &DomainModel, segments: &[&str]) -> Result<ReferenceTarge
             return Err(ReferenceError::new(format!(
                 "No charter matches root reference '{}'",
                 first
-            )))
+            )));
         }
         1 => Scope::Charter(root_matches[0]),
         _ => {
             return Err(ReferenceError::new(format!(
                 "Ambiguous root charter reference '{}'; use c:<alias> or c:<uuid>",
                 first
-            )))
+            )));
         }
     };
 
@@ -387,7 +387,7 @@ fn resolve_path(model: &DomainModel, segments: &[&str]) -> Result<ReferenceTarge
                         return Err(ReferenceError::new(format!(
                             "No match for '{}' under charter '{}'",
                             segment, charter.title
-                        )))
+                        )));
                     }
                     (1, 0) => Scope::Charter(child_charters[0]),
                     (0, 1) => Scope::Plan(charter, child_plans[0]),
@@ -395,7 +395,7 @@ fn resolve_path(model: &DomainModel, segments: &[&str]) -> Result<ReferenceTarge
                         return Err(ReferenceError::new(format!(
                             "Ambiguous reference '{}' under charter '{}'; use c: or p: prefix",
                             segment, charter.title
-                        )))
+                        )));
                     }
                 }
             }
@@ -417,7 +417,7 @@ fn resolve_path(model: &DomainModel, segments: &[&str]) -> Result<ReferenceTarge
                         return Err(ReferenceError::new(format!(
                             "No match for '{}' under plan '{}'",
                             segment, plan.name
-                        )))
+                        )));
                     }
                     (1, 0) => Scope::Plan(charter, child_plans[0]),
                     (0, 1) => return Ok(ReferenceTarget::Act(child_acts[0].id)),
@@ -425,7 +425,7 @@ fn resolve_path(model: &DomainModel, segments: &[&str]) -> Result<ReferenceTarge
                         return Err(ReferenceError::new(format!(
                             "Ambiguous reference '{}' under plan '{}'; use p: or a: prefix",
                             segment, plan.name
-                        )))
+                        )));
                     }
                 }
             }
@@ -557,6 +557,7 @@ mod tests {
     fn sample_model() -> DomainModel {
         let charter_id = Uuid::parse_str("12345678-0000-0000-0000-000000000001").unwrap();
         let child_charter_id = Uuid::parse_str("abcdef12-0000-0000-0000-000000000002").unwrap();
+        let implicit_charter_id = Uuid::parse_str("abcdef12-0000-0000-0000-000000000099").unwrap();
         let plan_id = Uuid::parse_str("11223344-0000-0000-0000-000000000003").unwrap();
         let subplan_id = Uuid::parse_str("55667788-0000-0000-0000-000000000004").unwrap();
         let act_id = Uuid::parse_str("deadbeef-0000-0000-0000-000000000005").unwrap();
@@ -586,9 +587,19 @@ mod tests {
             plans: vec![],
         };
 
+        let implicit_charter = Charter {
+            id: implicit_charter_id,
+            title: "".to_string(),
+            description: None,
+            alias: Some("implicit".to_string()),
+            parent: None,
+            objectives: None,
+            plans: vec![],
+        };
+
         DomainModel {
             objectives: vec![],
-            charters: vec![charter, child_charter],
+            charters: vec![charter, child_charter, implicit_charter],
         }
     }
 
@@ -639,5 +650,17 @@ mod tests {
         let model = sample_model();
         let err = resolve_reference(&model, "c:", &ReferenceOptions::default()).unwrap_err();
         assert!(err.to_string().contains("prefix"));
+    }
+
+    #[test]
+    fn finds_implicit_charter() {
+        let model = sample_model();
+        let target = resolve_reference(&model, "implicit", &ReferenceOptions::default()).unwrap();
+        assert_eq!(
+            target,
+            ReferenceTarget::Charter(
+                Uuid::parse_str("abcdef12-0000-0000-0000-000000000099").unwrap()
+            )
+        );
     }
 }
