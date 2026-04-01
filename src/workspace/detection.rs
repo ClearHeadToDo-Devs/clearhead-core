@@ -1,7 +1,7 @@
-/// This module provides functionality to search for the workspace upon which all other work is
-/// based on. To do this, it takes the current working directory, and traverses up to see if it can
-/// find a directory named `.clearhead`. if it finds one, it returns the path to that directory. If
-/// it doesn't find one, it returns None to denote that it is NOT a project-scoped workspace.
+//! This module provides functionality to search for the workspace upon which all other work is
+//! based on. To do this, it takes the current working directory, and traverses up to see if it can
+//! find a directory named `.clearhead`. if it finds one, it returns the path to that directory. If
+//! it doesn't find one, it returns None to denote that it is NOT a project-scoped workspace.
 
 /// Core function to check for a workspace by traversing up the directory tree
 /// Returns either the path to the workspace (if found) or None (if not found)
@@ -12,8 +12,8 @@
 /// Examples:
 ///
 /// ```
-/// let workspace_path = check_for_workspace(std::path::Path::new("/path/to/your/project/.clearhead/subdir"));
-/// assert_eq!(workspace_path, Some(std::path::PathBuf::from("/path/to/your/project/.clearhead")));
+/// let workspace_path = check_for_workspace(std::path::Path::new("/path/to/your/project/src"));
+/// assert_eq!(workspace_path, Some(std::path::PathBuf::from("/path/to/your/project")));
 /// ```
 pub fn check_for_workspace(cwd: &std::path::Path) -> Option<std::path::PathBuf> {
     let mut current_dir = cwd;
