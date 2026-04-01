@@ -12,12 +12,13 @@ use tree_sitter::Tree;
 pub mod actions;
 pub mod acts;
 pub mod charter;
+pub mod detection;
 pub mod store;
 
 // Re-export key types at workspace level
 pub use actions::{
     Action, ActionList, ActionRepository, ActionSource, ActionState, Diff, OutputFormat,
-    ParsedDocument, SourcedAction, SourceMetadata, SourceRange, diff_actions, format,
+    ParsedDocument, SourceMetadata, SourceRange, SourcedAction, diff_actions, format,
 };
 pub use acts::{
     closed_acts_path, merge_acts_into_model, open_acts_path, read_acts, write_acts,
@@ -25,6 +26,8 @@ pub use acts::{
 };
 pub use charter::{format_charter, implicit_charter, parse_charter};
 pub use store::{DiscoveredCharter, FsWorkspaceStore, InMemoryStore, ObjectiveRef, WorkspaceStore};
+
+pub use detection::check_for_workspace;
 
 use crate::domain::DomainModel;
 
