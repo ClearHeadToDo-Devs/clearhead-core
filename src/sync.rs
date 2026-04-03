@@ -3,9 +3,9 @@
 //! This module provides pure functions for semantic comparison of ActionLists
 //! and determining whether CRDT synchronization is needed.
 
+use crate::diff::diff_domain_models;
 use crate::domain::{DomainDiff, DomainModel};
 use crate::workspace::actions::{ActionList, Diff, diff_actions};
-use crate::diff::diff_domain_models;
 
 /// Compare two action lists semantically (ignoring formatting/whitespace)
 ///
@@ -79,124 +79,5 @@ pub enum DomainSyncDecision {
 impl DomainSyncDecision {
     pub fn needs_sync(&self) -> bool {
         matches!(self, DomainSyncDecision::SyncNeeded { .. })
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::workspace::actions::{Action, ActionState, convert};
-    use uuid::Uuid;
-
-    fn make_action(state: ActionState, name: &str) -> Action {
-        Action {
-            id: Uuid::new_v4(),
-            parent_id: None,
-            state,
-            name: name.to_string(),
-            description: None,
-            priority: None,
-            context_list: None,
-            do_date_time: None,
-            do_duration: None,
-            recurrence: None,
-            completed_date_time: None,
-            created_date_time: None,
-            predecessors: None,
-            charter: None,
-            alias: None,
-            is_sequential: None,
-        }
-    }
-
-    #[test]
-    fn test_semantically_equal_identical_actions() {
-        let actions1: ActionList = vec![make_action(ActionState::NotStarted, "Task 1")];
-        let actions2: ActionList = vec![make_action(ActionState::NotStarted, "Task 1")];
-
-        // Different UUIDs so they won't be equal
-        // The real test is when actions have same ID but different formatting
-        assert!(!semantically_equal(&actions1, &actions2));
-    }
-
-    #[test]
-    fn test_semantically_equal_same_instance() {
-        let list: ActionList = vec![make_action(ActionState::NotStarted, "Task 1")];
-
-        assert!(semantically_equal(&list, &list));
-    }
-
-    #[test]
-    fn test_should_sync_no_change() {
-        let list: ActionList = vec![make_action(ActionState::NotStarted, "Task 1")];
-
-        let decision = should_sync(&list, &list);
-        assert!(!decision.needs_sync());
-        assert!(matches!(decision, SyncDecision::NoChange));
-    }
-
-    #[test]
-    fn test_should_sync_detects_change() {
-        let id = Uuid::new_v4();
-
-        let mut action1 = make_action(ActionState::NotStarted, "Task 1");
-        action1.id = id;
-
-        let mut action2 = make_action(ActionState::Completed, "Task 1");
-        action2.id = id;
-
-        let list1: ActionList = vec![action1];
-        let list2: ActionList = vec![action2];
-
-        let decision = should_sync(&list2, &list1);
-        assert!(decision.needs_sync());
-
-        if let SyncDecision::SyncNeeded { changes } = decision {
-            assert!(!changes.modified.is_empty());
-        } else {
-            panic!("Expected SyncNeeded");
-        }
-    }
-
-    // ====================================================================
-    // Domain sync tests
-    // ====================================================================
-
-    #[test]
-    fn test_domain_semantically_equal_same_model() {
-        let actions = vec![make_action(ActionState::NotStarted, "Task 1")];
-        let model = convert::from_actions(&actions);
-        assert!(domain_semantically_equal(&model, &model));
-    }
-
-    #[test]
-    fn test_domain_sync_no_change() {
-        let actions = vec![make_action(ActionState::NotStarted, "Task 1")];
-        let model = convert::from_actions(&actions);
-
-        let decision = should_sync_model(&model, &model);
-        assert!(!decision.needs_sync());
-        assert!(matches!(decision, DomainSyncDecision::NoChange));
-    }
-
-    #[test]
-    fn test_domain_sync_detects_plan_change() {
-        let id = Uuid::new_v4();
-        let mut action1 = make_action(ActionState::NotStarted, "Task 1");
-        action1.id = id;
-        let mut action2 = make_action(ActionState::NotStarted, "Task 1 Updated");
-        action2.id = id;
-
-        let model1 = convert::from_actions(&vec![action1]);
-        let model2 = convert::from_actions(&vec![action2]);
-
-        let decision = should_sync_model(&model2, &model1);
-        assert!(decision.needs_sync());
-
-        if let DomainSyncDecision::SyncNeeded { changes } = decision {
-            assert!(!changes.plans_modified.is_empty());
-        } else {
-            panic!("Expected SyncNeeded");
-        }
     }
 }

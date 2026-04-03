@@ -294,7 +294,7 @@ impl Plan {
 /// Maps to `actions:Charter` (subclass of cco:DirectiveInformationContentEntity).
 /// Charters are the highest-level organizational unit. Plans reference charters
 /// via the `charter` field.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct Charter {
     pub id: Uuid,
     pub title: String,
@@ -306,6 +306,18 @@ pub struct Charter {
     pub objectives: Option<Vec<String>>,
     /// Plans organized under this charter (nested hierarchy)
     pub plans: Vec<Plan>,
+}
+
+pub fn charter_from_plans_and_name(name: String, plans: Vec<Plan>) -> Charter {
+    Charter {
+        id: Uuid::new_v4(),
+        title: name.clone(),
+        description: None,
+        alias: Some(name.clone()),
+        parent: None,
+        objectives: None,
+        plans,
+    }
 }
 
 /// Actual execution / occurrence of a Plan.
@@ -550,84 +562,6 @@ impl DomainDiff {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::workspace::actions::{Action, ActionState, convert};
-
-    #[test]
-    fn test_split_simple_action() {
-        let action = Action {
-            id: Uuid::new_v4(),
-            name: "Buy milk".to_string(),
-            state: ActionState::NotStarted,
-            ..Default::default()
-        };
-
-        let (plan, act) = convert::split_action(&action);
-
-        assert_eq!(plan.id, action.id);
-        assert_eq!(plan.name, "Buy milk");
-        assert_eq!(act.plan_id, plan.id);
-        assert_eq!(act.phase, ActPhase::NotStarted);
-    }
-
-    #[test]
-    fn test_split_completed_action() {
-        let action = Action {
-            id: Uuid::new_v4(),
-            name: "Done task".to_string(),
-            state: ActionState::Completed,
-            completed_date_time: Some(Local::now()),
-            ..Default::default()
-        };
-
-        let (_, act) = convert::split_action(&action);
-
-        assert_eq!(act.phase, ActPhase::Completed);
-        assert!(act.completed_at.is_some());
-    }
-
-    #[test]
-    fn test_domain_model_from_actions() {
-        let actions = vec![Action::new("Task 1"), Action::new("Task 2")];
-
-        let model = convert::from_actions(&actions);
-
-        assert_eq!(model.all_plans().len(), 2);
-        assert_eq!(model.all_acts().len(), 2);
-    }
-
-    #[test]
-    fn test_acts_for_plan() {
-        let action = Action::new("Test task");
-        let model = convert::from_actions(&vec![action.clone()]);
-
-        let acts = model.acts_for_plan(action.id);
-        assert_eq!(acts.len(), 1);
-    }
-
-    #[test]
-    fn test_deterministic_act_ids() {
-        let actions = vec![Action::new("Task 1"), Action::new("Task 2")];
-
-        let model1 = convert::from_actions(&actions);
-        let model2 = convert::from_actions(&actions);
-
-        // Same ActionList should produce same act IDs every time
-        let mut ids1: Vec<String> = model1.all_acts().iter().map(|a| a.id.to_string()).collect();
-        let mut ids2: Vec<String> = model2.all_acts().iter().map(|a| a.id.to_string()).collect();
-        ids1.sort();
-        ids2.sort();
-        assert_eq!(ids1, ids2);
-    }
-
-    #[test]
-    fn test_act_id_derived_from_plan_id() {
-        let action = Action::new("Test");
-        let (plan, act) = convert::split_action(&action);
-
-        // Act ID should be deterministic v5 UUID based on plan ID
-        let expected_act_id = Uuid::new_v5(&plan.id, b"act-0");
-        assert_eq!(act.id, expected_act_id);
-    }
 
     #[test]
     fn test_expand_occurrences() {

@@ -4,56 +4,71 @@ use uuid::Uuid;
 
 /// Namespace UUID for the synthetic inbox charter.
 pub const INBOX_CHARTER_NS: Uuid = Uuid::from_bytes([
-    0x69, 0x6e, 0x62, 0x6f, 0x78, 0x2d, 0x63, 0x68,
-    0x61, 0x72, 0x74, 0x65, 0x72, 0x2d, 0x6e, 0x73,
+    0x69, 0x6e, 0x62, 0x6f, 0x78, 0x2d, 0x63, 0x68, 0x61, 0x72, 0x74, 0x65, 0x72, 0x2d, 0x6e, 0x73,
 ]);
+/// Convert an ActionList into a DomainModel with a charter name derived from
+/// the file path. Pass `None` to get "inbox" (same as `from_actions`).
+pub fn from_actions_with_charter(actions: &ActionList, charter_name: String) -> Charter {
+    let title = charter_name;
+    let id = Uuid::now_v7();
+    let plans = actions.iter().map(|a| a.into()).collect();
+    return Charter {
+        id,
+        title: title.clone(),
+        description: None,
+        alias: Some(title.clone()),
+        parent: None,
+        objectives: None,
+        plans,
+    };
+}
 
 /// Split an Action into its Plan and PlannedAct components.
 ///
 /// The Action.id becomes the Plan.id (it identifies the task definition).
 /// The PlannedAct gets a new UUID (it's a specific occurrence).
-pub fn split_action(action: &Action) -> (Plan, PlannedAct) {
-    let plan_id = action.id;
-    let act_id = Uuid::new_v5(&plan_id, b"act-0");
+impl From<&Action> for Plan {
+    fn from(action: &Action) -> Self {
+        let plan_id = action.id;
+        let act_id = Uuid::new_v5(&plan_id, b"act-0");
 
-    let act = PlannedAct {
-        id: act_id,
-        plan_id,
-        phase: match action.state {
-            ActionState::NotStarted => ActPhase::NotStarted,
-            ActionState::InProgress => ActPhase::InProgress,
-            ActionState::Completed => ActPhase::Completed,
-            ActionState::BlockedorAwaiting => ActPhase::Blocked,
-            ActionState::Cancelled => ActPhase::Cancelled,
-        },
-        scheduled_at: action.do_date_time,
-        duration: action.do_duration,
-        completed_at: action.completed_date_time,
-        created_at: action.created_date_time,
-    };
+        let act = PlannedAct {
+            id: act_id,
+            plan_id,
+            phase: match action.state {
+                ActionState::NotStarted => ActPhase::NotStarted,
+                ActionState::InProgress => ActPhase::InProgress,
+                ActionState::Completed => ActPhase::Completed,
+                ActionState::BlockedorAwaiting => ActPhase::Blocked,
+                ActionState::Cancelled => ActPhase::Cancelled,
+            },
+            scheduled_at: action.do_date_time,
+            duration: action.do_duration,
+            completed_at: action.completed_date_time,
+            created_at: action.created_date_time,
+        };
 
-    let plan = Plan {
-        id: plan_id,
-        name: action.name.clone(),
-        description: action.description.clone(),
-        priority: action.priority,
-        contexts: action.context_list.clone(),
-        recurrence: action.recurrence.clone(),
-        parent: action.parent_id,
-        objective: action.charter.clone(),
-        alias: action.alias.clone(),
-        is_sequential: action.is_sequential,
-        duration: action.do_duration,
-        depends_on: action
-            .predecessors
-            .as_ref()
-            .map(|preds| preds.iter().filter_map(|p| p.resolved_uuid).collect()),
-        acts: vec![act],
-    };
+        let plan = Plan {
+            id: plan_id,
+            name: action.name.clone(),
+            description: action.description.clone(),
+            priority: action.priority,
+            contexts: action.context_list.clone(),
+            recurrence: action.recurrence.clone(),
+            parent: action.parent_id,
+            objective: action.charter.clone(),
+            alias: action.alias.clone(),
+            is_sequential: action.is_sequential,
+            duration: action.do_duration,
+            depends_on: action
+                .predecessors
+                .as_ref()
+                .map(|preds| preds.iter().filter_map(|p| p.resolved_uuid).collect()),
+            acts: vec![act],
+        };
 
-    // Return the act separately too for callers that need it
-    let act_copy = plan.acts[0].clone();
-    (plan, act_copy)
+        plan
+    }
 }
 
 /// Merge a Plan and PlannedAct into a single Action.
@@ -89,57 +104,6 @@ pub fn merge_to_action(plan: &Plan, act: &PlannedAct, target_id: Uuid) -> Action
         charter: plan.objective.clone(),
         alias: plan.alias.clone(),
         is_sequential: plan.is_sequential,
-    }
-}
-
-/// Convert an ActionList into a DomainModel with a charter name derived from
-/// the file path. Pass `None` to get "inbox" (same as `from_actions`).
-pub fn from_actions_with_charter(
-    actions: &ActionList,
-    charter_name: Option<String>,
-) -> DomainModel {
-    let title = charter_name.unwrap_or_else(|| "inbox".to_string());
-    let id = Uuid::new_v5(&INBOX_CHARTER_NS, title.as_bytes());
-    let plans = actions.iter().map(|a| split_action(a).0).collect();
-    let charter = Charter {
-        id,
-        title,
-        description: None,
-        alias: None,
-        parent: None,
-        objectives: None,
-        plans,
-    };
-    DomainModel {
-        objectives: vec![],
-        charters: vec![charter],
-    }
-}
-
-/// Convert an ActionList into a hierarchical DomainModel.
-///
-/// All plans are wrapped in a synthetic "inbox" charter.
-pub fn from_actions(actions: &ActionList) -> DomainModel {
-    let mut plans = Vec::new();
-
-    for action in actions {
-        let (plan, _act) = split_action(action);
-        plans.push(plan);
-    }
-
-    let inbox_charter = Charter {
-        id: Uuid::new_v5(&INBOX_CHARTER_NS, b"inbox"),
-        title: "inbox".to_string(),
-        description: None,
-        alias: None,
-        parent: None,
-        objectives: None,
-        plans,
-    };
-
-    DomainModel {
-        objectives: vec![],
-        charters: vec![inbox_charter],
     }
 }
 

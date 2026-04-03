@@ -30,10 +30,8 @@
 //! assert_eq!(loaded.all_plans().len(), 0);
 //! ```
 
-use super::actions::convert;
 use crate::domain::{Charter, DomainModel};
-use std::collections::HashMap;
-use std::collections::HashSet;
+use crate::workspace::actions::convert::from_actions_with_charter;
 use std::fmt;
 use std::path::{Path, PathBuf};
 
@@ -52,6 +50,33 @@ pub struct ObjectiveRef {
     /// Human-readable name (inferred from key or metadata).
     pub name: Option<String>,
 }
+
+/// Errors that can occur when interacting with a workspace.
+#[derive(Debug)]
+pub enum WorkspaceError {
+    Io(std::io::Error),
+    Parse(String),
+    Acts(String),
+    InvalidPath(PathBuf),
+}
+impl From<std::io::Error> for WorkspaceError {
+    fn from(e: std::io::Error) -> Self {
+        WorkspaceError::Io(e)
+    }
+}
+
+impl fmt::Display for WorkspaceError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            WorkspaceError::Io(e) => write!(f, "IO error: {}", e),
+            WorkspaceError::Parse(msg) => write!(f, "Parse error: {}", msg),
+            WorkspaceError::Acts(msg) => write!(f, "Acts error: {}", msg),
+            WorkspaceError::InvalidPath(p) => write!(f, "Invalid path: {}", p.display()),
+        }
+    }
+}
+
+impl std::error::Error for WorkspaceError {}
 
 impl ObjectiveRef {
     /// Create an ObjectiveRef from a key string.
@@ -84,261 +109,34 @@ pub struct DiscoveredCharter {
     /// vs inferred from context (e.g., from a `.actions` filename or directory).
     pub is_explicit: bool,
 }
+pub fn load_domain_model(root: &PathBuf) -> Result<DomainModel, WorkspaceError> {
+    if !root.is_dir() {
+        return Err(WorkspaceError::InvalidPath(root.clone()));
+    } else {
+        let mut domain_model = DomainModel::new();
+        let files = discover_action_files(root)
+            .map_err(|e| WorkspaceError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
 
-// ============================================================================
-// Trait definition
-// ============================================================================
+        for file_path in files {
+            let relative = file_path
+                .strip_prefix(root)
+                .unwrap_or(&file_path)
+                .to_string_lossy()
+                .to_string();
 
-/// Trait for loading and saving workspace content.
-///
-/// Implementations decide the storage backend. The trait covers the core
-/// operations needed by the CLI, LSP, and sync server:
-///
-/// - **Objectives:** List what's in the workspace
-/// - **Domain models:** Load/save plans and their planned acts
-/// - **Charters:** Load/save/discover project charters
-///
-/// # Mutability
-///
-/// `save_*` methods take `&mut self` to allow implementations that need
-/// interior state changes (file handles, transaction state, etc.).
-/// Implementations that don't need mutation can use interior mutability
-/// or simply ignore the `&mut`.
-pub trait WorkspaceStore {
-    /// The error type returned by this store's operations.
-    type Error: fmt::Display;
+            let charter_name = infer_project_name(Path::new(&relative)).unwrap();
+            let mut actions = super::parse_actions(&std::fs::read_to_string(&file_path)?)
+                .map_err(|e| WorkspaceError::Parse(e))?;
 
-    /// List all objectives in the workspace.
-    fn list_objectives(&self) -> Result<Vec<ObjectiveRef>, Self::Error>;
-
-    /// Load the domain model for a specific objective.
-    ///
-    /// Returns an empty `DomainModel` if the objective exists but has no plans.
-    /// Returns an error if the objective doesn't exist or can't be read.
-    fn load_domain_model(&self, objective: &ObjectiveRef) -> Result<DomainModel, Self::Error>;
-
-    /// Save a domain model for a specific objective.
-    ///
-    /// Creates the objective if it doesn't exist.
-    fn save_domain_model(
-        &mut self,
-        objective: &ObjectiveRef,
-        model: &DomainModel,
-    ) -> Result<(), Self::Error>;
-
-    /// Load a charter for a specific objective.
-    ///
-    /// Returns `None` if no charter exists for this objective.
-    fn load_charter(&self, objective: &ObjectiveRef) -> Result<Option<Charter>, Self::Error>;
-
-    /// Save a charter for a specific objective.
-    fn save_charter(
-        &mut self,
-        objective: &ObjectiveRef,
-        charter: &Charter,
-    ) -> Result<(), Self::Error>;
-
-    /// Discover all charters in the workspace.
-    ///
-    /// This includes both explicitly defined charters and those inferred
-    /// from workspace structure (e.g., directory names, filenames).
-    fn discover_charters(&self) -> Result<Vec<DiscoveredCharter>, Self::Error>;
-}
-
-// ============================================================================
-// InMemoryStore — always-public for consumer testing
-// ============================================================================
-
-/// In-memory workspace store.
-///
-/// Useful for testing and for consumers who want to verify their code against
-/// the `WorkspaceStore` trait without touching the filesystem.
-///
-/// # Example
-///
-/// ```rust
-/// use clearhead_core::workspace::store::{InMemoryStore, WorkspaceStore, ObjectiveRef};
-/// use clearhead_core::DomainModel;
-///
-/// let mut store = InMemoryStore::new();
-/// let obj = ObjectiveRef::new("test");
-/// store.save_domain_model(&obj, &DomainModel::new()).unwrap();
-/// assert_eq!(store.list_objectives().unwrap().len(), 1);
-/// ```
-#[derive(Debug, Default, Clone)]
-pub struct InMemoryStore {
-    /// Domain models keyed by objective key.
-    pub models: HashMap<String, DomainModel>,
-    /// Charters keyed by objective key.
-    pub charters: HashMap<String, Charter>,
-}
-
-/// Error type for the in-memory store.
-///
-/// Operations on InMemoryStore rarely fail, but the trait requires
-/// an error type for consistency.
-#[derive(Debug, Clone)]
-pub struct InMemoryError(pub String);
-
-impl fmt::Display for InMemoryError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-
-impl InMemoryStore {
-    /// Create a new empty in-memory store.
-    pub fn new() -> Self {
-        Self::default()
-    }
-}
-
-impl WorkspaceStore for InMemoryStore {
-    type Error = InMemoryError;
-
-    fn list_objectives(&self) -> Result<Vec<ObjectiveRef>, Self::Error> {
-        let mut keys: Vec<_> = self
-            .models
-            .keys()
-            .chain(self.charters.keys())
-            .collect::<std::collections::HashSet<_>>()
-            .into_iter()
-            .map(|k| ObjectiveRef::new(k))
-            .collect();
-        keys.sort_by(|a, b| a.key.cmp(&b.key));
-        Ok(keys)
-    }
-
-    fn load_domain_model(&self, objective: &ObjectiveRef) -> Result<DomainModel, Self::Error> {
-        Ok(self
-            .models
-            .get(&objective.key)
-            .cloned()
-            .unwrap_or_default())
-    }
-
-    fn save_domain_model(
-        &mut self,
-        objective: &ObjectiveRef,
-        model: &DomainModel,
-    ) -> Result<(), Self::Error> {
-        self.models.insert(objective.key.clone(), model.clone());
-        Ok(())
-    }
-
-    fn load_charter(&self, objective: &ObjectiveRef) -> Result<Option<Charter>, Self::Error> {
-        Ok(self.charters.get(&objective.key).cloned())
-    }
-
-    fn save_charter(
-        &mut self,
-        objective: &ObjectiveRef,
-        charter: &Charter,
-    ) -> Result<(), Self::Error> {
-        self.charters.insert(objective.key.clone(), charter.clone());
-        Ok(())
-    }
-
-    fn discover_charters(&self) -> Result<Vec<DiscoveredCharter>, Self::Error> {
-        let mut discovered: Vec<_> = self
-            .charters
-            .iter()
-            .map(|(key, charter)| DiscoveredCharter {
-                charter: charter.clone(),
-                source_key: key.clone(),
-                is_explicit: true,
-            })
-            .collect();
-        discovered.sort_by(|a, b| a.source_key.cmp(&b.source_key));
-        Ok(discovered)
-    }
-}
-
-// ============================================================================
-// FsWorkspaceStore — filesystem-backed implementation
-// ============================================================================
-
-/// Filesystem-backed workspace store.
-///
-/// Discovers and manages `.actions` files and `.md` charter files
-/// in a root directory following the workspace naming conventions:
-///
-/// - Root level: `<project>.actions` (single-file projects)
-/// - Directories: `<project>/next.actions` (multi-file projects)
-/// - Charters: `<project>.md` or `<project>/README.md`
-/// - Archives: `<project>/logs/<YYYY-MM>.actions`
-#[derive(Debug, Clone)]
-pub struct FsWorkspaceStore {
-    /// Root directory for .actions files and charters
-    root: PathBuf,
-}
-
-/// Error type for filesystem store operations.
-#[derive(Debug, Clone)]
-pub struct FsError(pub String);
-
-impl fmt::Display for FsError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-
-impl FsWorkspaceStore {
-    /// Create a new filesystem store rooted at the given directory.
-    pub fn new(root: &Path) -> Self {
-        Self {
-            root: root.to_path_buf(),
-        }
-    }
-
-    /// The root directory of this store.
-    pub fn root(&self) -> &Path {
-        &self.root
-    }
-
-    /// Resolve an objective key to a filesystem path.
-    ///
-    /// The key is a relative path (e.g., `"inbox.actions"`, `"work/next.actions"`).
-    fn resolve_path(&self, key: &str) -> PathBuf {
-        self.root.join(key)
-    }
-
-    /// Resolve the charter file path for an objective key.
-    ///
-    /// Checks for `<stem>.md` at root level first, then `<dir>/README.md`.
-    fn resolve_charter_path(&self, key: &str) -> Option<PathBuf> {
-        // If key is a .actions file, check for matching .md
-        let path = Path::new(key);
-        if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
-            // Root-level: health.actions → health.md
-            let md_path = self.root.join(format!("{}.md", stem));
-            if md_path.is_file() {
-                return Some(md_path);
-            }
-        }
-
-        // Directory-level: work/next.actions → work/README.md
-        if let Some(parent) = path.parent() {
-            if !parent.as_os_str().is_empty() {
-                let readme = self.root.join(parent).join("README.md");
-                if readme.is_file() {
-                    return Some(readme);
+            for action in &mut actions {
+                if action.charter.is_none() {
+                    action.charter = Some(charter_name.clone());
                 }
             }
+            let charter = from_actions_with_charter(&actions, charter_name);
+            domain_model.charters.push(charter);
         }
-
-        // Check if key itself is a directory name
-        let readme = self.root.join(key).join("README.md");
-        if readme.is_file() {
-            return Some(readme);
-        }
-
-        let md_path = self.root.join(format!("{}.md", key));
-        if md_path.is_file() {
-            return Some(md_path);
-        }
-
-        None
+        return Ok(domain_model);
     }
 }
 
@@ -373,9 +171,6 @@ pub fn infer_project_name(relative_path: &Path) -> Option<String> {
     if components.len() == 1 {
         let stem = relative_path.file_stem()?.to_str()?;
         let base = strip_archive_suffix(stem);
-        if base == "inbox" {
-            return None;
-        }
         return Some(base.to_string());
     }
 
@@ -428,23 +223,22 @@ pub fn infer_parent_charter_name(relative_path: &Path) -> Option<String> {
 }
 
 /// Discover all `.actions` files recursively, skipping hidden directories.
-fn discover_action_files(dir: &Path) -> Result<Vec<PathBuf>, String> {
+fn discover_action_files(dir: &Path) -> Result<Vec<PathBuf>, WorkspaceError> {
     let mut files = Vec::new();
     discover_recursive(dir, &mut files)?;
     files.sort();
     Ok(files)
 }
 
-fn discover_recursive(dir: &Path, files: &mut Vec<PathBuf>) -> Result<(), String> {
+fn discover_recursive(dir: &Path, files: &mut Vec<PathBuf>) -> Result<(), WorkspaceError> {
     if !dir.is_dir() {
         return Ok(());
     }
 
-    let entries = std::fs::read_dir(dir)
-        .map_err(|e| format!("Failed to read directory '{}': {}", dir.display(), e))?;
+    let entries = std::fs::read_dir(dir).map_err(|e| WorkspaceError::Io(e))?;
 
     for entry in entries {
-        let entry = entry.map_err(|e| format!("Failed to read directory entry: {}", e))?;
+        let entry = entry.map_err(|e| WorkspaceError::Io(e))?;
         let path = entry.path();
 
         if path.is_dir() {
@@ -466,394 +260,6 @@ fn discover_recursive(dir: &Path, files: &mut Vec<PathBuf>) -> Result<(), String
     Ok(())
 }
 
-impl WorkspaceStore for FsWorkspaceStore {
-    type Error = FsError;
-
-    fn list_objectives(&self) -> Result<Vec<ObjectiveRef>, Self::Error> {
-        let files = discover_action_files(&self.root).map_err(|e| FsError(e))?;
-
-        let mut objectives = Vec::new();
-        for file_path in files {
-            let relative = file_path
-                .strip_prefix(&self.root)
-                .unwrap_or(&file_path)
-                .to_string_lossy()
-                .to_string();
-            let name = infer_project_name(Path::new(&relative));
-            objectives.push(ObjectiveRef {
-                key: relative,
-                name,
-            });
-        }
-
-        Ok(objectives)
-    }
-
-    fn load_domain_model(&self, objective: &ObjectiveRef) -> Result<DomainModel, Self::Error> {
-        let path = self.resolve_path(&objective.key);
-
-        if !path.exists() {
-            return Ok(DomainModel::new());
-        }
-
-        let content = std::fs::read_to_string(&path)
-            .map_err(|e| FsError(format!("Failed to read '{}': {}", path.display(), e)))?;
-
-        if content.trim().is_empty() {
-            return Ok(DomainModel::new());
-        }
-
-        let actions = super::parse_actions(&content).map_err(|e| FsError(e))?;
-        let charter_name = infer_project_name(Path::new(&objective.key));
-        let parent_name = infer_parent_charter_name(Path::new(&objective.key));
-        let mut model = convert::from_actions_with_charter(&actions, charter_name);
-        if let Some(parent) = parent_name {
-            if let Some(charter) = model.charters.first_mut() {
-                charter.parent = Some(parent);
-            }
-        }
-
-        // Load open + closed acts for this charter and merge both
-        let open_path = super::acts::open_acts_path(&path);
-        let closed_path = super::acts::closed_acts_path(&path);
-        let mut loaded_acts = super::acts::read_acts(&open_path).map_err(|e| FsError(e))?;
-        let closed_acts = super::acts::read_acts(&closed_path).map_err(|e| FsError(e))?;
-        loaded_acts.extend(closed_acts);
-        if !loaded_acts.is_empty() {
-            super::acts::merge_acts_into_model(&mut model, loaded_acts);
-        }
-
-        Ok(model)
-    }
-
-    fn save_domain_model(
-        &mut self,
-        objective: &ObjectiveRef,
-        model: &DomainModel,
-    ) -> Result<(), Self::Error> {
-        let path = self.resolve_path(&objective.key);
-
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| {
-                FsError(format!(
-                    "Failed to create directory '{}': {}",
-                    parent.display(),
-                    e
-                ))
-            })?;
-        }
-
-        let actions = convert::to_action_list(model);
-        let formatted = super::actions::format::format(
-            &actions,
-            super::actions::format::OutputFormat::Actions,
-            None,
-            None,
-        )
-        .map_err(|e| FsError(e))?;
-
-        std::fs::write(&path, formatted)
-            .map_err(|e| FsError(format!("Failed to write '{}': {}", path.display(), e)))?;
-
-        Ok(())
-    }
-
-    fn load_charter(&self, objective: &ObjectiveRef) -> Result<Option<Charter>, Self::Error> {
-        let charter_path = match self.resolve_charter_path(&objective.key) {
-            Some(p) => p,
-            None => return Ok(None),
-        };
-
-        let content = std::fs::read_to_string(&charter_path)
-            .map_err(|e| FsError(format!("Failed to read '{}': {}", charter_path.display(), e)))?;
-
-        match super::charter::parse_charter(&content) {
-            Ok(charter) => Ok(Some(charter)),
-            Err(_) => Ok(None),
-        }
-    }
-
-    fn save_charter(
-        &mut self,
-        objective: &ObjectiveRef,
-        charter: &Charter,
-    ) -> Result<(), Self::Error> {
-        // Determine charter path: use <key>.md if key has no extension,
-        // or replace .actions with .md
-        let key_path = Path::new(&objective.key);
-        let charter_filename = if key_path.extension().is_some() {
-            let stem = key_path.file_stem().unwrap_or_default().to_string_lossy();
-            format!("{}.md", stem)
-        } else {
-            format!("{}.md", objective.key)
-        };
-
-        let path = self.root.join(&charter_filename);
-
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| {
-                FsError(format!(
-                    "Failed to create directory '{}': {}",
-                    parent.display(),
-                    e
-                ))
-            })?;
-        }
-
-        let formatted = super::charter::format_charter(charter);
-        std::fs::write(&path, formatted)
-            .map_err(|e| FsError(format!("Failed to write '{}': {}", path.display(), e)))?;
-
-        Ok(())
-    }
-
-    fn discover_charters(&self) -> Result<Vec<DiscoveredCharter>, Self::Error> {
-        let mut charters = Vec::new();
-        let mut seen_names: HashSet<String> = HashSet::new();
-
-        if !self.root.is_dir() {
-            return Ok(charters);
-        }
-
-        let entries = std::fs::read_dir(&self.root)
-            .map_err(|e| FsError(format!("Failed to read '{}': {}", self.root.display(), e)))?;
-
-        let mut root_md_files = Vec::new();
-        let mut root_actions_files = Vec::new();
-        let mut directories = Vec::new();
-
-        for entry in entries {
-            let entry =
-                entry.map_err(|e| FsError(format!("Failed to read directory entry: {}", e)))?;
-            let path = entry.path();
-
-            if path.is_dir() {
-                if let Some(name) = path.file_name() {
-                    if !name.to_string_lossy().starts_with('.') {
-                        directories.push(path);
-                    }
-                }
-            } else if path.is_file() {
-                if let Some(ext) = path.extension() {
-                    if ext == "md" {
-                        root_md_files.push(path);
-                    } else if ext == "actions" {
-                        root_actions_files.push(path);
-                    }
-                }
-            }
-        }
-
-        // Phase 1: Explicit charters from .md files at root
-        for md_path in &root_md_files {
-            let content = match std::fs::read_to_string(md_path) {
-                Ok(c) => c,
-                Err(_) => continue,
-            };
-            match super::charter::parse_charter(&content) {
-                Ok(charter) => {
-                    let name = charter.title.to_lowercase();
-                    seen_names.insert(name);
-                    if let Some(ref alias) = charter.alias {
-                        seen_names.insert(alias.to_lowercase());
-                    }
-                    if let Some(stem) = md_path.file_stem().and_then(|s| s.to_str()) {
-                        seen_names.insert(stem.to_lowercase());
-                    }
-                    let relative = md_path
-                        .strip_prefix(&self.root)
-                        .unwrap_or(md_path)
-                        .to_string_lossy()
-                        .to_string();
-                    charters.push(DiscoveredCharter {
-                        charter,
-                        source_key: relative,
-                        is_explicit: true,
-                    });
-                }
-                Err(_) => continue,
-            }
-        }
-
-        // Phase 1b: Explicit charters from README.md and sub-.md files in project directories
-        for dir_path in &directories {
-            let parent_name = dir_path
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("")
-                .to_string();
-
-            let readme = dir_path.join("README.md");
-            if readme.is_file() {
-                if let Ok(content) = std::fs::read_to_string(&readme) {
-                    if let Ok(charter) = super::charter::parse_charter(&content) {
-                        seen_names.insert(charter.title.to_lowercase());
-                        seen_names.insert(parent_name.to_lowercase());
-                        if let Some(ref alias) = charter.alias {
-                            seen_names.insert(alias.to_lowercase());
-                        }
-                        let relative = readme
-                            .strip_prefix(&self.root)
-                            .unwrap_or(&readme)
-                            .to_string_lossy()
-                            .to_string();
-                        charters.push(DiscoveredCharter {
-                            charter,
-                            source_key: relative,
-                            is_explicit: true,
-                        });
-                    }
-                }
-            }
-
-            // Scan sub-entries: .md files become explicit sub-charters,
-            // sub-directories with .actions files become implicit sub-charters.
-            if let Ok(sub_entries) = std::fs::read_dir(dir_path) {
-                for sub_entry in sub_entries.flatten() {
-                    let sub_path = sub_entry.path();
-
-                    if sub_path.is_file() {
-                        let filename = match sub_path.file_name().and_then(|n| n.to_str()) {
-                            Some(f) => f.to_string(),
-                            None => continue,
-                        };
-                        if filename == "README.md" {
-                            continue;
-                        }
-                        if sub_path.extension().map(|e| e == "md").unwrap_or(false) {
-                            if let Ok(content) = std::fs::read_to_string(&sub_path) {
-                                if let Ok(mut charter) = super::charter::parse_charter(&content) {
-                                    if charter.parent.is_none() {
-                                        charter.parent = Some(parent_name.clone());
-                                    }
-                                    let title_lower = charter.title.to_lowercase();
-                                    let stem = sub_path
-                                        .file_stem()
-                                        .and_then(|s| s.to_str())
-                                        .unwrap_or("")
-                                        .to_lowercase();
-                                    if !seen_names.contains(&title_lower)
-                                        && !seen_names.contains(&stem)
-                                    {
-                                        seen_names.insert(title_lower);
-                                        seen_names.insert(stem);
-                                        if let Some(ref alias) = charter.alias {
-                                            seen_names.insert(alias.to_lowercase());
-                                        }
-                                        let relative = sub_path
-                                            .strip_prefix(&self.root)
-                                            .unwrap_or(&sub_path)
-                                            .to_string_lossy()
-                                            .to_string();
-                                        charters.push(DiscoveredCharter {
-                                            charter,
-                                            source_key: relative,
-                                            is_explicit: true,
-                                        });
-                                    }
-                                }
-                            }
-                        }
-                    } else if sub_path.is_dir() {
-                        if let Some(name) = sub_path.file_name() {
-                            if name.to_string_lossy().starts_with('.') {
-                                continue;
-                            }
-                        }
-                        let has_actions = sub_path.join("next.actions").is_file()
-                            || std::fs::read_dir(&sub_path)
-                                .ok()
-                                .map(|entries| {
-                                    entries.flatten().any(|e| {
-                                        e.path().extension().is_some_and(|ext| ext == "actions")
-                                    })
-                                })
-                                .unwrap_or(false);
-
-                        if has_actions {
-                            let sub_name = sub_path
-                                .file_name()
-                                .and_then(|n| n.to_str())
-                                .unwrap_or("")
-                                .to_string();
-                            if !seen_names.contains(&sub_name.to_lowercase()) {
-                                let mut sub_charter =
-                                    super::charter::implicit_charter(&sub_name);
-                                sub_charter.parent = Some(parent_name.clone());
-                                seen_names.insert(sub_name.to_lowercase());
-                                let relative = sub_path
-                                    .strip_prefix(&self.root)
-                                    .unwrap_or(&sub_path)
-                                    .to_string_lossy()
-                                    .to_string();
-                                charters.push(DiscoveredCharter {
-                                    charter: sub_charter,
-                                    source_key: relative,
-                                    is_explicit: false,
-                                });
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // Phase 2: Implicit charters from .actions files
-        // Sort for determinism: primary files (e.g., health.actions) before archive
-        // variants (health.completed.actions), so the primary becomes the source.
-        let mut sorted_actions = root_actions_files.clone();
-        sorted_actions.sort();
-        for actions_path in &sorted_actions {
-            if let Some(stem) = actions_path.file_stem().and_then(|s| s.to_str()) {
-                let base = strip_archive_suffix(stem);
-                if base == "inbox" {
-                    continue;
-                }
-                if !seen_names.contains(&base.to_lowercase()) {
-                    seen_names.insert(base.to_lowercase());
-                    let relative = actions_path
-                        .strip_prefix(&self.root)
-                        .unwrap_or(actions_path)
-                        .to_string_lossy()
-                        .to_string();
-                    charters.push(DiscoveredCharter {
-                        charter: super::charter::implicit_charter(base),
-                        source_key: relative,
-                        is_explicit: false,
-                    });
-                }
-            }
-        }
-
-        // Phase 2b: Implicit charters from directories
-        for dir_path in &directories {
-            if let Some(dir_name) = dir_path.file_name().and_then(|n| n.to_str()) {
-                if !seen_names.contains(&dir_name.to_lowercase()) {
-                    let has_actions = discover_action_files(dir_path)
-                        .map(|f| !f.is_empty())
-                        .unwrap_or(false);
-                    if has_actions {
-                        seen_names.insert(dir_name.to_lowercase());
-                        let relative = dir_path
-                            .strip_prefix(&self.root)
-                            .unwrap_or(dir_path)
-                            .to_string_lossy()
-                            .to_string();
-                        charters.push(DiscoveredCharter {
-                            charter: super::charter::implicit_charter(dir_name),
-                            source_key: relative,
-                            is_explicit: false,
-                        });
-                    }
-                }
-            }
-        }
-
-        charters.sort_by(|a, b| a.charter.title.cmp(&b.charter.title));
-        Ok(charters)
-    }
-}
-
 // ============================================================================
 // Tests
 // ============================================================================
@@ -861,288 +267,6 @@ impl WorkspaceStore for FsWorkspaceStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::workspace::actions::Action;
-    use std::fs;
-
-    #[test]
-    fn test_in_memory_store_roundtrip() {
-        let mut store = InMemoryStore::new();
-        let obj = ObjectiveRef::new("inbox");
-
-        // Initially empty
-        let model = store.load_domain_model(&obj).unwrap();
-        assert!(model.all_plans().is_empty());
-
-        // Save a model with one action
-        let action = Action::new("Test task");
-        let model = convert::from_actions(&vec![action]);
-        store.save_domain_model(&obj, &model).unwrap();
-
-        // Load it back
-        let loaded = store.load_domain_model(&obj).unwrap();
-        assert_eq!(loaded.all_plans().len(), 1);
-    }
-
-    #[test]
-    fn test_in_memory_store_list_objectives() {
-        let mut store = InMemoryStore::new();
-
-        let inbox = ObjectiveRef::new("inbox");
-        let work = ObjectiveRef::new("work");
-
-        store
-            .save_domain_model(&inbox, &DomainModel::new())
-            .unwrap();
-        store
-            .save_domain_model(&work, &DomainModel::new())
-            .unwrap();
-
-        let objectives = store.list_objectives().unwrap();
-        assert_eq!(objectives.len(), 2);
-        assert_eq!(objectives[0].key, "inbox");
-        assert_eq!(objectives[1].key, "work");
-    }
-
-    #[test]
-    fn test_in_memory_store_charters() {
-        let mut store = InMemoryStore::new();
-        let obj = ObjectiveRef::new("health");
-
-        // No charter initially
-        assert!(store.load_charter(&obj).unwrap().is_none());
-
-        // Save a charter
-        let charter = Charter {
-            id: uuid::Uuid::new_v4(),
-            title: "Health & Fitness".to_string(),
-            description: Some("Stay healthy.".to_string()),
-            alias: Some("health".to_string()),
-            parent: None,
-            objectives: None,
-            plans: vec![],
-        };
-        store.save_charter(&obj, &charter).unwrap();
-
-        // Load it back
-        let loaded = store.load_charter(&obj).unwrap().unwrap();
-        assert_eq!(loaded.title, "Health & Fitness");
-        assert_eq!(loaded.alias, Some("health".to_string()));
-    }
-
-    #[test]
-    fn test_in_memory_store_discover_charters() {
-        let mut store = InMemoryStore::new();
-
-        let health = ObjectiveRef::new("health");
-        let work = ObjectiveRef::new("work");
-
-        let charter_a = Charter {
-            id: uuid::Uuid::new_v4(),
-            title: "Health".to_string(),
-            description: None,
-            alias: None,
-            parent: None,
-            objectives: None,
-            plans: vec![],
-        };
-        let charter_b = Charter {
-            id: uuid::Uuid::new_v4(),
-            title: "Work".to_string(),
-            description: None,
-            alias: None,
-            parent: None,
-            objectives: None,
-            plans: vec![],
-        };
-
-        store.save_charter(&health, &charter_a).unwrap();
-        store.save_charter(&work, &charter_b).unwrap();
-
-        let discovered = store.discover_charters().unwrap();
-        assert_eq!(discovered.len(), 2);
-        assert!(discovered.iter().all(|d| d.is_explicit));
-    }
-
-    #[test]
-    fn test_objectives_union_of_models_and_charters() {
-        let mut store = InMemoryStore::new();
-
-        // One objective has only a model
-        let inbox = ObjectiveRef::new("inbox");
-        store
-            .save_domain_model(&inbox, &DomainModel::new())
-            .unwrap();
-
-        // Another has only a charter
-        let health = ObjectiveRef::new("health");
-        let charter = Charter {
-            id: uuid::Uuid::new_v4(),
-            title: "Health".to_string(),
-            description: None,
-            alias: None,
-            parent: None,
-            objectives: None,
-            plans: vec![],
-        };
-        store.save_charter(&health, &charter).unwrap();
-
-        // list_objectives returns the union
-        let objectives = store.list_objectives().unwrap();
-        assert_eq!(objectives.len(), 2);
-    }
-
-    // ========================================================================
-    // FsWorkspaceStore tests
-    // ========================================================================
-
-    #[test]
-    fn test_fs_store_list_objectives() {
-        let temp = tempfile::TempDir::new().unwrap();
-        let root = temp.path();
-
-        fs::write(root.join("inbox.actions"), "[ ] Task 1").unwrap();
-        fs::write(root.join("work.actions"), "[ ] Task 2").unwrap();
-
-        let project_dir = root.join("project1");
-        fs::create_dir(&project_dir).unwrap();
-        fs::write(project_dir.join("next.actions"), "[ ] Task 3").unwrap();
-
-        let store = FsWorkspaceStore::new(root);
-        let objectives = store.list_objectives().unwrap();
-
-        assert_eq!(objectives.len(), 3);
-        // inbox has no project name
-        let inbox = objectives.iter().find(|o| o.key == "inbox.actions").unwrap();
-        assert!(inbox.name.is_none());
-
-        // work has project name
-        let work = objectives.iter().find(|o| o.key == "work.actions").unwrap();
-        assert_eq!(work.name, Some("work".to_string()));
-    }
-
-    #[test]
-    fn test_fs_store_load_save_domain_model() {
-        let temp = tempfile::TempDir::new().unwrap();
-        let root = temp.path();
-
-        let mut store = FsWorkspaceStore::new(root);
-        let obj = ObjectiveRef::new("test.actions");
-
-        // Save a model
-        let action = Action::new("Test task");
-        let model = convert::from_actions(&vec![action]);
-        store.save_domain_model(&obj, &model).unwrap();
-
-        // File should exist
-        assert!(root.join("test.actions").exists());
-
-        // Load it back
-        let loaded = store.load_domain_model(&obj).unwrap();
-        assert_eq!(loaded.all_plans().len(), 1);
-    }
-
-    #[test]
-    fn test_fs_store_load_nonexistent_returns_empty() {
-        let temp = tempfile::TempDir::new().unwrap();
-        let store = FsWorkspaceStore::new(temp.path());
-        let obj = ObjectiveRef::new("nonexistent.actions");
-
-        let model = store.load_domain_model(&obj).unwrap();
-        assert!(model.all_plans().is_empty());
-    }
-
-    #[test]
-    fn test_fs_store_discover_charters_implicit() {
-        let temp = tempfile::TempDir::new().unwrap();
-        let root = temp.path();
-
-        fs::write(root.join("health.actions"), "[ ] Exercise").unwrap();
-        fs::write(root.join("inbox.actions"), "[ ] Random").unwrap();
-
-        let store = FsWorkspaceStore::new(root);
-        let charters = store.discover_charters().unwrap();
-
-        assert_eq!(charters.len(), 1);
-        assert_eq!(charters[0].charter.title, "health");
-        assert!(!charters[0].is_explicit);
-    }
-
-    #[test]
-    fn test_fs_store_discover_charters_explicit_wins() {
-        let temp = tempfile::TempDir::new().unwrap();
-        let root = temp.path();
-
-        fs::write(root.join("health.actions"), "[ ] Exercise").unwrap();
-        fs::write(root.join("health.md"), "# Health & Fitness\n\nStay fit.\n").unwrap();
-
-        let store = FsWorkspaceStore::new(root);
-        let charters = store.discover_charters().unwrap();
-
-        assert_eq!(charters.len(), 1);
-        assert_eq!(charters[0].charter.title, "Health & Fitness");
-        assert!(charters[0].is_explicit);
-    }
-
-    #[test]
-    fn test_fs_store_discover_charters_directory() {
-        let temp = tempfile::TempDir::new().unwrap();
-        let root = temp.path();
-
-        let project_dir = root.join("build_clearhead");
-        fs::create_dir(&project_dir).unwrap();
-        fs::write(project_dir.join("next.actions"), "[ ] Build").unwrap();
-
-        let store = FsWorkspaceStore::new(root);
-        let charters = store.discover_charters().unwrap();
-
-        assert_eq!(charters.len(), 1);
-        assert_eq!(charters[0].charter.title, "build_clearhead");
-        assert!(!charters[0].is_explicit);
-    }
-
-    #[test]
-    fn test_fs_store_save_and_load_charter() {
-        let temp = tempfile::TempDir::new().unwrap();
-        let root = temp.path();
-
-        let mut store = FsWorkspaceStore::new(root);
-        let obj = ObjectiveRef::new("health");
-
-        let charter = Charter {
-            id: uuid::Uuid::new_v4(),
-            title: "Health & Fitness".to_string(),
-            description: Some("Stay healthy.".to_string()),
-            alias: Some("health".to_string()),
-            parent: None,
-            objectives: None,
-            plans: vec![],
-        };
-        store.save_charter(&obj, &charter).unwrap();
-
-        // File should exist
-        assert!(root.join("health.md").exists());
-
-        // Load it back via the charter path
-        let loaded = store.load_charter(&obj).unwrap().unwrap();
-        assert_eq!(loaded.title, "Health & Fitness");
-    }
-
-    #[test]
-    fn test_fs_store_skips_hidden_dirs() {
-        let temp = tempfile::TempDir::new().unwrap();
-        let root = temp.path();
-
-        fs::write(root.join("inbox.actions"), "[ ] Task").unwrap();
-        let hidden = root.join(".clearhead");
-        fs::create_dir(&hidden).unwrap();
-        fs::write(hidden.join("internal.actions"), "[ ] Hidden").unwrap();
-
-        let store = FsWorkspaceStore::new(root);
-        let objectives = store.list_objectives().unwrap();
-
-        assert_eq!(objectives.len(), 1);
-        assert_eq!(objectives[0].key, "inbox.actions");
-    }
 
     #[test]
     fn test_infer_project_name_rules() {

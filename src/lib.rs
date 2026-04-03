@@ -15,11 +15,11 @@
 
 pub mod workspace;
 pub use workspace::{
-    Action, ActionList, ActionState, Diff, DiscoveredCharter, FsWorkspaceStore, InMemoryStore,
-    ObjectiveRef, OutputFormat, ParsedDocument, SourceMetadata, SourceRange, WorkspaceStore,
-    closed_acts_path, diff_actions, format, format_charter, implicit_charter,
-    merge_acts_into_model, open_acts_path, parse_actions, parse_charter, parse_document,
-    parse_domain_model, parse_tree, patch_action_list, read_acts, write_acts, write_acts_for_plans,
+    Action, ActionList, ActionState, Diff, DiscoveredCharter, ObjectiveRef, OutputFormat,
+    ParsedDocument, SourceMetadata, SourceRange, closed_acts_path, diff_actions, format,
+    format_charter, implicit_charter, merge_acts_into_model, open_acts_path, parse_actions,
+    parse_charter, parse_document, parse_tree, patch_action_list, read_acts, write_acts,
+    write_acts_for_plans,
 };
 
 pub mod diff;
@@ -35,9 +35,6 @@ pub mod crdt;
 
 pub mod sync;
 pub use sync::DomainSyncDecision;
-
-pub mod document;
-pub use document::DomainSaveResult;
 
 pub mod graph;
 

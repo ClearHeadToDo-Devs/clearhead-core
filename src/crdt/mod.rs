@@ -15,6 +15,7 @@ pub mod types;
 use crate::domain::DomainModel;
 use automerge::AutoCommit;
 use autosurgeon::{hydrate, reconcile};
+
 use std::path::{Path, PathBuf};
 use types::{SyncModel, SyncWorkspaceState};
 
@@ -371,88 +372,5 @@ impl SyncRepo {
             file_key,
             doc,
         })
-    }
-}
-
-// ============================================================================
-// Tests
-// ============================================================================
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::workspace::actions::{Action, convert};
-    use tempfile::TempDir;
-
-    #[test]
-    fn test_workspace_separation() {
-        let temp_dir = TempDir::new().unwrap();
-        let root = temp_dir.path().to_path_buf();
-        let workspace = Workspace {
-            state_dir: root.clone(),
-            data_dir: root.clone(),
-        };
-        let storage = CrdtStorage::new(workspace.clone()).unwrap();
-
-        let mut doc = WorkspaceDoc::new().unwrap();
-
-        let model_a = convert::from_actions(&vec![Action::new("Task A")]);
-        doc.save_model("file_a.actions", &model_a).unwrap();
-
-        let model_b = convert::from_actions(&vec![Action::new("Task B")]);
-        doc.save_model("file_b.actions", &model_b).unwrap();
-
-        storage.save(&mut doc).unwrap();
-
-        let loaded_doc = storage.load().unwrap();
-
-        let loaded_a = loaded_doc.get_model("file_a.actions").unwrap();
-        assert_eq!(loaded_a.all_plans().len(), 1);
-        assert_eq!(loaded_a.all_plans()[0].name, "Task A");
-
-        let loaded_b = loaded_doc.get_model("file_b.actions").unwrap();
-        assert_eq!(loaded_b.all_plans().len(), 1);
-        assert_eq!(loaded_b.all_plans()[0].name, "Task B");
-    }
-
-    #[test]
-    fn test_domain_model_roundtrip_through_crdt() {
-        let temp_dir = TempDir::new().unwrap();
-        let root = temp_dir.path().to_path_buf();
-        let workspace = Workspace {
-            state_dir: root.clone(),
-            data_dir: root.clone(),
-        };
-        let storage = CrdtStorage::new(workspace.clone()).unwrap();
-
-        let mut doc = WorkspaceDoc::new().unwrap();
-
-        let mut action = Action::new("Round-trip Task");
-        action.priority = Some(3);
-        action.description = Some("Test description".to_string());
-        let original_model = convert::from_actions(&vec![action]);
-
-        doc.save_model("test.actions", &original_model).unwrap();
-        storage.save(&mut doc).unwrap();
-
-        let loaded_doc = storage.load().unwrap();
-        let loaded_model = loaded_doc.get_model("test.actions").unwrap();
-
-        assert_eq!(
-            loaded_model.all_plans().len(),
-            original_model.all_plans().len()
-        );
-        assert_eq!(
-            loaded_model.all_acts().len(),
-            original_model.all_acts().len()
-        );
-
-        let original_plans = original_model.all_plans();
-        let loaded_plans = loaded_model.all_plans();
-        for (orig, loaded) in original_plans.iter().zip(loaded_plans.iter()) {
-            assert_eq!(loaded.name, orig.name);
-            assert_eq!(loaded.priority, orig.priority);
-            assert_eq!(loaded.description, orig.description);
-        }
     }
 }

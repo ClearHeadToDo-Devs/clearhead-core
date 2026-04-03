@@ -25,7 +25,7 @@ pub use acts::{
     write_acts_for_plans,
 };
 pub use charter::{format_charter, implicit_charter, parse_charter};
-pub use store::{DiscoveredCharter, FsWorkspaceStore, InMemoryStore, ObjectiveRef, WorkspaceStore};
+pub use store::{DiscoveredCharter, ObjectiveRef};
 
 pub use detection::check_for_workspace;
 
@@ -71,12 +71,6 @@ pub fn parse_tree(input: &str) -> Result<Tree, String> {
     action_parser
         .parse(input, None)
         .ok_or("Failed to parse tree".to_string())
-}
-
-/// Parse a .actions file into a DomainModel
-pub fn parse_domain_model(content: &str) -> Result<DomainModel, String> {
-    let actions = parse_actions(content)?;
-    Ok(actions::convert::from_actions(&actions))
 }
 
 /// Patch a primary ActionList with updates from a secondary list

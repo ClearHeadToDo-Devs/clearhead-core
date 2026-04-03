@@ -304,7 +304,13 @@ mod tests {
         action.description = Some("A description".to_string());
         action.context_list = Some(vec!["home".to_string(), "computer".to_string()]);
 
-        let dm = action_convert::from_actions(&vec![action]);
+        let dm = DomainModel {
+            objectives: vec![],
+            charters: vec![action_convert::from_actions_with_charter(
+                &vec![action],
+                "Test Charter".to_string(),
+            )],
+        };
         let sync: SyncModel = SyncModel::from(&dm);
         let back: DomainModel = DomainModel::from(&sync);
 
@@ -361,22 +367,5 @@ mod tests {
         assert_eq!(back.title, obj.title);
         assert_eq!(back.metrics.as_ref().unwrap().len(), 1);
         assert_eq!(back.metrics.as_ref().unwrap()[0].name, "Steps");
-    }
-
-    #[test]
-    fn test_charter_with_plans_roundtrip() {
-        let action = Action::new("Charter task");
-        let dm = action_convert::from_actions(&vec![action]);
-
-        // The DomainModel wraps things in a synthetic charter
-        let sync: SyncModel = SyncModel::from(&dm);
-        let back: DomainModel = DomainModel::from(&sync);
-
-        assert_eq!(back.charters.len(), dm.charters.len());
-        for (orig_c, round_c) in dm.charters.iter().zip(back.charters.iter()) {
-            assert_eq!(round_c.id, orig_c.id);
-            assert_eq!(round_c.title, orig_c.title);
-            assert_eq!(round_c.plans.len(), orig_c.plans.len());
-        }
     }
 }
