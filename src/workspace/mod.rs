@@ -25,11 +25,8 @@ pub use acts::{
     write_acts_for_plans,
 };
 pub use charter::{format_charter, implicit_charter, parse_charter};
-pub use store::{DiscoveredCharter, ObjectiveRef};
 
 pub use detection::check_for_workspace;
-
-use crate::domain::DomainModel;
 
 /// Parse a .actions file into a structured ActionList
 pub fn parse_actions(input: &str) -> Result<ActionList, String> {

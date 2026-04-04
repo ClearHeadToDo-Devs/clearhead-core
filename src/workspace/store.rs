@@ -1,36 +1,6 @@
-//! Workspace storage abstraction.
-//!
-//! This module defines the [`WorkspaceStore`] trait — the interface for loading
-//! and saving domain objects (plans, charters) regardless of storage backend.
-//!
-//! # Design
-//!
-//! The trait abstracts *where* domain objects live. Implementations decide:
-//! - **Filesystem:** `.actions` files + `.md` charters in XDG directories
-//! - **Database:** SQLite, PostgreSQL, etc.
-//! - **In-memory:** For testing and ephemeral use
-//!
-//! The CRDT sync layer sits *above* this trait. A sync server uses a
-//! `WorkspaceStore` to project CRDT state outward, but the store itself
-//! has no knowledge of CRDTs or synchronization.
-//!
-//! # Example
-//!
-//! ```rust
-//! use clearhead_core::workspace::store::{InMemoryStore, WorkspaceStore, ObjectiveRef};
-//! use clearhead_core::DomainModel;
-//!
-//! let mut store = InMemoryStore::new();
-//!
-//! let objective = ObjectiveRef::new("inbox");
-//! let model = DomainModel::new();
-//! store.save_domain_model(&objective, &model).unwrap();
-//!
-//! let loaded = store.load_domain_model(&objective).unwrap();
-//! assert_eq!(loaded.all_plans().len(), 0);
-//! ```
+//! Workspace storage — loading domain models from `.actions` files on disk.
 
-use crate::domain::{Charter, DomainModel};
+use crate::domain::DomainModel;
 use crate::workspace::actions::convert::from_actions_with_charter;
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -38,18 +8,6 @@ use std::path::{Path, PathBuf};
 // ============================================================================
 // Core types
 // ============================================================================
-
-/// Identifies an objective (project/file) in the workspace.
-///
-/// The key is storage-agnostic: for filesystem stores it's a relative path
-/// (e.g., `"inbox.actions"`), for databases it could be a row ID or slug.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct ObjectiveRef {
-    /// Storage-level key for this objective.
-    pub key: String,
-    /// Human-readable name (inferred from key or metadata).
-    pub name: Option<String>,
-}
 
 /// Errors that can occur when interacting with a workspace.
 #[derive(Debug)]
@@ -78,37 +36,11 @@ impl fmt::Display for WorkspaceError {
 
 impl std::error::Error for WorkspaceError {}
 
-impl ObjectiveRef {
-    /// Create an ObjectiveRef from a key string.
-    ///
-    /// The name defaults to the key itself.
-    pub fn new(key: &str) -> Self {
-        Self {
-            key: key.to_string(),
-            name: Some(key.to_string()),
-        }
-    }
-
-    /// Create an ObjectiveRef with an explicit name.
-    pub fn with_name(key: &str, name: &str) -> Self {
-        Self {
-            key: key.to_string(),
-            name: Some(name.to_string()),
-        }
-    }
-}
-
-/// A charter with metadata about how it was discovered.
-#[derive(Debug, Clone)]
-pub struct DiscoveredCharter {
-    /// The parsed charter.
-    pub charter: Charter,
-    /// Storage-level key (e.g., file path, row ID).
-    pub source_key: String,
-    /// Whether this charter was explicitly defined (e.g., from a `.md` file)
-    /// vs inferred from context (e.g., from a `.actions` filename or directory).
-    pub is_explicit: bool,
-}
+/// The main interface for loading and saving domain models in a workspace.
+/// iterates through all .actions files,
+/// iterates through all charters from the .md files
+/// iterates through all acts through the ttl files
+/// pulls all of this out as a domain model for further effort
 pub fn load_domain_model(root: &PathBuf) -> Result<DomainModel, WorkspaceError> {
     if !root.is_dir() {
         return Err(WorkspaceError::InvalidPath(root.clone()));
@@ -154,7 +86,6 @@ pub fn strip_archive_suffix(stem: &str) -> &str {
 /// Rules:
 /// - `project.actions` → "project"
 /// - `project.completed.actions` → "project"  (archive convention)
-/// - `inbox.actions` → None (inbox is special, not a project)
 /// - `project/next.actions` → "project"  (primary file for that charter)
 /// - `project/subcharter.actions` → "subcharter"  (sub-charter)
 /// - `project/subdir/next.actions` → "subdir"
@@ -225,12 +156,16 @@ pub fn infer_parent_charter_name(relative_path: &Path) -> Option<String> {
 /// Discover all `.actions` files recursively, skipping hidden directories.
 fn discover_action_files(dir: &Path) -> Result<Vec<PathBuf>, WorkspaceError> {
     let mut files = Vec::new();
-    discover_recursive(dir, &mut files)?;
+    discover_recursive(dir, "actions".to_string(), &mut files)?;
     files.sort();
     Ok(files)
 }
 
-fn discover_recursive(dir: &Path, files: &mut Vec<PathBuf>) -> Result<(), WorkspaceError> {
+fn discover_recursive(
+    dir: &Path,
+    ext: String,
+    files: &mut Vec<PathBuf>,
+) -> Result<(), WorkspaceError> {
     if !dir.is_dir() {
         return Ok(());
     }
@@ -247,10 +182,10 @@ fn discover_recursive(dir: &Path, files: &mut Vec<PathBuf>) -> Result<(), Worksp
                     continue;
                 }
             }
-            discover_recursive(&path, files)?;
+            discover_recursive(&path, ext.clone(), files)?;
         } else if path.is_file() {
-            if let Some(ext) = path.extension() {
-                if ext == "actions" {
+            if let Some(file_ext) = path.extension() {
+                if *file_ext == *ext {
                     files.push(path);
                 }
             }
@@ -274,7 +209,10 @@ mod tests {
             infer_project_name(Path::new("work.actions")),
             Some("work".to_string())
         );
-        assert_eq!(infer_project_name(Path::new("inbox.actions")), None);
+        assert_eq!(
+            infer_project_name(Path::new("inbox.actions")),
+            Some("inbox".to_string())
+        );
         assert_eq!(
             infer_project_name(Path::new("myproject/next.actions")),
             Some("myproject".to_string())
