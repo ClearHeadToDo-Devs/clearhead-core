@@ -6,21 +6,11 @@ use uuid::Uuid;
 pub const INBOX_CHARTER_NS: Uuid = Uuid::from_bytes([
     0x69, 0x6e, 0x62, 0x6f, 0x78, 0x2d, 0x63, 0x68, 0x61, 0x72, 0x74, 0x65, 0x72, 0x2d, 0x6e, 0x73,
 ]);
-/// Convert an ActionList into a DomainModel with a charter name derived from
-/// the file path. Pass `None` to get "inbox" (same as `from_actions`).
+/// Convert an ActionList into a Charter with a deterministic ID derived from the name.
 pub fn from_actions_with_charter(actions: &ActionList, charter_name: String) -> Charter {
-    let title = charter_name;
-    let id = Uuid::now_v7();
-    let plans = actions.iter().map(|a| a.into()).collect();
-    return Charter {
-        id,
-        title: title.clone(),
-        description: None,
-        alias: Some(title.clone()),
-        parent: None,
-        objectives: None,
-        plans,
-    };
+    let mut charter = crate::workspace::charter::implicit_charter(&charter_name);
+    charter.plans = actions.iter().map(|a| a.into()).collect();
+    charter
 }
 
 /// Split an Action into its Plan and PlannedAct components.

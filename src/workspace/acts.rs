@@ -4,7 +4,7 @@
 //! - `<charter>.open.ttl`   — upcoming/in-progress acts
 //! - `<charter>.closed.ttl` — completed/cancelled acts
 //!
-//! Path derivation follows `infer_project_name` logic but does NOT skip "inbox",
+//! Path derivation follows `infer_charter_name` logic but does NOT skip "inbox",
 //! and always uses the charter stem (parent dir name for `next.actions`).
 
 use std::collections::{HashMap, HashSet};
@@ -22,7 +22,7 @@ use crate::graph;
 /// Derive the charter stem from a `.actions` file path.
 ///
 /// - `health.actions`                   → `"health"`
-/// - `inbox.actions`                    → `"inbox"` (NOT skipped — unlike infer_project_name)
+/// - `inbox.actions`                    → `"inbox"` (NOT skipped — unlike infer_charter_name)
 /// - `build_clearhead/next.actions`     → `"build_clearhead"` (parent dir)
 /// - `build_clearhead/observ.actions`   → `"observ"` (file stem)
 fn charter_stem(actions_path: &Path) -> String {

@@ -1,4 +1,5 @@
 use super::parser::{Action, ActionList};
+use crate::workspace::store::infer_charter_name;
 use std::path::{Path, PathBuf};
 
 /// Metadata about an action's source file
@@ -48,7 +49,7 @@ impl ActionRepository {
             .unwrap_or(file_path)
             .to_path_buf();
 
-        let project = infer_project_name(&relative_path);
+        let project = infer_charter_name(&relative_path);
 
         for action in actions {
             self.sourced_actions.push(SourcedAction {
@@ -72,41 +73,4 @@ impl ActionRepository {
     }
 }
 
-/// Infer project name from file path
-///
-/// Rules:
-/// - `project.actions` -> project
-/// - `inbox.actions` -> None (not a project)
-/// - `project/next.actions` -> project  (primary file for that charter)
-/// - `project/subcharter.actions` -> subcharter  (sub-charter)
-/// - `project/subdir/next.actions` -> subdir
-/// - `project/logs/2026-01.actions` -> 2026-01
-pub fn infer_project_name(relative_path: &Path) -> Option<String> {
-    let components: Vec<_> = relative_path.components().collect();
 
-    if components.is_empty() {
-        return None;
-    }
-
-    let filename = relative_path.file_name()?.to_str()?;
-
-    // Single file at root: check if it's a project file
-    if components.len() == 1 {
-        let stem = relative_path.file_stem()?.to_str()?;
-        if stem == "inbox" {
-            return None;
-        }
-        return Some(stem.to_string());
-    }
-
-    // Nested: next.actions → parent dir is the charter; anything else → file stem is the charter
-    if filename == "next.actions" {
-        if let std::path::Component::Normal(name) = components[components.len() - 2] {
-            return name.to_str().map(String::from);
-        }
-        return None;
-    }
-
-    let stem = relative_path.file_stem()?.to_str()?;
-    Some(stem.to_string())
-}
