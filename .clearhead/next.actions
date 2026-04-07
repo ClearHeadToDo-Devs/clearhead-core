@@ -1,0 +1,19 @@
+[x] Add a new function for workspace detection  $ in order to support project-level scoping we want to put in the logic to check for a .clearhead directory in the current folder or above, otherwise, assuming user-scoped work was wanted $ %2026-03-31T22:40 ^2026-03-31T21:02 #019d4734-db5e-7543-b911-9ac67164633a
+        >[x] define function to walk up the tree looking for .clearhead directory, returning the path if found, otherwise null  %2026-03-31T22:40 ^2026-03-31T21:02 #019d4737-045a-7b22-8b9e-acfe3a11fccf
+[ ] add start_date to Plan struct  $ right now we rely on implicit logic in the act to do proper expansion which is just wrong, so i need to add a proper start date, but that is going to be a hairball because then a bunch of downstream stuff changes that we are going to need to handle $ ^2026-03-22T00:48 #019d1484-5dd9-7ae0-b2ad-6ea5f69413e7
+[-] Finalize our refactor of taking a path and creating a domain model from it  $ not just the structure of the functions i want to be better about testing the content over time $ ^2026-04-03T07:32 #019d53c2-bb95-75a2-b3a7-a4eb70cebe56
+        >[ ] add integration tests for workspace loading with fixture trees (user + project scope)  $ assert charter names, parent links, and markdown/action merge from real filesystem layouts $ ^2026-04-06T00:15 #2f4ce7bc-41ce-41de-9b86-5409ba744a42
+                >>[ ] snapshot normalized DomainModel in RON for each fixture  $ improve tangibility of semantic model state $ ^2026-04-06T00:15 #f9db52f9-8d66-4d5c-b741-92a8d9476f47
+                >>[ ] snapshot inferred workspace tree manifest for load pipeline explainability  $ include file path, inferred charter, inferred parent, and source type $ ^2026-04-06T00:15 #0fef1630-39c7-48b7-b4ca-cdf7968d53be
+        >[ ] add save_domain_model workspace API with deterministic full-write baseline  $ write project root charter to .clearhead/next.actions and keep scope-aware path rules $ ^2026-04-06T00:15 #3cb11f7a-3b13-4799-93d7-6e3888d5ef87
+        >[ ] add round-trip integration tests (load -> save -> load) validated by diff_domain_models  $ verify semantic equality over string equality across both scopes $ ^2026-04-06T00:15 #a713e9e4-f2d2-4674-9ce1-1caec6dfaf4b
+        >[ ] add diff-backed incremental save path as phase 2  $ rewrite only touched charter files after correctness baseline is stable $ ^2026-04-06T00:15 #018f469b-f87b-4423-99bf-c3dbef56ef1b
+                >>[ ] add tests that snapshot rewritten file set for incremental save  $ make minimal write behavior visible and auditable $ ^2026-04-06T00:15 #1d445bdb-58bf-4d6b-a780-6dddf2527f42
+        >[ ] add tests for reading .actions files  ^2026-04-04T00:08 #019d5752-4d3c-78e1-8cc5-8370f5b1a7d3
+        >[-] add charter markdown reading support  ^2026-04-03T07:32 #019d53c2-bb95-75a2-b3a7-a4ffa8ec98d1
+                >>[ ] Add tests for a charter and action file  ^2026-04-04T00:07 #019d5751-abcf-71e2-932d-9ce91c9afae3
+                >>[ ] Add tests for the charter AND subcharter scenario with an action file still  ^2026-04-04T00:08 #019d5752-7f4c-7c92-8fb5-390a6d2452aa
+        >[ ] add support for reading .ttl files for acts  ^2026-04-03T07:32 #019d53c2-bb95-75a2-b3a7-a50b4e7f3912
+        >[ ] fix the cargo check bugs from the rework  ^2026-04-03T07:36 #019d53c6-29d5-7562-8435-c8069d1b9018
+[ ] Add state concept in charters  $ right now the library doesnt encode state even if people do write it so we want to atleast capture it when necessary $ ^2026-04-03T23:47 #019d573f-95fd-7e93-a1ac-78dbec9be4b8
+[x] support project-local workspace loading from .clearhead  $ workspace store now treats <project>/.clearhead as data root, maps root next.actions to project charter name, and preserves parent inference under project scope $ %2026-04-06T00:00 ^2026-04-06T00:00 #01962d95-bf8b-7b0d-a3a0-f0ab3bc02c9a

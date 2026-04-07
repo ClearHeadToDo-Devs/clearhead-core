@@ -1,0 +1,3 @@
+[x] Begin RDF integration  =rdf-work $ Working on graph construction from parsed actions $ !2 %2026-02-27T18:47 ^2026-02-05T21:13 #019c315e-a4da-7b40-9ff7-f51e0f9bc3bf
+[x] Refactor Model to include Charters and objectives  $ currently, the work is done primarily on the side and there is domain confusion on what is actually the model so we are going to make it charters, objectives, and plans with their acts $ %2026-03-16T22:26 ^2026-02-12T11:07 #019c5340-0044-7133-8b46-abef8fa97145
+[x] Decouple CRDT from everything else  $ right now it feels like the CRDT is just in the middle of everything and we want this to be an optional piece which is why the sync server will be an important part of all this $ %2026-03-16T22:26 ^2026-02-12T11:09 #019c5342-7242-71d0-a466-946589a04e08

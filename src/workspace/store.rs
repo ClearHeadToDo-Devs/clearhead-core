@@ -51,18 +51,22 @@ pub fn load_domain_model(root: &PathBuf) -> Result<DomainModel, WorkspaceError> 
         return Err(WorkspaceError::InvalidPath(root.clone()));
     }
 
+    let layout = resolve_workspace_layout(root);
+
     // charter name → Charter (insertion-ordered for deterministic output)
     let mut charters: HashMap<String, crate::domain::Charter> = HashMap::new();
     // charter name → relative path (for parent inference after merging)
     let mut path_for_name: HashMap<String, PathBuf> = HashMap::new();
 
     // Pass 1: .actions files → implicit charters with plans
-    for file_path in discover_action_files(root)? {
+    for file_path in discover_action_files(&layout.data_root)? {
         let relative = file_path
-            .strip_prefix(root)
+            .strip_prefix(&layout.data_root)
             .unwrap_or(&file_path)
             .to_path_buf();
-        let name = infer_charter_name(&relative).unwrap();
+        let name =
+            infer_charter_name_for_workspace(&relative, layout.project_root_charter.as_deref())
+                .unwrap();
 
         let mut actions = super::parse_actions(&std::fs::read_to_string(&file_path)?)
             .map_err(WorkspaceError::Parse)?;
@@ -82,12 +86,14 @@ pub fn load_domain_model(root: &PathBuf) -> Result<DomainModel, WorkspaceError> 
     }
 
     // Pass 2: .md files → enrich charters with explicit metadata
-    for file_path in discover_charter_files(root)? {
+    for file_path in discover_charter_files(&layout.data_root)? {
         let relative = file_path
-            .strip_prefix(root)
+            .strip_prefix(&layout.data_root)
             .unwrap_or(&file_path)
             .to_path_buf();
-        let name = infer_charter_name(&relative).unwrap();
+        let name =
+            infer_charter_name_for_workspace(&relative, layout.project_root_charter.as_deref())
+                .unwrap();
 
         let explicit =
             parse_charter(&std::fs::read_to_string(&file_path)?).map_err(WorkspaceError::Parse)?;
@@ -116,7 +122,8 @@ pub fn load_domain_model(root: &PathBuf) -> Result<DomainModel, WorkspaceError> 
     let parent_hints: Vec<(String, String)> = path_for_name
         .iter()
         .filter_map(|(name, path)| {
-            infer_parent_charter_name(path).map(|parent| (name.clone(), parent))
+            infer_parent_charter_name_for_workspace(path, layout.project_root_charter.as_deref())
+                .map(|parent| (name.clone(), parent))
         })
         .collect();
 
@@ -189,6 +196,27 @@ pub fn infer_charter_name(relative_path: &Path) -> Option<String> {
     Some(strip_archive_suffix(stem).to_string())
 }
 
+/// Infer charter name with optional project-root behavior.
+///
+/// When `project_root_charter` is present and the file is a workspace-primary
+/// file (`next.actions` / `README.md`) at the workspace data root, the charter
+/// name resolves to the project root instead of `next`.
+pub fn infer_charter_name_for_workspace(
+    relative_path: &Path,
+    project_root_charter: Option<&str>,
+) -> Option<String> {
+    let filename = relative_path.file_name()?.to_str()?;
+    let components: Vec<_> = relative_path.components().collect();
+
+    if components.len() == 1 && is_primary_filename(filename) {
+        if let Some(project_name) = project_root_charter {
+            return Some(project_name.to_string());
+        }
+    }
+
+    infer_charter_name(relative_path)
+}
+
 /// Infer the parent charter name from a file path.
 ///
 /// Returns `None` if the file's charter has no structural parent.
@@ -224,6 +252,34 @@ pub fn infer_parent_charter_name(relative_path: &Path) -> Option<String> {
         }
     }
     None
+}
+
+/// Infer parent charter with optional project-root behavior.
+///
+/// In project-local layout (`<project>/.clearhead/...`), top-level charter
+/// files under `.clearhead` are treated as children of the project charter,
+/// except the project's own primary file (`next.actions` / `README.md`).
+pub fn infer_parent_charter_name_for_workspace(
+    relative_path: &Path,
+    project_root_charter: Option<&str>,
+) -> Option<String> {
+    let filename = relative_path.file_name()?.to_str()?;
+    let components: Vec<_> = relative_path.components().collect();
+
+    if let Some(project_name) = project_root_charter {
+        if components.len() == 1 {
+            if is_primary_filename(filename) {
+                return None;
+            }
+            return Some(project_name.to_string());
+        }
+
+        if components.len() == 2 && is_primary_filename(filename) {
+            return Some(project_name.to_string());
+        }
+    }
+
+    infer_parent_charter_name(relative_path)
 }
 
 /// Discover all `.actions` files recursively, skipping hidden directories.
@@ -274,6 +330,29 @@ fn discover_recursive(
     }
 
     Ok(())
+}
+#[derive(Debug, Clone)]
+struct WorkspaceLayout {
+    data_root: PathBuf,
+    project_root_charter: Option<String>,
+}
+
+fn resolve_workspace_layout(root: &Path) -> WorkspaceLayout {
+    let project_data = root.join(".clearhead");
+    if project_data.is_dir() {
+        return WorkspaceLayout {
+            data_root: project_data,
+            project_root_charter: root
+                .file_name()
+                .and_then(|n| n.to_str())
+                .map(|s| s.to_string()),
+        };
+    }
+
+    WorkspaceLayout {
+        data_root: root.to_path_buf(),
+        project_root_charter: None,
+    }
 }
 
 // ============================================================================
@@ -350,6 +429,51 @@ mod tests {
         assert_eq!(
             infer_parent_charter_name(Path::new("myproject/subdir/sub.actions")),
             Some("subdir".to_string())
+        );
+    }
+
+    #[test]
+    fn test_infer_charter_name_project_local_workspace() {
+        assert_eq!(
+            infer_charter_name_for_workspace(Path::new("next.actions"), Some("platform")),
+            Some("platform".to_string())
+        );
+        assert_eq!(
+            infer_charter_name_for_workspace(Path::new("README.md"), Some("platform")),
+            Some("platform".to_string())
+        );
+        assert_eq!(
+            infer_charter_name_for_workspace(Path::new("observability.actions"), Some("platform")),
+            Some("observability".to_string())
+        );
+    }
+
+    #[test]
+    fn test_infer_parent_charter_name_project_local_workspace() {
+        assert_eq!(
+            infer_parent_charter_name_for_workspace(Path::new("next.actions"), Some("platform")),
+            None
+        );
+        assert_eq!(
+            infer_parent_charter_name_for_workspace(
+                Path::new("observability.actions"),
+                Some("platform")
+            ),
+            Some("platform".to_string())
+        );
+        assert_eq!(
+            infer_parent_charter_name_for_workspace(
+                Path::new("infra/next.actions"),
+                Some("platform")
+            ),
+            Some("platform".to_string())
+        );
+        assert_eq!(
+            infer_parent_charter_name_for_workspace(
+                Path::new("infra/deploy.actions"),
+                Some("platform")
+            ),
+            Some("infra".to_string())
         );
     }
 }
