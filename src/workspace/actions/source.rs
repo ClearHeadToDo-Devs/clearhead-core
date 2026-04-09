@@ -1,5 +1,5 @@
 use super::lint::LintDiagnostic;
-use super::parser::parse_action_recursive;
+use super::parser::{parse_action_recursive, parse_tree};
 use std::collections::HashMap;
 use tree_sitter::{Node, Tree};
 use uuid::Uuid;
@@ -158,6 +158,31 @@ pub struct ParsedDocument {
     pub source_map: HashMap<Uuid, SourceMetadata>,
     pub tag_index: HashMap<String, Vec<SourceRange>>,
     pub syntax_errors: Vec<LintDiagnostic>,
+}
+
+/// Parse a .actions file into a ParsedDocument (actions + source metadata)
+pub fn parse_document(input: &str) -> Result<ParsedDocument, String> {
+    let tree = parse_tree(input)?;
+    let tree_wrapper = TreeWrapper {
+        tree,
+        source: input.to_string(),
+    };
+    tree_wrapper.try_into()
+}
+
+/// Parse a .actions file into a structured ActionList
+pub fn parse_actions(input: &str) -> Result<ActionList, String> {
+    let parsed_doc = parse_document(input)?;
+    if !parsed_doc.syntax_errors.is_empty() {
+        let err = &parsed_doc.syntax_errors[0];
+        return Err(format!(
+            "Syntax error at line {}, column {}: {}",
+            err.range.start_row + 1,
+            err.range.start_col + 1,
+            err.message
+        ));
+    }
+    Ok(parsed_doc.actions)
 }
 
 impl TryFrom<TreeWrapper> for ActionList {

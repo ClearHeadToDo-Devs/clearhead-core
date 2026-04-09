@@ -6,16 +6,23 @@ pub mod parser;
 pub mod repository;
 pub mod source;
 
-pub use parser::{
-    Action, ActionList, ActionState, PredecessorRef, parse_action_recursive, parse_iso8601_datetime,
-};
-pub use repository::{ActionRepository, ActionSource, SourcedAction};
 pub use crate::workspace::store::infer_charter_name;
-pub use source::{
-    NodeWrapper, ParsedDocument, SourceMetadata, SourceRange, TreeWrapper, create_node_wrapper,
-    create_tree_wrapper, get_field_text, get_node_text, get_prefixed_text, validate_tree,
-};
 
-pub use diff::*;
-pub use format::*;
-pub use lint::*;
+// Core action types
+pub use parser::{Action, ActionList, ActionState, PredecessorRef, parse_tree};
+
+// Parse pipeline
+pub use source::{ParsedDocument, SourceMetadata, SourceRange, parse_actions, parse_document};
+
+// Storage
+pub use repository::{ActionRepository, ActionSource, SourcedAction};
+pub use convert::patch_action_list;
+
+// Diff
+pub use diff::{ActionDiff, Diff, FieldChange, diff_actions};
+
+// Format
+pub use format::{FormatConfig, FormatStyle, IndentStyle, OutputFormat, TableFormatOptions, format};
+
+// Lint
+pub use lint::{LintDiagnostic, LintResults, LintSeverity, lint_document};

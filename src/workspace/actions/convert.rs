@@ -97,6 +97,19 @@ pub fn merge_to_action(plan: &Plan, act: &PlannedAct, target_id: Uuid) -> Action
     }
 }
 
+/// Patch a primary ActionList with updates from a secondary list.
+///
+/// Updates existing actions by ID, appends new ones.
+pub fn patch_action_list(primary: &mut ActionList, secondary: &ActionList) {
+    for patch_action in secondary {
+        if let Some(original) = primary.iter_mut().find(|a| a.id == patch_action.id) {
+            *original = patch_action.clone();
+        } else {
+            primary.push(patch_action.clone());
+        }
+    }
+}
+
 /// Convert a DomainModel back to an ActionList.
 ///
 /// Walks the charter → plan → act hierarchy.

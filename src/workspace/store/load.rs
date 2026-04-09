@@ -22,8 +22,9 @@ pub fn load_domain_model(root: &Path) -> Result<DomainModel, WorkspaceError> {
             .strip_prefix(&layout.data_root)
             .unwrap_or(&file_path)
             .to_path_buf();
-        let name = infer_charter_name_for_workspace(&relative, layout.project_root_charter.as_deref())
-            .ok_or_else(|| WorkspaceError::Parse("Failed to infer charter name".to_string()))?;
+        let name =
+            infer_charter_name_for_workspace(&relative, layout.project_root_charter.as_deref())
+                .ok_or_else(|| WorkspaceError::Parse("Failed to infer charter name".to_string()))?;
 
         let mut actions = super::super::parse_actions(&std::fs::read_to_string(&file_path)?)
             .map_err(WorkspaceError::Parse)?;
@@ -47,8 +48,9 @@ pub fn load_domain_model(root: &Path) -> Result<DomainModel, WorkspaceError> {
             .strip_prefix(&layout.data_root)
             .unwrap_or(&file_path)
             .to_path_buf();
-        let name = infer_charter_name_for_workspace(&relative, layout.project_root_charter.as_deref())
-            .ok_or_else(|| WorkspaceError::Parse("Failed to infer charter name".to_string()))?;
+        let name =
+            infer_charter_name_for_workspace(&relative, layout.project_root_charter.as_deref())
+                .ok_or_else(|| WorkspaceError::Parse("Failed to infer charter name".to_string()))?;
 
         let explicit =
             parse_charter(&std::fs::read_to_string(&file_path)?).map_err(WorkspaceError::Parse)?;

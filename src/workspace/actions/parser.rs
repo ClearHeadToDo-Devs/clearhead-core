@@ -1,6 +1,7 @@
 use super::source::{
     NodeWrapper, SourceMetadata, SourceRange, create_node_wrapper, get_node_text, get_prefixed_text,
 };
+use tree_sitter::Tree;
 use crate::domain::Recurrence;
 use chrono::{DateTime, Local};
 use serde::{Deserialize, Serialize};
@@ -557,6 +558,17 @@ fn parse_rrule(rrule_str: &str) -> Option<Recurrence> {
 
 fn parse_int_list<T: std::str::FromStr>(s: &str) -> Vec<T> {
     s.split(',').filter_map(|x| x.parse().ok()).collect()
+}
+
+/// Parse raw text into a tree-sitter Tree
+pub fn parse_tree(input: &str) -> Result<Tree, String> {
+    let mut parser = tree_sitter::Parser::new();
+    parser
+        .set_language(&tree_sitter_actions::LANGUAGE.into())
+        .expect("Failed to set language for tree-sitter parser");
+    parser
+        .parse(input, None)
+        .ok_or("Failed to parse tree".to_string())
 }
 
 #[cfg(test)]
