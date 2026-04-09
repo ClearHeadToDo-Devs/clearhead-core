@@ -5,8 +5,9 @@
                 >>[ ] snapshot inferred workspace tree manifest for load pipeline explainability  $ include file path, inferred charter, inferred parent, and source type $ ^2026-04-06T00:15 #0fef1630-39c7-48b7-b4ca-cdf7968d53be
         >[x] add save_domain_model workspace API with deterministic full-write baseline  $ write project root charter to .clearhead/next.actions and keep scope-aware path rules $ %2026-04-08T18:29 ^2026-04-06T00:15 #3cb11f7a-3b13-4799-93d7-6e3888d5ef87
         >[ ] add round-trip integration tests  $ verify semantic equality over string equality across both scopes $ ^2026-04-06T00:15 #a713e9e4-f2d2-4674-9ce1-1caec6dfaf4b
-        >[ ] add diff-backed incremental save path as phase 2  $ rewrite only touched charter files after correctness baseline is stable $ ^2026-04-06T00:15 #018f469b-f87b-4423-99bf-c3dbef56ef1b
-                >>[ ] add tests that snapshot rewritten file set for incremental save  $ make minimal write behavior visible and auditable $ ^2026-04-06T00:15 #1d445bdb-58bf-4d6b-a780-6dddf2527f42
+        >[x] add diff-backed incremental save path as phase 2  $ rewrites only touched charter files; removes orphans; skips unchanged files via content comparison $ %2026-04-09T00:00 ^2026-04-06T00:15 #018f469b-f87b-4423-99bf-c3dbef56ef1b
+                >>[x] extend DomainDiff to carry charter context  $ restructured DomainDiff as hierarchy (DomainDiff→CharterDiff→PlanDiff→ActDiff); domain/ folder created; diff.rs merged into domain/diff.rs; CharterFieldChange added $ %2026-04-09T00:00 ^2026-04-08T00:00 #a1b2c3d4-0000-0000-0000-000000000001
+                >>[x] add tests that snapshot rewritten file set for incremental save  $ incremental_save_only_writes_changed_files + incremental_save_removes_orphaned_files in save.rs $ %2026-04-09T00:00 ^2026-04-06T00:15 #1d445bdb-58bf-4d6b-a780-6dddf2527f42
         >[ ] add tests for reading .actions files  ^2026-04-04T00:08 #019d5752-4d3c-78e1-8cc5-8370f5b1a7d3
         >[-] add charter markdown reading support  ^2026-04-03T07:32 #019d53c2-bb95-75a2-b3a7-a4ffa8ec98d1
                 >>[ ] Add tests for a charter and action file  ^2026-04-04T00:07 #019d5751-abcf-71e2-932d-9ce91c9afae3

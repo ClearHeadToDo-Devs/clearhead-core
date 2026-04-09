@@ -14,6 +14,8 @@
 //! "Do laundry weekly" is one Plan. Each week's laundry is a separate PlannedAct.
 //! For non-recurring tasks, there's still one Plan and one PlannedAct.
 
+pub mod diff;
+
 use chrono::{DateTime, Local};
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -448,117 +450,6 @@ impl DomainModel {
     }
 }
 
-// ============================================================================
-// Domain Diff Types
-// ============================================================================
-
-/// A change to a single field on a Plan.
-#[derive(Debug, Clone, PartialEq)]
-pub enum PlanFieldChange {
-    Name {
-        old: String,
-        new: String,
-    },
-    Description {
-        old: Option<String>,
-        new: Option<String>,
-    },
-    Priority {
-        old: Option<u32>,
-        new: Option<u32>,
-    },
-    Contexts {
-        old: Option<Vec<String>>,
-        new: Option<Vec<String>>,
-    },
-    Parent {
-        old: Option<Uuid>,
-        new: Option<Uuid>,
-    },
-    Objective {
-        old: Option<String>,
-        new: Option<String>,
-    },
-    Alias {
-        old: Option<String>,
-        new: Option<String>,
-    },
-    IsSequential {
-        old: Option<bool>,
-        new: Option<bool>,
-    },
-    Recurrence {
-        old: Option<Recurrence>,
-        new: Option<Recurrence>,
-    },
-    DependsOn {
-        old: Option<Vec<Uuid>>,
-        new: Option<Vec<Uuid>>,
-    },
-}
-
-/// A change to a single field on a PlannedAct.
-#[derive(Debug, Clone, PartialEq)]
-pub enum ActFieldChange {
-    Phase {
-        old: ActPhase,
-        new: ActPhase,
-    },
-    ScheduledAt {
-        old: Option<DateTime<Local>>,
-        new: Option<DateTime<Local>>,
-    },
-    Duration {
-        old: Option<u32>,
-        new: Option<u32>,
-    },
-    CompletedAt {
-        old: Option<DateTime<Local>>,
-        new: Option<DateTime<Local>>,
-    },
-    CreatedAt {
-        old: Option<DateTime<Local>>,
-        new: Option<DateTime<Local>>,
-    },
-}
-
-/// Changes detected for a single Plan.
-#[derive(Debug, Clone, PartialEq)]
-pub struct PlanDiff {
-    pub id: Uuid,
-    pub changes: Vec<PlanFieldChange>,
-}
-
-/// Changes detected for a single PlannedAct.
-#[derive(Debug, Clone, PartialEq)]
-pub struct ActDiff {
-    pub id: Uuid,
-    pub plan_id: Uuid,
-    pub changes: Vec<ActFieldChange>,
-}
-
-/// Complete diff between two DomainModels.
-#[derive(Debug, Clone, PartialEq, Default)]
-pub struct DomainDiff {
-    pub plans_added: Vec<Plan>,
-    pub plans_removed: Vec<Plan>,
-    pub plans_modified: Vec<PlanDiff>,
-    pub acts_added: Vec<PlannedAct>,
-    pub acts_removed: Vec<PlannedAct>,
-    pub acts_modified: Vec<ActDiff>,
-}
-
-impl DomainDiff {
-    pub fn is_empty(&self) -> bool {
-        self.plans_added.is_empty()
-            && self.plans_removed.is_empty()
-            && self.plans_modified.is_empty()
-            && self.acts_added.is_empty()
-            && self.acts_removed.is_empty()
-            && self.acts_modified.is_empty()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -653,7 +544,7 @@ mod tests {
                 depends_on: None,
                 acts: vec![PlannedAct {
                     id: Uuid::new_v4(),
-                    plan_id: plan_id,
+                    plan_id,
                     phase: ActPhase::NotStarted,
                     scheduled_at: Some(Local::now()),
                     duration: Some(30),

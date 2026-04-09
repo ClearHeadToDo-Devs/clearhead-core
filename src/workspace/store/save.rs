@@ -8,7 +8,11 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
-/// Save a `DomainModel` to a workspace root directory using deterministic full-write.
+/// Save a `DomainModel` to a workspace root directory.
+///
+/// Only writes files whose content has changed and removes orphaned files
+/// (those no longer represented in the model). Directories are created as
+/// needed and pruned when empty.
 pub fn save_domain_model(root: &Path, model: &DomainModel) -> Result<(), WorkspaceError> {
     if !root.is_dir() {
         return Err(WorkspaceError::InvalidPath(root.to_path_buf()));
@@ -17,26 +21,38 @@ pub fn save_domain_model(root: &Path, model: &DomainModel) -> Result<(), Workspa
     let layout = resolve_workspace_layout(root);
     std::fs::create_dir_all(&layout.data_root)?;
 
-    clear_existing_actions(&layout)?;
+    let manifest = build_action_file_manifest(model, &layout)?;
 
-    for (relative_path, content) in build_action_file_manifest(model, &layout)? {
+    // Write only files whose content differs from what's on disk.
+    for (relative_path, content) in &manifest {
         let absolute_path = layout.data_root.join(relative_path);
-        if let Some(parent) = absolute_path.parent() {
-            std::fs::create_dir_all(parent)?;
+        let needs_write = std::fs::read_to_string(&absolute_path)
+            .map(|existing| existing != *content)
+            .unwrap_or(true); // file missing → write it
+
+        if needs_write {
+            if let Some(parent) = absolute_path.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::write(absolute_path, content)?;
         }
-        std::fs::write(absolute_path, content)?;
     }
 
-    Ok(())
-}
-
-fn clear_existing_actions(layout: &WorkspaceLayout) -> Result<(), WorkspaceError> {
+    // Remove orphaned files (on disk but not in the new manifest).
+    let manifest_paths: HashSet<PathBuf> = manifest.keys().cloned().collect();
     for existing in discover_action_files(&layout.data_root)? {
-        std::fs::remove_file(&existing)?;
-        if let Some(parent) = existing.parent() {
-            prune_empty_directories(parent, &layout.data_root)?;
+        let relative = existing
+            .strip_prefix(&layout.data_root)
+            .unwrap_or(&existing)
+            .to_path_buf();
+        if !manifest_paths.contains(&relative) {
+            std::fs::remove_file(&existing)?;
+            if let Some(parent) = existing.parent() {
+                prune_empty_directories(parent, &layout.data_root)?;
+            }
         }
     }
+
     Ok(())
 }
 
@@ -359,5 +375,106 @@ mod tests {
 
         assert!(root.join("work.actions").exists());
         assert!(root.join("work/ops.actions").exists());
+    }
+
+    #[test]
+    fn incremental_save_only_writes_changed_files() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path().to_path_buf();
+
+        let work_id = Uuid::new_v4();
+        let ops_id = Uuid::new_v4();
+
+        let model = DomainModel {
+            objectives: vec![],
+            charters: vec![
+                Charter {
+                    id: work_id,
+                    title: "work".to_string(),
+                    description: None,
+                    alias: Some("work".to_string()),
+                    parent: None,
+                    objectives: None,
+                    plans: vec![test_plan("Quarter plan")],
+                },
+                Charter {
+                    id: ops_id,
+                    title: "ops".to_string(),
+                    description: None,
+                    alias: Some("ops".to_string()),
+                    parent: Some("work".to_string()),
+                    objectives: None,
+                    plans: vec![test_plan("Backups")],
+                },
+            ],
+        };
+
+        save_domain_model(&root, &model).expect("initial save");
+
+        // Capture the content of the unchanged file before the second save.
+        let work_content_before =
+            std::fs::read_to_string(root.join("work.actions")).expect("read work.actions");
+
+        // Save again with only ops modified.
+        let mut updated = model.clone();
+        updated.charters[1].plans[0].name = "Backups v2".to_string();
+        save_domain_model(&root, &updated).expect("incremental save");
+
+        // ops should reflect the change.
+        let ops_content = std::fs::read_to_string(root.join("work/ops.actions"))
+            .expect("read ops.actions");
+        assert!(ops_content.contains("Backups v2"), "ops file should be updated");
+
+        // work should be byte-for-byte identical — not rewritten.
+        let work_content_after =
+            std::fs::read_to_string(root.join("work.actions")).expect("read work.actions");
+        assert_eq!(
+            work_content_before, work_content_after,
+            "unchanged charter file should not be rewritten"
+        );
+    }
+
+    #[test]
+    fn incremental_save_removes_orphaned_files() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path().to_path_buf();
+
+        let work_id = Uuid::new_v4();
+        let ops_id = Uuid::new_v4();
+
+        let model = DomainModel {
+            objectives: vec![],
+            charters: vec![
+                Charter {
+                    id: work_id,
+                    title: "work".to_string(),
+                    description: None,
+                    alias: Some("work".to_string()),
+                    parent: None,
+                    objectives: None,
+                    plans: vec![test_plan("Quarter plan")],
+                },
+                Charter {
+                    id: ops_id,
+                    title: "ops".to_string(),
+                    description: None,
+                    alias: Some("ops".to_string()),
+                    parent: Some("work".to_string()),
+                    objectives: None,
+                    plans: vec![test_plan("Backups")],
+                },
+            ],
+        };
+
+        save_domain_model(&root, &model).expect("initial save");
+        assert!(root.join("work/ops.actions").exists());
+
+        // Remove ops from the model and save again.
+        let mut trimmed = model.clone();
+        trimmed.charters.retain(|c| c.id != ops_id);
+        save_domain_model(&root, &trimmed).expect("trimmed save");
+
+        assert!(!root.join("work/ops.actions").exists(), "orphaned file should be removed");
+        assert!(root.join("work.actions").exists(), "surviving file should remain");
     }
 }

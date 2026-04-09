@@ -23,13 +23,13 @@ pub use workspace::{
     read_acts, save_domain_model, write_acts, write_acts_for_plans,
 };
 
-pub mod diff;
-pub use diff::diff_domain_models;
-
 pub mod domain;
 pub use domain::{
-    ActDiff, ActFieldChange, ActPhase, Charter, DomainDiff, DomainModel, Metric, Objective, Plan,
-    PlanDiff, PlanFieldChange, PlannedAct, Recurrence,
+    ActPhase, Charter, DomainModel, Metric, Objective, Plan, PlannedAct, Recurrence,
+};
+pub use domain::diff::{
+    ActDiff, ActFieldChange, CharterDiff, CharterFieldChange, DomainDiff, PlanDiff,
+    PlanFieldChange, diff_domain_models,
 };
 
 pub mod crdt;
