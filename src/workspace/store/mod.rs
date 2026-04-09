@@ -1,4 +1,24 @@
 //! Workspace storage — loading and saving domain models on disk.
+//!
+//! # Workspace Layouts
+//!
+//! ClearHead supports two workspace layouts. See the
+//! [naming conventions specification](../../../specifications/naming_conventions.md)
+//! for the authoritative description of each scope.
+//!
+//! ## Project layout
+//! The workspace root contains a `.clearhead/` subdirectory. Action files live
+//! inside it, and the root directory name becomes the top-level charter — so
+//! `my-project/.clearhead/next.actions` belongs to the `my-project` charter.
+//! Used for project-local work tracked alongside source code.
+//!
+//! ## User layout
+//! No `.clearhead/` subdirectory. Action files live directly in the root and
+//! charter names are inferred purely from filenames and directory structure.
+//! Used for personal workspaces not tied to a specific project.
+//!
+//! `resolve_workspace_layout` detects which layout applies and returns a
+//! `WorkspaceLayout` that all load/save functions use for path resolution.
 
 mod discovery;
 mod load;
@@ -49,6 +69,13 @@ pub(crate) struct WorkspaceLayout {
     pub(crate) project_root_charter: Option<String>,
 }
 
+/// Detect the workspace layout and return the paths needed for load/save.
+///
+/// - **Project layout** (`.clearhead/` exists): data root is `.clearhead/`,
+///   and the root directory name becomes `project_root_charter` so that
+///   `next.actions` at the top level maps to the project charter rather than "next".
+/// - **User layout** (no `.clearhead/`): data root is the directory itself,
+///   `project_root_charter` is `None`, and all charter names come from filenames.
 pub(crate) fn resolve_workspace_layout(root: &Path) -> WorkspaceLayout {
     let project_data = root.join(".clearhead");
     if project_data.is_dir() {
