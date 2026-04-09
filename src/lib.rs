@@ -15,11 +15,12 @@
 
 pub mod workspace;
 pub use workspace::{
-    Action, ActionList, ActionState, Diff, OutputFormat,
-    ParsedDocument, SourceMetadata, SourceRange, closed_acts_path, diff_actions, format,
-    format_charter, implicit_charter, merge_acts_into_model, open_acts_path, parse_actions,
-    parse_charter, parse_document, parse_tree, patch_action_list, read_acts, write_acts,
-    write_acts_for_plans,
+    Action, ActionList, ActionState, Diff, OutputFormat, ParsedDocument, SourceMetadata,
+    SourceRange, closed_acts_path, diff_actions, format, format_charter, implicit_charter,
+    infer_charter_name, infer_charter_name_for_workspace, infer_parent_charter_name,
+    infer_parent_charter_name_for_workspace, load_domain_model, merge_acts_into_model,
+    open_acts_path, parse_actions, parse_charter, parse_document, parse_tree, patch_action_list,
+    read_acts, save_domain_model, write_acts, write_acts_for_plans,
 };
 
 pub mod diff;
