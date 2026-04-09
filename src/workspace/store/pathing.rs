@@ -1,20 +1,21 @@
 use std::path::Path;
 
-/// Strip archive suffixes (`.completed`, `.archived`) from a file stem.
-///
-/// `health.completed` → `"health"`, `health` → `"health"`.
-pub(crate) fn strip_archive_suffix(stem: &str) -> &str {
-    stem.strip_suffix(".completed")
-        .or_else(|| stem.strip_suffix(".archived"))
-        .unwrap_or(stem)
-}
+/// Infer charter name with optional project-root behavior.
+pub fn infer_charter_name_for_workspace(
+    relative_path: &Path,
+    project_root_charter: Option<&str>,
+) -> Option<String> {
+    let filename = relative_path.file_name()?.to_str()?;
+    let components: Vec<_> = relative_path.components().collect();
 
-/// Returns true for filenames where the parent directory is the charter name.
-///
-/// Both `next.actions` and `README.md` are "primary" files — they represent
-/// the charter itself, not a sub-charter.
-pub(crate) fn is_primary_filename(filename: &str) -> bool {
-    filename == "next.actions" || filename == "README.md"
+    if components.len() == 1
+        && is_primary_filename(filename)
+        && let Some(project_name) = project_root_charter
+    {
+        return Some(project_name.to_string());
+    }
+
+    infer_charter_name(relative_path)
 }
 
 /// Infer the charter name from a relative file path.
@@ -41,47 +42,6 @@ pub fn infer_charter_name(relative_path: &Path) -> Option<String> {
     Some(strip_archive_suffix(stem).to_string())
 }
 
-/// Infer charter name with optional project-root behavior.
-pub fn infer_charter_name_for_workspace(
-    relative_path: &Path,
-    project_root_charter: Option<&str>,
-) -> Option<String> {
-    let filename = relative_path.file_name()?.to_str()?;
-    let components: Vec<_> = relative_path.components().collect();
-
-    if components.len() == 1
-        && is_primary_filename(filename)
-        && let Some(project_name) = project_root_charter
-    {
-        return Some(project_name.to_string());
-    }
-
-    infer_charter_name(relative_path)
-}
-
-/// Infer the parent charter name from a file path.
-pub fn infer_parent_charter_name(relative_path: &Path) -> Option<String> {
-    let components: Vec<_> = relative_path.components().collect();
-    let filename = relative_path.file_name()?.to_str()?;
-
-    if components.len() <= 1 {
-        return None;
-    }
-
-    if is_primary_filename(filename) {
-        if components.len() == 2 {
-            return None;
-        }
-        if let std::path::Component::Normal(name) = components[components.len() - 3] {
-            return name.to_str().map(ToString::to_string);
-        }
-    } else if let std::path::Component::Normal(name) = components[components.len() - 2] {
-        return name.to_str().map(ToString::to_string);
-    }
-
-    None
-}
-
 /// Infer parent charter with optional project-root behavior.
 pub fn infer_parent_charter_name_for_workspace(
     relative_path: &Path,
@@ -105,6 +65,44 @@ pub fn infer_parent_charter_name_for_workspace(
 
     infer_parent_charter_name(relative_path)
 }
+/// Infer the parent charter name from a file path.
+pub fn infer_parent_charter_name(relative_path: &Path) -> Option<String> {
+    let components: Vec<_> = relative_path.components().collect();
+    let filename = relative_path.file_name()?.to_str()?;
+
+    if components.len() <= 1 {
+        return None;
+    }
+
+    if is_primary_filename(filename) {
+        if components.len() == 2 {
+            return None;
+        }
+        if let std::path::Component::Normal(name) = components[components.len() - 3] {
+            return name.to_str().map(ToString::to_string);
+        }
+    } else if let std::path::Component::Normal(name) = components[components.len() - 2] {
+        return name.to_str().map(ToString::to_string);
+    }
+
+    None
+}
+/// Strip archive suffixes (`.completed`, `.archived`) from a file stem.
+///
+/// `health.completed` → `"health"`, `health` → `"health"`.
+pub(crate) fn strip_archive_suffix(stem: &str) -> &str {
+    stem.strip_suffix(".completed")
+        .or_else(|| stem.strip_suffix(".archived"))
+        .unwrap_or(stem)
+}
+
+/// Returns true for filenames where the parent directory is the charter name.
+///
+/// Both `next.actions` and `README.md` are "primary" files — they represent
+/// the charter itself, not a sub-charter.
+pub(crate) fn is_primary_filename(filename: &str) -> bool {
+    filename == "next.actions" || filename == "README.md"
+}
 
 #[cfg(test)]
 mod tests {
@@ -113,7 +111,10 @@ mod tests {
 
     #[test]
     fn infer_charter_names() {
-        assert_eq!(infer_charter_name(Path::new("work.actions")), Some("work".into()));
+        assert_eq!(
+            infer_charter_name(Path::new("work.actions")),
+            Some("work".into())
+        );
         assert_eq!(
             infer_charter_name(Path::new("myproject/next.actions")),
             Some("myproject".into())
