@@ -46,10 +46,8 @@ impl From<&Action> for Plan {
             contexts: action.context_list.clone(),
             recurrence: action.recurrence.clone(),
             parent: action.parent_id,
-            objective: action.charter.clone(),
             alias: action.alias.clone(),
             is_sequential: action.is_sequential,
-            duration: action.do_duration,
             depends_on: action
                 .predecessors
                 .as_ref()
@@ -78,7 +76,7 @@ pub fn merge_to_action(plan: &Plan, act: &PlannedAct, target_id: Uuid) -> Action
         priority: plan.priority,
         context_list: plan.contexts.clone(),
         do_date_time: act.scheduled_at,
-        do_duration: act.duration.or(plan.duration),
+        do_duration: act.duration,
         recurrence: plan.recurrence.clone(),
         completed_date_time: act.completed_at,
         created_date_time: act.created_at,
@@ -91,7 +89,7 @@ pub fn merge_to_action(plan: &Plan, act: &PlannedAct, target_id: Uuid) -> Action
                 })
                 .collect()
         }),
-        charter: plan.objective.clone(),
+        charter: None,
         alias: plan.alias.clone(),
         is_sequential: plan.is_sequential,
     }

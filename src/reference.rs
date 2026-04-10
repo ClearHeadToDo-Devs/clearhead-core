@@ -533,10 +533,8 @@ mod tests {
             contexts: None,
             recurrence: None,
             parent,
-            objective: None,
             alias: Some(alias.to_string()),
             is_sequential: None,
-            duration: None,
             depends_on: None,
             acts: Vec::new(),
         }

@@ -239,14 +239,10 @@ pub struct Plan {
     pub recurrence: Option<Recurrence>,
     /// Parent plan (partOf relationship for hierarchy)
     pub parent: Option<Uuid>,
-    /// Story/project reference (hasObjective relationship)
-    pub objective: Option<String>,
     /// Stable alias for references
     pub alias: Option<String>,
     /// Whether children execute sequentially
     pub is_sequential: Option<bool>,
-    /// Duration in minutes (template for acts)
-    pub duration: Option<u32>,
     /// Plans this plan depends on (predecessor relationships)
     pub depends_on: Option<Vec<Uuid>>,
     /// PlannedActs that realize this plan (nested hierarchy)
@@ -424,6 +420,7 @@ impl DomainModel {
                         plan.acts.iter().map(|a| a.id).collect();
 
                     let occurrences = plan.expand_occurrences(dtstart, 1000);
+                    let template_duration = plan.acts.first().and_then(|a| a.duration);
                     for (i, occ) in occurrences.iter().enumerate() {
                         let occ_local = occ.with_timezone(&Local);
                         if occ_local > end_date {
@@ -438,7 +435,7 @@ impl DomainModel {
                                 plan_id: plan.id,
                                 phase: ActPhase::NotStarted,
                                 scheduled_at: Some(occ_local),
-                                duration: plan.duration,
+                                duration: template_duration,
                                 completed_at: None,
                                 created_at: Some(now),
                             });
@@ -485,10 +482,8 @@ mod tests {
             contexts: None,
             recurrence: Some(recurrence),
             parent: None,
-            objective: None,
             alias: None,
             is_sequential: None,
-            duration: None,
             depends_on: None,
             acts: vec![],
         };
@@ -537,10 +532,8 @@ mod tests {
                     week_start: None,
                 }),
                 parent: None,
-                objective: None,
                 alias: None,
                 is_sequential: None,
-                duration: Some(30),
                 depends_on: None,
                 acts: vec![PlannedAct {
                     id: Uuid::new_v4(),

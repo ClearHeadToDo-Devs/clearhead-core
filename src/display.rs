@@ -101,7 +101,7 @@ pub fn format_domain_as_table(
                     .map(|dt| dt.format("%Y-%m-%d %H:%M").to_string())
                     .unwrap_or_else(|| "-".to_string()),
                 first_act
-                    .and_then(|a| a.duration.or(plan.duration))
+                    .and_then(|a| a.duration)
                     .map(|d| format!("{}m", d))
                     .unwrap_or_else(|| "-".to_string()),
                 plan.recurrence

@@ -40,12 +40,19 @@ pub(crate) const SKOS_NS: &str = "http://www.w3.org/2004/02/skos/core#";
 
 // BFO property identifiers
 pub(crate) const BFO_HAS_PART: &str = "BFO_0000051";
+pub(crate) const BFO_PART_OF: &str = "BFO_0000050";
 
 // CCO class and property identifiers
 pub(crate) const CCO_PLAN: &str = "ont00000974";
 pub(crate) const CCO_PLANNED_ACT: &str = "ont00000228";
+pub(crate) const CCO_IS_SUCCESSOR_OF: &str = "ont00001775";
 pub(crate) const CCO_PRESCRIBES: &str = "ont00001942";
+pub(crate) const CCO_PRESCRIBED_BY: &str = "ont00001920";
 pub(crate) const CCO_STATUS_PROP: &str = "ont00001868";
+
+// RDFS property identifiers
+pub(crate) const RDFS_LABEL: &str = "label";
+pub(crate) const RDFS_COMMENT: &str = "comment";
 
 // ============================================================================
 // Shared NamedNode helpers (used by all submodules)
@@ -65,6 +72,10 @@ pub(crate) fn cco_node(id: &str) -> NamedNode {
 
 pub(crate) fn schema_pred(name: &str) -> NamedNode {
     ns(SCHEMA_NS, name)
+}
+
+pub(crate) fn rdfs_pred(name: &str) -> NamedNode {
+    ns("http://www.w3.org/2000/01/rdf-schema#", name)
 }
 
 pub(crate) fn bfo_pred(name: &str) -> NamedNode {

@@ -88,10 +88,8 @@ impl From<&Plan> for SyncPlan {
             contexts: p.contexts.clone(),
             recurrence: p.recurrence.as_ref().map(SyncRecurrence::from),
             parent: p.parent,
-            objective: p.objective.clone(),
             alias: p.alias.clone(),
             is_sequential: p.is_sequential,
-            duration: p.duration,
             depends_on: p.depends_on.clone(),
             acts: p.acts.iter().map(SyncPlannedAct::from).collect(),
         }
@@ -220,10 +218,8 @@ impl From<&SyncPlan> for Plan {
             contexts: p.contexts.clone(),
             recurrence: p.recurrence.as_ref().map(Recurrence::from),
             parent: p.parent,
-            objective: p.objective.clone(),
             alias: p.alias.clone(),
             is_sequential: p.is_sequential,
-            duration: p.duration,
             depends_on: p.depends_on.clone(),
             acts: p.acts.iter().map(PlannedAct::from).collect(),
         }
@@ -284,7 +280,7 @@ impl From<&SyncRecurrence> for Recurrence {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::workspace::actions::{Action, convert as action_convert};
+    use crate::workspace::actions::{convert as action_convert, Action};
     use uuid::Uuid;
 
     #[test]

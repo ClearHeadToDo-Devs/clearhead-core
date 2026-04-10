@@ -194,7 +194,7 @@ fn representative_act(plan: &Plan) -> PlannedAct {
         plan_id: plan.id,
         phase: ActPhase::NotStarted,
         scheduled_at: None,
-        duration: plan.duration,
+        duration: None,
         completed_at: None,
         created_at: None,
     }
@@ -256,10 +256,8 @@ mod tests {
             contexts: None,
             recurrence: None,
             parent: None,
-            objective: None,
             alias: None,
             is_sequential: None,
-            duration: Some(30),
             depends_on: None,
             acts: vec![PlannedAct {
                 id: Uuid::new_v5(&id, b"act-0"),
@@ -421,9 +419,12 @@ mod tests {
         save_domain_model(&root, &updated).expect("incremental save");
 
         // ops should reflect the change.
-        let ops_content = std::fs::read_to_string(root.join("work/ops.actions"))
-            .expect("read ops.actions");
-        assert!(ops_content.contains("Backups v2"), "ops file should be updated");
+        let ops_content =
+            std::fs::read_to_string(root.join("work/ops.actions")).expect("read ops.actions");
+        assert!(
+            ops_content.contains("Backups v2"),
+            "ops file should be updated"
+        );
 
         // work should be byte-for-byte identical — not rewritten.
         let work_content_after =
@@ -474,7 +475,13 @@ mod tests {
         trimmed.charters.retain(|c| c.id != ops_id);
         save_domain_model(&root, &trimmed).expect("trimmed save");
 
-        assert!(!root.join("work/ops.actions").exists(), "orphaned file should be removed");
-        assert!(root.join("work.actions").exists(), "surviving file should remain");
+        assert!(
+            !root.join("work/ops.actions").exists(),
+            "orphaned file should be removed"
+        );
+        assert!(
+            root.join("work.actions").exists(),
+            "surviving file should remain"
+        );
     }
 }

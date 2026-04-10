@@ -88,9 +88,10 @@ pub fn read_acts(path: &Path) -> Result<Vec<PlannedAct>, String> {
     graph::load_turtle(&store, &content)?;
 
     let sparql = format!(
-        "SELECT ?id WHERE {{ ?s a <{}{}> . ?s <{}id> ?id }}",
+        "SELECT ?id WHERE {{ ?s a <{}{}> . {{ ?s <{}hasUUID> ?id }} UNION {{ ?s <{}id> ?id }} }}",
         crate::graph::CCO_NS,
         crate::graph::CCO_PLANNED_ACT,
+        crate::graph::ACTIONS_NS,
         crate::graph::ACTIONS_NS
     );
     graph::query_acts(&store, &sparql)
@@ -102,9 +103,8 @@ pub fn read_acts(path: &Path) -> Result<Vec<PlannedAct>, String> {
 pub fn write_acts(acts: &[PlannedAct], path: &Path) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         if !parent.as_os_str().is_empty() {
-            std::fs::create_dir_all(parent).map_err(|e| {
-                format!("Failed to create directory '{}': {}", parent.display(), e)
-            })?;
+            std::fs::create_dir_all(parent)
+                .map_err(|e| format!("Failed to create directory '{}': {}", parent.display(), e))?;
         }
     }
 
@@ -112,8 +112,7 @@ pub fn write_acts(acts: &[PlannedAct], path: &Path) -> Result<(), String> {
     graph::load_acts_into_store(&store, acts)?;
     let ttl = graph::dump_store_to_turtle(&store)?;
 
-    std::fs::write(path, ttl)
-        .map_err(|e| format!("Failed to write '{}': {}", path.display(), e))
+    std::fs::write(path, ttl).map_err(|e| format!("Failed to write '{}': {}", path.display(), e))
 }
 
 /// Write acts belonging to specific plans, preserving other plans' acts already in the file.
@@ -175,11 +174,7 @@ mod tests {
                     .unwrap(),
             ),
             completed_at: None,
-            created_at: Some(
-                chrono::Local
-                    .with_ymd_and_hms(2026, 3, 1, 0, 0, 0)
-                    .unwrap(),
-            ),
+            created_at: Some(chrono::Local.with_ymd_and_hms(2026, 3, 1, 0, 0, 0).unwrap()),
             duration: Some(30),
         }
     }
@@ -256,6 +251,36 @@ mod tests {
         assert!(loaded_act.scheduled_at.is_some());
         assert!(loaded_act.created_at.is_some());
         assert!(loaded_act.completed_at.is_none());
+    }
+
+    #[test]
+    fn test_read_legacy_predicates_still_works() {
+        let plan_id = Uuid::new_v4();
+        let act_id = Uuid::new_v4();
+        let ttl = format!(
+            "@prefix actions: <https://clearhead.us/vocab/actions/v4#> .\n\
+             @prefix cco: <https://www.commoncoreontologies.org/> .\n\
+             @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .\n\n\
+             <urn:uuid:{act_id}> a cco:{planned_act} ;\n\
+                 actions:id \"{act_id}\" ;\n\
+                 actions:prescribedBy <urn:uuid:{plan_id}> ;\n\
+                 cco:{status_prop} actions:NotStarted ;\n\
+                 actions:duration \"30\"^^xsd:integer ;\n\
+                 actions:createdAt \"2026-04-09T09:00:00-07:00\"^^xsd:dateTime .\n",
+            planned_act = crate::graph::CCO_PLANNED_ACT,
+            status_prop = crate::graph::CCO_STATUS_PROP,
+        );
+
+        let tmp_dir = tempfile::tempdir().expect("tempdir");
+        let path = tmp_dir.path().join("legacy.open.ttl");
+        std::fs::write(&path, ttl).expect("write ttl");
+
+        let loaded = read_acts(&path).expect("read acts");
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].id, act_id);
+        assert_eq!(loaded[0].plan_id, plan_id);
+        assert_eq!(loaded[0].duration, Some(30));
+        assert!(loaded[0].created_at.is_some());
     }
 
     #[test]
@@ -366,10 +391,8 @@ mod tests {
             contexts: None,
             recurrence: None,
             parent: None,
-            objective: None,
             alias: None,
             is_sequential: None,
-            duration: None,
             depends_on: None,
             acts: Vec::new(), // starts empty
         };

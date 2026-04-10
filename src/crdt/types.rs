@@ -87,10 +87,8 @@ pub struct SyncPlan {
     pub contexts: Option<Vec<String>>,
     pub recurrence: Option<SyncRecurrence>,
     pub parent: Option<Uuid>,
-    pub objective: Option<String>,
     pub alias: Option<String>,
     pub is_sequential: Option<bool>,
-    pub duration: Option<u32>,
     pub depends_on: Option<Vec<Uuid>>,
     pub acts: Vec<SyncPlannedAct>,
 }
