@@ -12,7 +12,7 @@ pub use crate::workspace::store::infer_charter_name;
 pub use parser::{Action, ActionList, ActionState, PredecessorRef, parse_tree};
 
 // Parse pipeline
-pub use source::{ParsedDocument, SourceMetadata, SourceRange, parse_actions, parse_document};
+pub use source::{ParsedDocument, SourceMetadata, SourceRange, get_node_text, parse_actions, parse_document};
 
 // Storage
 pub use repository::{ActionRepository, ActionSource, SourcedAction};

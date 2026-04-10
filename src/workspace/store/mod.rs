@@ -35,6 +35,22 @@ pub use pathing::{
 };
 pub use save::save_domain_model;
 
+/// Returns the data root directory for this workspace.
+///
+/// In a project layout (`.clearhead/` subdirectory exists), returns `.clearhead/`.
+/// In a user layout, returns the root itself.
+pub fn workspace_data_root(root: &Path) -> PathBuf {
+    resolve_workspace_layout(root).data_root
+}
+
+/// Returns absolute paths to all `.actions` files in the workspace.
+///
+/// Handles both project layout (`.clearhead/` subdirectory) and user layout.
+pub fn list_action_files(root: &Path) -> Result<Vec<PathBuf>, WorkspaceError> {
+    let layout = resolve_workspace_layout(root);
+    discovery::discover_action_files(&layout.data_root)
+}
+
 /// Errors that can occur when interacting with a workspace.
 #[derive(Debug)]
 pub enum WorkspaceError {
