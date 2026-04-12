@@ -86,6 +86,7 @@ pub struct SyncPlan {
     pub priority: Option<u32>,
     pub contexts: Option<Vec<String>>,
     pub recurrence: Option<SyncRecurrence>,
+    pub due_recurrence: Option<SyncRecurrence>,
     pub parent: Option<Uuid>,
     pub alias: Option<String>,
     pub is_sequential: Option<bool>,
@@ -103,6 +104,8 @@ pub struct SyncPlannedAct {
     pub phase: SyncActPhase,
     #[autosurgeon(reconcile = "reconcile_date", hydrate = "hydrate_date")]
     pub scheduled_at: Option<chrono::DateTime<chrono::Local>>,
+    #[autosurgeon(reconcile = "reconcile_date", hydrate = "hydrate_date")]
+    pub due_date: Option<chrono::DateTime<chrono::Local>>,
     pub duration: Option<u32>,
     #[autosurgeon(reconcile = "reconcile_date", hydrate = "hydrate_date")]
     pub completed_at: Option<chrono::DateTime<chrono::Local>>,

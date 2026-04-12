@@ -559,8 +559,6 @@ mod tests {
                 title: "Platform".to_string(),
                 description: Some("Platform charter".to_string()),
                 alias: Some("platform".to_string()),
-                parent: None,
-                objectives: None,
                 plans: vec![Plan {
                     id: plan_id,
                     name: "Write graph tests".to_string(),
@@ -570,21 +568,9 @@ mod tests {
                     recurrence: Some(Recurrence {
                         frequency: "weekly".to_string(),
                         interval: Some(2),
-                        count: None,
-                        until: None,
-                        by_second: None,
-                        by_minute: None,
-                        by_hour: None,
                         by_day: Some(vec!["MO".to_string(), "WE".to_string()]),
-                        by_month_day: None,
-                        by_year_day: None,
-                        by_week_no: None,
-                        by_month: None,
-                        by_set_pos: None,
-                        week_start: None,
+                        ..Default::default()
                     }),
-                    due_recurrence: None,
-                    parent: None,
                     alias: Some("graph_tests".to_string()),
                     is_sequential: Some(true),
                     depends_on: Some(vec![Uuid::parse_str(
@@ -596,12 +582,13 @@ mod tests {
                         plan_id,
                         phase: ActPhase::InProgress,
                         scheduled_at: Some(chrono::Local::now()),
-                        due_date: None,
                         duration: Some(45),
-                        completed_at: None,
                         created_at: Some(chrono::Local::now()),
+                        ..Default::default()
                     }],
+                    ..Default::default()
                 }],
+                ..Default::default()
             }],
         };
 
@@ -820,7 +807,7 @@ mod tests {
     fn raw_query_errors_on_boolean_queries() {
         let store = create_store().expect("store");
         let err = query_raw(&store, "ASK { ?s ?p ?o }").expect_err("expected error");
-        assert!(err.contains("ASK queries not supported"));
+        assert!(err.to_string().contains("ASK queries not supported"));
     }
 
     #[test]
@@ -867,7 +854,7 @@ mod tests {
         crate::graph::load_turtle(&store, &ttl).expect("load turtle");
 
         let err = query_plans(&store).expect_err("expected error");
-        assert!(err.contains("missing name"));
+        assert!(err.to_string().contains("missing name"));
     }
 
     #[test]

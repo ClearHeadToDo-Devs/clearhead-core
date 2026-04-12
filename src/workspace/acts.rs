@@ -167,16 +167,14 @@ mod tests {
         PlannedAct {
             id: Uuid::new_v4(),
             plan_id,
-            phase: ActPhase::NotStarted,
             scheduled_at: Some(
                 chrono::Local
                     .with_ymd_and_hms(2026, 3, 18, 9, 0, 0)
                     .unwrap(),
             ),
-            due_date: None,
-            completed_at: None,
             created_at: Some(chrono::Local.with_ymd_and_hms(2026, 3, 1, 0, 0, 0).unwrap()),
             duration: Some(30),
+            ..Default::default()
         }
     }
 
@@ -298,11 +296,7 @@ mod tests {
                 id: Uuid::new_v4(),
                 plan_id,
                 phase,
-                scheduled_at: None,
-                due_date: None,
-                completed_at: None,
-                created_at: None,
-                duration: None,
+                ..Default::default()
             };
 
             let path = tmp_dir.path().join(format!("{:?}.open.ttl", phase));
@@ -321,26 +315,8 @@ mod tests {
         let plan_a = Uuid::new_v4();
         let plan_b = Uuid::new_v4();
 
-        let act_a = PlannedAct {
-            id: Uuid::new_v4(),
-            plan_id: plan_a,
-            phase: ActPhase::NotStarted,
-            scheduled_at: None,
-            due_date: None,
-            completed_at: None,
-            created_at: None,
-            duration: None,
-        };
-        let act_b = PlannedAct {
-            id: Uuid::new_v4(),
-            plan_id: plan_b,
-            phase: ActPhase::NotStarted,
-            scheduled_at: None,
-            due_date: None,
-            completed_at: None,
-            created_at: None,
-            duration: None,
-        };
+        let act_a = PlannedAct { id: Uuid::new_v4(), plan_id: plan_a, ..Default::default() };
+        let act_b = PlannedAct { id: Uuid::new_v4(), plan_id: plan_b, ..Default::default() };
 
         let tmp_dir = tempfile::tempdir().expect("tempdir");
         let path = tmp_dir.path().join("health.open.ttl");
@@ -377,26 +353,14 @@ mod tests {
             id: Uuid::new_v4(),
             plan_id,
             phase: ActPhase::Completed,
-            scheduled_at: None,
-            due_date: None,
-            completed_at: None,
-            created_at: None,
-            duration: None,
+            ..Default::default()
         };
 
         let plan = Plan {
             id: plan_id,
             name: "Test plan".to_string(),
-            description: None,
-            priority: None,
-            contexts: None,
-            recurrence: None,
-            due_recurrence: None,
-            parent: None,
-            alias: None,
-            is_sequential: None,
-            depends_on: None,
-            acts: Vec::new(), // starts empty
+            acts: Vec::new(),
+            ..Default::default()
         };
 
         let charter = Charter {

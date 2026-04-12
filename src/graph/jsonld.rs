@@ -357,8 +357,6 @@ mod tests {
                 title: "Platform".to_string(),
                 description: Some("Platform charter".to_string()),
                 alias: Some("platform".to_string()),
-                parent: None,
-                objectives: None,
                 plans: vec![Plan {
                     id: plan_id,
                     name: "Write graph tests".to_string(),
@@ -368,24 +366,11 @@ mod tests {
                     recurrence: Some(Recurrence {
                         frequency: "weekly".to_string(),
                         interval: Some(2),
-                        count: None,
-                        until: None,
-                        by_second: None,
-                        by_minute: None,
-                        by_hour: None,
                         by_day: Some(vec!["MO".to_string(), "WE".to_string()]),
-                        by_month_day: None,
-                        by_year_day: None,
-                        by_week_no: None,
-                        by_month: None,
-                        by_set_pos: None,
-                        week_start: None,
+                        ..Default::default()
                     }),
-                    due_recurrence: None,
-                    parent: None,
                     alias: Some("graph_tests".to_string()),
                     is_sequential: Some(true),
-                    depends_on: None,
                     acts: vec![PlannedAct {
                         id: act_id,
                         plan_id,
@@ -395,14 +380,15 @@ mod tests {
                                 .with_ymd_and_hms(2026, 4, 9, 10, 0, 0)
                                 .unwrap(),
                         ),
-                        due_date: None,
                         duration: Some(45),
-                        completed_at: None,
                         created_at: Some(
                             chrono::Local.with_ymd_and_hms(2026, 4, 9, 9, 0, 0).unwrap(),
                         ),
+                        ..Default::default()
                     }],
+                    ..Default::default()
                 }],
+                ..Default::default()
             }],
         }
     }

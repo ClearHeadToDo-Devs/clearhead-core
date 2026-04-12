@@ -1,7 +1,7 @@
 use super::discovery::discover_action_files;
 use super::WorkspaceLayout;
 use super::{resolve_workspace_layout, WorkspaceError};
-use crate::domain::{ActPhase, Charter, DomainModel, Plan, PlannedAct};
+use crate::domain::{Charter, DomainModel, Plan, PlannedAct};
 use crate::workspace::actions::convert::merge_to_action;
 use crate::workspace::{format, ActionList, OutputFormat};
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -192,12 +192,7 @@ fn representative_act(plan: &Plan) -> PlannedAct {
     PlannedAct {
         id: Uuid::new_v5(&plan.id, b"act-0"),
         plan_id: plan.id,
-        phase: ActPhase::NotStarted,
-        scheduled_at: None,
-        due_date: None,
-        duration: None,
-        completed_at: None,
-        created_at: None,
+        ..Default::default()
     }
 }
 
@@ -252,25 +247,14 @@ mod tests {
         Plan {
             id,
             name: name.to_string(),
-            description: None,
-            priority: None,
-            contexts: None,
-            recurrence: None,
-            due_recurrence: None,
-            parent: None,
-            alias: None,
-            is_sequential: None,
-            depends_on: None,
             acts: vec![PlannedAct {
                 id: Uuid::new_v5(&id, b"act-0"),
                 plan_id: id,
-                phase: ActPhase::NotStarted,
-                scheduled_at: None,
-                due_date: None,
                 duration: Some(30),
-                completed_at: None,
                 created_at: Some(Local::now()),
+                ..Default::default()
             }],
+            ..Default::default()
         }
     }
 
@@ -289,29 +273,25 @@ mod tests {
                 Charter {
                     id: Uuid::new_v4(),
                     title: "platform".to_string(),
-                    description: None,
                     alias: Some("platform".to_string()),
-                    parent: None,
-                    objectives: None,
                     plans: vec![test_plan("Ship v1")],
+                    ..Default::default()
                 },
                 Charter {
                     id: Uuid::new_v4(),
                     title: "infra".to_string(),
-                    description: None,
                     alias: Some("infra".to_string()),
                     parent: Some("platform".to_string()),
-                    objectives: None,
                     plans: vec![test_plan("Harden CI")],
+                    ..Default::default()
                 },
                 Charter {
                     id: Uuid::new_v4(),
                     title: "deploy".to_string(),
-                    description: None,
                     alias: Some("deploy".to_string()),
                     parent: Some("infra".to_string()),
-                    objectives: None,
                     plans: vec![test_plan("Blue/green rollout")],
+                    ..Default::default()
                 },
             ],
         };

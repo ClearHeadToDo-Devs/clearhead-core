@@ -138,6 +138,27 @@ pub struct Recurrence {
     pub week_start: Option<String>, // WKST: MO,TU,WE,TH,FR,SA,SU (default MO)
 }
 
+impl Default for Recurrence {
+    fn default() -> Self {
+        Self {
+            frequency: String::new(),
+            interval: None,
+            count: None,
+            until: None,
+            by_second: None,
+            by_minute: None,
+            by_hour: None,
+            by_day: None,
+            by_month_day: None,
+            by_year_day: None,
+            by_week_no: None,
+            by_month: None,
+            by_set_pos: None,
+            week_start: None,
+        }
+    }
+}
+
 impl fmt::Display for Recurrence {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "R:FREQ={}", self.frequency.to_uppercase())?;
@@ -356,6 +377,32 @@ impl Plan {
     }
 }
 
+impl Default for Plan {
+    fn default() -> Self {
+        Self {
+            id: Uuid::nil(),
+            name: String::new(),
+            description: None,
+            priority: None,
+            contexts: None,
+            recurrence: None,
+            due_recurrence: None,
+            parent: None,
+            alias: None,
+            is_sequential: None,
+            depends_on: None,
+            acts: vec![],
+        }
+    }
+}
+
+impl Plan {
+    /// Construct a new plan with a generated UUIDv7 and all optional fields unset.
+    pub fn new(name: impl Into<String>) -> Self {
+        Self { id: Uuid::now_v7(), name: name.into(), ..Default::default() }
+    }
+}
+
 /// A charter — a directive that organizes plans under a shared purpose.
 ///
 /// Maps to `actions:Charter` (subclass of cco:DirectiveInformationContentEntity).
@@ -409,6 +456,21 @@ pub struct PlannedAct {
     pub completed_at: Option<DateTime<Local>>,
     /// When this act was created/scheduled
     pub created_at: Option<DateTime<Local>>,
+}
+
+impl Default for PlannedAct {
+    fn default() -> Self {
+        Self {
+            id: Uuid::nil(),
+            plan_id: Uuid::nil(),
+            phase: ActPhase::NotStarted,
+            scheduled_at: None,
+            due_date: None,
+            duration: None,
+            completed_at: None,
+            created_at: None,
+        }
+    }
 }
 
 /// Hierarchical domain model: Objectives → Charters → Plans → Acts.
@@ -503,12 +565,10 @@ impl DomainModel {
                             plan.acts.push(PlannedAct {
                                 id: act_id,
                                 plan_id: plan.id,
-                                phase: ActPhase::NotStarted,
                                 scheduled_at: Some(occ_local),
-                                due_date: None,
                                 duration: template_duration,
-                                completed_at: None,
                                 created_at: Some(now),
+                                ..Default::default()
                             });
                         }
                     }
@@ -577,48 +637,26 @@ mod tests {
         let charter = Charter {
             id: Uuid::new_v4(),
             title: "Test Charter".to_string(),
-            description: None,
-            alias: None,
-            parent: None,
-            objectives: None,
             plans: vec![Plan {
                 id: plan_id,
                 name: "Test Recurring".to_string(),
-                description: None,
-                priority: None,
-                contexts: None,
                 recurrence: Some(Recurrence {
                     frequency: "daily".to_string(),
                     interval: Some(1),
                     count: Some(2),
-                    until: None,
-                    by_second: None,
-                    by_minute: None,
-                    by_hour: None,
-                    by_day: None,
-                    by_month_day: None,
-                    by_year_day: None,
-                    by_week_no: None,
-                    by_month: None,
-                    by_set_pos: None,
-                    week_start: None,
+                    ..Default::default()
                 }),
-                due_recurrence: None,
-                parent: None,
-                alias: None,
-                is_sequential: None,
-                depends_on: None,
                 acts: vec![PlannedAct {
                     id: Uuid::new_v4(),
                     plan_id,
-                    phase: ActPhase::NotStarted,
                     scheduled_at: Some(Local::now()),
-                    due_date: None,
                     duration: Some(30),
-                    completed_at: None,
                     created_at: Some(Local::now()),
+                    ..Default::default()
                 }],
+                ..Default::default()
             }],
+            ..Default::default()
         };
 
         model.charters.push(charter);

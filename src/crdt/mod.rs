@@ -29,7 +29,7 @@ const CRDT_FILENAME: &str = "workspace.crdt";
 
 /// Bump this constant any time the Hydrate/Reconcile-derived shape of
 /// the Sync* types changes. The domain model can now evolve independently.
-pub const CRDT_SCHEMA_VERSION: u32 = 2;
+pub const CRDT_SCHEMA_VERSION: u32 = 3;
 
 // ============================================================================
 // Workspace — directory configuration

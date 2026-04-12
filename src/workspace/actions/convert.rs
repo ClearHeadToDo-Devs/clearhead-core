@@ -140,12 +140,7 @@ pub fn to_action_list_ordered(model: &DomainModel, plan_order: &[String]) -> Act
                 let dummy_act = PlannedAct {
                     id: Uuid::new_v5(&plan.id, b"act-0"),
                     plan_id: plan.id,
-                    phase: ActPhase::NotStarted,
-                    scheduled_at: None,
-                    due_date: None,
-                    duration: None,
-                    completed_at: None,
-                    created_at: None,
+                    ..Default::default()
                 };
                 actions.push(merge_to_action(plan, &dummy_act, plan.id));
             } else {

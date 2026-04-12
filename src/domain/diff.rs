@@ -467,33 +467,17 @@ mod tests {
             charters: vec![Charter {
                 id: charter_id,
                 title: "Test Charter".to_string(),
-                description: None,
-                alias: None,
-                parent: None,
-                objectives: None,
                 plans: vec![Plan {
                     id: plan_id,
                     name: name.to_string(),
-                    description: None,
-                    priority: None,
-                    contexts: None,
-                    parent: None,
-                    alias: None,
-                    is_sequential: None,
-                    recurrence: None,
-                    due_recurrence: None,
-                    depends_on: None,
                     acts: vec![PlannedAct {
                         id: act_id,
                         plan_id,
-                        phase: ActPhase::NotStarted,
-                        scheduled_at: None,
-                        due_date: None,
-                        duration: None,
-                        completed_at: None,
-                        created_at: None,
+                        ..Default::default()
                     }],
+                    ..Default::default()
                 }],
+                ..Default::default()
             }],
         }
     }

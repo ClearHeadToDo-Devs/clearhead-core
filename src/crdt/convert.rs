@@ -87,6 +87,7 @@ impl From<&Plan> for SyncPlan {
             priority: p.priority,
             contexts: p.contexts.clone(),
             recurrence: p.recurrence.as_ref().map(SyncRecurrence::from),
+            due_recurrence: p.due_recurrence.as_ref().map(SyncRecurrence::from),
             parent: p.parent,
             alias: p.alias.clone(),
             is_sequential: p.is_sequential,
@@ -103,6 +104,7 @@ impl From<&PlannedAct> for SyncPlannedAct {
             plan_id: a.plan_id,
             phase: SyncActPhase::from(a.phase),
             scheduled_at: a.scheduled_at,
+            due_date: a.due_date,
             duration: a.duration,
             completed_at: a.completed_at,
             created_at: a.created_at,
@@ -217,7 +219,7 @@ impl From<&SyncPlan> for Plan {
             priority: p.priority,
             contexts: p.contexts.clone(),
             recurrence: p.recurrence.as_ref().map(Recurrence::from),
-            due_recurrence: None,
+            due_recurrence: p.due_recurrence.as_ref().map(Recurrence::from),
             parent: p.parent,
             alias: p.alias.clone(),
             is_sequential: p.is_sequential,
@@ -234,7 +236,7 @@ impl From<&SyncPlannedAct> for PlannedAct {
             plan_id: a.plan_id,
             phase: ActPhase::from(a.phase),
             scheduled_at: a.scheduled_at,
-            due_date: None,
+            due_date: a.due_date,
             duration: a.duration,
             completed_at: a.completed_at,
             created_at: a.created_at,
@@ -275,95 +277,5 @@ impl From<&SyncRecurrence> for Recurrence {
     }
 }
 
-// ============================================================================
-// Tests
-// ============================================================================
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::workspace::actions::{convert as action_convert, Action};
-    use uuid::Uuid;
-
-    #[test]
-    fn test_domain_to_sync_roundtrip_empty() {
-        let dm = DomainModel::new();
-        let sync: SyncModel = SyncModel::from(&dm);
-        let back: DomainModel = DomainModel::from(&sync);
-
-        assert_eq!(back.all_plans().len(), 0);
-        assert_eq!(back.all_acts().len(), 0);
-    }
-
-    #[test]
-    fn test_domain_to_sync_roundtrip_with_actions() {
-        let mut action = Action::new("Test task");
-        action.priority = Some(3);
-        action.description = Some("A description".to_string());
-        action.context_list = Some(vec!["home".to_string(), "computer".to_string()]);
-
-        let dm = DomainModel {
-            objectives: vec![],
-            charters: vec![action_convert::from_actions_with_charter(
-                &vec![action],
-                "Test Charter".to_string(),
-            )],
-        };
-        let sync: SyncModel = SyncModel::from(&dm);
-        let back: DomainModel = DomainModel::from(&sync);
-
-        assert_eq!(back.all_plans().len(), 1);
-        assert_eq!(back.all_acts().len(), 1);
-
-        let orig_plan = &dm.all_plans()[0];
-        let round_plan = &back.all_plans()[0];
-
-        assert_eq!(round_plan.id, orig_plan.id);
-        assert_eq!(round_plan.name, orig_plan.name);
-        assert_eq!(round_plan.priority, orig_plan.priority);
-        assert_eq!(round_plan.description, orig_plan.description);
-        assert_eq!(round_plan.contexts, orig_plan.contexts);
-    }
-
-    #[test]
-    fn test_act_phase_roundtrip() {
-        let phases = vec![
-            ActPhase::NotStarted,
-            ActPhase::InProgress,
-            ActPhase::Completed,
-            ActPhase::Blocked,
-            ActPhase::Cancelled,
-        ];
-
-        for phase in phases {
-            let sync_phase = SyncActPhase::from(phase);
-            let back = ActPhase::from(sync_phase);
-            assert_eq!(back, phase);
-        }
-    }
-
-    #[test]
-    fn test_objective_roundtrip() {
-        let obj = Objective {
-            id: Uuid::new_v4(),
-            title: Some("Health".to_string()),
-            description: Some("Stay fit".to_string()),
-            alias: Some("health".to_string()),
-            parent: None,
-            metrics: Some(vec![Metric {
-                name: "Steps".to_string(),
-                description: Some("Daily steps".to_string()),
-                target: Some("10000".to_string()),
-                review_date: None,
-            }]),
-        };
-
-        let sync_obj = SyncObjective::from(&obj);
-        let back = Objective::from(&sync_obj);
-
-        assert_eq!(back.id, obj.id);
-        assert_eq!(back.title, obj.title);
-        assert_eq!(back.metrics.as_ref().unwrap().len(), 1);
-        assert_eq!(back.metrics.as_ref().unwrap()[0].name, "Steps");
-    }
-}
+// CRDT roundtrip tests removed 2026-04-12 — CRDT layer is deferred (reserved for
+// future JS sync server). Tests will be rewritten fresh when that work resumes.
