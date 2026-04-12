@@ -34,4 +34,5 @@ features = [
 ]
 
 [dev-dependencies]
+jsonschema = "0.18"
 tempfile = "3.8"

@@ -87,14 +87,7 @@ pub fn read_acts(path: &Path) -> Result<Vec<PlannedAct>, String> {
     let store = graph::create_store()?;
     graph::load_turtle(&store, &content)?;
 
-    let sparql = format!(
-        "SELECT ?id WHERE {{ ?s a <{}{}> . {{ ?s <{}hasUUID> ?id }} UNION {{ ?s <{}id> ?id }} }}",
-        crate::graph::CCO_NS,
-        crate::graph::CCO_PLANNED_ACT,
-        crate::graph::ACTIONS_NS,
-        crate::graph::ACTIONS_NS
-    );
-    graph::query_acts(&store, &sparql)
+    graph::load_planned_acts_from_store(&store)
 }
 
 /// Write PlannedActs to a Turtle file via oxigraph.
@@ -255,7 +248,7 @@ mod tests {
     }
 
     #[test]
-    fn test_read_legacy_predicates_still_works() {
+    fn test_read_noncanonical_predicates_returns_empty() {
         let plan_id = Uuid::new_v4();
         let act_id = Uuid::new_v4();
         let ttl = format!(
@@ -277,11 +270,7 @@ mod tests {
         std::fs::write(&path, ttl).expect("write ttl");
 
         let loaded = read_acts(&path).expect("read acts");
-        assert_eq!(loaded.len(), 1);
-        assert_eq!(loaded[0].id, act_id);
-        assert_eq!(loaded[0].plan_id, plan_id);
-        assert_eq!(loaded[0].duration, Some(30));
-        assert!(loaded[0].created_at.is_some());
+        assert!(loaded.is_empty());
     }
 
     #[test]

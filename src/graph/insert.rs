@@ -492,7 +492,7 @@ mod tests {
         assert!(!has_predicate(
             &store,
             plan,
-            crate::graph::schema_pred("name").as_ref()
+            NamedNodeRef::new("http://schema.org/name").unwrap(),
         ));
         assert!(!has_predicate(&store, plan, actions_pred("id").as_ref()));
         assert!(!has_predicate(&store, plan, actions_pred("alias").as_ref()));

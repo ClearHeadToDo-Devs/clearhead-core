@@ -1,0 +1,113 @@
+{
+  "@context": {
+    "@version": 1.1,
+    "id": "@id",
+    "type": "@type",
+    "actions": "https://clearhead.us/vocab/actions/v4#",
+    "cco": "https://www.commoncoreontologies.org/",
+    "bfo": "http://purl.obolibrary.org/obo/",
+    "rdfs": "http://www.w3.org/2000/01/rdf-schema#",
+    "xsd": "http://www.w3.org/2001/XMLSchema#",
+    "Plan": "https://www.commoncoreontologies.org/ont00000974",
+    "PlannedAct": "https://www.commoncoreontologies.org/ont00000228",
+    "Objective": "https://www.commoncoreontologies.org/ont00000476",
+    "Charter": "https://clearhead.us/vocab/actions/v4#Charter",
+    "Context": "https://clearhead.us/vocab/actions/v4#Context",
+    "ContextType": "https://clearhead.us/vocab/actions/v4#ContextType",
+    "NotStarted": "https://clearhead.us/vocab/actions/v4#NotStarted",
+    "InProgress": "https://clearhead.us/vocab/actions/v4#InProgress",
+    "Completed": "https://clearhead.us/vocab/actions/v4#Completed",
+    "Blocked": "https://clearhead.us/vocab/actions/v4#Blocked",
+    "Cancelled": "https://clearhead.us/vocab/actions/v4#Cancelled",
+    "name": "rdfs:label",
+    "description": "http://purl.org/dc/terms/description",
+    "inServiceOf": {
+      "@id": "actions:inServiceOf",
+      "@type": "@id"
+    },
+    "requiresContext": {
+      "@id": "actions:requiresContext",
+      "@type": "@id"
+    },
+    "partOf": {
+      "@id": "bfo:BFO_0000050",
+      "@type": "@id"
+    },
+    "plannedActs": {
+      "@id": "cco:ont00001942",
+      "@type": "@id"
+    },
+    "status": {
+      "@id": "cco:ont00001868",
+      "@type": "@id"
+    },
+    "priority": {
+      "@id": "actions:hasPriority",
+      "@type": "xsd:integer"
+    },
+    "subCharters": {
+      "@id": "actions:hasSubCharter",
+      "@type": "@id"
+    },
+    "isSuccessorOf": {
+      "@id": "cco:ont00001775",
+      "@type": "@id"
+    },
+    "uuid": {
+      "@id": "actions:hasUUID",
+      "@type": "xsd:string"
+    },
+    "alias": {
+      "@id": "actions:hasAlias",
+      "@type": "xsd:string"
+    },
+    "sequentialChildren": {
+      "@id": "actions:hasSequentialChildren",
+      "@type": "xsd:boolean"
+    },
+    "recurrence": {
+      "@id": "actions:hasRecurrenceRule",
+      "@type": "xsd:string"
+    },
+    "durationMinutes": {
+      "@id": "actions:hasDurationMinutes",
+      "@type": "xsd:integer"
+    },
+    "scheduledAt": {
+      "@id": "actions:hasScheduledDateTime",
+      "@type": "xsd:dateTime"
+    },
+    "dueDate": {
+      "@id": "actions:hasDueDateTime",
+      "@type": "xsd:dateTime"
+    },
+    "dueRecurrence": {
+      "@id": "actions:hasDueRecurrenceRule",
+      "@type": "xsd:string"
+    },
+    "completedDate": {
+      "@id": "actions:hasCompletedDateTime",
+      "@type": "xsd:dateTime"
+    },
+    "createdDate": {
+      "@id": "actions:hasCreatedDateTime",
+      "@type": "xsd:dateTime"
+    },
+    "contextType": {
+      "@id": "actions:hasContextType",
+      "@type": "@id"
+    },
+    "contextIdentifier": {
+      "@id": "actions:hasContextIdentifier",
+      "@type": "xsd:string"
+    },
+    "contextBroader": {
+      "@id": "actions:contextBroader",
+      "@type": "@id"
+    },
+    "contextNarrower": {
+      "@id": "actions:contextNarrower",
+      "@type": "@id"
+    }
+  }
+}

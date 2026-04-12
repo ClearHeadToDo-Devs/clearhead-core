@@ -6,18 +6,21 @@
 //! # Submodules
 //!
 //! - [`insert`] — load domain objects into a store
+//! - [`jsonld`] — export canonical compact JSON-LD
 //! - [`query`]  — SPARQL queries + reconstruction from the store
 //! - [`serialize`] — serialize a store or model to Turtle output
 
 pub mod insert;
+pub mod jsonld;
 pub mod query;
 pub mod serialize;
 
 pub use insert::{load_acts_into_store, load_domain_model, load_turtle};
+pub use jsonld::{serialize_domain_to_jsonld, serialize_store_to_jsonld};
 pub use oxigraph::store::Store;
 pub use query::{
-    build_raw_where_query, build_where_query, query_actions, query_acts, query_plans, query_raw,
-    validate_actions_vocabulary,
+    build_raw_where_query, build_where_query, load_domain_model_from_store,
+    load_planned_acts_from_store, query_action_ids, query_raw, validate_actions_vocabulary,
 };
 pub use serialize::{
     dump_store_to_turtle, serialize_acts_to_turtle, serialize_closed_acts_to_turtle,
@@ -33,7 +36,6 @@ use oxigraph::model::NamedNode;
 pub(crate) const ACTIONS_NS: &str = "https://clearhead.us/vocab/actions/v4#";
 pub(crate) const CCO_NS: &str = "https://www.commoncoreontologies.org/";
 pub(crate) const BFO_NS: &str = "http://purl.obolibrary.org/obo/";
-pub(crate) const SCHEMA_NS: &str = "http://schema.org/";
 pub(crate) const RDF_NS: &str = "http://www.w3.org/1999/02/22-rdf-syntax-ns#";
 pub(crate) const XSD_NS: &str = "http://www.w3.org/2001/XMLSchema#";
 pub(crate) const SKOS_NS: &str = "http://www.w3.org/2004/02/skos/core#";
@@ -68,10 +70,6 @@ pub(crate) fn actions_pred(name: &str) -> NamedNode {
 
 pub(crate) fn cco_node(id: &str) -> NamedNode {
     ns(CCO_NS, id)
-}
-
-pub(crate) fn schema_pred(name: &str) -> NamedNode {
-    ns(SCHEMA_NS, name)
 }
 
 pub(crate) fn rdfs_pred(name: &str) -> NamedNode {
