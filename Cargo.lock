@@ -403,7 +403,7 @@ checksum = "c8d4a3bb8b1e0c1050499d1815f5ab16d04f0959b233085fb31653fbfc9d98f9"
 
 [[package]]
 name = "clearhead_core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "automerge",
  "autosurgeon",
@@ -417,6 +417,7 @@ dependencies = [
  "serde_json",
  "serde_yml",
  "tempfile",
+ "thiserror 2.0.18",
  "topiary-core",
  "topiary-tree-sitter-facade",
  "tree-sitter",
