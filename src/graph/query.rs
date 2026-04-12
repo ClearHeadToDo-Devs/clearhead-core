@@ -1,8 +1,8 @@
 //! SPARQL query and graph reconstruction utilities.
 
 use super::{
-    actions_pred, bfo_pred, cco_node, rdfs_pred, Store, ACTIONS_NS, BFO_HAS_PART, BFO_NS,
-    BFO_PART_OF, CCO_IS_SUCCESSOR_OF, CCO_NS, CCO_PLAN, CCO_PLANNED_ACT, CCO_PRESCRIBED_BY,
+    actions_pred, bfo_pred, cco_node, rdfs_pred, GraphError, Result, Store, ACTIONS_NS, BFO_HAS_PART,
+    BFO_NS, BFO_PART_OF, CCO_IS_SUCCESSOR_OF, CCO_NS, CCO_PLAN, CCO_PLANNED_ACT, CCO_PRESCRIBED_BY,
     CCO_PRESCRIBES, CCO_STATUS_PROP, RDFS_COMMENT, RDFS_LABEL,
 };
 use crate::domain::{ActPhase, Charter, DomainModel, Plan, PlannedAct, Recurrence};
@@ -14,11 +14,11 @@ use uuid::Uuid;
 
 type Row = HashMap<String, String>;
 
-pub fn query_action_ids(store: &Store, sparql: &str) -> Result<Vec<String>, String> {
+pub fn query_action_ids(store: &Store, sparql: &str) -> Result<Vec<String>> {
     query_ids(store, sparql, "id")
 }
 
-pub fn query_raw(store: &Store, sparql: &str) -> Result<Vec<Row>, String> {
+pub fn query_raw(store: &Store, sparql: &str) -> Result<Vec<Row>> {
     execute_select_rows(store, sparql)
 }
 
@@ -56,7 +56,7 @@ pub fn build_where_query(where_clause: &str, _select: Option<&str>, _from: Optio
     )
 }
 
-pub fn load_domain_model_from_store(store: &Store) -> Result<DomainModel, String> {
+pub fn load_domain_model_from_store(store: &Store) -> Result<DomainModel> {
     let charters = query_charters(store)?;
     let plans = query_plans(store)?;
     let acts = query_acts(store)?;
@@ -101,11 +101,11 @@ pub fn load_domain_model_from_store(store: &Store) -> Result<DomainModel, String
     })
 }
 
-pub fn load_planned_acts_from_store(store: &Store) -> Result<Vec<PlannedAct>, String> {
+pub fn load_planned_acts_from_store(store: &Store) -> Result<Vec<PlannedAct>> {
     query_acts(store)
 }
 
-pub fn validate_actions_vocabulary(store: &Store) -> Result<Vec<String>, String> {
+pub fn validate_actions_vocabulary(store: &Store) -> Result<Vec<String>> {
     let mut violations = Vec::new();
 
     let q_missing_status = format!(
@@ -165,7 +165,7 @@ pub fn validate_actions_vocabulary(store: &Store) -> Result<Vec<String>, String>
     Ok(violations)
 }
 
-fn query_charters(store: &Store) -> Result<Vec<Charter>, String> {
+fn query_charters(store: &Store) -> Result<Vec<Charter>> {
     let sparql = format!(
         "SELECT ?id WHERE {{ ?s a <{actions}Charter> . ?s <{actions}hasUUID> ?id . }}",
         actions = ACTIONS_NS,
@@ -176,7 +176,7 @@ fn query_charters(store: &Store) -> Result<Vec<Charter>, String> {
         .collect()
 }
 
-fn query_plans(store: &Store) -> Result<Vec<Plan>, String> {
+fn query_plans(store: &Store) -> Result<Vec<Plan>> {
     let sparql = format!(
         "SELECT ?id WHERE {{ ?s a <{cco}{plan}> . ?s <{actions}hasUUID> ?id . }}",
         cco = CCO_NS,
@@ -189,7 +189,7 @@ fn query_plans(store: &Store) -> Result<Vec<Plan>, String> {
         .collect()
 }
 
-fn query_acts(store: &Store) -> Result<Vec<PlannedAct>, String> {
+fn query_acts(store: &Store) -> Result<Vec<PlannedAct>> {
     let sparql = format!(
         "SELECT ?id WHERE {{ ?s a <{cco}{planned_act}> . ?s <{actions}hasUUID> ?id . }}",
         cco = CCO_NS,
@@ -202,7 +202,7 @@ fn query_acts(store: &Store) -> Result<Vec<PlannedAct>, String> {
         .collect()
 }
 
-fn query_charter_plan_edges(store: &Store) -> Result<Vec<(Uuid, Uuid)>, String> {
+fn query_charter_plan_edges(store: &Store) -> Result<Vec<(Uuid, Uuid)>> {
     let sparql = format!(
         "SELECT ?charterId ?planId WHERE {{ \
             ?charter a <{actions}Charter> ; <{actions}hasUUID> ?charterId ; <{bfo}{has_part}> ?plan . \
@@ -296,13 +296,13 @@ fn query_term_values(store: &Store, sparql: &str, var_name: &str) -> Result<Vec<
     query_ids(store, sparql, var_name)
 }
 
-fn execute_select_rows(store: &Store, sparql: &str) -> Result<Vec<Row>, String> {
+fn execute_select_rows(store: &Store, sparql: &str) -> Result<Vec<Row>> {
     let results = SparqlEvaluator::new()
         .parse_query(sparql)
-        .map_err(|e| e.to_string())?
+        .map_err(|e| GraphError::Query(e.to_string()))?
         .on_store(store)
         .execute()
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| GraphError::Query(e.to_string()))?;
 
     match results {
         QueryResults::Solutions(solutions) => {
@@ -313,7 +313,7 @@ fn execute_select_rows(store: &Store, sparql: &str) -> Result<Vec<Row>, String> 
                 .collect();
             let mut rows = Vec::new();
             for solution in solutions {
-                let solution = solution.map_err(|e| e.to_string())?;
+                let solution = solution.map_err(|e| GraphError::Query(e.to_string()))?;
                 let mut row = HashMap::new();
                 for var_name in &var_names {
                     if let Some(term) = solution.get(var_name.as_str()) {
@@ -324,8 +324,8 @@ fn execute_select_rows(store: &Store, sparql: &str) -> Result<Vec<Row>, String> 
             }
             Ok(rows)
         }
-        QueryResults::Boolean(_) => Err("ASK queries not supported; use SELECT".to_string()),
-        QueryResults::Graph(_) => Err("CONSTRUCT/DESCRIBE not supported; use SELECT".to_string()),
+        QueryResults::Boolean(_) => Err(GraphError::Query("ASK queries not supported; use SELECT".to_string())),
+        QueryResults::Graph(_) => Err(GraphError::Query("CONSTRUCT/DESCRIBE not supported; use SELECT".to_string())),
     }
 }
 

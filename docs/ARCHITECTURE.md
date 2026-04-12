@@ -12,6 +12,13 @@ These are the core domain objects and everything we do speaks in terms of these 
 
 the rest is various formats that are able to leverage the core domain model to provide different functionality and to keep the domain model separated from the various needs of our usecases
 
+There are three primary modules:
+- domain: the in-memory representation of the domain model, including the core structs and the various algorithms that operate on them
+- workspace: the various formats that we use to interact with the domain model, including the actions files and the markdown files for charters and objectives
+- graph: the graph layer that converts the domain model into RDF triples that can be stored in a graph database and queried with SPARQL all according to the [ontology](https://github.com/ClearHeadToDo-Devs/ontology/blob/main/README.md)
+- crdt: the CRDT layer for syncing changes, which is responsible for converting the domain
+  - currently deferred in leu of getting the others done first but the skeleton is still there for future contributors if the need for a mobile app arises
+
 ## Workspaces
 
 The workspace is the collection of files that are serving as the user interface for the domain model.
@@ -44,3 +51,44 @@ instead, this library is responsible for converting the domain model into a form
 Finally, the RDF layer allows us to translate the domain model into RDF triples that can be stored in an graph database. This allows us to leverage SPARQL for querying the data in a flexible and powerful way, and also to perform SHACL validation against the data to ensure it conforms to our ontology.
 
 the choice of graph db is left up to the implementors but the important part is making sure that the domain model can be easily translated into RDF and that we have a clear way to apply changes from the graph database back into the domain model.
+### Module Structure
+
+
+### Data Flow
+
+```mmd
+graph TD
+    DSL[Actions DSL] -->|parse file| actions[ActionList]
+    actions -->|Transform| domain[Domain Structs]
+    domain -->|autosurgeon| crdt[CRDT State]
+    domain -->|oxigraph| graph[Graph Store]
+    domain -->|format| output[Formatted Output]
+```
+
+## Core Types
+
+The Domain model is the core struct of the entire library.
+
+### Testing
+
+Run tests:
+
+```bash
+cargo test
+```
+
+Run with verbose output:
+c
+```bash
+cargo test -- --nocapture
+```
+
+## Contributing
+
+Contributions are welcome! Please ensure:
+
+1. All tests pass (`cargo test`)
+2. Code is formatted (`cargo fmt`)
+3. No clippy warnings (`cargo clippy`)
+4. No environment dependencies (filesystem, network, config)
+

@@ -1,18 +1,18 @@
 //! Domain model aligned with the Actions Vocabulary v4 ontology.
 //!
 //! This module provides structs that map to the CCO-aligned ontology:
-//! - `Plan` (cco:Plan) - task definition / template (information content)
-//! - `PlannedAct` (cco:PlannedAct) - actual execution (occurrence)
-//! - `ActPhase` - lifecycle state (custom BFO Quality)
+//! - [`Plan`] (cco:Plan) - task definition / template (information content)
+//! - [`PlannedAct`] (cco:PlannedAct) - actual execution (occurrence)
+//! - [`ActPhase`] - lifecycle state (custom BFO Quality)
 //!
 //! The key insight from BFO: information vs occurrence.
-//! - A Plan is a *continuant* — persists and can be realized multiple times
-//! - A PlannedAct is an *occurrent* — unfolds through time
+//! - A [`Plan`] is a *continuant* — persists and can be realized multiple times
+//! - A [`PlannedAct`] is an *occurrent* — unfolds through time
 //!
 //! # Example
 //!
-//! "Do laundry weekly" is one Plan. Each week's laundry is a separate PlannedAct.
-//! For non-recurring tasks, there's still one Plan and one PlannedAct.
+//! "Do laundry weekly" is one [`Plan`]. Each week's laundry is a separate [`PlannedAct`].
+//! For non-recurring tasks, there's still one [`Plan`] and one [`PlannedAct`].
 
 pub mod diff;
 
@@ -40,7 +40,22 @@ impl fmt::Display for Reference {
     }
 }
 
-/// A measurable indicator tied to an objective.
+/// A measurable indicator tied to an [`Objective`].
+///
+/// Metrics provide a way to track progress toward a high-level goal.
+///
+/// # Examples
+///
+/// ```
+/// use clearhead_core::domain::Metric;
+///
+/// let metric = Metric {
+///     name: "Uptime".to_string(),
+///     description: Some("Percentage of time the service is available".to_string()),
+///     target: Some("99.9%".to_string()),
+///     review_date: Some("2026-06-01".to_string()),
+/// };
+/// ```
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Metric {
     pub name: String,
@@ -49,11 +64,11 @@ pub struct Metric {
     pub review_date: Option<String>,
 }
 
-/// A high-level goal that organizes charters.
+/// A high-level goal that organizes [`Charter`]s.
 ///
 /// Maps to `actions:Objective` — the topmost organizational layer.
 /// Objectives sit above charters in the hierarchy:
-/// Objectives → Charters → Plans → Acts
+/// [`Objective`] → [`Charter`] → [`Plan`] → [`PlannedAct`]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Objective {
     pub id: Uuid,
@@ -64,7 +79,34 @@ pub struct Objective {
     pub metrics: Option<Vec<Metric>>,
 }
 
-/// Recurrence rule per RFC 5545 RRULE specification
+/// Recurrence rule per RFC 5545 RRULE specification.
+///
+/// Used by [`Plan`] to prescribe multiple [`PlannedAct`]s.
+///
+/// # Examples
+///
+/// ```
+/// use clearhead_core::domain::Recurrence;
+///
+/// let r = Recurrence {
+///     frequency: "weekly".to_string(),
+///     interval: Some(2),
+///     count: Some(5),
+///     until: None,
+///     by_second: None,
+///     by_minute: None,
+///     by_hour: None,
+///     by_day: Some(vec!["MO".to_string(), "WE".to_string()]),
+///     by_month_day: None,
+///     by_year_day: None,
+///     by_week_no: None,
+///     by_month: None,
+///     by_set_pos: None,
+///     week_start: None,
+/// };
+///
+/// assert_eq!(r.to_string(), "R:FREQ=WEEKLY;INTERVAL=2;COUNT=5;BYDAY=MO,WE");
+/// ```
 #[derive(PartialEq, Debug, Clone, Serialize, Deserialize)]
 pub struct Recurrence {
     pub frequency: String, // FREQ: secondly, minutely, hourly, daily, weekly, monthly, yearly
@@ -208,27 +250,32 @@ impl fmt::Display for Recurrence {
     }
 }
 
-/// Lifecycle phase of a PlannedAct.
+/// Lifecycle phase of a [`PlannedAct`].
 ///
 /// Maps to `actions:ActPhase` (subclass of bfo:Quality).
-/// The phase inheres in the PlannedAct, not the Plan.
+/// The phase inheres in the [`PlannedAct`], not the [`Plan`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum ActPhase {
+    /// Act is defined but not yet ready for execution.
     #[default]
     NotStarted,
+    /// Act is currently being executed.
     InProgress,
+    /// Act has been successfully completed.
     Completed,
+    /// Act is unable to proceed due to a dependency or obstacle.
     Blocked,
+    /// Act has been abandoned and will not be completed.
     Cancelled,
 }
 
-/// Task definition / template.
+/// Task definition or template for execution.
 ///
-/// Maps to `cco:Plan` - information content that persists and can be
+/// Maps to `cco:Plan` — information content that persists and can be
 /// realized multiple times (for recurring tasks) or once (for one-off tasks).
 ///
-/// Plans hold the "what" - name, description, priority, contexts, recurrence rules.
-/// They don't hold execution state (that's on PlannedAct).
+/// Plans hold the "what" — name, description, priority, contexts, recurrence rules.
+/// They do not hold execution state; that is the responsibility of [`PlannedAct`].
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Plan {
     pub id: Uuid,
@@ -247,7 +294,7 @@ pub struct Plan {
     pub is_sequential: Option<bool>,
     /// Plans this plan depends on (predecessor relationships)
     pub depends_on: Option<Vec<Uuid>>,
-    /// PlannedActs that realize this plan (nested hierarchy)
+    /// [`PlannedAct`]s that realize this plan (nested hierarchy)
     pub acts: Vec<PlannedAct>,
 }
 
@@ -260,6 +307,26 @@ impl Plan {
     /// # Arguments
     /// * `dtstart` - The start date/time for the recurrence series
     /// * `limit` - Maximum number of occurrences to generate
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use clearhead_core::domain::{Plan, Recurrence};
+    /// use chrono::{TimeZone, Local};
+    /// use uuid::Uuid;
+    ///
+    /// let dt_start = Local.with_ymd_and_hms(2025, 1, 1, 9, 0, 0).unwrap();
+    /// let plan = Plan {
+    ///     id: Uuid::new_v4(),
+    ///     name: "Daily".to_string(),
+    ///     recurrence: Some(Recurrence { frequency: "daily".to_string(), count: Some(2), ..Default::default() }),
+    ///     acts: vec![],
+    ///     description: None, priority: None, contexts: None, due_recurrence: None, parent: None, alias: None, is_sequential: None, depends_on: None,
+    /// };
+    ///
+    /// let occurrences = plan.expand_occurrences(dt_start, 10);
+    /// assert_eq!(occurrences.len(), 2);
+    /// ```
     pub fn expand_occurrences(
         &self,
         dtstart: DateTime<Local>,
@@ -292,8 +359,7 @@ impl Plan {
 /// A charter — a directive that organizes plans under a shared purpose.
 ///
 /// Maps to `actions:Charter` (subclass of cco:DirectiveInformationContentEntity).
-/// Charters are the highest-level organizational unit. Plans reference charters
-/// via the `charter` field.
+/// Charters are the highest-level organizational unit for [`Plan`]s.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct Charter {
     pub id: Uuid,
@@ -302,9 +368,9 @@ pub struct Charter {
     pub alias: Option<String>,
     /// Reference string for parent charter, resolved at workspace layer
     pub parent: Option<String>,
-    /// References to objectives, resolved at workspace layer
+    /// References to [`Objective`]s, resolved at workspace layer
     pub objectives: Option<Vec<String>>,
-    /// Plans organized under this charter (nested hierarchy)
+    /// [`Plan`]s organized under this charter (nested hierarchy)
     pub plans: Vec<Plan>,
 }
 
@@ -320,16 +386,16 @@ pub fn charter_from_plans_and_name(name: String, plans: Vec<Plan>) -> Charter {
     }
 }
 
-/// Actual execution / occurrence of a Plan.
+/// Actual execution or occurrence of a [`Plan`].
 ///
-/// Maps to `cco:PlannedAct` - something that unfolds through time.
-/// Each realization of a Plan creates a PlannedAct.
+/// Maps to `cco:PlannedAct` — something that unfolds through time.
+/// Each realization of a [`Plan`] creates a [`PlannedAct`].
 ///
-/// PlannedActs hold the "when" and "status" - scheduled time, completion, phase.
+/// [`PlannedAct`]s hold the "when" and "status" — scheduled time, completion, phase.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PlannedAct {
     pub id: Uuid,
-    /// The Plan this act realizes (prescribes relationship, inverse)
+    /// The [`Plan`] this act realizes (prescribes relationship, inverse)
     pub plan_id: Uuid,
     /// Current lifecycle phase
     pub phase: ActPhase,

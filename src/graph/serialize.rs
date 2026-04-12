@@ -2,7 +2,7 @@
 //!
 //! This module owns the "turn a store into text" direction.
 
-use super::{create_store, Store};
+use super::{create_store, GraphError, Result, Store};
 use crate::domain::{ActPhase, DomainModel, PlannedAct};
 use oxigraph::io::RdfFormat;
 use oxigraph::model::GraphNameRef;
@@ -11,7 +11,7 @@ use oxigraph::model::GraphNameRef;
 ///
 /// Loads the full model (Plans + Acts) into a temporary store,
 /// then serializes the default graph to Turtle.
-pub fn serialize_acts_to_turtle(model: &DomainModel) -> Result<String, String> {
+pub fn serialize_acts_to_turtle(model: &DomainModel) -> Result<String> {
     let store = create_store()?;
     super::load_domain_model(&store, model)?;
     store_to_turtle(&store)
@@ -20,7 +20,7 @@ pub fn serialize_acts_to_turtle(model: &DomainModel) -> Result<String, String> {
 /// Serialize only completed/cancelled acts (and their plans) to Turtle format.
 ///
 /// Useful for generating a "closed acts" archive file.
-pub fn serialize_closed_acts_to_turtle(model: &DomainModel) -> Result<String, String> {
+pub fn serialize_closed_acts_to_turtle(model: &DomainModel) -> Result<String> {
     let filtered = filter_model_by_phase(model, |phase| {
         matches!(phase, ActPhase::Completed | ActPhase::Cancelled)
     });
@@ -32,7 +32,7 @@ pub fn serialize_closed_acts_to_turtle(model: &DomainModel) -> Result<String, St
 /// Serialize only open (non-completed, non-cancelled) acts to Turtle format.
 ///
 /// Useful for generating an "upcoming acts" file.
-pub fn serialize_open_acts_to_turtle(model: &DomainModel) -> Result<String, String> {
+pub fn serialize_open_acts_to_turtle(model: &DomainModel) -> Result<String> {
     let filtered = filter_model_by_phase(model, |phase| {
         !matches!(phase, ActPhase::Completed | ActPhase::Cancelled)
     });
@@ -45,7 +45,7 @@ pub fn serialize_open_acts_to_turtle(model: &DomainModel) -> Result<String, Stri
 ///
 /// Companion to `load_acts_into_store` for the archive workflow:
 /// load existing archive + new acts → call this → write back to `archive.ttl`.
-pub fn dump_store_to_turtle(store: &Store) -> Result<String, String> {
+pub fn dump_store_to_turtle(store: &Store) -> Result<String> {
     store_to_turtle(store)
 }
 
@@ -53,12 +53,12 @@ pub fn dump_store_to_turtle(store: &Store) -> Result<String, String> {
 // Private helpers
 // ============================================================================
 
-fn store_to_turtle(store: &Store) -> Result<String, String> {
+fn store_to_turtle(store: &Store) -> Result<String> {
     let mut buffer = Vec::new();
     store
         .dump_graph_to_writer(GraphNameRef::DefaultGraph, RdfFormat::Turtle, &mut buffer)
-        .map_err(|e| format!("Failed to serialize to Turtle: {}", e))?;
-    String::from_utf8(buffer).map_err(|e| format!("Invalid UTF-8 in Turtle output: {}", e))
+        .map_err(|e| GraphError::Syntax(e.to_string()))?;
+    String::from_utf8(buffer).map_err(|e| GraphError::Syntax(e.to_string()))
 }
 
 /// Filter a `DomainModel` to only include acts matching `predicate`,

@@ -3,9 +3,9 @@
 //! This module owns the "put things in" direction: domain model → RDF triples.
 
 use super::{
-    actions_pred, bfo_pred, cco_node, ns, phase_node, rdf_type, rdfs_pred, Store, BFO_HAS_PART,
-    BFO_PART_OF, CCO_IS_SUCCESSOR_OF, CCO_PLAN, CCO_PLANNED_ACT, CCO_PRESCRIBED_BY, CCO_PRESCRIBES,
-    CCO_STATUS_PROP, RDFS_COMMENT, RDFS_LABEL, XSD_NS,
+    actions_pred, bfo_pred, cco_node, ns, phase_node, rdf_type, rdfs_pred, GraphError, Result,
+    Store, BFO_HAS_PART, BFO_PART_OF, CCO_IS_SUCCESSOR_OF, CCO_PLAN, CCO_PLANNED_ACT,
+    CCO_PRESCRIBED_BY, CCO_PRESCRIBES, CCO_STATUS_PROP, RDFS_COMMENT, RDFS_LABEL, XSD_NS,
 };
 use crate::domain::{Charter, DomainModel, Plan, PlannedAct};
 use crate::workspace::actions::convert::INBOX_CHARTER_NS;
@@ -18,7 +18,7 @@ use uuid::Uuid;
 ///
 /// Inserts Charters, Plans, and PlannedActs with CCO/BFO-aligned types and
 /// relationships, including Charter → Plan containment via `bfo:has_part`.
-pub fn load_domain_model(store: &Store, model: &DomainModel) -> Result<(), String> {
+pub fn load_domain_model(store: &Store, model: &DomainModel) -> Result<()> {
     // Build title → UUID map so hasSubCharter triples use the actual charter UUID
     // rather than re-deriving it (which breaks when explicit .md charters have
     // their own UUID that differs from the INBOX_CHARTER_NS-derived one).
@@ -42,7 +42,7 @@ pub fn load_domain_model(store: &Store, model: &DomainModel) -> Result<(), Strin
 /// Used by the archive command to populate a store before serializing to
 /// `archive.ttl`.  Quad idempotence means calling this with already-present
 /// acts is safe.
-pub fn load_acts_into_store(store: &Store, acts: &[PlannedAct]) -> Result<(), String> {
+pub fn load_acts_into_store(store: &Store, acts: &[PlannedAct]) -> Result<()> {
     for act in acts {
         insert_planned_act(store, act)?;
     }
@@ -53,10 +53,10 @@ pub fn load_acts_into_store(store: &Store, acts: &[PlannedAct]) -> Result<(), St
 ///
 /// Reverse of `dump_store_to_turtle` — useful for loading external `.ttl`
 /// files or round-trip testing.
-pub fn load_turtle(store: &Store, content: &str) -> Result<(), String> {
+pub fn load_turtle(store: &Store, content: &str) -> Result<()> {
     store
         .load_from_reader(RdfFormat::Turtle, content.as_bytes())
-        .map_err(|e| format!("Failed to load Turtle: {}", e))
+        .map_err(|e| GraphError::Syntax(e.to_string()))
 }
 
 // ============================================================================
@@ -67,7 +67,7 @@ fn insert_charter(
     store: &Store,
     charter: &Charter,
     charter_id_by_title: &HashMap<String, Uuid>,
-) -> Result<(), String> {
+) -> Result<()> {
     let subject =
         NamedOrBlankNode::NamedNode(NamedNode::new(format!("urn:uuid:{}", charter.id)).unwrap());
     let graph = GraphName::DefaultGraph;
@@ -75,7 +75,7 @@ fn insert_charter(
     let add = |pred: NamedNode, term: Term| {
         store
             .insert(&Quad::new(subject.clone(), pred, term, graph.clone()))
-            .map_err(|e| e.to_string())
+            .map_err(|e| GraphError::Store(e.to_string()))
     };
 
     add(
@@ -120,7 +120,7 @@ fn insert_charter(
                 Term::NamedNode(NamedNode::new(format!("urn:uuid:{}", charter.id)).unwrap()),
                 GraphName::DefaultGraph,
             ))
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| GraphError::Store(e.to_string()))?;
     }
 
     for plan in &charter.plans {
@@ -132,7 +132,7 @@ fn insert_charter(
     Ok(())
 }
 
-fn insert_plan(store: &Store, plan: &Plan) -> Result<(), String> {
+fn insert_plan(store: &Store, plan: &Plan) -> Result<()> {
     let subject =
         NamedOrBlankNode::NamedNode(NamedNode::new(format!("urn:uuid:{}", plan.id)).unwrap());
     let graph = GraphName::DefaultGraph;
@@ -140,7 +140,7 @@ fn insert_plan(store: &Store, plan: &Plan) -> Result<(), String> {
     let add = |pred: NamedNode, term: Term| {
         store
             .insert(&Quad::new(subject.clone(), pred, term, graph.clone()))
-            .map_err(|e| e.to_string())
+            .map_err(|e| GraphError::Store(e.to_string()))
     };
 
     add(rdf_type(), Term::NamedNode(cco_node(CCO_PLAN)))?;
@@ -232,7 +232,7 @@ fn insert_plan(store: &Store, plan: &Plan) -> Result<(), String> {
     Ok(())
 }
 
-fn insert_planned_act(store: &Store, act: &PlannedAct) -> Result<(), String> {
+fn insert_planned_act(store: &Store, act: &PlannedAct) -> Result<()> {
     let subject =
         NamedOrBlankNode::NamedNode(NamedNode::new(format!("urn:uuid:{}", act.id)).unwrap());
     let graph = GraphName::DefaultGraph;
@@ -240,7 +240,7 @@ fn insert_planned_act(store: &Store, act: &PlannedAct) -> Result<(), String> {
     let add = |pred: NamedNode, term: Term| {
         store
             .insert(&Quad::new(subject.clone(), pred, term, graph.clone()))
-            .map_err(|e| e.to_string())
+            .map_err(|e| GraphError::Store(e.to_string()))
     };
 
     add(rdf_type(), Term::NamedNode(cco_node(CCO_PLANNED_ACT)))?;

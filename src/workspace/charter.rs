@@ -37,7 +37,7 @@ struct CharterFrontmatter {
     objectives: Option<Vec<String>>,
 }
 
-/// Parse a charter from markdown content with optional YAML frontmatter.
+/// Parse a [`Charter`] from markdown content with optional YAML frontmatter.
 ///
 /// Title resolution order:
 /// 1. `title` field in frontmatter

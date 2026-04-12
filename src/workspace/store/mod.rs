@@ -52,32 +52,21 @@ pub fn list_action_files(root: &Path) -> Result<Vec<PathBuf>, WorkspaceError> {
 }
 
 /// Errors that can occur when interacting with a workspace.
-#[derive(Debug)]
+#[derive(thiserror::Error, Debug)]
 pub enum WorkspaceError {
-    Io(std::io::Error),
+    /// An underlying I/O error occurred.
+    #[error("IO error: {0}")]
+    Io(#[from] std::io::Error),
+    /// Error parsing a `.actions` file.
+    #[error("Parse error: {0}")]
     Parse(String),
+    /// Error loading or saving sidecar acts.
+    #[error("Acts error: {0}")]
     Acts(String),
+    /// A path provided was not within the workspace or was otherwise invalid.
+    #[error("Invalid path: {0}")]
     InvalidPath(PathBuf),
 }
-
-impl From<std::io::Error> for WorkspaceError {
-    fn from(e: std::io::Error) -> Self {
-        WorkspaceError::Io(e)
-    }
-}
-
-impl fmt::Display for WorkspaceError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            WorkspaceError::Io(e) => write!(f, "IO error: {}", e),
-            WorkspaceError::Parse(msg) => write!(f, "Parse error: {}", msg),
-            WorkspaceError::Acts(msg) => write!(f, "Acts error: {}", msg),
-            WorkspaceError::InvalidPath(p) => write!(f, "Invalid path: {}", p.display()),
-        }
-    }
-}
-
-impl std::error::Error for WorkspaceError {}
 
 #[derive(Debug, Clone)]
 pub(crate) struct WorkspaceLayout {

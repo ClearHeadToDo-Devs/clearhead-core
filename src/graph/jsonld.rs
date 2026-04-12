@@ -8,7 +8,7 @@
 //! in `src/resources/` are used so export behavior and tests remain stable
 //! without network dependencies.
 
-use super::{create_store, Store};
+use super::{create_store, GraphError, Result, Store};
 use crate::domain::{ActPhase, Charter, DomainModel, Plan};
 use crate::graph::{load_domain_model, load_domain_model_from_store};
 use serde_json::{json, Map, Value};
@@ -67,28 +67,28 @@ const ACTIONS_CONTEXT_V4: &str = include_str!("../resources/actions.context.v4.j
 /// assert!(jsonld.contains("\"@context\""));
 /// assert!(jsonld.contains("\"@graph\""));
 /// ```
-pub fn serialize_store_to_jsonld(store: &Store) -> Result<String, String> {
+pub fn serialize_store_to_jsonld(store: &Store) -> Result<String> {
     let model = load_domain_model_from_store(store)?;
     let document = build_jsonld_document(&model)?;
-    serde_json::to_string_pretty(&document).map_err(|e| e.to_string())
+    serde_json::to_string_pretty(&document).map_err(|e| GraphError::Syntax(e.to_string()))
 }
 
 /// Serialize a `DomainModel` into canonical compact JSON-LD.
 ///
 /// This helper is equivalent to `DomainModel -> Store -> JSON-LD`.
-pub fn serialize_domain_to_jsonld(model: &DomainModel) -> Result<String, String> {
+pub fn serialize_domain_to_jsonld(model: &DomainModel) -> Result<String> {
     let store = create_store()?;
     load_domain_model(&store, model)?;
     serialize_store_to_jsonld(&store)
 }
 
-fn build_jsonld_document(model: &DomainModel) -> Result<Value, String> {
+fn build_jsonld_document(model: &DomainModel) -> Result<Value> {
     let context_value: Value = serde_json::from_str(ACTIONS_CONTEXT_V4)
-        .map_err(|e| format!("Invalid vendored actions context JSON: {e}"))?;
+        .map_err(|e| GraphError::Syntax(format!("Invalid vendored actions context JSON: {e}")))?;
     let context = context_value
         .get("@context")
         .cloned()
-        .ok_or_else(|| "Vendored context missing @context".to_string())?;
+        .ok_or_else(|| GraphError::Syntax("Vendored context missing @context".to_string()))?;
 
     let mut nodes: Vec<Value> = Vec::new();
 

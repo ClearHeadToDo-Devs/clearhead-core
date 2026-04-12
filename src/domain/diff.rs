@@ -158,7 +158,9 @@ impl CharterDiff {
     }
 }
 
-/// Complete hierarchical diff between two DomainModels.
+/// Complete hierarchical diff between two [`DomainModel`]s.
+///
+/// Use [`diff_domain_models`] to generate this struct.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct DomainDiff {
     pub charters_added: Vec<Charter>,
@@ -173,7 +175,7 @@ impl DomainDiff {
             && self.charters_modified.is_empty()
     }
 
-    /// IDs of charters that have any change (added, removed, or modified).
+    /// IDs of [`Charter`]s that have any change (added, removed, or modified).
     pub fn affected_charter_ids(&self) -> Vec<Uuid> {
         let mut ids: Vec<Uuid> = self
             .charters_added
@@ -192,10 +194,10 @@ impl DomainDiff {
 // Diff engine
 // ============================================================================
 
-/// Diff two DomainModels, producing a hierarchical DomainDiff.
+/// Diff two [`DomainModel`]s, producing a hierarchical [`DomainDiff`].
 ///
-/// Charters are matched by `charter.id`. Plans within a charter are matched
-/// by `plan.id`. Acts within a plan are matched by `act.id`.
+/// [`Charter`]s are matched by `charter.id`. [`Plan`]s within a charter are matched
+/// by `plan.id`. [`PlannedAct`]s within a plan are matched by `act.id`.
 pub fn diff_domain_models(old: &DomainModel, new: &DomainModel) -> DomainDiff {
     let old_charters: HashMap<Uuid, &Charter> = old.charters.iter().map(|c| (c.id, c)).collect();
     let new_charters: HashMap<Uuid, &Charter> = new.charters.iter().map(|c| (c.id, c)).collect();

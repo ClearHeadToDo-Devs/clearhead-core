@@ -1,11 +1,16 @@
 //! CRDT operations for distributed synchronization.
 //!
+//! # ⚠️ DEFERRED
+//! This module is currently deferred and not actively maintained or used in the
+//! primary ClearHead workflow. Future implementation will leverage Automerge
+//! for multi-device synchronization.
+//!
 //! This module manages the Automerge CRDT document that serves as the
 //! source of truth for workspace state. It speaks only `DomainModel`
 //! at its public boundary — no ActionList, no formatting, no parsing.
 //!
 //! Filesystem projection (writing .actions files) is handled by
-//! [`WorkspaceStore`](crate::store::WorkspaceStore) implementations.
+//! [`WorkspaceStore`](crate::workspace::store::load_domain_model) implementations.
 //! File import (seeding CRDT from disk) is the caller's responsibility.
 
 pub mod convert;

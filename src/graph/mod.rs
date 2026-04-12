@@ -27,6 +27,26 @@ pub use serialize::{
     serialize_open_acts_to_turtle,
 };
 
+/// Result type for graph operations.
+pub type Result<T> = std::result::Result<T, GraphError>;
+
+/// Errors that can occur during RDF/SPARQL operations.
+#[derive(thiserror::Error, Debug)]
+pub enum GraphError {
+    /// Error from the underlying Oxigraph store.
+    #[error("Database error: {0}")]
+    Store(String),
+    /// Error parsing RDF (e.g., Turtle).
+    #[error("RDF syntax error: {0}")]
+    Syntax(String),
+    /// Error executing a SPARQL query.
+    #[error("SPARQL error: {0}")]
+    Query(String),
+    /// Error during domain model hydration/mapping.
+    #[error("Domain mapping error: {0}")]
+    Domain(String),
+}
+
 use oxigraph::model::NamedNode;
 
 // ============================================================================
@@ -101,11 +121,11 @@ pub(crate) fn phase_node(phase: &crate::domain::ActPhase) -> NamedNode {
 // ============================================================================
 
 /// Create an in-memory Oxigraph store.
-pub fn create_store() -> Result<Store, String> {
-    Store::new().map_err(|e| e.to_string())
+pub fn create_store() -> Result<Store> {
+    Store::new().map_err(|e| GraphError::Store(e.to_string()))
 }
 
 /// Legacy alias for `create_store`.
-pub fn create_database() -> Result<Store, String> {
+pub fn create_database() -> Result<Store> {
     create_store()
 }

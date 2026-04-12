@@ -14,6 +14,7 @@ use uuid::Uuid;
 
 use crate::domain::{DomainModel, PlannedAct};
 use crate::graph;
+use crate::workspace::store::WorkspaceError;
 
 // ============================================================================
 // Path derivation
@@ -72,40 +73,46 @@ pub fn closed_acts_path(actions_path: &Path) -> PathBuf {
 // Public API
 // ============================================================================
 
-/// Read PlannedActs from a Turtle file.
+/// Read [`PlannedAct`]s from a Turtle file.
 ///
 /// Returns `Ok(vec![])` if the file is absent — absence is normal for
 /// non-recurring plans or files that have never been expanded.
-pub fn read_acts(path: &Path) -> Result<Vec<PlannedAct>, String> {
+pub fn read_acts(path: &Path) -> Result<Vec<PlannedAct>, WorkspaceError> {
     if !path.exists() {
         return Ok(Vec::new());
     }
 
     let content = std::fs::read_to_string(path)
-        .map_err(|e| format!("Failed to read '{}': {}", path.display(), e))?;
+        .map_err(|e| WorkspaceError::Io(e))?;
 
-    let store = graph::create_store()?;
-    graph::load_turtle(&store, &content)?;
+    let store = graph::create_store()
+        .map_err(|e| WorkspaceError::Acts(e.to_string()))?;
+    graph::load_turtle(&store, &content)
+        .map_err(|e| WorkspaceError::Acts(e.to_string()))?;
 
     graph::load_planned_acts_from_store(&store)
+        .map_err(|e| WorkspaceError::Acts(e.to_string()))
 }
 
-/// Write PlannedActs to a Turtle file via oxigraph.
+/// Write [`PlannedAct`]s to a Turtle file via oxigraph.
 ///
 /// Creates parent directories as needed. Overwrites any existing file.
-pub fn write_acts(acts: &[PlannedAct], path: &Path) -> Result<(), String> {
+pub fn write_acts(acts: &[PlannedAct], path: &Path) -> Result<(), WorkspaceError> {
     if let Some(parent) = path.parent() {
         if !parent.as_os_str().is_empty() {
             std::fs::create_dir_all(parent)
-                .map_err(|e| format!("Failed to create directory '{}': {}", parent.display(), e))?;
+                .map_err(|e| WorkspaceError::Io(e))?;
         }
     }
 
-    let store = graph::create_store()?;
-    graph::load_acts_into_store(&store, acts)?;
-    let ttl = graph::dump_store_to_turtle(&store)?;
+    let store = graph::create_store()
+        .map_err(|e| WorkspaceError::Acts(e.to_string()))?;
+    graph::load_acts_into_store(&store, acts)
+        .map_err(|e| WorkspaceError::Acts(e.to_string()))?;
+    let ttl = graph::dump_store_to_turtle(&store)
+        .map_err(|e| WorkspaceError::Acts(e.to_string()))?;
 
-    std::fs::write(path, ttl).map_err(|e| format!("Failed to write '{}': {}", path.display(), e))
+    std::fs::write(path, ttl).map_err(|e| WorkspaceError::Io(e))
 }
 
 /// Write acts belonging to specific plans, preserving other plans' acts already in the file.
@@ -119,14 +126,14 @@ pub fn write_acts_for_plans(
     updated: &[PlannedAct],
     plan_ids: &HashSet<Uuid>,
     path: &Path,
-) -> Result<(), String> {
+) -> Result<(), WorkspaceError> {
     let mut existing = read_acts(path)?;
     existing.retain(|a| !plan_ids.contains(&a.plan_id));
     existing.extend_from_slice(updated);
     write_acts(&existing, path)
 }
 
-/// Merge a list of loaded PlannedActs into a DomainModel.
+/// Merge a list of loaded [`PlannedAct`]s into a [`DomainModel`].
 ///
 /// For each plan in the model, replaces the plan's synthetic acts with
 /// the loaded acts where `plan_id` matches. Plans with no matching acts

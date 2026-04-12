@@ -23,6 +23,7 @@ topiary-core = "0.7.3"
 topiary-tree-sitter-facade = "0.7.3"
 tree-sitter = "0.26.3"
 tree-sitter-actions = { path = "../tree-sitter-actions", version = "0.9.4" }
+thiserror = "2.0"
 
 [dependencies.uuid]
 version = "1.0"

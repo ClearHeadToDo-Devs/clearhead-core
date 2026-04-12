@@ -9,53 +9,88 @@ use std::collections::HashMap;
 use std::fmt;
 use uuid::Uuid;
 
+/// A collection of [`Action`]s, typically representing a parsed `.actions` document.
 pub type ActionList = Vec<Action>;
 
-/// Reference to a predecessor action, which can be either a UUID or a name reference
+/// Reference to a predecessor action.
+///
+/// Can be either a literal UUID or a name-based reference that is resolved
+/// during the workspace loading phase.
 #[derive(PartialEq, Debug, Clone, Serialize, Deserialize)]
 pub struct PredecessorRef {
-    /// The raw reference text from the source (could be a UUID string or an action name)
+    /// The raw reference text from the source (e.g., "build core" or a UUID).
     pub raw_ref: String,
-    /// The resolved UUID if we were able to parse/resolve it
+    /// The resolved UUID if resolution was successful.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub resolved_uuid: Option<Uuid>,
 }
 
+/// The core unit of work in the ClearHead DSL.
+///
+/// Represents a single line (or tree node) in a `.actions` file, containing
+/// state, identity, and metadata.
+///
+/// # Examples
+///
+/// ```
+/// use clearhead_core::workspace::Action;
+/// use clearhead_core::workspace::ActionState;
+///
+/// let mut action = Action::new("Fix the documentation");
+/// action.state = ActionState::InProgress;
+///
+/// assert_eq!(action.name, "Fix the documentation");
+/// assert_eq!(action.state, ActionState::InProgress);
+/// ```
 #[derive(PartialEq, Debug, Clone, Serialize, Deserialize)]
 pub struct Action {
     pub id: Uuid,
+    /// Parent action ID for hierarchical organization.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub parent_id: Option<Uuid>,
+    /// Current lifecycle state (e.g., [ ], [x], [-]).
     pub state: ActionState,
     pub name: String,
+    /// Detailed description enclosed in $ ... $.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    /// Priority level (e.g., !1).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub priority: Option<u32>,
+    /// Associated contexts (e.g., +home,+work).
     #[serde(rename = "contexts", skip_serializing_if = "Option::is_none")]
     pub context_list: Option<Vec<String>>,
+    /// Scheduled execution time (@-syntax).
     #[serde(rename = "doDateTime", skip_serializing_if = "Option::is_none")]
     pub do_date_time: Option<DateTime<Local>>,
+    /// Expected duration in minutes (D-syntax).
     #[serde(rename = "doDuration", skip_serializing_if = "Option::is_none")]
-    pub do_duration: Option<u32>, // Duration in minutes
+    pub do_duration: Option<u32>,
+    /// Recurrence rule for the scheduled time.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub recurrence: Option<Recurrence>,
+    /// Deadline or due date (:-syntax).
     #[serde(rename = "dueDateTime", skip_serializing_if = "Option::is_none")]
     pub due_date_time: Option<DateTime<Local>>,
+    /// Recurrence rule for the due date.
     #[serde(rename = "dueRecurrence", skip_serializing_if = "Option::is_none")]
     pub due_recurrence: Option<Recurrence>,
+    /// When the action was marked as completed (%-syntax).
     #[serde(rename = "completedDate", skip_serializing_if = "Option::is_none")]
     pub completed_date_time: Option<DateTime<Local>>,
+    /// When the action was originally created (^-syntax).
     #[serde(rename = "createdDate", skip_serializing_if = "Option::is_none")]
     pub created_date_time: Option<DateTime<Local>>,
+    /// List of actions that must be completed before this one (<-syntax).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub predecessors: Option<Vec<PredecessorRef>>,
+    /// The charter this action belongs to (*-syntax).
     #[serde(rename = "story", skip_serializing_if = "Option::is_none")]
     pub charter: Option<String>,
-    /// Alias for stable references that persist even when action name changes
+    /// Stable alias for references (=alias).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub alias: Option<String>,
-    /// When true, all direct children are sequential (each depends on previous sibling)
+    /// Whether children are executed sequentially (~).
     #[serde(rename = "isSequential", skip_serializing_if = "Option::is_none")]
     pub is_sequential: Option<bool>,
 }
@@ -434,15 +469,28 @@ pub fn parse_action_recursive(
     Ok(actions)
 }
 
+/// Lifecycle state of an [`Action`].
+///
+/// Maps to the visual representation in the `.actions` file:
+/// - `NotStarted` -> `[ ]`
+/// - `Completed` -> `[x]`
+/// - `InProgress` -> `[-]`
+/// - `Blocked` -> `[=]`
+/// - `Cancelled` -> `[_]`
 #[derive(Default, Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ActionState {
+    /// Action is defined but not yet started.
     #[default]
     NotStarted,
+    /// Action has been successfully completed.
     Completed,
+    /// Action is currently being worked on.
     InProgress,
+    /// Action is blocked by a dependency or awaiting external input.
     #[serde(rename = "blocked")]
     BlockedorAwaiting,
+    /// Action has been cancelled and will not be completed.
     Cancelled,
 }
 
