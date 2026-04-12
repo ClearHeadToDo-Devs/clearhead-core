@@ -25,7 +25,6 @@ mod load;
 mod pathing;
 mod save;
 
-use std::fmt;
 use std::path::{Path, PathBuf};
 
 pub use load::load_domain_model;

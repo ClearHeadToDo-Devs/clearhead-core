@@ -220,10 +220,10 @@ fn query_charter_plan_edges(store: &Store) -> Result<Vec<(Uuid, Uuid)>> {
         .map(|row| {
             let charter_id = row
                 .get("charterId")
-                .ok_or_else(|| "Missing charterId in edge row".to_string())?;
+                .ok_or_else(|| GraphError::Domain("Missing charterId in edge row".to_string()))?;
             let plan_id = row
                 .get("planId")
-                .ok_or_else(|| "Missing planId in edge row".to_string())?;
+                .ok_or_else(|| GraphError::Domain("Missing planId in edge row".to_string()))?;
             Ok((
                 parse_uuid(plan_id, "plan")?,
                 parse_uuid(charter_id, "charter")?,
@@ -232,11 +232,11 @@ fn query_charter_plan_edges(store: &Store) -> Result<Vec<(Uuid, Uuid)>> {
         .collect()
 }
 
-fn get_charter_by_id(store: &Store, id: Uuid) -> Result<Charter, String> {
+fn get_charter_by_id(store: &Store, id: Uuid) -> Result<Charter> {
     let node = NodeView::new(store, id);
     let title = node
         .lit(rdfs_pred(RDFS_LABEL))
-        .ok_or_else(|| format!("Charter {} missing title", id))?;
+        .ok_or_else(|| GraphError::Domain(format!("Charter {} missing title", id)))?;
     let alias = node.lit(actions_pred("hasAlias"));
 
     Ok(Charter {
@@ -253,7 +253,7 @@ fn get_charter_by_id(store: &Store, id: Uuid) -> Result<Charter, String> {
 fn query_charter_parent_alias_or_title(
     store: &Store,
     child_id: Uuid,
-) -> Result<Option<String>, String> {
+) -> Result<Option<String>> {
     let q = format!(
         "SELECT ?pid WHERE {{ \
             ?parent a <{actions}Charter> ; <{actions}hasSubCharter> <urn:uuid:{child}> ; <{actions}hasUUID> ?pid . \
@@ -269,11 +269,11 @@ fn query_charter_parent_alias_or_title(
     let parent = NodeView::new(store, parent_id);
     let parent_title = parent
         .lit(rdfs_pred(RDFS_LABEL))
-        .ok_or_else(|| format!("Charter {} missing title", parent_id))?;
+        .ok_or_else(|| GraphError::Domain(format!("Charter {} missing title", parent_id)))?;
     Ok(parent.lit(actions_pred("hasAlias")).or(Some(parent_title)))
 }
 
-fn query_ids(store: &Store, sparql: &str, var_name: &str) -> Result<Vec<String>, String> {
+fn query_ids(store: &Store, sparql: &str, var_name: &str) -> Result<Vec<String>> {
     Ok(execute_select_rows(store, sparql)?
         .into_iter()
         .filter_map(|row| row.get(var_name).cloned())
@@ -285,14 +285,14 @@ fn query_uuids(
     sparql: &str,
     var_name: &str,
     kind: &str,
-) -> Result<Vec<Uuid>, String> {
+) -> Result<Vec<Uuid>> {
     query_ids(store, sparql, var_name)?
         .into_iter()
         .map(|id| parse_uuid(&id, kind))
         .collect()
 }
 
-fn query_term_values(store: &Store, sparql: &str, var_name: &str) -> Result<Vec<String>, String> {
+fn query_term_values(store: &Store, sparql: &str, var_name: &str) -> Result<Vec<String>> {
     query_ids(store, sparql, var_name)
 }
 
@@ -337,8 +337,8 @@ fn stringify_term(term: &Term) -> String {
     }
 }
 
-fn parse_uuid(value: &str, kind: &str) -> Result<Uuid, String> {
-    Uuid::parse_str(value).map_err(|e| format!("Invalid {kind} UUID '{}': {}", value, e))
+fn parse_uuid(value: &str, kind: &str) -> Result<Uuid> {
+    Uuid::parse_str(value).map_err(|e| GraphError::Domain(format!("Invalid {kind} UUID '{}': {}", value, e)))
 }
 
 struct NodeView<'a> {
@@ -365,7 +365,7 @@ impl<'a> NodeView<'a> {
                 Some(GraphName::DefaultGraph.as_ref()),
             )
             .next()
-            .and_then(Result::ok)
+            .and_then(|r| r.ok())
             .map(|q| q.object)
     }
 
@@ -377,7 +377,7 @@ impl<'a> NodeView<'a> {
                 None,
                 Some(GraphName::DefaultGraph.as_ref()),
             )
-            .filter_map(Result::ok)
+            .filter_map(|r| r.ok())
             .map(|q| q.object)
             .collect()
     }
@@ -425,11 +425,11 @@ fn term_uuid_urn(term: Term) -> Option<Uuid> {
     }
 }
 
-fn get_plan_by_id(store: &Store, id: Uuid) -> Result<Plan, String> {
+fn get_plan_by_id(store: &Store, id: Uuid) -> Result<Plan> {
     let node = NodeView::new(store, id);
     let name = node
         .lit(rdfs_pred(RDFS_LABEL))
-        .ok_or_else(|| format!("Plan {} missing name", id))?;
+        .ok_or_else(|| GraphError::Domain(format!("Plan {} missing name", id)))?;
 
     let contexts: Vec<String> = node
         .many(actions_pred("hasContext"))
@@ -510,11 +510,11 @@ fn parse_recurrence_rule(rrule: &str) -> Option<Recurrence> {
     })
 }
 
-fn get_planned_act_by_id(store: &Store, id: Uuid) -> Result<PlannedAct, String> {
+fn get_planned_act_by_id(store: &Store, id: Uuid) -> Result<PlannedAct> {
     let node = NodeView::new(store, id);
     let plan_id = node
         .uuid_node(cco_node(CCO_PRESCRIBED_BY))
-        .ok_or_else(|| format!("PlannedAct {} missing prescribedBy", id))?;
+        .ok_or_else(|| GraphError::Domain(format!("PlannedAct {} missing prescribedBy", id)))?;
 
     let phase = match node.one(cco_node(CCO_STATUS_PROP)) {
         Some(Term::NamedNode(nn)) => match nn.as_str().split('#').next_back() {
