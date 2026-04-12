@@ -40,6 +40,10 @@ pub struct Action {
     pub do_duration: Option<u32>, // Duration in minutes
     #[serde(skip_serializing_if = "Option::is_none")]
     pub recurrence: Option<Recurrence>,
+    #[serde(rename = "dueDateTime", skip_serializing_if = "Option::is_none")]
+    pub due_date_time: Option<DateTime<Local>>,
+    #[serde(rename = "dueRecurrence", skip_serializing_if = "Option::is_none")]
+    pub due_recurrence: Option<Recurrence>,
     #[serde(rename = "completedDate", skip_serializing_if = "Option::is_none")]
     pub completed_date_time: Option<DateTime<Local>>,
     #[serde(rename = "createdDate", skip_serializing_if = "Option::is_none")]
@@ -69,7 +73,9 @@ impl Default for Action {
             do_date_time: None,
             do_duration: None,
             recurrence: None,
-            completed_date_time: None,
+            due_date_time: None,
+            due_recurrence: None,
+                        completed_date_time: None,
             created_date_time: Some(Local::now()),
             predecessors: None,
             charter: None,
@@ -123,6 +129,12 @@ impl Action {
                 write!(f, " D{}", duration)?;
             }
             if let Some(recurrence) = &self.recurrence {
+                write!(f, " {}", recurrence)?;
+            }
+        }
+        if let Some(due_date_time) = &self.due_date_time {
+            write!(f, " :{}", due_date_time.format("%Y-%m-%dT%H:%M"))?;
+            if let Some(recurrence) = &self.due_recurrence {
                 write!(f, " {}", recurrence)?;
             }
         }
@@ -267,6 +279,9 @@ pub fn parse_action_recursive(
     let mut is_sequential = None;
 
     let mut do_date_range = None;
+    let mut due_date_time = None;
+    let mut due_recurrence = None;
+    let mut due_date_range = None;
     let mut completed_date_range = None;
     let mut created_date_range = None;
     let mut raw_id = None;
@@ -310,6 +325,10 @@ pub fn parse_action_recursive(
                 (do_date_time, do_date_range) = parse_date_field(&meta, &node.source);
                 do_duration = parse_duration_field(&meta, &node.source);
                 recurrence = parse_recurrence_field(&meta, &node.source);
+            }
+            "due_date" => {
+                (due_date_time, due_date_range) = parse_date_field(&meta, &node.source);
+                due_recurrence = parse_recurrence_field(&meta, &node.source);
             }
             "completed_date" => {
                 (completed_date_time, completed_date_range) = parse_date_field(&meta, &node.source);
@@ -366,6 +385,7 @@ pub fn parse_action_recursive(
                 end_col: line_end_pos.column,
             },
             do_date: do_date_range,
+            due_date: due_date_range,
             completed_date: completed_date_range,
             created_date: created_date_range,
             is_id_generated,
@@ -385,6 +405,8 @@ pub fn parse_action_recursive(
         do_date_time,
         do_duration,
         recurrence,
+        due_date_time,
+        due_recurrence,
         completed_date_time,
         created_date_time,
         predecessors: if predecessors.is_empty() {
@@ -691,6 +713,8 @@ mod tests {
             do_date_time: Some(Local::now()),
             do_duration: Some(60),
             recurrence: Some(recurrence),
+            due_date_time: None,
+            due_recurrence: None,
             completed_date_time: None,
             created_date_time: None,
             predecessors: None,
@@ -770,7 +794,9 @@ mod tests {
             do_date_time: None,
             do_duration: None,
             recurrence: None,
-            completed_date_time: None,
+            due_date_time: None,
+            due_recurrence: None,
+                        completed_date_time: None,
             created_date_time: None,
             predecessors: Some(vec![pred_ref]),
             charter: None,

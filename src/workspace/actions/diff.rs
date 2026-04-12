@@ -168,6 +168,8 @@ mod tests {
             do_date_time: None,
             do_duration: None,
             recurrence: None,
+            due_date_time: None,
+            due_recurrence: None,
             completed_date_time: None,
             created_date_time: None,
             predecessors: None,

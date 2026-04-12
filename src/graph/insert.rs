@@ -214,6 +214,15 @@ fn insert_plan(store: &Store, plan: &Plan) -> Result<(), String> {
         )?;
     }
 
+    if let Some(recurrence) = &plan.due_recurrence {
+        let recurrence_str = recurrence.to_string();
+        let clean = recurrence_str.strip_prefix("R:").unwrap_or(&recurrence_str);
+        add(
+            actions_pred("hasDueRecurrenceRule"),
+            Term::Literal(Literal::new_simple_literal(clean)),
+        )?;
+    }
+
     // cco:prescribes (ont00001942) — forward link from Plan to each PlannedAct
     for act in &plan.acts {
         let act_uri = NamedNode::new(format!("urn:uuid:{}", act.id)).unwrap();
@@ -251,7 +260,17 @@ fn insert_planned_act(store: &Store, act: &PlannedAct) -> Result<(), String> {
 
     if let Some(dt) = &act.scheduled_at {
         add(
-            actions_pred("hasDoDateTime"),
+            actions_pred("hasScheduledDateTime"),
+            Term::Literal(Literal::new_typed_literal(
+                dt.to_rfc3339(),
+                ns(XSD_NS, "dateTime"),
+            )),
+        )?;
+    }
+
+    if let Some(dt) = &act.due_date {
+        add(
+            actions_pred("hasDueDateTime"),
             Term::Literal(Literal::new_typed_literal(
                 dt.to_rfc3339(),
                 ns(XSD_NS, "dateTime"),
@@ -336,6 +355,7 @@ mod tests {
                         by_set_pos: None,
                         week_start: None,
                     }),
+                    due_recurrence: None,
                     parent: None,
                     alias: Some("graph_tests".to_string()),
                     is_sequential: Some(true),
@@ -352,6 +372,7 @@ mod tests {
                                 .with_ymd_and_hms(2026, 4, 9, 10, 0, 0)
                                 .unwrap(),
                         ),
+                        due_date: None,
                         duration: Some(45),
                         completed_at: None,
                         created_at: Some(

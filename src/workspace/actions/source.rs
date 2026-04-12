@@ -22,6 +22,7 @@ pub struct SourceMetadata {
     pub root: SourceRange,
     pub line_range: SourceRange,
     pub do_date: Option<SourceRange>,
+    pub due_date: Option<SourceRange>,
     pub completed_date: Option<SourceRange>,
     pub created_date: Option<SourceRange>,
     pub is_id_generated: bool,

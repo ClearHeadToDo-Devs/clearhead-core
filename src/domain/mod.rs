@@ -237,6 +237,8 @@ pub struct Plan {
     pub priority: Option<u32>,
     pub contexts: Option<Vec<String>>,
     pub recurrence: Option<Recurrence>,
+    /// Independent due-date recurrence rule (R: following :-syntax)
+    pub due_recurrence: Option<Recurrence>,
     /// Parent plan (partOf relationship for hierarchy)
     pub parent: Option<Uuid>,
     /// Stable alias for references
@@ -331,8 +333,10 @@ pub struct PlannedAct {
     pub plan_id: Uuid,
     /// Current lifecycle phase
     pub phase: ActPhase,
-    /// Scheduled date/time for this occurrence
+    /// Scheduled date/time for this occurrence (@-syntax)
     pub scheduled_at: Option<DateTime<Local>>,
+    /// Deadline for this occurrence (:-syntax)
+    pub due_date: Option<DateTime<Local>>,
     /// Duration in minutes
     pub duration: Option<u32>,
     /// When this act was completed
@@ -435,6 +439,7 @@ impl DomainModel {
                                 plan_id: plan.id,
                                 phase: ActPhase::NotStarted,
                                 scheduled_at: Some(occ_local),
+                                due_date: None,
                                 duration: template_duration,
                                 completed_at: None,
                                 created_at: Some(now),
@@ -481,6 +486,7 @@ mod tests {
             priority: None,
             contexts: None,
             recurrence: Some(recurrence),
+            due_recurrence: None,
             parent: None,
             alias: None,
             is_sequential: None,
@@ -531,6 +537,7 @@ mod tests {
                     by_set_pos: None,
                     week_start: None,
                 }),
+                due_recurrence: None,
                 parent: None,
                 alias: None,
                 is_sequential: None,
@@ -540,6 +547,7 @@ mod tests {
                     plan_id,
                     phase: ActPhase::NotStarted,
                     scheduled_at: Some(Local::now()),
+                    due_date: None,
                     duration: Some(30),
                     completed_at: None,
                     created_at: Some(Local::now()),

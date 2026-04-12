@@ -48,6 +48,10 @@ pub enum PlanFieldChange {
         old: Option<Recurrence>,
         new: Option<Recurrence>,
     },
+    DueRecurrence {
+        old: Option<Recurrence>,
+        new: Option<Recurrence>,
+    },
     DependsOn {
         old: Option<Vec<Uuid>>,
         new: Option<Vec<Uuid>>,
@@ -74,6 +78,10 @@ pub enum ActFieldChange {
         new: Option<DateTime<Local>>,
     },
     CreatedAt {
+        old: Option<DateTime<Local>>,
+        new: Option<DateTime<Local>>,
+    },
+    DueDate {
         old: Option<DateTime<Local>>,
         new: Option<DateTime<Local>>,
     },
@@ -369,6 +377,12 @@ fn compare_plans(old: &Plan, new: &Plan) -> Vec<PlanFieldChange> {
             new: new.recurrence.clone(),
         });
     }
+    if old.due_recurrence != new.due_recurrence {
+        changes.push(PlanFieldChange::DueRecurrence {
+            old: old.due_recurrence.clone(),
+            new: new.due_recurrence.clone(),
+        });
+    }
     if old.depends_on != new.depends_on {
         changes.push(PlanFieldChange::DependsOn {
             old: old.depends_on.clone(),
@@ -408,6 +422,12 @@ fn compare_acts(old: &PlannedAct, new: &PlannedAct) -> Vec<ActFieldChange> {
         changes.push(ActFieldChange::CreatedAt {
             old: old.created_at,
             new: new.created_at,
+        });
+    }
+    if !dates_equal(&old.due_date, &new.due_date) {
+        changes.push(ActFieldChange::DueDate {
+            old: old.due_date,
+            new: new.due_date,
         });
     }
     changes
@@ -459,12 +479,14 @@ mod tests {
                     alias: None,
                     is_sequential: None,
                     recurrence: None,
+                    due_recurrence: None,
                     depends_on: None,
                     acts: vec![PlannedAct {
                         id: act_id,
                         plan_id,
                         phase: ActPhase::NotStarted,
                         scheduled_at: None,
+                        due_date: None,
                         duration: None,
                         completed_at: None,
                         created_at: None,

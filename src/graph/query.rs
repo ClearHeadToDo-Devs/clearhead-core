@@ -396,6 +396,10 @@ fn get_plan_by_id(store: &Store, id: Uuid) -> Result<Plan, String> {
         priority,
         contexts: if contexts.is_empty() { None } else { Some(contexts) },
         recurrence,
+        due_recurrence: find_one(actions_pred("hasDueRecurrenceRule")).and_then(|t| match t {
+            Term::Literal(l) => parse_recurrence_rule(l.value()),
+            _ => None,
+        }),
         parent,
         alias,
         is_sequential,
@@ -525,12 +529,14 @@ fn get_planned_act_by_id(store: &Store, id: Uuid) -> Result<PlannedAct, String> 
         _ => ActPhase::NotStarted,
     };
 
-    let scheduled_at = find_one(actions_pred("hasDoDateTime")).and_then(|t| match t {
-        Term::Literal(l) => DateTime::parse_from_rfc3339(l.value())
-            .ok()
-            .map(|dt| dt.with_timezone(&chrono::Local)),
-        _ => None,
-    });
+    let scheduled_at = find_one(actions_pred("hasScheduledDateTime"))
+        .or_else(|| find_one(actions_pred("hasDoDateTime"))) // legacy compat
+        .and_then(|t| match t {
+            Term::Literal(l) => DateTime::parse_from_rfc3339(l.value())
+                .ok()
+                .map(|dt| dt.with_timezone(&chrono::Local)),
+            _ => None,
+        });
 
     let duration = find_one(actions_pred("hasDurationMinutes"))
         .or_else(|| find_one(actions_pred("duration")))
@@ -555,11 +561,19 @@ fn get_planned_act_by_id(store: &Store, id: Uuid) -> Result<PlannedAct, String> 
         _ => None,
     });
 
+    let due_date = find_one(actions_pred("hasDueDateTime")).and_then(|t| match t {
+        Term::Literal(l) => DateTime::parse_from_rfc3339(l.value())
+            .ok()
+            .map(|dt| dt.with_timezone(&chrono::Local)),
+        _ => None,
+    });
+
     Ok(PlannedAct {
         id,
         plan_id,
         phase,
         scheduled_at,
+        due_date,
         duration,
         completed_at,
         created_at,
