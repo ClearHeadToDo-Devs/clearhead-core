@@ -60,15 +60,16 @@ fn build_action_file_manifest(
     model: &DomainModel,
     layout: &WorkspaceLayout,
 ) -> Result<BTreeMap<PathBuf, String>, WorkspaceError> {
-    let key_by_id: HashMap<Uuid, String> = model
-        .charters
+    let all_charters = model.all_charters();
+
+    let key_by_id: HashMap<Uuid, String> = all_charters
         .iter()
         .map(|charter| (charter.id, charter_reference_name(charter)))
         .collect();
 
     let mut key_by_alias: HashMap<String, String> = HashMap::new();
     let mut key_by_title: HashMap<String, String> = HashMap::new();
-    for charter in &model.charters {
+    for charter in &all_charters {
         let key = charter_reference_name(charter);
         if let Some(alias) = &charter.alias {
             key_by_alias.insert(alias.clone(), key.clone());
@@ -76,8 +77,7 @@ fn build_action_file_manifest(
         key_by_title.insert(charter.title.clone(), key);
     }
 
-    let parent_by_key: HashMap<String, Option<String>> = model
-        .charters
+    let parent_by_key: HashMap<String, Option<String>> = all_charters
         .iter()
         .map(|charter| {
             let key = charter_reference_name(charter);
@@ -95,7 +95,7 @@ fn build_action_file_manifest(
         resolve_project_root_charter_key(model, layout.project_root_charter.as_deref());
 
     let mut manifest = BTreeMap::new();
-    for charter in &model.charters {
+    for charter in &all_charters {
         let key = key_by_id
             .get(&charter.id)
             .cloned()
@@ -119,8 +119,8 @@ fn resolve_project_root_charter_key(
     let project_root_name = project_root_name?;
 
     model
-        .charters
-        .iter()
+        .all_charters()
+        .into_iter()
         .find(|charter| {
             charter_reference_name(charter) == project_root_name
                 || charter.title == project_root_name
@@ -197,10 +197,10 @@ fn representative_act(plan: &Plan) -> PlannedAct {
 }
 
 fn actions_for_charter(charter: &Charter, charter_name: &str) -> ActionList {
-    let mut plans: Vec<&Plan> = charter.plans.iter().collect();
-    plans.sort_by_key(|plan| plan.id.to_string());
-
-    plans
+    // DFS order from all_plans() preserves parent-before-children for correct
+    // indentation when the .actions file is written back.
+    charter
+        .all_plans()
         .into_iter()
         .map(|plan| {
             let mut action = merge_to_action(plan, &representative_act(plan), plan.id);
@@ -267,33 +267,34 @@ mod tests {
         std::fs::write(root.join(".clearhead").join("stale.actions"), "[ ] stale\n")
             .expect("write stale");
 
+        let deploy = Charter {
+            id: Uuid::new_v4(),
+            title: "deploy".to_string(),
+            alias: Some("deploy".to_string()),
+            parent: Some("infra".to_string()),
+            plans: vec![test_plan("Blue/green rollout")],
+            ..Default::default()
+        };
+        let mut infra = Charter {
+            id: Uuid::new_v4(),
+            title: "infra".to_string(),
+            alias: Some("infra".to_string()),
+            parent: Some("platform".to_string()),
+            plans: vec![test_plan("Harden CI")],
+            ..Default::default()
+        };
+        infra.sub_charters = vec![deploy];
+        let mut platform = Charter {
+            id: Uuid::new_v4(),
+            title: "platform".to_string(),
+            alias: Some("platform".to_string()),
+            plans: vec![test_plan("Ship v1")],
+            ..Default::default()
+        };
+        platform.sub_charters = vec![infra];
         let model = DomainModel {
             objectives: vec![],
-            charters: vec![
-                Charter {
-                    id: Uuid::new_v4(),
-                    title: "platform".to_string(),
-                    alias: Some("platform".to_string()),
-                    plans: vec![test_plan("Ship v1")],
-                    ..Default::default()
-                },
-                Charter {
-                    id: Uuid::new_v4(),
-                    title: "infra".to_string(),
-                    alias: Some("infra".to_string()),
-                    parent: Some("platform".to_string()),
-                    plans: vec![test_plan("Harden CI")],
-                    ..Default::default()
-                },
-                Charter {
-                    id: Uuid::new_v4(),
-                    title: "deploy".to_string(),
-                    alias: Some("deploy".to_string()),
-                    parent: Some("infra".to_string()),
-                    plans: vec![test_plan("Blue/green rollout")],
-                    ..Default::default()
-                },
-            ],
+            charters: vec![platform],
         };
 
         save_domain_model(&root, &model).expect("save model");
@@ -304,22 +305,15 @@ mod tests {
         assert!(!root.join(".clearhead/stale.actions").exists());
 
         let loaded = load_domain_model(&root).expect("load model");
-        let mut names: Vec<String> = loaded.charters.iter().map(|c| c.title.clone()).collect();
+        let all = loaded.all_charters();
+        let mut names: Vec<String> = all.iter().map(|c| c.title.clone()).collect();
         names.sort();
         assert_eq!(names, vec!["deploy", "infra", "platform"]);
 
-        let infra = loaded
-            .charters
-            .iter()
-            .find(|c| c.title == "infra")
-            .expect("infra charter");
+        let infra = all.iter().find(|c| c.title == "infra").expect("infra charter");
         assert_eq!(infra.parent.as_deref(), Some("platform"));
 
-        let deploy = loaded
-            .charters
-            .iter()
-            .find(|c| c.title == "deploy")
-            .expect("deploy charter");
+        let deploy = all.iter().find(|c| c.title == "deploy").expect("deploy charter");
         assert_eq!(deploy.parent.as_deref(), Some("infra"));
     }
 
@@ -328,29 +322,23 @@ mod tests {
         let temp = tempfile::tempdir().expect("tempdir");
         let root = temp.path().to_path_buf();
 
-        let model = DomainModel {
-            objectives: vec![],
-            charters: vec![
-                Charter {
-                    id: Uuid::new_v4(),
-                    title: "work".to_string(),
-                    description: None,
-                    alias: Some("work".to_string()),
-                    parent: None,
-                    objectives: None,
-                    plans: vec![test_plan("Quarter plan")],
-                },
-                Charter {
-                    id: Uuid::new_v4(),
-                    title: "ops".to_string(),
-                    description: None,
-                    alias: Some("ops".to_string()),
-                    parent: Some("work".to_string()),
-                    objectives: None,
-                    plans: vec![test_plan("Backups")],
-                },
-            ],
+        let ops = Charter {
+            id: Uuid::new_v4(),
+            title: "ops".to_string(),
+            alias: Some("ops".to_string()),
+            parent: Some("work".to_string()),
+            plans: vec![test_plan("Backups")],
+            ..Default::default()
         };
+        let mut work = Charter {
+            id: Uuid::new_v4(),
+            title: "work".to_string(),
+            alias: Some("work".to_string()),
+            plans: vec![test_plan("Quarter plan")],
+            ..Default::default()
+        };
+        work.sub_charters = vec![ops];
+        let model = DomainModel { objectives: vec![], charters: vec![work] };
 
         save_domain_model(&root, &model).expect("save model");
 
@@ -366,29 +354,23 @@ mod tests {
         let work_id = Uuid::new_v4();
         let ops_id = Uuid::new_v4();
 
-        let model = DomainModel {
-            objectives: vec![],
-            charters: vec![
-                Charter {
-                    id: work_id,
-                    title: "work".to_string(),
-                    description: None,
-                    alias: Some("work".to_string()),
-                    parent: None,
-                    objectives: None,
-                    plans: vec![test_plan("Quarter plan")],
-                },
-                Charter {
-                    id: ops_id,
-                    title: "ops".to_string(),
-                    description: None,
-                    alias: Some("ops".to_string()),
-                    parent: Some("work".to_string()),
-                    objectives: None,
-                    plans: vec![test_plan("Backups")],
-                },
-            ],
+        let ops = Charter {
+            id: ops_id,
+            title: "ops".to_string(),
+            alias: Some("ops".to_string()),
+            parent: Some("work".to_string()),
+            plans: vec![test_plan("Backups")],
+            ..Default::default()
         };
+        let mut work = Charter {
+            id: work_id,
+            title: "work".to_string(),
+            alias: Some("work".to_string()),
+            plans: vec![test_plan("Quarter plan")],
+            ..Default::default()
+        };
+        work.sub_charters = vec![ops];
+        let model = DomainModel { objectives: vec![], charters: vec![work] };
 
         save_domain_model(&root, &model).expect("initial save");
 
@@ -398,7 +380,7 @@ mod tests {
 
         // Save again with only ops modified.
         let mut updated = model.clone();
-        updated.charters[1].plans[0].name = "Backups v2".to_string();
+        updated.charters[0].sub_charters[0].plans[0].name = "Backups v2".to_string();
         save_domain_model(&root, &updated).expect("incremental save");
 
         // ops should reflect the change.
@@ -426,36 +408,30 @@ mod tests {
         let work_id = Uuid::new_v4();
         let ops_id = Uuid::new_v4();
 
-        let model = DomainModel {
-            objectives: vec![],
-            charters: vec![
-                Charter {
-                    id: work_id,
-                    title: "work".to_string(),
-                    description: None,
-                    alias: Some("work".to_string()),
-                    parent: None,
-                    objectives: None,
-                    plans: vec![test_plan("Quarter plan")],
-                },
-                Charter {
-                    id: ops_id,
-                    title: "ops".to_string(),
-                    description: None,
-                    alias: Some("ops".to_string()),
-                    parent: Some("work".to_string()),
-                    objectives: None,
-                    plans: vec![test_plan("Backups")],
-                },
-            ],
+        let ops = Charter {
+            id: ops_id,
+            title: "ops".to_string(),
+            alias: Some("ops".to_string()),
+            parent: Some("work".to_string()),
+            plans: vec![test_plan("Backups")],
+            ..Default::default()
         };
+        let mut work = Charter {
+            id: work_id,
+            title: "work".to_string(),
+            alias: Some("work".to_string()),
+            plans: vec![test_plan("Quarter plan")],
+            ..Default::default()
+        };
+        work.sub_charters = vec![ops];
+        let model = DomainModel { objectives: vec![], charters: vec![work] };
 
         save_domain_model(&root, &model).expect("initial save");
         assert!(root.join("work/ops.actions").exists());
 
         // Remove ops from the model and save again.
         let mut trimmed = model.clone();
-        trimmed.charters.retain(|c| c.id != ops_id);
+        trimmed.charters[0].sub_charters.retain(|c| c.id != ops_id);
         save_domain_model(&root, &trimmed).expect("trimmed save");
 
         assert!(

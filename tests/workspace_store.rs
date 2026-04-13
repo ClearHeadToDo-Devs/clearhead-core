@@ -317,8 +317,9 @@ fn parent_reference_uses_machine_key_not_title() {
 
     let model = load_domain_model(dir.path()).expect("load failed");
 
-    let ops = model
-        .charters
+    let all = model.all_charters();
+
+    let ops = all
         .iter()
         .find(|c| c.alias.as_deref() == Some("ops") || c.title == "ops")
         .expect("ops charter not found");
@@ -330,8 +331,7 @@ fn parent_reference_uses_machine_key_not_title() {
     );
 
     // Verify the work charter itself got the human-readable title
-    let work = model
-        .charters
+    let work = all
         .iter()
         .find(|c| c.alias.as_deref() == Some("work"))
         .expect("work charter not found");

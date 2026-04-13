@@ -9,8 +9,39 @@ pub const INBOX_CHARTER_NS: Uuid = Uuid::from_bytes([
 /// Convert an ActionList into a Charter with a deterministic ID derived from the name.
 pub fn from_actions_with_charter(actions: &ActionList, charter_name: String) -> Charter {
     let mut charter = crate::workspace::charter::implicit_charter(&charter_name);
-    charter.plans = actions.iter().map(|a| a.into()).collect();
+    let flat: Vec<Plan> = actions.iter().map(|a| a.into()).collect();
+    charter.plans = nest_plans(flat);
     charter
+}
+
+/// Assemble a flat list of plans into a tree using `parent` UUID links.
+///
+/// Root plans (no parent, or parent not in this set) stay in the returned Vec.
+/// Children are moved into their parent's `sub_plans`, depth-first.
+fn nest_plans(flat: Vec<Plan>) -> Vec<Plan> {
+    let all_ids: std::collections::HashSet<uuid::Uuid> = flat.iter().map(|p| p.id).collect();
+
+    let (mut roots, mut children): (Vec<Plan>, Vec<Plan>) = flat
+        .into_iter()
+        .partition(|p| p.parent.map_or(true, |pid| !all_ids.contains(&pid)));
+
+    attach_sub_plans(&mut roots, &mut children);
+    roots
+}
+
+fn attach_sub_plans(parents: &mut [Plan], remaining: &mut Vec<Plan>) {
+    for parent in parents.iter_mut() {
+        let mut i = 0;
+        while i < remaining.len() {
+            if remaining[i].parent == Some(parent.id) {
+                let mut child = remaining.remove(i);
+                attach_sub_plans(std::slice::from_mut(&mut child), remaining);
+                parent.sub_plans.push(child);
+            } else {
+                i += 1;
+            }
+        }
+    }
 }
 
 /// Split an Action into its Plan and PlannedAct components.
@@ -55,6 +86,7 @@ impl From<&Action> for Plan {
                 .as_ref()
                 .map(|preds| preds.iter().filter_map(|p| p.resolved_uuid).collect()),
             acts: vec![act],
+            sub_plans: vec![],
         };
 
         plan

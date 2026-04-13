@@ -144,12 +144,26 @@ pub fn merge_acts_into_model(model: &mut DomainModel, acts: Vec<PlannedAct>) {
         acts_by_plan.entry(act.plan_id).or_default().push(act);
     }
 
-    for charter in &mut model.charters {
-        for plan in &mut charter.plans {
-            if let Some(loaded) = acts_by_plan.remove(&plan.id) {
-                plan.acts = loaded;
-            }
+    fn apply_to_plan(plan: &mut crate::domain::Plan, acts: &mut HashMap<Uuid, Vec<PlannedAct>>) {
+        if let Some(loaded) = acts.remove(&plan.id) {
+            plan.acts = loaded;
         }
+        for sub in &mut plan.sub_plans {
+            apply_to_plan(sub, acts);
+        }
+    }
+
+    fn apply_to_charter(charter: &mut crate::domain::Charter, acts: &mut HashMap<Uuid, Vec<PlannedAct>>) {
+        for plan in &mut charter.plans {
+            apply_to_plan(plan, acts);
+        }
+        for sub in &mut charter.sub_charters {
+            apply_to_charter(sub, acts);
+        }
+    }
+
+    for charter in &mut model.charters {
+        apply_to_charter(charter, &mut acts_by_plan);
     }
 }
 
@@ -366,11 +380,8 @@ mod tests {
         let charter = Charter {
             id: Uuid::new_v4(),
             title: "Test".to_string(),
-            description: None,
-            alias: None,
-            parent: None,
-            objectives: None,
             plans: vec![plan],
+            ..Default::default()
         };
 
         let mut model = DomainModel {

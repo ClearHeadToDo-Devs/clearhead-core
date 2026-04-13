@@ -84,8 +84,57 @@ pub fn load_domain_model(root: &Path) -> Result<DomainModel, WorkspaceError> {
 
     Ok(DomainModel {
         objectives: vec![],
-        charters: charters.into_values().collect(),
+        charters: assemble_charter_tree(charters),
     })
+}
+
+/// Move non-root charters into their parent's `sub_charters`, returning only roots.
+fn assemble_charter_tree(mut flat: HashMap<String, Charter>) -> Vec<Charter> {
+    // Build alias → key lookup for parent resolution
+    let alias_to_key: HashMap<String, String> = flat
+        .iter()
+        .filter_map(|(k, c)| c.alias.as_ref().map(|a| (a.to_lowercase(), k.clone())))
+        .collect();
+
+    // Determine which keys are roots (parent is absent or unresolvable)
+    let root_keys: Vec<String> = flat
+        .iter()
+        .filter(|(_k, c)| {
+            let Some(parent_str) = &c.parent else { return true };
+            let p = parent_str.to_lowercase();
+            let resolves_to = alias_to_key.get(&p).cloned().unwrap_or_else(|| p.clone());
+            !flat.contains_key(&resolves_to) && !flat.contains_key(&p)
+        })
+        .map(|(k, _)| k.clone())
+        .collect();
+
+    fn build(key: &str, flat: &mut HashMap<String, Charter>, alias_to_key: &HashMap<String, String>) -> Option<Charter> {
+        let mut charter = flat.remove(key)?;
+        // Collect keys of direct children
+        let child_keys: Vec<String> = flat
+            .iter()
+            .filter(|(_, c)| {
+                let Some(parent_str) = &c.parent else { return false };
+                let p = parent_str.to_lowercase();
+                let resolved = alias_to_key.get(&p).map(|s| s.as_str()).unwrap_or(&p);
+                resolved.to_lowercase() == key.to_lowercase()
+                    || (charter.alias.as_deref().map(|a| a.to_lowercase()).as_deref() == Some(resolved))
+            })
+            .map(|(k, _)| k.clone())
+            .collect();
+
+        for child_key in child_keys {
+            if let Some(child) = build(&child_key, flat, alias_to_key) {
+                charter.sub_charters.push(child);
+            }
+        }
+        Some(charter)
+    }
+
+    root_keys
+        .iter()
+        .filter_map(|k| build(k, &mut flat, &alias_to_key))
+        .collect()
 }
 
 fn parent_hints(

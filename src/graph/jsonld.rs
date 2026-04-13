@@ -57,7 +57,9 @@ const ACTIONS_CONTEXT_V4: &str = include_str!("../resources/actions.context.v4.j
 ///                 completed_at: None,
 ///                 created_at: None,
 ///             }],
+///             sub_plans: vec![],
 ///         }],
+///         sub_charters: vec![],
 ///     }],
 /// };
 ///

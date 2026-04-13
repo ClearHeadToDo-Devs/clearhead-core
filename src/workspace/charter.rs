@@ -74,7 +74,7 @@ pub fn parse_charter(content: &str) -> Result<Charter, String> {
         alias: fm.alias,
         parent: fm.parent,
         objectives: fm.objectives,
-        plans: vec![],
+        ..Default::default()
     })
 }
 
@@ -85,11 +85,8 @@ pub fn implicit_charter(name: &str) -> Charter {
     Charter {
         id: Uuid::new_v5(&CHARTER_NS, name.as_bytes()),
         title: name.to_string(),
-        description: None,
         alias: Some(name.to_string()),
-        parent: None,
-        objectives: None,
-        plans: vec![],
+        ..Default::default()
     }
 }
 
@@ -291,9 +288,8 @@ Stay healthy and fit through regular exercise and diet.
             title: "Test".to_string(),
             description: Some("A test charter.".to_string()),
             alias: Some("test".to_string()),
-            parent: None,
             objectives: Some(vec!["obj1".to_string()]),
-            plans: vec![],
+            ..Default::default()
         };
 
         let formatted = format_charter(&charter);

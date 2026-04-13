@@ -23,12 +23,12 @@ pub fn load_domain_model(store: &Store, model: &DomainModel) -> Result<()> {
     // rather than re-deriving it (which breaks when explicit .md charters have
     // their own UUID that differs from the INBOX_CHARTER_NS-derived one).
     let charter_id_by_title: HashMap<String, Uuid> = model
-        .charters
+        .all_charters()
         .iter()
         .map(|c| (c.title.to_lowercase(), c.id))
         .collect();
 
-    for charter in &model.charters {
+    for charter in model.all_charters() {
         insert_charter(store, charter, &charter_id_by_title)?;
     }
     for act in model.all_acts() {

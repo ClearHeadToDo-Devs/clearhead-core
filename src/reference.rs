@@ -124,90 +124,45 @@ pub fn filter_model_for_charter(
     charter_id: Uuid,
     recursive: bool,
 ) -> DomainModel {
+    let found = model.all_charters().into_iter().find(|c| c.id == charter_id).cloned();
+    let Some(mut charter) = found else {
+        return DomainModel { objectives: vec![], charters: vec![] };
+    };
+
     if !recursive {
-        let charters = model
-            .charters
-            .iter()
-            .filter(|c| c.id == charter_id)
-            .cloned()
-            .collect();
-        return DomainModel {
-            objectives: vec![],
-            charters,
-        };
+        charter.sub_charters = vec![];
     }
 
-    let mut to_visit = vec![charter_id];
-    let mut keep = std::collections::HashSet::new();
-
-    while let Some(current) = to_visit.pop() {
-        if !keep.insert(current) {
-            continue;
-        }
-        if let Some(parent) = model.charters.iter().find(|c| c.id == current) {
-            for child in model
-                .charters
-                .iter()
-                .filter(|c| is_child_charter(c, parent))
-            {
-                if !keep.contains(&child.id) {
-                    to_visit.push(child.id);
-                }
-            }
-        }
-    }
-
-    let charters = model
-        .charters
-        .iter()
-        .filter(|c| keep.contains(&c.id))
-        .cloned()
-        .collect();
-
-    DomainModel {
-        objectives: vec![],
-        charters,
-    }
+    DomainModel { objectives: vec![], charters: vec![charter] }
 }
 
 pub fn filter_model_for_plan(model: &DomainModel, plan_id: Uuid) -> DomainModel {
-    for charter in &model.charters {
-        if let Some(plan) = charter.plans.iter().find(|p| p.id == plan_id) {
+    for charter in model.all_charters() {
+        if let Some(plan) = charter.all_plans().into_iter().find(|p| p.id == plan_id) {
             let mut charter_copy = charter.clone();
             charter_copy.plans = vec![plan.clone()];
-            return DomainModel {
-                objectives: vec![],
-                charters: vec![charter_copy],
-            };
+            charter_copy.sub_charters = vec![];
+            return DomainModel { objectives: vec![], charters: vec![charter_copy] };
         }
     }
-
-    DomainModel {
-        objectives: vec![],
-        charters: vec![],
-    }
+    DomainModel { objectives: vec![], charters: vec![] }
 }
 
 pub fn filter_model_for_act(model: &DomainModel, act_id: Uuid) -> DomainModel {
-    for charter in &model.charters {
-        for plan in &charter.plans {
+    for charter in model.all_charters() {
+        for plan in charter.all_plans() {
             if let Some(act) = plan.acts.iter().find(|a| a.id == act_id) {
                 let mut plan_copy = plan.clone();
                 plan_copy.acts = vec![act.clone()];
+                plan_copy.sub_plans = vec![];
                 let mut charter_copy = charter.clone();
                 charter_copy.plans = vec![plan_copy];
-                return DomainModel {
-                    objectives: vec![],
-                    charters: vec![charter_copy],
-                };
+                charter_copy.sub_charters = vec![];
+                return DomainModel { objectives: vec![], charters: vec![charter_copy] };
             }
         }
     }
-
-    DomainModel {
-        objectives: vec![],
-        charters: vec![],
-    }
+    DomainModel { objectives: vec![], charters: vec![] }
 }
 
 fn parse_prefix(
@@ -268,8 +223,8 @@ fn resolve_charter_global(
     segment: &str,
 ) -> Result<ReferenceTarget, ReferenceError> {
     let matches = model
-        .charters
-        .iter()
+        .all_charters()
+        .into_iter()
         .filter(|c| charter_matches_segment(c, segment))
         .collect::<Vec<_>>();
 
@@ -291,8 +246,8 @@ fn resolve_plan_global(
     segment: &str,
 ) -> Result<ReferenceTarget, ReferenceError> {
     let mut matches: Vec<&Plan> = Vec::new();
-    for charter in &model.charters {
-        for plan in &charter.plans {
+    for charter in model.all_charters() {
+        for plan in charter.all_plans() {
             if plan_matches_segment(plan, segment) {
                 matches.push(plan);
             }
@@ -317,8 +272,8 @@ fn resolve_act_global(
     segment: &str,
 ) -> Result<ReferenceTarget, ReferenceError> {
     let mut matches: Vec<&PlannedAct> = Vec::new();
-    for charter in &model.charters {
-        for plan in &charter.plans {
+    for charter in model.all_charters() {
+        for plan in charter.all_plans() {
             for act in &plan.acts {
                 if act_matches_segment(act, segment) {
                     matches.push(act);
@@ -345,10 +300,11 @@ fn resolve_path(model: &DomainModel, segments: &[&str]) -> Result<ReferenceTarge
         .first()
         .ok_or_else(|| ReferenceError::new("Reference path is empty"))?;
 
+    // Root charters are model.charters (top-level only)
     let root_matches: Vec<&Charter> = model
         .charters
         .iter()
-        .filter(|c| is_root_charter(c) && charter_matches_segment(c, first))
+        .filter(|c| charter_matches_segment(c, first))
         .collect();
 
     let mut scope = match root_matches.len() {
@@ -370,16 +326,17 @@ fn resolve_path(model: &DomainModel, segments: &[&str]) -> Result<ReferenceTarge
     for segment in &segments[1..] {
         scope = match scope {
             Scope::Charter(charter) => {
-                let child_charters: Vec<&Charter> = model
-                    .charters
+                // Sub-charters live in charter.sub_charters now
+                let child_charters: Vec<&Charter> = charter
+                    .sub_charters
                     .iter()
-                    .filter(|c| is_child_charter(c, charter) && charter_matches_segment(c, segment))
+                    .filter(|c| charter_matches_segment(c, segment))
                     .collect();
 
                 let child_plans: Vec<&Plan> = charter
                     .plans
                     .iter()
-                    .filter(|p| p.parent.is_none() && plan_matches_segment(p, segment))
+                    .filter(|p| plan_matches_segment(p, segment))
                     .collect();
 
                 match (child_charters.len(), child_plans.len()) {
@@ -400,10 +357,10 @@ fn resolve_path(model: &DomainModel, segments: &[&str]) -> Result<ReferenceTarge
                 }
             }
             Scope::Plan(charter, plan) => {
-                let child_plans: Vec<&Plan> = charter
-                    .plans
+                let child_plans: Vec<&Plan> = plan
+                    .sub_plans
                     .iter()
-                    .filter(|p| p.parent == Some(plan.id) && plan_matches_segment(p, segment))
+                    .filter(|p| plan_matches_segment(p, segment))
                     .collect();
 
                 let child_acts: Vec<&PlannedAct> = plan
@@ -436,38 +393,6 @@ fn resolve_path(model: &DomainModel, segments: &[&str]) -> Result<ReferenceTarge
         Scope::Charter(charter) => Ok(ReferenceTarget::Charter(charter.id)),
         Scope::Plan(_, plan) => Ok(ReferenceTarget::Plan(plan.id)),
     }
-}
-
-fn is_root_charter(charter: &Charter) -> bool {
-    match &charter.parent {
-        None => true,
-        Some(parent) => parent.trim().is_empty(),
-    }
-}
-
-fn is_child_charter(child: &Charter, parent: &Charter) -> bool {
-    let parent_ref = match &child.parent {
-        Some(value) => value.trim().to_lowercase(),
-        None => return false,
-    };
-
-    if parent_ref.is_empty() {
-        return false;
-    }
-
-    if let Some(alias) = &parent.alias {
-        if parent_ref == alias.to_lowercase() {
-            return true;
-        }
-    }
-
-    let parent_id = parent.id.to_string();
-    if parent_ref == parent_id.to_lowercase() {
-        return true;
-    }
-
-    let short = &parent_id[..8];
-    parent_ref == short
 }
 
 fn charter_matches_segment(charter: &Charter, segment: &str) -> bool {
@@ -552,39 +477,33 @@ mod tests {
 
         let subplan = make_plan(subplan_id, "resolver", Some(plan_id));
 
-        let charter = Charter {
-            id: charter_id,
-            title: "Build".to_string(),
-            description: None,
-            alias: Some("build".to_string()),
-            parent: None,
-            objectives: None,
-            plans: vec![plan, subplan],
-        };
-
         let child_charter = Charter {
             id: child_charter_id,
             title: "Observability".to_string(),
-            description: None,
             alias: Some("obs".to_string()),
             parent: Some("build".to_string()),
-            objectives: None,
-            plans: vec![],
+            ..Default::default()
         };
+
+        let mut charter = Charter {
+            id: charter_id,
+            title: "Build".to_string(),
+            alias: Some("build".to_string()),
+            plans: vec![plan, subplan],
+            ..Default::default()
+        };
+        charter.sub_charters = vec![child_charter];
 
         let implicit_charter = Charter {
             id: implicit_charter_id,
             title: "".to_string(),
-            description: None,
             alias: Some("implicit".to_string()),
-            parent: None,
-            objectives: None,
-            plans: vec![],
+            ..Default::default()
         };
 
         DomainModel {
             objectives: vec![],
-            charters: vec![charter, child_charter, implicit_charter],
+            charters: vec![charter, implicit_charter],
         }
     }
 

@@ -317,6 +317,9 @@ pub struct Plan {
     pub depends_on: Option<Vec<Uuid>>,
     /// [`PlannedAct`]s that realize this plan (nested hierarchy)
     pub acts: Vec<PlannedAct>,
+    /// Child plans (sub-tasks). Root plans live in [`Charter::plans`]; children live here.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sub_plans: Vec<Plan>,
 }
 
 impl Plan {
@@ -342,7 +345,7 @@ impl Plan {
     ///     name: "Daily".to_string(),
     ///     recurrence: Some(Recurrence { frequency: "daily".to_string(), count: Some(2), ..Default::default() }),
     ///     acts: vec![],
-    ///     description: None, priority: None, contexts: None, due_recurrence: None, parent: None, alias: None, is_sequential: None, depends_on: None,
+    ///     description: None, priority: None, contexts: None, due_recurrence: None, parent: None, alias: None, is_sequential: None, depends_on: None, sub_plans: vec![],
     /// };
     ///
     /// let occurrences = plan.expand_occurrences(dt_start, 10);
@@ -392,6 +395,7 @@ impl Default for Plan {
             is_sequential: None,
             depends_on: None,
             acts: vec![],
+            sub_plans: vec![],
         }
     }
 }
@@ -417,8 +421,28 @@ pub struct Charter {
     pub parent: Option<String>,
     /// References to [`Objective`]s, resolved at workspace layer
     pub objectives: Option<Vec<String>>,
-    /// [`Plan`]s organized under this charter (nested hierarchy)
+    /// Root [`Plan`]s organized under this charter. Sub-plans live in [`Plan::sub_plans`].
     pub plans: Vec<Plan>,
+    /// Child charters (sub-charters). Root charters live in [`DomainModel::charters`].
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sub_charters: Vec<Charter>,
+}
+
+impl Charter {
+    /// All plans in this charter, depth-first (parent before children).
+    pub fn all_plans(&self) -> Vec<&Plan> {
+        fn collect<'a>(plan: &'a Plan, out: &mut Vec<&'a Plan>) {
+            out.push(plan);
+            for child in &plan.sub_plans {
+                collect(child, out);
+            }
+        }
+        let mut result = Vec::new();
+        for plan in &self.plans {
+            collect(plan, &mut result);
+        }
+        result
+    }
 }
 
 pub fn charter_from_plans_and_name(name: String, plans: Vec<Plan>) -> Charter {
@@ -430,6 +454,7 @@ pub fn charter_from_plans_and_name(name: String, plans: Vec<Plan>) -> Charter {
         parent: None,
         objectives: None,
         plans,
+        sub_charters: vec![],
     }
 }
 
@@ -489,18 +514,32 @@ impl DomainModel {
         Self::default()
     }
 
-    /// Flatten all plans across all charters.
-    pub fn all_plans(&self) -> Vec<&Plan> {
-        self.charters.iter().flat_map(|c| c.plans.iter()).collect()
+    /// All charters, depth-first (parent before children).
+    pub fn all_charters(&self) -> Vec<&Charter> {
+        fn collect<'a>(charter: &'a Charter, out: &mut Vec<&'a Charter>) {
+            out.push(charter);
+            for child in &charter.sub_charters {
+                collect(child, out);
+            }
+        }
+        let mut result = Vec::new();
+        for charter in &self.charters {
+            collect(charter, &mut result);
+        }
+        result
     }
 
-    /// Flatten all acts across all charters and plans.
-    pub fn all_acts(&self) -> Vec<&PlannedAct> {
-        self.charters
-            .iter()
-            .flat_map(|c| c.plans.iter())
-            .flat_map(|p| p.acts.iter())
+    /// All plans across all charters, depth-first.
+    pub fn all_plans(&self) -> Vec<&Plan> {
+        self.all_charters()
+            .into_iter()
+            .flat_map(|c| c.all_plans())
             .collect()
+    }
+
+    /// All acts across all charters and plans.
+    pub fn all_acts(&self) -> Vec<&PlannedAct> {
+        self.all_plans().into_iter().flat_map(|p| p.acts.iter()).collect()
     }
 
     /// Find a Plan by ID, searching across the hierarchy.
@@ -508,10 +547,10 @@ impl DomainModel {
         self.all_plans().into_iter().find(|p| p.id == id)
     }
 
-    /// Find the charter that contains a given plan.
+    /// Find the charter that directly contains a given root plan.
     pub fn charter_for_plan(&self, plan_id: Uuid) -> Option<&Charter> {
-        self.charters
-            .iter()
+        self.all_charters()
+            .into_iter()
             .find(|c| c.plans.iter().any(|p| p.id == plan_id))
     }
 
@@ -539,18 +578,12 @@ impl DomainModel {
         let now = Local::now();
         let end_date = now + Duration::days(days as i64);
 
-        for charter in &mut self.charters {
-            for plan in &mut charter.plans {
-                if plan.recurrence.is_some() {
-                    let dtstart = plan.acts.first().and_then(|a| a.scheduled_at);
-                    let dtstart = match dtstart {
-                        Some(dt) => dt,
-                        None => continue,
-                    };
-
+        fn expand_plan(plan: &mut Plan, end_date: chrono::DateTime<Local>, now: chrono::DateTime<Local>) {
+            if plan.recurrence.is_some() {
+                let dtstart = plan.acts.first().and_then(|a| a.scheduled_at);
+                if let Some(dtstart) = dtstart {
                     let existing_ids: std::collections::HashSet<Uuid> =
                         plan.acts.iter().map(|a| a.id).collect();
-
                     let occurrences = plan.expand_occurrences(dtstart, 1000);
                     let template_duration = plan.acts.first().and_then(|a| a.duration);
                     for (i, occ) in occurrences.iter().enumerate() {
@@ -558,9 +591,7 @@ impl DomainModel {
                         if occ_local > end_date {
                             break;
                         }
-
                         let act_id = Uuid::new_v5(&plan.id, format!("act-{}", i).as_bytes());
-
                         if !existing_ids.contains(&act_id) {
                             plan.acts.push(PlannedAct {
                                 id: act_id,
@@ -574,6 +605,22 @@ impl DomainModel {
                     }
                 }
             }
+            for sub in &mut plan.sub_plans {
+                expand_plan(sub, end_date, now);
+            }
+        }
+
+        fn expand_charter(charter: &mut Charter, end_date: chrono::DateTime<Local>, now: chrono::DateTime<Local>) {
+            for plan in &mut charter.plans {
+                expand_plan(plan, end_date, now);
+            }
+            for sub in &mut charter.sub_charters {
+                expand_charter(sub, end_date, now);
+            }
+        }
+
+        for charter in &mut self.charters {
+            expand_charter(charter, end_date, now);
         }
     }
 }
@@ -608,16 +655,8 @@ mod tests {
         let plan = Plan {
             id: Uuid::new_v4(),
             name: "Daily Standup".to_string(),
-            description: None,
-            priority: None,
-            contexts: None,
             recurrence: Some(recurrence),
-            due_recurrence: None,
-            parent: None,
-            alias: None,
-            is_sequential: None,
-            depends_on: None,
-            acts: vec![],
+            ..Default::default()
         };
 
         let occurrences = plan.expand_occurrences(dt_start, 10);

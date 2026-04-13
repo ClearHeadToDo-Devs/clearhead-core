@@ -245,8 +245,7 @@ fn get_charter_by_id(store: &Store, id: Uuid) -> Result<Charter> {
         description: node.lit(rdfs_pred(RDFS_COMMENT)),
         alias,
         parent: query_charter_parent_alias_or_title(store, id)?,
-        objectives: None,
-        plans: vec![],
+        ..Default::default()
     })
 }
 
@@ -463,6 +462,7 @@ fn get_plan_by_id(store: &Store, id: Uuid) -> Result<Plan> {
         is_sequential: node.lit_bool(actions_pred("hasSequentialChildren")),
         depends_on: (!depends_on.is_empty()).then_some(depends_on),
         acts: vec![],
+        sub_plans: vec![],
     })
 }
 

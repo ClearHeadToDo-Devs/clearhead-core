@@ -206,6 +206,7 @@ impl From<&SyncCharter> for Charter {
             parent: c.parent.clone(),
             objectives: c.objectives.clone(),
             plans: c.plans.iter().map(Plan::from).collect(),
+            sub_charters: vec![],
         }
     }
 }
@@ -225,6 +226,7 @@ impl From<&SyncPlan> for Plan {
             is_sequential: p.is_sequential,
             depends_on: p.depends_on.clone(),
             acts: p.acts.iter().map(PlannedAct::from).collect(),
+            sub_plans: vec![],
         }
     }
 }
