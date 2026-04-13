@@ -3,7 +3,7 @@
 //! Provides table rendering that operates directly on `DomainModel`,
 //! preserving the charter hierarchy instead of losing it through ActionList conversion.
 
-use crate::domain::{ActPhase, DomainModel, Plan};
+use crate::domain::{ActPhase, Charter, DomainModel, Plan};
 use crate::workspace::actions::format::{
     TableFormatOptions, COLUMN_NAMES, columns_to_show, columns_without,
 };
@@ -11,9 +11,9 @@ use comfy_table::{Cell, Color, ContentArrangement, Table, presets::UTF8_FULL};
 
 /// Render a `DomainModel` as a human-readable table.
 ///
-/// Charter titles come directly from the `Charter` struct — no field enrichment needed.
-/// State and dates are read from the first `PlannedAct` on each plan, or synthesized
-/// as `NotStarted` if the plan has no acts.
+/// Charters appear as section header rows (`── Title ──`), with sub-charters
+/// nested immediately after their parent's plans. Plan indentation comes from
+/// the sub-plan tree depth via `plan_depth()`.
 pub fn format_domain_as_table(
     model: &DomainModel,
     filters: Option<&TableFormatOptions>,
@@ -63,82 +63,127 @@ pub fn format_domain_as_table(
             .map(|&i| Cell::new(COLUMN_NAMES[i]).fg(Color::Cyan)),
     );
 
-    // Collect all plans for depth calculation
+    // Collect all plans once for plan_depth() parent lookups
     let all_plans: Vec<&Plan> = model.all_plans();
 
     for charter in &model.charters {
-        for plan in &charter.plans {
-            // Depth: walk the parent chain through all plans in the model
-            let depth = plan_depth(plan, &all_plans);
-            let indent = "  ".repeat(depth);
-
-            // State from first act, or synthesized NotStarted
-            let phase = plan
-                .acts
-                .first()
-                .map(|a| a.phase)
-                .unwrap_or(ActPhase::NotStarted);
-
-            let state_cell = match phase {
-                ActPhase::NotStarted => Cell::new("Not Started"),
-                ActPhase::Completed => Cell::new("Done").fg(Color::Green),
-                ActPhase::InProgress => Cell::new("In Progress").fg(Color::Yellow),
-                ActPhase::Blocked => Cell::new("Blocked").fg(Color::Red),
-                ActPhase::Cancelled => Cell::new("Cancelled").fg(Color::DarkGrey),
-            };
-
-            let first_act = plan.acts.first();
-
-            let all_strings: Vec<String> = vec![
-                String::new(), // placeholder — state rendered as colored Cell
-                format!("{}{}", indent, plan.name),
-                charter.title.clone(),
-                plan.priority
-                    .map(|p| p.to_string())
-                    .unwrap_or_else(|| "-".to_string()),
-                first_act
-                    .and_then(|a| a.scheduled_at)
-                    .map(|dt| dt.format("%Y-%m-%d %H:%M").to_string())
-                    .unwrap_or_else(|| "-".to_string()),
-                first_act
-                    .and_then(|a| a.duration)
-                    .map(|d| format!("{}m", d))
-                    .unwrap_or_else(|| "-".to_string()),
-                plan.recurrence
-                    .as_ref()
-                    .map(|r| r.frequency.to_uppercase())
-                    .unwrap_or_else(|| "-".to_string()),
-                plan.contexts
-                    .as_ref()
-                    .map(|c| c.join(", "))
-                    .unwrap_or_else(|| "-".to_string()),
-                plan.description
-                    .as_ref()
-                    .map(|d| d.to_string())
-                    .unwrap_or_else(|| "-".to_string()),
-                plan.id.to_string()[..8].to_string(),
-                charter.title.clone(), // "Story" alias — same as Charter
-            ];
-
-            let row: Vec<Cell> = columns_idx
-                .iter()
-                .map(|&i| {
-                    if i == 0 {
-                        state_cell.clone()
-                    } else {
-                        Cell::new(&all_strings[i])
-                    }
-                })
-                .collect();
-
-            table.add_row(row);
-        }
+        render_charter(charter, 0, &all_plans, &mut table, &columns_idx);
     }
 
     Ok(table.to_string())
 }
 
-/// Walk the parent chain to determine nesting depth.
+/// Render one charter section: header row, its direct plans (DFS), then sub-charters.
+///
+/// `depth` is the charter nesting level — 0 for root charters, +1 for each sub-charter level.
+fn render_charter(
+    charter: &Charter,
+    depth: usize,
+    all_plans: &[&Plan],
+    table: &mut Table,
+    columns_idx: &[usize],
+) {
+    // Section header row: indented "── Title ──" in the Name column (index 1),
+    // blank elsewhere. This avoids inflating the narrow State column with long titles.
+    let indent = "  ".repeat(depth);
+    let header = truncate(&format!("{}── {} ──", indent, charter.title), 40);
+    // Find which rendered position corresponds to the Name column (COLUMN_NAMES index 1).
+    let name_pos = columns_idx.iter().position(|&i| i == 1).unwrap_or(0);
+    let header_row: Vec<Cell> = columns_idx
+        .iter()
+        .enumerate()
+        .map(|(pos, _)| {
+            if pos == name_pos {
+                Cell::new(&header).fg(Color::Cyan)
+            } else {
+                Cell::new("")
+            }
+        })
+        .collect();
+    table.add_row(header_row);
+
+    // Plans belonging to this charter only (DFS: parent before sub-plans)
+    for plan in charter.all_plans() {
+        let plan_indent = "  ".repeat(plan_depth(plan, all_plans));
+
+        let phase = plan
+            .acts
+            .first()
+            .map(|a| a.phase)
+            .unwrap_or(ActPhase::NotStarted);
+
+        let state_cell = match phase {
+            ActPhase::NotStarted => Cell::new("Not Started"),
+            ActPhase::Completed => Cell::new("Done").fg(Color::Green),
+            ActPhase::InProgress => Cell::new("In Progress").fg(Color::Yellow),
+            ActPhase::Blocked => Cell::new("Blocked").fg(Color::Red),
+            ActPhase::Cancelled => Cell::new("Cancelled").fg(Color::DarkGrey),
+        };
+
+        let first_act = plan.acts.first();
+
+        let all_strings: Vec<String> = vec![
+            String::new(), // placeholder — state rendered as colored Cell
+            truncate(&format!("{}{}", plan_indent, plan.name), 40),
+            charter.title.clone(),
+            plan.priority
+                .map(|p| p.to_string())
+                .unwrap_or_else(|| "-".to_string()),
+            first_act
+                .and_then(|a| a.scheduled_at)
+                .map(|dt| dt.format("%Y-%m-%d %H:%M").to_string())
+                .unwrap_or_else(|| "-".to_string()),
+            first_act
+                .and_then(|a| a.duration)
+                .map(|d| format!("{}m", d))
+                .unwrap_or_else(|| "-".to_string()),
+            plan.recurrence
+                .as_ref()
+                .map(|r| r.frequency.to_uppercase())
+                .unwrap_or_else(|| "-".to_string()),
+            plan.contexts
+                .as_ref()
+                .map(|c| c.join(", "))
+                .unwrap_or_else(|| "-".to_string()),
+            plan.description
+                .as_ref()
+                .map(|d| d.to_string())
+                .unwrap_or_else(|| "-".to_string()),
+            plan.id.to_string()[..8].to_string(),
+            charter.title.clone(), // "Story" alias — same as Charter
+        ];
+
+        let row: Vec<Cell> = columns_idx
+            .iter()
+            .map(|&i| {
+                if i == 0 {
+                    state_cell.clone()
+                } else {
+                    Cell::new(&all_strings[i])
+                }
+            })
+            .collect();
+
+        table.add_row(row);
+    }
+
+    // Sub-charters appear immediately after this charter's plans, one level deeper
+    for sub in &charter.sub_charters {
+        render_charter(sub, depth + 1, all_plans, table, columns_idx);
+    }
+}
+
+/// Truncate a string to `max` chars, appending `…` if cut. Unicode-safe.
+fn truncate(s: &str, max: usize) -> String {
+    if s.chars().count() <= max {
+        s.to_string()
+    } else {
+        let t: String = s.chars().take(max.saturating_sub(1)).collect();
+        format!("{}…", t)
+    }
+}
+
+/// Walk the parent chain to determine plan nesting depth.
 fn plan_depth(plan: &Plan, all_plans: &[&Plan]) -> usize {
     let mut depth = 0;
     let mut current_parent = plan.parent;
