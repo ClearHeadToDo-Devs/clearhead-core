@@ -1,9 +1,8 @@
 use super::discovery::discover_action_files;
 use super::WorkspaceLayout;
 use super::{resolve_workspace_layout, WorkspaceError};
-use crate::domain::{Charter, DomainModel, Plan, PlannedAct};
-use crate::workspace::actions::convert::merge_to_action;
-use crate::workspace::{format, ActionList, OutputFormat};
+use crate::domain::{Charter, DomainModel, Plan};
+use crate::workspace::{format, Action, ActionList, OutputFormat};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
@@ -176,25 +175,6 @@ fn charter_reference_name(charter: &Charter) -> String {
         .unwrap_or_else(|| charter.title.clone())
 }
 
-fn representative_act(plan: &Plan) -> PlannedAct {
-    if let Some(act) = plan
-        .acts
-        .iter()
-        .find(|act| act.id == Uuid::new_v5(&plan.id, b"act-0"))
-    {
-        return act.clone();
-    }
-
-    if let Some(act) = plan.acts.first() {
-        return act.clone();
-    }
-
-    PlannedAct {
-        id: Uuid::new_v5(&plan.id, b"act-0"),
-        plan_id: plan.id,
-        ..Default::default()
-    }
-}
 
 fn actions_for_charter(charter: &Charter, charter_name: &str) -> ActionList {
     let mut plans: Vec<&Plan> = charter.plans.iter().collect();
@@ -203,7 +183,7 @@ fn actions_for_charter(charter: &Charter, charter_name: &str) -> ActionList {
     plans
         .into_iter()
         .map(|plan| {
-            let mut action = merge_to_action(plan, &representative_act(plan), plan.id);
+            let mut action = Action::from(plan);
             action.charter = Some(charter_name.to_string());
             action
         })
@@ -238,7 +218,7 @@ fn prune_empty_directories(start: &Path, stop_at: &Path) -> Result<(), Workspace
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::{Charter, DomainModel, Plan};
+    use crate::domain::{Charter, DomainModel, Plan, PlannedAct};
     use crate::workspace::store::load_domain_model;
     use chrono::Local;
 

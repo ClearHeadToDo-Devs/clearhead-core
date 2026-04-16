@@ -1,11 +1,13 @@
 use super::{Action, ActionList, ActionState, PredecessorRef};
 use crate::domain::{ActPhase, Charter, DomainModel, Plan, PlannedAct};
+use std::collections::HashMap;
 use uuid::Uuid;
 
 /// Namespace UUID for the synthetic inbox charter.
 pub const INBOX_CHARTER_NS: Uuid = Uuid::from_bytes([
     0x69, 0x6e, 0x62, 0x6f, 0x78, 0x2d, 0x63, 0x68, 0x61, 0x72, 0x74, 0x65, 0x72, 0x2d, 0x6e, 0x73,
 ]);
+
 /// Convert an ActionList into a Charter with a deterministic ID derived from the name.
 pub fn from_actions_with_charter(actions: &ActionList, charter_name: String) -> Charter {
     let mut charter = crate::workspace::charter::implicit_charter(&charter_name);
@@ -39,7 +41,7 @@ impl From<&Action> for Plan {
             created_at: action.created_date_time,
         };
 
-        let plan = Plan {
+        Plan {
             id: plan_id,
             name: action.name.clone(),
             description: action.description.clone(),
@@ -55,47 +57,67 @@ impl From<&Action> for Plan {
                 .as_ref()
                 .map(|preds| preds.iter().filter_map(|p| p.resolved_uuid).collect()),
             acts: vec![act],
-        };
-
-        plan
+        }
     }
 }
 
-/// Merge a Plan and PlannedAct into a single Action.
-pub fn merge_to_action(plan: &Plan, act: &PlannedAct, target_id: Uuid) -> Action {
-    Action {
-        id: target_id,
-        parent_id: plan.parent,
-        state: match act.phase {
-            ActPhase::NotStarted => ActionState::NotStarted,
-            ActPhase::InProgress => ActionState::InProgress,
-            ActPhase::Completed => ActionState::Completed,
-            ActPhase::Blocked => ActionState::BlockedorAwaiting,
-            ActPhase::Cancelled => ActionState::Cancelled,
-        },
-        name: plan.name.clone(),
-        description: plan.description.clone(),
-        priority: plan.priority,
-        context_list: plan.contexts.clone(),
-        do_date_time: act.scheduled_at,
-        do_duration: act.duration,
-        recurrence: plan.recurrence.clone(),
-        due_date_time: act.due_date,
-        due_recurrence: plan.due_recurrence.clone(),
-        completed_date_time: act.completed_at,
-        created_date_time: act.created_at,
-        predecessors: plan.depends_on.as_ref().map(|uuids| {
-            uuids
-                .iter()
-                .map(|u| PredecessorRef {
-                    raw_ref: u.to_string(),
-                    resolved_uuid: Some(*u),
-                })
-                .collect()
-        }),
-        charter: None,
-        alias: plan.alias.clone(),
-        is_sequential: plan.is_sequential,
+/// Select the canonical act for a plan.
+///
+/// Prefers act-0 (the deterministic primary act). Falls back to a synthesized
+/// default if no acts exist — this covers plans that haven't been expanded yet.
+fn representative_act(plan: &Plan) -> PlannedAct {
+    plan.acts
+        .iter()
+        .find(|a| a.id == Uuid::new_v5(&plan.id, b"act-0"))
+        .cloned()
+        .unwrap_or_else(|| PlannedAct {
+            id: Uuid::new_v5(&plan.id, b"act-0"),
+            plan_id: plan.id,
+            ..Default::default()
+        })
+}
+
+/// Reconstruct an Action from a Plan using its canonical representative act.
+///
+/// `charter` is not recoverable from a Plan (it lives on the Charter struct),
+/// so it is always set to None here. Callers that need it should set it after.
+impl From<&Plan> for Action {
+    fn from(plan: &Plan) -> Self {
+        let act = representative_act(plan);
+        Action {
+            id: plan.id,
+            parent_id: plan.parent,
+            state: match act.phase {
+                ActPhase::NotStarted => ActionState::NotStarted,
+                ActPhase::InProgress => ActionState::InProgress,
+                ActPhase::Completed => ActionState::Completed,
+                ActPhase::Blocked => ActionState::BlockedorAwaiting,
+                ActPhase::Cancelled => ActionState::Cancelled,
+            },
+            name: plan.name.clone(),
+            description: plan.description.clone(),
+            priority: plan.priority,
+            context_list: plan.contexts.clone(),
+            do_date_time: act.scheduled_at,
+            do_duration: act.duration,
+            recurrence: plan.recurrence.clone(),
+            due_date_time: act.due_date,
+            due_recurrence: plan.due_recurrence.clone(),
+            completed_date_time: act.completed_at,
+            created_date_time: act.created_at,
+            predecessors: plan.depends_on.as_ref().map(|uuids| {
+                uuids
+                    .iter()
+                    .map(|u| PredecessorRef {
+                        raw_ref: u.to_string(),
+                        resolved_uuid: Some(*u),
+                    })
+                    .collect()
+            }),
+            charter: None,
+            alias: plan.alias.clone(),
+            is_sequential: plan.is_sequential,
+        }
     }
 }
 
@@ -124,32 +146,168 @@ pub fn to_action_list(model: &DomainModel) -> ActionList {
 ///
 /// Only includes plans whose ID appears in `plan_order`.
 pub fn to_action_list_ordered(model: &DomainModel, plan_order: &[String]) -> ActionList {
-    let mut actions = Vec::new();
-
-    // Build a lookup from plan ID string → &Plan
-    let plan_map: std::collections::HashMap<String, &Plan> = model
+    let plan_map: HashMap<String, &Plan> = model
         .all_plans()
         .into_iter()
         .map(|p| (p.id.to_string(), p))
         .collect();
 
-    for plan_id_str in plan_order {
-        if let Some(plan) = plan_map.get(plan_id_str) {
-            if plan.acts.is_empty() {
-                // Placeholder act for plans with no acts
-                let dummy_act = PlannedAct {
-                    id: Uuid::new_v5(&plan.id, b"act-0"),
-                    plan_id: plan.id,
-                    ..Default::default()
-                };
-                actions.push(merge_to_action(plan, &dummy_act, plan.id));
-            } else {
-                for act in &plan.acts {
-                    actions.push(merge_to_action(plan, act, plan.id));
-                }
-            }
+    plan_order
+        .iter()
+        .filter_map(|id| plan_map.get(id).copied())
+        .map(Action::from)
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::{ActPhase, Charter, DomainModel};
+
+    fn make_action(name: &str) -> Action {
+        Action {
+            id: Uuid::new_v4(),
+            parent_id: None,
+            state: ActionState::NotStarted,
+            name: name.to_string(),
+            description: None,
+            priority: None,
+            context_list: None,
+            do_date_time: None,
+            do_duration: None,
+            recurrence: None,
+            due_date_time: None,
+            due_recurrence: None,
+            completed_date_time: None,
+            created_date_time: None,
+            predecessors: None,
+            charter: None,
+            alias: None,
+            is_sequential: None,
         }
     }
 
-    actions
+    #[test]
+    fn action_to_plan_state_mapping() {
+        use ActionState::*;
+        let cases = [
+            (NotStarted, ActPhase::NotStarted),
+            (InProgress, ActPhase::InProgress),
+            (Completed, ActPhase::Completed),
+            (BlockedorAwaiting, ActPhase::Blocked),
+            (Cancelled, ActPhase::Cancelled),
+        ];
+        for (action_state, expected_phase) in cases {
+            let mut action = make_action("task");
+            action.state = action_state;
+            let plan = Plan::from(&action);
+            assert_eq!(plan.acts[0].phase, expected_phase, "state: {action_state:?}");
+        }
+    }
+
+    #[test]
+    fn plan_to_action_state_mapping() {
+        use ActPhase::*;
+        let cases = [
+            (NotStarted, ActionState::NotStarted),
+            (InProgress, ActionState::InProgress),
+            (Completed, ActionState::Completed),
+            (Blocked, ActionState::BlockedorAwaiting),
+            (Cancelled, ActionState::Cancelled),
+        ];
+        for (phase, expected_state) in cases {
+            let id = Uuid::new_v4();
+            let plan = Plan {
+                id,
+                name: "task".to_string(),
+                acts: vec![PlannedAct {
+                    id: Uuid::new_v5(&id, b"act-0"),
+                    plan_id: id,
+                    phase,
+                    ..Default::default()
+                }],
+                ..Default::default()
+            };
+            let action = Action::from(&plan);
+            assert_eq!(action.state, expected_state, "phase: {phase:?}");
+        }
+    }
+
+    #[test]
+    fn round_trip_preserves_all_fields() {
+        let mut action = make_action("Ship it");
+        action.description = Some("details here".to_string());
+        action.priority = Some(2);
+        action.context_list = Some(vec!["work".to_string(), "deep".to_string()]);
+        action.alias = Some("ship".to_string());
+        action.is_sequential = Some(true);
+        action.state = ActionState::InProgress;
+
+        let dep_id = Uuid::new_v4();
+        action.predecessors = Some(vec![PredecessorRef {
+            raw_ref: dep_id.to_string(),
+            resolved_uuid: Some(dep_id),
+        }]);
+
+        let plan = Plan::from(&action);
+        let roundtripped = Action::from(&plan);
+
+        assert_eq!(roundtripped.id, action.id);
+        assert_eq!(roundtripped.name, action.name);
+        assert_eq!(roundtripped.description, action.description);
+        assert_eq!(roundtripped.priority, action.priority);
+        assert_eq!(roundtripped.context_list, action.context_list);
+        assert_eq!(roundtripped.alias, action.alias);
+        assert_eq!(roundtripped.is_sequential, action.is_sequential);
+        assert_eq!(roundtripped.state, action.state);
+        let deps = roundtripped.predecessors.unwrap();
+        assert_eq!(deps.len(), 1);
+        assert_eq!(deps[0].resolved_uuid, Some(dep_id));
+    }
+
+    #[test]
+    fn unresolved_predecessors_are_dropped() {
+        let mut action = make_action("task");
+        let resolved_id = Uuid::new_v4();
+        action.predecessors = Some(vec![
+            PredecessorRef { raw_ref: "some name".to_string(), resolved_uuid: None },
+            PredecessorRef { raw_ref: resolved_id.to_string(), resolved_uuid: Some(resolved_id) },
+        ]);
+
+        let plan = Plan::from(&action);
+        let depends_on = plan.depends_on.unwrap();
+        assert_eq!(depends_on, vec![resolved_id]);
+    }
+
+    #[test]
+    fn to_action_list_ordered_respects_order_and_excludes_extras() {
+        let id_a = Uuid::new_v4();
+        let id_b = Uuid::new_v4();
+        let id_c = Uuid::new_v4();
+
+        let make_plan = |id: Uuid, name: &str| Plan {
+            id,
+            name: name.to_string(),
+            acts: vec![PlannedAct { id: Uuid::new_v5(&id, b"act-0"), plan_id: id, ..Default::default() }],
+            ..Default::default()
+        };
+
+        let model = DomainModel {
+            charters: vec![Charter {
+                id: Uuid::new_v4(),
+                title: "test".to_string(),
+                plans: vec![make_plan(id_a, "Alpha"), make_plan(id_b, "Beta"), make_plan(id_c, "Gamma")],
+                ..Default::default()
+            }],
+            objectives: vec![],
+        };
+
+        // Request B then A — C excluded entirely
+        let order = vec![id_b.to_string(), id_a.to_string()];
+        let actions = to_action_list_ordered(&model, &order);
+
+        assert_eq!(actions.len(), 2);
+        assert_eq!(actions[0].name, "Beta");
+        assert_eq!(actions[1].name, "Alpha");
+    }
 }
