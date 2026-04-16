@@ -5,7 +5,7 @@
 
 use crate::domain::{ActPhase, DomainModel, Plan};
 use crate::workspace::actions::format::{
-    TableFormatOptions, COLUMN_NAMES, columns_to_show, columns_without,
+    DEFAULT_COLUMNS, TableFormatOptions, COLUMN_NAMES, columns_to_show, columns_without,
 };
 use comfy_table::{Cell, Color, ContentArrangement, Table, presets::UTF8_FULL};
 
@@ -36,20 +36,20 @@ pub fn format_domain_as_table(
         return Ok(String::new());
     }
 
-    // Build column index list based on filters (exclude last "Story" alias column by default)
-    let all_idx: Vec<usize> = (0..COLUMN_NAMES.len() - 1).collect();
+    // Build column index list based on filters
+    let default_idx: Vec<usize> = DEFAULT_COLUMNS.to_vec();
     let columns_idx: Vec<usize> = if let Some(opts) = filters {
         match (&opts.columns, &opts.hide_columns) {
             (Some(cols), None) => columns_to_show(cols),
-            (None, Some(hide)) => columns_without(hide, &all_idx),
+            (None, Some(hide)) => columns_without(hide, &default_idx),
             (Some(cols), Some(hide)) => {
                 let shown = columns_to_show(cols);
                 columns_without(hide, &shown)
             }
-            (None, None) => all_idx,
+            (None, None) => default_idx,
         }
     } else {
-        all_idx
+        default_idx
     };
 
     let mut table = Table::new();

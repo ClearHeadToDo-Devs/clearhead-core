@@ -246,20 +246,20 @@ fn format_as_table(
         return Ok(String::new());
     }
 
-    // Build column index list based on filters (exclude index 10 "Story" alias by default)
-    let all_idx: Vec<usize> = (0..COLUMN_NAMES.len() - 1).collect();
+    // Build column index list based on filters
+    let default_idx: Vec<usize> = DEFAULT_COLUMNS.to_vec();
     let columns_idx: Vec<usize> = if let Some(opts) = filters {
         match (&opts.columns, &opts.hide_columns) {
             (Some(cols), None) => columns_to_show(cols),
-            (None, Some(hide)) => columns_without(hide, &all_idx),
+            (None, Some(hide)) => columns_without(hide, &default_idx),
             (Some(cols), Some(hide)) => {
                 let shown = columns_to_show(cols);
                 columns_without(hide, &shown)
             }
-            (None, None) => all_idx,
+            (None, None) => default_idx,
         }
     } else {
-        all_idx
+        default_idx
     };
 
     let mut table = Table::new();
@@ -343,18 +343,22 @@ fn format_as_table(
 }
 
 pub const COLUMN_NAMES: [&str; 11] = [
-    "State",
-    "Name",
-    "Charter",
-    "Priority",
-    "Due",
-    "Dur",
-    "Recurrence",
-    "Context",
-    "Description",
-    "ID",
-    "Story",
+    "State",       // 0
+    "Name",        // 1
+    "Charter",     // 2
+    "Priority",    // 3
+    "Due",         // 4
+    "Dur",         // 5
+    "Recurrence",  // 6
+    "Context",     // 7
+    "Description", // 8 — excluded from default; use `show` for detail
+    "ID",          // 9
+    "Story",       // 10 — excluded from default (internal alias key)
 ];
+
+/// Default column set for list views: everything except Description and Story.
+/// Description belongs in `show`, not in a summary table.
+pub const DEFAULT_COLUMNS: &[usize] = &[0, 1, 2, 3, 4, 5, 6, 7, 9];
 
 pub fn columns_to_show(names: &[String]) -> Vec<usize> {
     names
