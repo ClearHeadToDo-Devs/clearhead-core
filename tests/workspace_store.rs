@@ -4,8 +4,11 @@
 //! Each test creates an isolated temp workspace so there are no shared-state concerns.
 
 use clearhead_core::sync::domain_semantically_equal;
-use clearhead_core::{load_domain_model, save_domain_model};
+use clearhead_core::{
+    ManifestSourceType, collect_workspace_manifest, load_domain_model, save_domain_model,
+};
 use std::fs;
+use std::path::Path;
 use tempfile::TempDir;
 
 // --- Fixture helpers ---
@@ -366,4 +369,229 @@ fn load_md_only_charter_produces_empty_plan_list() {
         "charter from .md-only should have no plans"
     );
     assert_eq!(charter.title, "Health & Fitness");
+}
+
+// =============================================================================
+// Fixture-based tests (checked-in workspace trees)
+// =============================================================================
+//
+// These tests load from real fixture directories so that the expected semantic
+// model state is visible on disk alongside the test assertions.
+//
+// RON snapshots live next to the fixtures under `tests/fixtures/workspace/`.
+// On first run (no snapshot file) the test writes the snapshot; on subsequent
+// runs it asserts byte-for-byte equality. Set `UPDATE_SNAPSHOTS=1` to
+// regenerate a snapshot after an intentional model change.
+
+fn fixture_path(name: &str) -> std::path::PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/workspace")
+        .join(name)
+}
+
+/// Serialize `model` to deterministic RON.
+///
+/// Charters are sorted by title so the output is stable regardless of
+/// HashMap iteration order during loading.
+fn model_to_ron(model: &clearhead_core::DomainModel) -> String {
+    let mut sorted = model.clone();
+    sorted.charters.sort_by(|a, b| a.title.cmp(&b.title));
+    for charter in &mut sorted.charters {
+        charter.plans.sort_by(|a, b| a.id.cmp(&b.id));
+    }
+    ron::ser::to_string_pretty(&sorted, ron::ser::PrettyConfig::default())
+        .expect("RON serialization failed")
+}
+
+/// Assert `actual` matches the snapshot at `path`, creating it if absent.
+fn assert_snapshot(snapshot_path: &Path, actual: &str) {
+    if !snapshot_path.exists() || std::env::var("UPDATE_SNAPSHOTS").is_ok() {
+        fs::write(snapshot_path, actual).expect("failed to write snapshot");
+        return;
+    }
+    let expected = fs::read_to_string(snapshot_path).expect("failed to read snapshot");
+    assert_eq!(
+        actual, expected,
+        "snapshot mismatch — run with UPDATE_SNAPSHOTS=1 to regenerate: {}",
+        snapshot_path.display()
+    );
+}
+
+#[test]
+fn fixture_user_flat_charter_names_and_plan_counts() {
+    let root = fixture_path("user-flat");
+    let model = load_domain_model(&root).expect("load failed");
+
+    let mut names: Vec<String> = model.charters.iter().map(|c| c.title.clone()).collect();
+    names.sort();
+    assert_eq!(names, vec!["personal", "work"]);
+
+    let work = model.charters.iter().find(|c| c.title == "work").unwrap();
+    assert_eq!(work.plans.len(), 3, "work: 2 top-level + 1 subtask");
+
+    let personal = model.charters.iter().find(|c| c.title == "personal").unwrap();
+    assert_eq!(personal.plans.len(), 2);
+}
+
+#[test]
+fn fixture_user_flat_ron_snapshot() {
+    let root = fixture_path("user-flat");
+    let model = load_domain_model(&root).expect("load failed");
+    let ron = model_to_ron(&model);
+    let snapshot = fixture_path("user-flat.ron");
+    assert_snapshot(&snapshot, &ron);
+}
+
+#[test]
+fn fixture_project_nested_parent_links() {
+    let root = fixture_path("project-nested");
+    let model = load_domain_model(&root).expect("load failed");
+
+    let mut names: Vec<String> = model.charters.iter().map(|c| c.title.clone()).collect();
+    names.sort();
+    assert_eq!(names, vec!["ops", "project-nested", "work"]);
+
+    let work = model
+        .charters
+        .iter()
+        .find(|c| c.title == "work")
+        .expect("work charter");
+    assert_eq!(
+        work.parent.as_deref(),
+        Some("project-nested"),
+        "work should be a child of the project root"
+    );
+
+    let ops = model
+        .charters
+        .iter()
+        .find(|c| c.title == "ops")
+        .expect("ops charter");
+    assert_eq!(
+        ops.parent.as_deref(),
+        Some("work"),
+        "ops should be a child of work"
+    );
+}
+
+#[test]
+fn fixture_project_nested_ron_snapshot() {
+    let root = fixture_path("project-nested");
+    let model = load_domain_model(&root).expect("load failed");
+    let ron = model_to_ron(&model);
+    let snapshot = fixture_path("project-nested.ron");
+    assert_snapshot(&snapshot, &ron);
+}
+
+#[test]
+fn fixture_md_merge_title_alias_and_description() {
+    let root = fixture_path("md-merge");
+    let model = load_domain_model(&root).expect("load failed");
+
+    assert_eq!(model.charters.len(), 1);
+    let charter = &model.charters[0];
+    assert_eq!(charter.title, "Health & Fitness");
+    assert_eq!(charter.alias.as_deref(), Some("health"));
+    assert_eq!(charter.plans.len(), 2);
+    assert!(
+        charter.description.is_some(),
+        "description should be populated from .md body"
+    );
+}
+
+#[test]
+fn fixture_md_merge_ron_snapshot() {
+    let root = fixture_path("md-merge");
+    let model = load_domain_model(&root).expect("load failed");
+    let ron = model_to_ron(&model);
+    let snapshot = fixture_path("md-merge.ron");
+    assert_snapshot(&snapshot, &ron);
+}
+
+// =============================================================================
+// Workspace manifest tests
+// =============================================================================
+
+#[test]
+fn fixture_user_flat_manifest() {
+    let root = fixture_path("user-flat");
+    let mut manifest = collect_workspace_manifest(&root).expect("manifest failed");
+    manifest.sort_by(|a, b| a.path.cmp(&b.path));
+
+    assert_eq!(manifest.len(), 2);
+
+    let personal = manifest.iter().find(|e| e.charter_name == "personal").unwrap();
+    assert_eq!(personal.source_type, ManifestSourceType::Actions);
+    assert!(personal.inferred_parent.is_none());
+
+    let work = manifest.iter().find(|e| e.charter_name == "work").unwrap();
+    assert_eq!(work.source_type, ManifestSourceType::Actions);
+    assert!(work.inferred_parent.is_none());
+}
+
+#[test]
+fn fixture_project_nested_manifest() {
+    let root = fixture_path("project-nested");
+    let manifest = collect_workspace_manifest(&root).expect("manifest failed");
+
+    assert_eq!(manifest.len(), 3);
+
+    let root_entry = manifest
+        .iter()
+        .find(|e| e.charter_name == "project-nested")
+        .unwrap();
+    assert!(root_entry.inferred_parent.is_none(), "project root has no parent");
+
+    let work_entry = manifest.iter().find(|e| e.charter_name == "work").unwrap();
+    assert_eq!(work_entry.inferred_parent.as_deref(), Some("project-nested"));
+
+    let ops_entry = manifest.iter().find(|e| e.charter_name == "ops").unwrap();
+    assert_eq!(ops_entry.inferred_parent.as_deref(), Some("work"));
+}
+
+#[test]
+fn fixture_md_merge_manifest_source_type() {
+    let root = fixture_path("md-merge");
+    let manifest = collect_workspace_manifest(&root).expect("manifest failed");
+
+    assert_eq!(manifest.len(), 1);
+    assert_eq!(manifest[0].charter_name, "health");
+    assert_eq!(
+        manifest[0].source_type,
+        ManifestSourceType::ActionsPlusMarkdown
+    );
+}
+
+#[test]
+fn unresolvable_parent_does_not_crash_load() {
+    // A charter with `parent: "Work Stuff"` (display title) should load
+    // successfully — the unresolvable parent only emits a warning, it does
+    // not abort. We can't easily capture stderr here, so we just assert
+    // the load succeeds and the parent string is preserved as-is.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let data = dir.path().join(".clearhead");
+    fs::create_dir_all(&data).expect("create .clearhead");
+
+    fs::write(
+        data.join("child.actions"),
+        "[ ] A task #01960000-9999-7000-0000-000000000001\n",
+    )
+    .expect("write actions");
+    fs::write(
+        data.join("child.md"),
+        "---\nparent: Work Stuff\n---\n# Child Charter\n",
+    )
+    .expect("write md");
+
+    let model = load_domain_model(dir.path()).expect("load should succeed despite bad parent");
+    let child = model
+        .charters
+        .iter()
+        .find(|c| c.alias.as_deref() == Some("child"))
+        .expect("child charter");
+    assert_eq!(
+        child.parent.as_deref(),
+        Some("Work Stuff"),
+        "bad parent should be preserved, not silently dropped"
+    );
 }

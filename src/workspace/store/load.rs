@@ -82,6 +82,29 @@ pub fn load_domain_model(root: &Path) -> Result<DomainModel, WorkspaceError> {
         }
     }
 
+    // Warn about parents that can't be resolved to a known charter alias.
+    let known_aliases: std::collections::HashSet<&str> = charters
+        .values()
+        .filter_map(|c| c.alias.as_deref())
+        .collect();
+    for (name, charter) in &charters {
+        if let Some(parent) = &charter.parent {
+            if !known_aliases.contains(parent.as_str()) {
+                let file = path_for_name
+                    .get(name)
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_else(|| "<unknown>".to_string());
+                eprintln!(
+                    "warning: [{}] charter '{}' has unresolvable parent '{}' — \
+                     use the alias (machine key), not the display title",
+                    file,
+                    charter.alias.as_deref().unwrap_or(&charter.title),
+                    parent
+                );
+            }
+        }
+    }
+
     Ok(DomainModel {
         objectives: vec![],
         charters: charters.into_values().collect(),

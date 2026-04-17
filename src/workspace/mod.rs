@@ -27,7 +27,8 @@ pub use charter::{format_charter, implicit_charter, parse_charter};
 
 pub use detection::check_for_workspace;
 pub use store::{
-    WorkspaceError, infer_charter_name, infer_charter_name_for_workspace,
-    infer_parent_charter_name, infer_parent_charter_name_for_workspace, list_action_files,
-    load_domain_model, save_domain_model, workspace_data_root,
+    ManifestSourceType, WorkspaceError, WorkspaceManifestEntry, collect_workspace_manifest,
+    infer_charter_name, infer_charter_name_for_workspace, infer_parent_charter_name,
+    infer_parent_charter_name_for_workspace, list_action_files, load_domain_model,
+    save_domain_model, workspace_data_root,
 };

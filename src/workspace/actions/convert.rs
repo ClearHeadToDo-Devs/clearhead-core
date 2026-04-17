@@ -63,15 +63,20 @@ impl From<&Action> for Plan {
 
 /// Select the canonical act for a plan.
 ///
-/// Prefers act-0 (the deterministic primary act). Falls back to a synthesized
-/// default if no acts exist — this covers plans that haven't been expanded yet.
+/// Selection order:
+/// 1. The act whose ID is `new_v5(plan.id, b"act-0")` — the deterministic primary.
+/// 2. The first act in the list — preserves data from externally-constructed models
+///    that don't use the act-0 convention.
+/// 3. A synthesized blank act — for plans that haven't been expanded yet.
 fn representative_act(plan: &Plan) -> PlannedAct {
+    let act_0_id = Uuid::new_v5(&plan.id, b"act-0");
     plan.acts
         .iter()
-        .find(|a| a.id == Uuid::new_v5(&plan.id, b"act-0"))
+        .find(|a| a.id == act_0_id)
+        .or_else(|| plan.acts.first())
         .cloned()
         .unwrap_or_else(|| PlannedAct {
-            id: Uuid::new_v5(&plan.id, b"act-0"),
+            id: act_0_id,
             plan_id: plan.id,
             ..Default::default()
         })
@@ -166,24 +171,9 @@ mod tests {
 
     fn make_action(name: &str) -> Action {
         Action {
-            id: Uuid::new_v4(),
-            parent_id: None,
-            state: ActionState::NotStarted,
             name: name.to_string(),
-            description: None,
-            priority: None,
-            context_list: None,
-            do_date_time: None,
-            do_duration: None,
-            recurrence: None,
-            due_date_time: None,
-            due_recurrence: None,
-            completed_date_time: None,
             created_date_time: None,
-            predecessors: None,
-            charter: None,
-            alias: None,
-            is_sequential: None,
+            ..Default::default()
         }
     }
 
@@ -309,5 +299,42 @@ mod tests {
         assert_eq!(actions.len(), 2);
         assert_eq!(actions[0].name, "Beta");
         assert_eq!(actions[1].name, "Alpha");
+    }
+
+    #[test]
+    fn representative_act_falls_back_to_first_when_no_act_zero() {
+        // External code building a DomainModel (e.g. CRDT merge, tests) won't
+        // necessarily use the new_v5(&plan_id, b"act-0") convention.
+        // representative_act must not silently drop their data.
+        let plan_id = Uuid::new_v4();
+        let external_act_id = Uuid::new_v4(); // deliberately NOT new_v5(&plan_id, b"act-0")
+        let plan = Plan {
+            id: plan_id,
+            name: "task".to_string(),
+            acts: vec![PlannedAct {
+                id: external_act_id,
+                plan_id,
+                duration: Some(45),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+
+        let action = Action::from(&plan);
+        assert_eq!(
+            action.do_duration,
+            Some(45),
+            "duration from non-canonical act must not be silently dropped"
+        );
+    }
+
+    #[test]
+    fn representative_act_synthesizes_blank_when_no_acts() {
+        let plan_id = Uuid::new_v4();
+        let plan = Plan { id: plan_id, name: "empty".to_string(), ..Default::default() };
+
+        let action = Action::from(&plan);
+        assert_eq!(action.do_duration, None);
+        assert_eq!(action.state, ActionState::NotStarted);
     }
 }

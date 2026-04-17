@@ -26,12 +26,13 @@ pub mod workspace;
 pub use workspace::{
     Action, ActionList, ActionState, Diff, OutputFormat, ParsedDocument, SourceMetadata,
     SourceRange, closed_acts_path, diff_actions, format, format_charter, implicit_charter,
-    infer_charter_name, infer_charter_name_for_workspace, infer_parent_charter_name,
-    infer_parent_charter_name_for_workspace, list_action_files, load_domain_model,
-    merge_acts_into_model, open_acts_path, parse_actions, parse_charter, parse_document,
-    parse_tree, patch_action_list, read_acts, save_domain_model, workspace_data_root, write_acts,
-    write_acts_for_plans,
+    collect_workspace_manifest, infer_charter_name, infer_charter_name_for_workspace,
+    infer_parent_charter_name, infer_parent_charter_name_for_workspace, list_action_files,
+    load_domain_model, merge_acts_into_model, open_acts_path, parse_actions, parse_charter,
+    parse_document, parse_tree, patch_action_list, read_acts, save_domain_model,
+    workspace_data_root, write_acts, write_acts_for_plans,
 };
+pub use workspace::store::{ManifestSourceType, WorkspaceManifestEntry};
 
 pub mod domain;
 #[doc(inline)]

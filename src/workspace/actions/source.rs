@@ -187,34 +187,6 @@ pub fn create_node_wrapper(node: Node, source: String) -> NodeWrapper {
     NodeWrapper { node, source }
 }
 
-pub fn validate_tree(tree: &Tree) -> Result<(), String> {
-    let root = tree.root_node();
-    if root.has_error() {
-        let mut cursor = root.walk();
-        let mut stack = vec![root];
-        while let Some(node) = stack.pop() {
-            if node.is_error() || node.is_missing() {
-                let start = node.start_position();
-                return Err(format!(
-                    "Syntax error at line {}, column {}: {}",
-                    start.row + 1,
-                    start.column + 1,
-                    if node.is_missing() {
-                        format!("missing '{}'", node.kind())
-                    } else {
-                        "unexpected token".to_string()
-                    }
-                ));
-            }
-            for child in node.children(&mut cursor) {
-                stack.push(child);
-            }
-        }
-        return Err("Syntax error in actions file".to_string());
-    }
-    Ok(())
-}
-
 pub fn get_node_text(node: &Node, source: &str) -> String {
     source[node.start_byte()..node.end_byte()].to_string()
 }
