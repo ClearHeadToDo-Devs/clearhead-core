@@ -77,11 +77,27 @@ pub fn load_domain_model(root: &Path) -> Result<DomainModel, WorkspaceError> {
             .or_insert(explicit);
     }
 
-    for (name, parent) in parent_hints(&path_for_name, layout.project_root_charter.as_deref()) {
+    // Explicit frontmatter wins: translate filesystem-inferred parent names to their
+    // resolved aliases so that e.g. a root charter with alias "build_clearhead" (not
+    // the raw directory name "workspace") is what sibling charters reference.
+    let name_to_alias: std::collections::HashMap<String, String> = charters
+        .iter()
+        .filter_map(|(name, c)| c.alias.as_ref().map(|a| (name.clone(), a.clone())))
+        .collect();
+
+    let resolved_hints: Vec<(String, String)> = parent_hints(&path_for_name, layout.project_root_charter.as_deref())
+        .into_iter()
+        .map(|(name, parent_name)| {
+            let alias = name_to_alias.get(&parent_name).cloned().unwrap_or(parent_name);
+            (name, alias)
+        })
+        .collect();
+
+    for (name, parent_alias) in resolved_hints {
         if let Some(charter) = charters.get_mut(&name)
             && charter.parent.is_none()
         {
-            charter.parent = Some(parent);
+            charter.parent = Some(parent_alias);
         }
     }
 
