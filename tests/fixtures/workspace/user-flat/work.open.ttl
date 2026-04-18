@@ -1,0 +1,12 @@
+@prefix actions: <https://clearhead.us/vocab/actions/v4#> .
+@prefix cco: <https://www.commoncoreontologies.org/> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+# "Write quarterly report" — InProgress, overdue (due 2026-04-10), scheduled 2026-04-17
+<urn:uuid:01960000-0001-7001-0000-000000000001> a cco:ont00000228 ;
+    actions:hasUUID "01960000-0001-7001-0000-000000000001" ;
+    cco:ont00001920 <urn:uuid:01960000-0001-7000-0000-000000000001> ;
+    cco:ont00001868 actions:InProgress ;
+    actions:hasDueDateTime "2026-04-10T17:00:00Z"^^xsd:dateTime ;
+    actions:hasScheduledDateTime "2026-04-17T09:00:00Z"^^xsd:dateTime ;
+    actions:hasCreatedDateTime "2026-04-01T09:00:00Z"^^xsd:dateTime .

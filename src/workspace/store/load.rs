@@ -3,6 +3,7 @@ use super::pathing::{infer_charter_name_for_workspace, infer_parent_charter_name
 use super::{WorkspaceError, resolve_workspace_layout};
 use crate::domain::{Charter, DomainModel};
 use crate::workspace::actions::convert::from_actions_with_charter;
+use crate::workspace::acts::{closed_acts_path, merge_acts_into_model, open_acts_path, read_acts};
 use crate::workspace::charter::parse_charter;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -16,6 +17,7 @@ pub fn load_domain_model(root: &Path) -> Result<DomainModel, WorkspaceError> {
     let layout = resolve_workspace_layout(root);
     let mut charters: HashMap<String, Charter> = HashMap::new();
     let mut path_for_name: HashMap<String, PathBuf> = HashMap::new();
+    let mut action_file_paths: Vec<PathBuf> = Vec::new();
 
     for file_path in discover_action_files(&layout.data_root)? {
         let relative = file_path
@@ -41,6 +43,7 @@ pub fn load_domain_model(root: &Path) -> Result<DomainModel, WorkspaceError> {
             .and_modify(|c| c.plans.extend(charter.plans.clone()))
             .or_insert(charter);
         path_for_name.entry(name).or_insert(relative);
+        action_file_paths.push(file_path);
     }
 
     for file_path in discover_charter_files(&layout.data_root)? {
@@ -105,10 +108,19 @@ pub fn load_domain_model(root: &Path) -> Result<DomainModel, WorkspaceError> {
         }
     }
 
-    Ok(DomainModel {
+    let mut model = DomainModel {
         objectives: vec![],
         charters: charters.into_values().collect(),
-    })
+    };
+
+    let mut all_acts = Vec::new();
+    for file_path in &action_file_paths {
+        all_acts.extend(read_acts(&open_acts_path(file_path))?);
+        all_acts.extend(read_acts(&closed_acts_path(file_path))?);
+    }
+    merge_acts_into_model(&mut model, all_acts);
+
+    Ok(model)
 }
 
 fn parent_hints(

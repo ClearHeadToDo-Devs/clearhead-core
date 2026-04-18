@@ -1,0 +1,11 @@
+@prefix actions: <https://clearhead.us/vocab/actions/v4#> .
+@prefix cco: <https://www.commoncoreontologies.org/> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+# "Buy groceries" — NotStarted, due 2026-04-20 (upcoming, not overdue)
+<urn:uuid:01960000-0002-7001-0000-000000000001> a cco:ont00000228 ;
+    actions:hasUUID "01960000-0002-7001-0000-000000000001" ;
+    cco:ont00001920 <urn:uuid:01960000-0002-7000-0000-000000000001> ;
+    cco:ont00001868 actions:NotStarted ;
+    actions:hasDueDateTime "2026-04-20T17:00:00Z"^^xsd:dateTime ;
+    actions:hasCreatedDateTime "2026-04-15T09:00:00Z"^^xsd:dateTime .

@@ -14,7 +14,7 @@
         >[x] add charter markdown reading support  %2026-04-09T00:00 ^2026-04-03T07:32 #019d53c2-bb95-75a2-b3a7-a4ffa8ec98d1
                 >>[x] Add tests for a charter and action file  $ covered by explicit_charter_title_does_not_overwrite_alias and alias_is_always_set_after_load $ %2026-04-09T00:00 ^2026-04-04T00:07 #019d5751-abcf-71e2-932d-9ce91c9afae3
                 >>[x] Add tests for the charter AND subcharter scenario with an action file still  $ covered by parent_reference_uses_machine_key_not_title $ %2026-04-09T00:00 ^2026-04-04T00:08 #019d5752-7f4c-7c92-8fb5-390a6d2452aa
-        >[ ] add support for reading .ttl files for acts  ^2026-04-03T07:32 #019d53c2-bb95-75a2-b3a7-a50b4e7f3912
+        >[x] add support for reading .ttl files for acts  $ load_domain_model now reads .open.ttl and .closed.ttl sidecars via read_acts/merge_acts_into_model; 9 graph query tests added covering charter scoping, due date filtering, scheduled queries, and act round-trip %2026-04-17T00:00 ^2026-04-03T07:32 #019d53c2-bb95-75a2-b3a7-a50b4e7f3912
         >[x] fix the cargo check bugs from the rework  %2026-04-08T18:30 ^2026-04-03T07:36 #019d53c6-29d5-7562-8435-c8069d1b9018
 [ ] Add state concept in charters  $ right now the library doesnt encode state even if people do write it so we want to atleast capture it when necessary $ ^2026-04-03T23:47 #019d573f-95fd-7e93-a1ac-78dbec9be4b8
 [x] warn on unresolvable charter.parent during workspace load  $ eprintln! in load.rs warns with file path (from path_for_name), charter alias, and bad parent value; unresolvable_parent_does_not_crash_load test in workspace_store.rs; ManifestSourceType pub re-export bug fixed as side-effect %2026-04-17T00:00 ^2026-04-09T00:00 #019d7100-0001-7000-0000-000000000001

@@ -83,6 +83,13 @@ c
 cargo test -- --nocapture
 ```
 
+### Snapshots
+In addition, RON snapshots are the recommended method for structuring tests such that different datasets can be created according to a golden format
+
+please see the `tests` directory where we load some example fixtures and generates RON snapshots, this allows us to have end-to-end testing persistently on-disk
+
+for changes to the structure of the structs themselves be sure to update the RON
+
 ## Contributing
 
 Contributions are welcome! Please ensure:
