@@ -29,7 +29,7 @@ pub fn load_domain_model(root: &Path) -> Result<DomainModel, WorkspaceError> {
                 .ok_or_else(|| WorkspaceError::Parse("Failed to infer charter name".to_string()))?;
 
         let mut actions = super::super::parse_actions(&std::fs::read_to_string(&file_path)?)
-            .map_err(WorkspaceError::Parse)?;
+            .map_err(|e| WorkspaceError::Parse(format!("{}: {}", file_path.display(), e)))?;
 
         for action in &mut actions {
             if action.charter.is_none() {
@@ -56,7 +56,8 @@ pub fn load_domain_model(root: &Path) -> Result<DomainModel, WorkspaceError> {
                 .ok_or_else(|| WorkspaceError::Parse("Failed to infer charter name".to_string()))?;
 
         let explicit =
-            parse_charter(&std::fs::read_to_string(&file_path)?).map_err(WorkspaceError::Parse)?;
+            parse_charter(&std::fs::read_to_string(&file_path)?)
+                .map_err(|e| WorkspaceError::Parse(format!("{}: {}", file_path.display(), e)))?;
 
         charters
             .entry(name)
@@ -131,8 +132,16 @@ pub fn load_domain_model(root: &Path) -> Result<DomainModel, WorkspaceError> {
 
     let mut all_acts = Vec::new();
     for file_path in &action_file_paths {
-        all_acts.extend(read_acts(&open_acts_path(file_path))?);
-        all_acts.extend(read_acts(&closed_acts_path(file_path))?);
+        let open = open_acts_path(file_path);
+        let closed = closed_acts_path(file_path);
+        all_acts.extend(
+            read_acts(&open)
+                .map_err(|e| WorkspaceError::Acts(format!("{}: {}", open.display(), e)))?,
+        );
+        all_acts.extend(
+            read_acts(&closed)
+                .map_err(|e| WorkspaceError::Acts(format!("{}: {}", closed.display(), e)))?,
+        );
     }
     merge_acts_into_model(&mut model, all_acts);
 
