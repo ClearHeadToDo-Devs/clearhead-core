@@ -1,0 +1,14 @@
+[
+    (
+        path: "personal.actions",
+        charter_name: "personal",
+        inferred_parent: None,
+        source_type: Actions,
+    ),
+    (
+        path: "work.actions",
+        charter_name: "work",
+        inferred_parent: None,
+        source_type: Actions,
+    ),
+]

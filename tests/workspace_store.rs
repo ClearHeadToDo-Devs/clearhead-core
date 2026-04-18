@@ -403,6 +403,16 @@ fn model_to_ron(model: &clearhead_core::DomainModel) -> String {
         .expect("RON serialization failed")
 }
 
+/// Serialize a manifest to deterministic RON.
+///
+/// Entries are sorted by path so the output is stable across runs.
+fn manifest_to_ron(manifest: &[clearhead_core::WorkspaceManifestEntry]) -> String {
+    let mut sorted = manifest.to_vec();
+    sorted.sort_by(|a, b| a.path.cmp(&b.path));
+    ron::ser::to_string_pretty(&sorted, ron::ser::PrettyConfig::default())
+        .expect("RON serialization failed")
+}
+
 /// Assert `actual` matches the snapshot at `path`, creating it if absent.
 fn assert_snapshot(snapshot_path: &Path, actual: &str) {
     if !snapshot_path.exists() || std::env::var("UPDATE_SNAPSHOTS").is_ok() {
@@ -527,6 +537,9 @@ fn fixture_user_flat_manifest() {
     let work = manifest.iter().find(|e| e.charter_name == "work").unwrap();
     assert_eq!(work.source_type, ManifestSourceType::Actions);
     assert!(work.inferred_parent.is_none());
+
+    let ron = manifest_to_ron(&manifest);
+    assert_snapshot(&fixture_path("user-flat-manifest.ron"), &ron);
 }
 
 #[test]
@@ -547,6 +560,9 @@ fn fixture_project_nested_manifest() {
 
     let ops_entry = manifest.iter().find(|e| e.charter_name == "ops").unwrap();
     assert_eq!(ops_entry.inferred_parent.as_deref(), Some("work"));
+
+    let ron = manifest_to_ron(&manifest);
+    assert_snapshot(&fixture_path("project-nested-manifest.ron"), &ron);
 }
 
 #[test]
@@ -560,6 +576,9 @@ fn fixture_md_merge_manifest_source_type() {
         manifest[0].source_type,
         ManifestSourceType::ActionsPlusMarkdown
     );
+
+    let ron = manifest_to_ron(&manifest);
+    assert_snapshot(&fixture_path("md-merge-manifest.ron"), &ron);
 }
 
 #[test]

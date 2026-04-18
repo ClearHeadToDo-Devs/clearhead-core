@@ -1,0 +1,20 @@
+[
+    (
+        path: "next.actions",
+        charter_name: "project-nested",
+        inferred_parent: None,
+        source_type: Actions,
+    ),
+    (
+        path: "work.actions",
+        charter_name: "work",
+        inferred_parent: Some("project-nested"),
+        source_type: Actions,
+    ),
+    (
+        path: "work/ops.actions",
+        charter_name: "ops",
+        inferred_parent: Some("work"),
+        source_type: Actions,
+    ),
+]

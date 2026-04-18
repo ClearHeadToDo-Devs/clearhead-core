@@ -1,0 +1,8 @@
+[
+    (
+        path: "health.actions",
+        charter_name: "health",
+        inferred_parent: Some("md-merge"),
+        source_type: ActionsPlusMarkdown,
+    ),
+]
