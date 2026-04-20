@@ -71,7 +71,11 @@ pub fn parse_actions(input: &str) -> Result<ActionList, String> {
 /// Parse a `.actions` file into a `ParsedDocument` (actions + source metadata + errors).
 pub fn parse_document(input: &str) -> Result<ParsedDocument, String> {
     let tree = parse_tree(input)?;
-    TreeWrapper { tree, source: input.to_string() }.try_into()
+    TreeWrapper {
+        tree,
+        source: input.to_string(),
+    }
+    .try_into()
 }
 
 impl TryFrom<TreeWrapper> for ParsedDocument {
@@ -117,14 +121,25 @@ impl TryFrom<TreeWrapper> for ParsedDocument {
         for root_action in root.children(&mut cursor) {
             if root_action.kind() == "root_action" {
                 let wrapper = create_node_wrapper(root_action, value.source.clone());
-                action_list.extend(
-                    parse_action_recursive(wrapper, None, &mut source_map, &mut tag_index)
-                        .map_err(|e| e.to_string())?,
-                );
+                match parse_action_recursive(wrapper, None, &mut source_map, &mut tag_index) {
+                    Ok(parsed_actions) => action_list.extend(parsed_actions),
+                    Err(err) => {
+                        syntax_errors.push(LintDiagnostic::error(
+                            "action-parse-error",
+                            err.to_string(),
+                            SourceRange::from_node(&root_action),
+                        ));
+                    }
+                }
             }
         }
 
-        Ok(ParsedDocument { actions: action_list, source_map, tag_index, syntax_errors })
+        Ok(ParsedDocument {
+            actions: action_list,
+            source_map,
+            tag_index,
+            syntax_errors,
+        })
     }
 }
 
@@ -152,7 +167,9 @@ pub struct NodeWrapper<'a> {
 
 impl<'a> NodeWrapper<'a> {
     pub fn require_field(&self, field: &str) -> Result<Node<'a>, &'static str> {
-        self.node.child_by_field_name(field).ok_or("Missing required field")
+        self.node
+            .child_by_field_name(field)
+            .ok_or("Missing required field")
     }
 
     pub fn text(&self) -> String {
@@ -171,7 +188,10 @@ impl<'a> NodeWrapper<'a> {
         let mut cursor = self.node.walk();
         self.node
             .children_by_field_name(field, &mut cursor)
-            .map(|n| NodeWrapper { node: n, source: self.source.clone() })
+            .map(|n| NodeWrapper {
+                node: n,
+                source: self.source.clone(),
+            })
             .collect::<Vec<_>>()
             .into_iter()
     }
@@ -197,5 +217,6 @@ pub fn get_prefixed_text(node: &Node, source: &str, prefix: char) -> Option<Stri
 }
 
 pub fn get_field_text(node: &Node, source: &str, field: &str) -> Option<String> {
-    node.child_by_field_name(field).map(|n| get_node_text(&n, source))
+    node.child_by_field_name(field)
+        .map(|n| get_node_text(&n, source))
 }

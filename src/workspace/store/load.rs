@@ -28,8 +28,33 @@ pub fn load_domain_model(root: &Path) -> Result<DomainModel, WorkspaceError> {
             infer_charter_name_for_workspace(&relative, layout.project_root_charter.as_deref())
                 .ok_or_else(|| WorkspaceError::Parse("Failed to infer charter name".to_string()))?;
 
-        let mut actions = super::super::parse_actions(&std::fs::read_to_string(&file_path)?)
+        let action_source = std::fs::read_to_string(&file_path)?;
+        let parsed_doc = super::super::parse_document(&action_source)
             .map_err(|e| WorkspaceError::Parse(format!("{}: {}", file_path.display(), e)))?;
+        let mut actions = parsed_doc.actions;
+
+        if !parsed_doc.syntax_errors.is_empty() {
+            eprintln!(
+                "warning: [{}] parsed with {} issue(s); loaded {} recoverable action(s)",
+                file_path.display(),
+                parsed_doc.syntax_errors.len(),
+                actions.len()
+            );
+
+            for diagnostic in parsed_doc.syntax_errors.iter().take(5) {
+                eprintln!(
+                    "  - line {}, col {}: {}",
+                    diagnostic.range.start_row + 1,
+                    diagnostic.range.start_col + 1,
+                    diagnostic.message
+                );
+            }
+
+            let remaining = parsed_doc.syntax_errors.len().saturating_sub(5);
+            if remaining > 0 {
+                eprintln!("  - ... and {} more issue(s)", remaining);
+            }
+        }
 
         for action in &mut actions {
             if action.charter.is_none() {
@@ -55,9 +80,8 @@ pub fn load_domain_model(root: &Path) -> Result<DomainModel, WorkspaceError> {
             infer_charter_name_for_workspace(&relative, layout.project_root_charter.as_deref())
                 .ok_or_else(|| WorkspaceError::Parse("Failed to infer charter name".to_string()))?;
 
-        let explicit =
-            parse_charter(&std::fs::read_to_string(&file_path)?)
-                .map_err(|e| WorkspaceError::Parse(format!("{}: {}", file_path.display(), e)))?;
+        let explicit = parse_charter(&std::fs::read_to_string(&file_path)?)
+            .map_err(|e| WorkspaceError::Parse(format!("{}: {}", file_path.display(), e)))?;
 
         charters
             .entry(name)
@@ -86,13 +110,17 @@ pub fn load_domain_model(root: &Path) -> Result<DomainModel, WorkspaceError> {
         .filter_map(|(name, c)| c.alias.as_ref().map(|a| (name.clone(), a.clone())))
         .collect();
 
-    let resolved_hints: Vec<(String, String)> = parent_hints(&path_for_name, layout.project_root_charter.as_deref())
-        .into_iter()
-        .map(|(name, parent_name)| {
-            let alias = name_to_alias.get(&parent_name).cloned().unwrap_or(parent_name);
-            (name, alias)
-        })
-        .collect();
+    let resolved_hints: Vec<(String, String)> =
+        parent_hints(&path_for_name, layout.project_root_charter.as_deref())
+            .into_iter()
+            .map(|(name, parent_name)| {
+                let alias = name_to_alias
+                    .get(&parent_name)
+                    .cloned()
+                    .unwrap_or(parent_name);
+                (name, alias)
+            })
+            .collect();
 
     for (name, parent_alias) in resolved_hints {
         if let Some(charter) = charters.get_mut(&name)

@@ -421,7 +421,8 @@ fn assert_snapshot(snapshot_path: &Path, actual: &str) {
     }
     let expected = fs::read_to_string(snapshot_path).expect("failed to read snapshot");
     assert_eq!(
-        actual, expected,
+        actual,
+        expected,
         "snapshot mismatch — run with UPDATE_SNAPSHOTS=1 to regenerate: {}",
         snapshot_path.display()
     );
@@ -439,7 +440,11 @@ fn fixture_user_flat_charter_names_and_plan_counts() {
     let work = model.charters.iter().find(|c| c.title == "work").unwrap();
     assert_eq!(work.plans.len(), 3, "work: 2 top-level + 1 subtask");
 
-    let personal = model.charters.iter().find(|c| c.title == "personal").unwrap();
+    let personal = model
+        .charters
+        .iter()
+        .find(|c| c.title == "personal")
+        .unwrap();
     assert_eq!(personal.plans.len(), 2);
 }
 
@@ -530,7 +535,10 @@ fn fixture_user_flat_manifest() {
 
     assert_eq!(manifest.len(), 2);
 
-    let personal = manifest.iter().find(|e| e.charter_name == "personal").unwrap();
+    let personal = manifest
+        .iter()
+        .find(|e| e.charter_name == "personal")
+        .unwrap();
     assert_eq!(personal.source_type, ManifestSourceType::Actions);
     assert!(personal.inferred_parent.is_none());
 
@@ -553,10 +561,16 @@ fn fixture_project_nested_manifest() {
         .iter()
         .find(|e| e.charter_name == "project-nested")
         .unwrap();
-    assert!(root_entry.inferred_parent.is_none(), "project root has no parent");
+    assert!(
+        root_entry.inferred_parent.is_none(),
+        "project root has no parent"
+    );
 
     let work_entry = manifest.iter().find(|e| e.charter_name == "work").unwrap();
-    assert_eq!(work_entry.inferred_parent.as_deref(), Some("project-nested"));
+    assert_eq!(
+        work_entry.inferred_parent.as_deref(),
+        Some("project-nested")
+    );
 
     let ops_entry = manifest.iter().find(|e| e.charter_name == "ops").unwrap();
     assert_eq!(ops_entry.inferred_parent.as_deref(), Some("work"));
@@ -579,6 +593,27 @@ fn fixture_md_merge_manifest_source_type() {
 
     let ron = manifest_to_ron(&manifest);
     assert_snapshot(&fixture_path("md-merge-manifest.ron"), &ron);
+}
+
+#[test]
+fn load_recovers_valid_actions_when_file_has_parse_issues() {
+    let workspace = make_workspace(&[(
+        "work.actions",
+        "[ ] Valid one #01961111-0000-7000-0000-000000000001\n\
+         this line is malformed and should not be parsed\n\
+         [ ] Valid two #01961111-0000-7000-0000-000000000002\n",
+    )]);
+
+    let model = load_domain_model(workspace.path()).expect("load should recover valid actions");
+    let work = model
+        .charters
+        .iter()
+        .find(|c| c.title == "work")
+        .expect("work charter");
+
+    assert_eq!(work.plans.len(), 2, "valid actions should still be loaded");
+    assert!(work.plans.iter().any(|p| p.name == "Valid one"));
+    assert!(work.plans.iter().any(|p| p.name == "Valid two"));
 }
 
 #[test]
