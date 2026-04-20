@@ -3,8 +3,8 @@
 //! This module provides pure functions for semantic comparison of ActionLists
 //! and determining whether CRDT synchronization is needed.
 
-use crate::domain::diff::{DomainDiff, diff_domain_models};
 use crate::domain::DomainModel;
+use crate::domain::diff::{DomainDiff, diff_domain_models};
 use crate::workspace::actions::{ActionList, Diff, diff_actions};
 
 /// Compare two action lists semantically (ignoring formatting/whitespace)

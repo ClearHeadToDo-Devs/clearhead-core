@@ -399,7 +399,11 @@ impl Default for Plan {
 impl Plan {
     /// Construct a new plan with a generated UUIDv7 and all optional fields unset.
     pub fn new(name: impl Into<String>) -> Self {
-        Self { id: Uuid::now_v7(), name: name.into(), ..Default::default() }
+        Self {
+            id: Uuid::now_v7(),
+            name: name.into(),
+            ..Default::default()
+        }
     }
 }
 

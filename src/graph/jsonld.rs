@@ -8,10 +8,10 @@
 //! in `src/resources/` are used so export behavior and tests remain stable
 //! without network dependencies.
 
-use super::{create_store, GraphError, Result, Store};
+use super::{GraphError, Result, Store, create_store};
 use crate::domain::{ActPhase, Charter, DomainModel, Plan};
 use crate::graph::{load_domain_model, load_domain_model_from_store};
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 use std::collections::BTreeMap;
 
 const ACTIONS_CONTEXT_V4: &str = include_str!("../resources/actions.context.v4.json");
@@ -408,13 +408,17 @@ mod tests {
             .and_then(Value::as_array)
             .expect("@graph array");
 
-        assert!(graph
-            .iter()
-            .any(|n| n.get("type") == Some(&json!("Charter"))));
+        assert!(
+            graph
+                .iter()
+                .any(|n| n.get("type") == Some(&json!("Charter")))
+        );
         assert!(graph.iter().any(|n| n.get("type") == Some(&json!("Plan"))));
-        assert!(graph
-            .iter()
-            .any(|n| n.get("type") == Some(&json!("PlannedAct"))));
+        assert!(
+            graph
+                .iter()
+                .any(|n| n.get("type") == Some(&json!("PlannedAct")))
+        );
     }
 
     #[test]

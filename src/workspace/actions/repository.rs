@@ -72,5 +72,3 @@ impl ActionRepository {
         self.sourced_actions.is_empty()
     }
 }
-
-

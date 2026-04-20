@@ -22,8 +22,8 @@ use chrono::{DateTime, Utc};
 use serde::Serialize;
 use std::sync::Arc;
 
-use crate::workspace::actions::FieldChange;
 use crate::ActionState;
+use crate::workspace::actions::FieldChange;
 
 // =============================================================================
 // Domain Types

@@ -82,16 +82,12 @@ pub fn read_acts(path: &Path) -> Result<Vec<PlannedAct>, WorkspaceError> {
         return Ok(Vec::new());
     }
 
-    let content = std::fs::read_to_string(path)
-        .map_err(|e| WorkspaceError::Io(e))?;
+    let content = std::fs::read_to_string(path).map_err(|e| WorkspaceError::Io(e))?;
 
-    let store = graph::create_store()
-        .map_err(|e| WorkspaceError::Acts(e.to_string()))?;
-    graph::load_turtle(&store, &content)
-        .map_err(|e| WorkspaceError::Acts(e.to_string()))?;
+    let store = graph::create_store().map_err(|e| WorkspaceError::Acts(e.to_string()))?;
+    graph::load_turtle(&store, &content).map_err(|e| WorkspaceError::Acts(e.to_string()))?;
 
-    graph::load_planned_acts_from_store(&store)
-        .map_err(|e| WorkspaceError::Acts(e.to_string()))
+    graph::load_planned_acts_from_store(&store).map_err(|e| WorkspaceError::Acts(e.to_string()))
 }
 
 /// Write [`PlannedAct`]s to a Turtle file via oxigraph.
@@ -100,17 +96,14 @@ pub fn read_acts(path: &Path) -> Result<Vec<PlannedAct>, WorkspaceError> {
 pub fn write_acts(acts: &[PlannedAct], path: &Path) -> Result<(), WorkspaceError> {
     if let Some(parent) = path.parent() {
         if !parent.as_os_str().is_empty() {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| WorkspaceError::Io(e))?;
+            std::fs::create_dir_all(parent).map_err(|e| WorkspaceError::Io(e))?;
         }
     }
 
-    let store = graph::create_store()
-        .map_err(|e| WorkspaceError::Acts(e.to_string()))?;
-    graph::load_acts_into_store(&store, acts)
-        .map_err(|e| WorkspaceError::Acts(e.to_string()))?;
-    let ttl = graph::dump_store_to_turtle(&store)
-        .map_err(|e| WorkspaceError::Acts(e.to_string()))?;
+    let store = graph::create_store().map_err(|e| WorkspaceError::Acts(e.to_string()))?;
+    graph::load_acts_into_store(&store, acts).map_err(|e| WorkspaceError::Acts(e.to_string()))?;
+    let ttl =
+        graph::dump_store_to_turtle(&store).map_err(|e| WorkspaceError::Acts(e.to_string()))?;
 
     std::fs::write(path, ttl).map_err(|e| WorkspaceError::Io(e))
 }
@@ -315,8 +308,16 @@ mod tests {
         let plan_a = Uuid::new_v4();
         let plan_b = Uuid::new_v4();
 
-        let act_a = PlannedAct { id: Uuid::new_v4(), plan_id: plan_a, ..Default::default() };
-        let act_b = PlannedAct { id: Uuid::new_v4(), plan_id: plan_b, ..Default::default() };
+        let act_a = PlannedAct {
+            id: Uuid::new_v4(),
+            plan_id: plan_a,
+            ..Default::default()
+        };
+        let act_b = PlannedAct {
+            id: Uuid::new_v4(),
+            plan_id: plan_b,
+            ..Default::default()
+        };
 
         let tmp_dir = tempfile::tempdir().expect("tempdir");
         let path = tmp_dir.path().join("health.open.ttl");

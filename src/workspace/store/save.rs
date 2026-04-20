@@ -1,8 +1,8 @@
-use super::discovery::discover_action_files;
 use super::WorkspaceLayout;
-use super::{resolve_workspace_layout, WorkspaceError};
+use super::discovery::discover_action_files;
+use super::{WorkspaceError, resolve_workspace_layout};
 use crate::domain::{Charter, DomainModel, Plan};
-use crate::workspace::{format, Action, ActionList, OutputFormat};
+use crate::workspace::{Action, ActionList, OutputFormat, format};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
@@ -174,7 +174,6 @@ fn charter_reference_name(charter: &Charter) -> String {
         .clone()
         .unwrap_or_else(|| charter.title.clone())
 }
-
 
 fn actions_for_charter(charter: &Charter, charter_name: &str) -> ActionList {
     let mut plans: Vec<&Plan> = charter.plans.iter().collect();

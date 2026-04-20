@@ -2,7 +2,7 @@
 //!
 //! This module owns the "turn a store into text" direction.
 
-use super::{create_store, GraphError, Result, Store};
+use super::{GraphError, Result, Store, create_store};
 use crate::domain::{ActPhase, DomainModel, PlannedAct};
 use oxigraph::io::RdfFormat;
 use oxigraph::model::GraphNameRef;

@@ -536,7 +536,11 @@ mod tests {
     }
 
     fn make_act(id: Uuid, plan_id: Uuid) -> PlannedAct {
-        PlannedAct { id, plan_id, ..Default::default() }
+        PlannedAct {
+            id,
+            plan_id,
+            ..Default::default()
+        }
     }
 
     fn sample_model() -> DomainModel {

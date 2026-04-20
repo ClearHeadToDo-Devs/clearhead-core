@@ -1,9 +1,9 @@
 //! SPARQL query and graph reconstruction utilities.
 
 use super::{
-    actions_pred, bfo_pred, cco_node, rdfs_pred, GraphError, Result, Store, ACTIONS_NS, BFO_HAS_PART,
-    BFO_NS, BFO_PART_OF, CCO_IS_SUCCESSOR_OF, CCO_NS, CCO_PLAN, CCO_PLANNED_ACT, CCO_PRESCRIBED_BY,
-    CCO_PRESCRIBES, CCO_STATUS_PROP, RDFS_COMMENT, RDFS_LABEL,
+    ACTIONS_NS, BFO_HAS_PART, BFO_NS, BFO_PART_OF, CCO_IS_SUCCESSOR_OF, CCO_NS, CCO_PLAN,
+    CCO_PLANNED_ACT, CCO_PRESCRIBED_BY, CCO_PRESCRIBES, CCO_STATUS_PROP, GraphError, RDFS_COMMENT,
+    RDFS_LABEL, Result, Store, actions_pred, bfo_pred, cco_node, rdfs_pred,
 };
 use crate::domain::{ActPhase, Charter, DomainModel, Plan, PlannedAct, Recurrence};
 use chrono::{DateTime, Local};
@@ -250,10 +250,7 @@ fn get_charter_by_id(store: &Store, id: Uuid) -> Result<Charter> {
     })
 }
 
-fn query_charter_parent_alias_or_title(
-    store: &Store,
-    child_id: Uuid,
-) -> Result<Option<String>> {
+fn query_charter_parent_alias_or_title(store: &Store, child_id: Uuid) -> Result<Option<String>> {
     let q = format!(
         "SELECT ?pid WHERE {{ \
             ?parent a <{actions}Charter> ; <{actions}hasSubCharter> <urn:uuid:{child}> ; <{actions}hasUUID> ?pid . \
@@ -280,12 +277,7 @@ fn query_ids(store: &Store, sparql: &str, var_name: &str) -> Result<Vec<String>>
         .collect())
 }
 
-fn query_uuids(
-    store: &Store,
-    sparql: &str,
-    var_name: &str,
-    kind: &str,
-) -> Result<Vec<Uuid>> {
+fn query_uuids(store: &Store, sparql: &str, var_name: &str, kind: &str) -> Result<Vec<Uuid>> {
     query_ids(store, sparql, var_name)?
         .into_iter()
         .map(|id| parse_uuid(&id, kind))
@@ -324,8 +316,12 @@ fn execute_select_rows(store: &Store, sparql: &str) -> Result<Vec<Row>> {
             }
             Ok(rows)
         }
-        QueryResults::Boolean(_) => Err(GraphError::Query("ASK queries not supported; use SELECT".to_string())),
-        QueryResults::Graph(_) => Err(GraphError::Query("CONSTRUCT/DESCRIBE not supported; use SELECT".to_string())),
+        QueryResults::Boolean(_) => Err(GraphError::Query(
+            "ASK queries not supported; use SELECT".to_string(),
+        )),
+        QueryResults::Graph(_) => Err(GraphError::Query(
+            "CONSTRUCT/DESCRIBE not supported; use SELECT".to_string(),
+        )),
     }
 }
 
@@ -338,7 +334,8 @@ fn stringify_term(term: &Term) -> String {
 }
 
 fn parse_uuid(value: &str, kind: &str) -> Result<Uuid> {
-    Uuid::parse_str(value).map_err(|e| GraphError::Domain(format!("Invalid {kind} UUID '{}': {}", value, e)))
+    Uuid::parse_str(value)
+        .map_err(|e| GraphError::Domain(format!("Invalid {kind} UUID '{}': {}", value, e)))
 }
 
 struct NodeView<'a> {
@@ -573,10 +570,9 @@ mod tests {
                     }),
                     alias: Some("graph_tests".to_string()),
                     is_sequential: Some(true),
-                    depends_on: Some(vec![Uuid::parse_str(
-                        "019d7100-4444-7444-8444-444444444444",
-                    )
-                    .unwrap()]),
+                    depends_on: Some(vec![
+                        Uuid::parse_str("019d7100-4444-7444-8444-444444444444").unwrap(),
+                    ]),
                     acts: vec![PlannedAct {
                         id: act_id,
                         plan_id,

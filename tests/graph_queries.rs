@@ -41,13 +41,20 @@ fn all_plans_visible_in_graph() {
     ";
 
     let rows = query_raw(&store, sparql).expect("query");
-    let names: Vec<&str> = rows.iter().filter_map(|r| r.get("name").map(String::as_str)).collect();
+    let names: Vec<&str> = rows
+        .iter()
+        .filter_map(|r| r.get("name").map(String::as_str))
+        .collect();
 
-    assert!(names.contains(&"Write quarterly report"), "got: {:?}", names);
-    assert!(names.contains(&"Review team PRs"),        "got: {:?}", names);
-    assert!(names.contains(&"Backend PRs"),            "got: {:?}", names);
-    assert!(names.contains(&"Buy groceries"),          "got: {:?}", names);
-    assert!(names.contains(&"Morning run"),            "got: {:?}", names);
+    assert!(
+        names.contains(&"Write quarterly report"),
+        "got: {:?}",
+        names
+    );
+    assert!(names.contains(&"Review team PRs"), "got: {:?}", names);
+    assert!(names.contains(&"Backend PRs"), "got: {:?}", names);
+    assert!(names.contains(&"Buy groceries"), "got: {:?}", names);
+    assert!(names.contains(&"Morning run"), "got: {:?}", names);
 }
 
 // ============================================================================
@@ -72,8 +79,10 @@ fn every_plan_has_exactly_one_act() {
     let rows = query_raw(&store, sparql).expect("query");
     for row in &rows {
         assert_eq!(
-            row.get("act_count").map(String::as_str), Some("1"),
-            "plan '{}' should have exactly 1 act", row.get("name").unwrap_or(&"?".to_string())
+            row.get("act_count").map(String::as_str),
+            Some("1"),
+            "plan '{}' should have exactly 1 act",
+            row.get("name").unwrap_or(&"?".to_string())
         );
     }
     assert_eq!(rows.len(), 5, "expected 5 plans with acts");
@@ -89,7 +98,11 @@ fn sidecar_act_replaces_synthetic_for_loaded_plan() {
 
     // Domain model: sidecar replaced synthetic — InProgress, not the default NotStarted
     let work = model.charters.iter().find(|c| c.title == "work").unwrap();
-    let report = work.plans.iter().find(|p| p.name == "Write quarterly report").unwrap();
+    let report = work
+        .plans
+        .iter()
+        .find(|p| p.name == "Write quarterly report")
+        .unwrap();
     assert_eq!(report.acts.len(), 1);
     assert_eq!(report.acts[0].phase, ActPhase::InProgress);
 
@@ -108,8 +121,12 @@ fn sidecar_act_replaces_synthetic_for_loaded_plan() {
     let rows = query_raw(&store, sparql).expect("query");
     assert_eq!(rows.len(), 1);
     assert!(
-        rows[0].get("status").map(|s| s.ends_with("InProgress")).unwrap_or(false),
-        "expected InProgress, got: {:?}", rows[0].get("status")
+        rows[0]
+            .get("status")
+            .map(|s| s.ends_with("InProgress"))
+            .unwrap_or(false),
+        "expected InProgress, got: {:?}",
+        rows[0].get("status")
     );
 }
 
@@ -133,13 +150,25 @@ fn in_progress_acts_surface_only_sidecar_sourced_plan() {
     ";
 
     let rows = query_raw(&store, sparql).expect("query");
-    let names: Vec<&str> = rows.iter().filter_map(|r| r.get("name").map(String::as_str)).collect();
+    let names: Vec<&str> = rows
+        .iter()
+        .filter_map(|r| r.get("name").map(String::as_str))
+        .collect();
 
     // "Morning run" is [-] (deferred → InProgress synthetic act)
     // "Write quarterly report" is InProgress from the sidecar act
-    assert!(names.contains(&"Write quarterly report"), "got: {:?}", names);
-    assert!(names.contains(&"Morning run"),            "got: {:?}", names);
-    assert_eq!(names.len(), 2, "expected exactly 2 InProgress plans, got: {:?}", names);
+    assert!(
+        names.contains(&"Write quarterly report"),
+        "got: {:?}",
+        names
+    );
+    assert!(names.contains(&"Morning run"), "got: {:?}", names);
+    assert_eq!(
+        names.len(),
+        2,
+        "expected exactly 2 InProgress plans, got: {:?}",
+        names
+    );
 }
 
 // ============================================================================
@@ -150,7 +179,8 @@ fn in_progress_acts_surface_only_sidecar_sourced_plan() {
 fn plans_scoped_to_charter_by_label() {
     let (_, store) = user_flat_store();
 
-    let sparql = format!("
+    let sparql = format!(
+        "
         PREFIX actions: <{ACTIONS}>
         PREFIX cco: <{CCO}>
         PREFIX bfo: <{BFO}>
@@ -160,20 +190,28 @@ fn plans_scoped_to_charter_by_label() {
                      bfo:BFO_0000051 ?plan .
             ?plan a cco:ont00000974 ; rdfs:label ?name .
         }} ORDER BY ?name
-    ");
+    "
+    );
 
     let rows = query_raw(&store, &sparql).expect("query");
-    let names: Vec<&str> = rows.iter().filter_map(|r| r.get("name").map(String::as_str)).collect();
+    let names: Vec<&str> = rows
+        .iter()
+        .filter_map(|r| r.get("name").map(String::as_str))
+        .collect();
 
-    assert_eq!(names, vec!["Backend PRs", "Review team PRs", "Write quarterly report"],
-        "work charter should contain exactly these plans");
+    assert_eq!(
+        names,
+        vec!["Backend PRs", "Review team PRs", "Write quarterly report"],
+        "work charter should contain exactly these plans"
+    );
 }
 
 #[test]
 fn plans_scoped_to_charter_by_alias() {
     let (_, store) = user_flat_store();
 
-    let sparql = format!("
+    let sparql = format!(
+        "
         PREFIX actions: <{ACTIONS}>
         PREFIX cco: <{CCO}>
         PREFIX bfo: <{BFO}>
@@ -183,13 +221,17 @@ fn plans_scoped_to_charter_by_alias() {
                      bfo:BFO_0000051 ?plan .
             ?plan a cco:ont00000974 ; rdfs:label ?name .
         }} ORDER BY ?name
-    ");
+    "
+    );
 
     let rows = query_raw(&store, &sparql).expect("query");
-    let names: Vec<&str> = rows.iter().filter_map(|r| r.get("name").map(String::as_str)).collect();
+    let names: Vec<&str> = rows
+        .iter()
+        .filter_map(|r| r.get("name").map(String::as_str))
+        .collect();
 
     assert!(names.contains(&"Buy groceries"), "got: {:?}", names);
-    assert!(names.contains(&"Morning run"),   "got: {:?}", names);
+    assert!(names.contains(&"Morning run"), "got: {:?}", names);
     assert_eq!(names.len(), 2);
 }
 
@@ -203,7 +245,8 @@ fn overdue_acts_returned_for_cutoff_date() {
 
     // Cutoff: 2026-04-17 end of day — "Write quarterly report" (due 2026-04-10) is overdue
     // "Buy groceries" (due 2026-04-20) is not
-    let sparql = format!("
+    let sparql = format!(
+        "
         PREFIX actions: <{ACTIONS}>
         PREFIX cco: <{CCO}>
         PREFIX rdfs: <{RDFS}>
@@ -216,13 +259,21 @@ fn overdue_acts_returned_for_cutoff_date() {
             FILTER(?due_date <= \"2026-04-17T23:59:59Z\"^^xsd:dateTime)
             ?plan cco:ont00001942 ?act ; rdfs:label ?plan_name .
         }} ORDER BY ?due_date
-    ");
+    "
+    );
 
     let rows = query_raw(&store, &sparql).expect("query");
-    let names: Vec<&str> = rows.iter().filter_map(|r| r.get("plan_name").map(String::as_str)).collect();
+    let names: Vec<&str> = rows
+        .iter()
+        .filter_map(|r| r.get("plan_name").map(String::as_str))
+        .collect();
 
-    assert_eq!(names, vec!["Write quarterly report"],
-        "only overdue plan should appear; got: {:?}", names);
+    assert_eq!(
+        names,
+        vec!["Write quarterly report"],
+        "only overdue plan should appear; got: {:?}",
+        names
+    );
 }
 
 #[test]
@@ -230,7 +281,8 @@ fn upcoming_acts_returned_after_cutoff() {
     let (_, store) = user_flat_store();
 
     // Acts due AFTER the cutoff — "Buy groceries" (due 2026-04-20) should appear
-    let sparql = format!("
+    let sparql = format!(
+        "
         PREFIX actions: <{ACTIONS}>
         PREFIX cco: <{CCO}>
         PREFIX rdfs: <{RDFS}>
@@ -243,13 +295,21 @@ fn upcoming_acts_returned_after_cutoff() {
             FILTER(?due_date > \"2026-04-17T23:59:59Z\"^^xsd:dateTime)
             ?plan cco:ont00001942 ?act ; rdfs:label ?plan_name .
         }} ORDER BY ?due_date
-    ");
+    "
+    );
 
     let rows = query_raw(&store, &sparql).expect("query");
-    let names: Vec<&str> = rows.iter().filter_map(|r| r.get("plan_name").map(String::as_str)).collect();
+    let names: Vec<&str> = rows
+        .iter()
+        .filter_map(|r| r.get("plan_name").map(String::as_str))
+        .collect();
 
-    assert_eq!(names, vec!["Buy groceries"],
-        "only upcoming plan should appear; got: {:?}", names);
+    assert_eq!(
+        names,
+        vec!["Buy groceries"],
+        "only upcoming plan should appear; got: {:?}",
+        names
+    );
 }
 
 // ============================================================================
@@ -261,7 +321,8 @@ fn scheduled_acts_on_or_before_date() {
     let (_, store) = user_flat_store();
 
     // "Write quarterly report" has hasScheduledDateTime 2026-04-17T09:00:00Z
-    let sparql = format!("
+    let sparql = format!(
+        "
         PREFIX actions: <{ACTIONS}>
         PREFIX cco: <{CCO}>
         PREFIX rdfs: <{RDFS}>
@@ -274,11 +335,19 @@ fn scheduled_acts_on_or_before_date() {
             FILTER(?scheduled_at <= \"2026-04-17T23:59:59Z\"^^xsd:dateTime)
             ?plan cco:ont00001942 ?act ; rdfs:label ?plan_name .
         }} ORDER BY ?scheduled_at
-    ");
+    "
+    );
 
     let rows = query_raw(&store, &sparql).expect("query");
-    let names: Vec<&str> = rows.iter().filter_map(|r| r.get("plan_name").map(String::as_str)).collect();
+    let names: Vec<&str> = rows
+        .iter()
+        .filter_map(|r| r.get("plan_name").map(String::as_str))
+        .collect();
 
-    assert_eq!(names, vec!["Write quarterly report"],
-        "only scheduled-today plan should appear; got: {:?}", names);
+    assert_eq!(
+        names,
+        vec!["Write quarterly report"],
+        "only scheduled-today plan should appear; got: {:?}",
+        names
+    );
 }

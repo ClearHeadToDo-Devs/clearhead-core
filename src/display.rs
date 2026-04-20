@@ -5,7 +5,7 @@
 
 use crate::domain::{ActPhase, DomainModel, Plan};
 use crate::workspace::actions::format::{
-    DEFAULT_COLUMNS, TableFormatOptions, COLUMN_NAMES, columns_to_show, columns_without,
+    COLUMN_NAMES, DEFAULT_COLUMNS, TableFormatOptions, columns_to_show, columns_without,
 };
 use comfy_table::{Cell, Color, ContentArrangement, Table, presets::UTF8_FULL};
 

@@ -11,12 +11,9 @@
 use clearhead_core::{ActionState, parse_actions, parse_document};
 
 // Use compile-time embedding so fixture content is verified to exist at build time.
-const WORK_ACTIONS: &str =
-    include_str!("fixtures/workspace/user-flat/work.actions");
-const PERSONAL_ACTIONS: &str =
-    include_str!("fixtures/workspace/user-flat/personal.actions");
-const HEALTH_ACTIONS: &str =
-    include_str!("fixtures/workspace/md-merge/.clearhead/health.actions");
+const WORK_ACTIONS: &str = include_str!("fixtures/workspace/user-flat/work.actions");
+const PERSONAL_ACTIONS: &str = include_str!("fixtures/workspace/user-flat/personal.actions");
+const HEALTH_ACTIONS: &str = include_str!("fixtures/workspace/md-merge/.clearhead/health.actions");
 
 #[test]
 fn work_actions_count_and_uuids() {
@@ -24,11 +21,11 @@ fn work_actions_count_and_uuids() {
 
     assert_eq!(actions.len(), 3, "expected 2 top-level + 1 child");
 
-    let write = actions.iter().find(|a| a.name == "Write quarterly report").expect("missing");
-    assert_eq!(
-        write.id.to_string(),
-        "01960000-0001-7000-0000-000000000001"
-    );
+    let write = actions
+        .iter()
+        .find(|a| a.name == "Write quarterly report")
+        .expect("missing");
+    assert_eq!(write.id.to_string(), "01960000-0001-7000-0000-000000000001");
     assert_eq!(write.state, ActionState::NotStarted);
     assert!(write.parent_id.is_none());
 }
@@ -37,8 +34,14 @@ fn work_actions_count_and_uuids() {
 fn work_actions_parent_child_link() {
     let actions = parse_actions(WORK_ACTIONS).expect("parse failed");
 
-    let review = actions.iter().find(|a| a.name == "Review team PRs").expect("missing");
-    let backend = actions.iter().find(|a| a.name == "Backend PRs").expect("missing");
+    let review = actions
+        .iter()
+        .find(|a| a.name == "Review team PRs")
+        .expect("missing");
+    let backend = actions
+        .iter()
+        .find(|a| a.name == "Backend PRs")
+        .expect("missing");
 
     assert_eq!(
         backend.parent_id,
@@ -51,14 +54,20 @@ fn work_actions_parent_child_link() {
 fn personal_actions_inprogress_state() {
     let actions = parse_actions(PERSONAL_ACTIONS).expect("parse failed");
 
-    let run = actions.iter().find(|a| a.name == "Morning run").expect("missing");
+    let run = actions
+        .iter()
+        .find(|a| a.name == "Morning run")
+        .expect("missing");
     assert_eq!(
         run.state,
         ActionState::InProgress,
         "Morning run should be InProgress ([-])"
     );
 
-    let groceries = actions.iter().find(|a| a.name == "Buy groceries").expect("missing");
+    let groceries = actions
+        .iter()
+        .find(|a| a.name == "Buy groceries")
+        .expect("missing");
     assert_eq!(groceries.state, ActionState::NotStarted);
 }
 
@@ -72,7 +81,10 @@ fn health_actions_plan_count_and_names() {
     assert!(names.contains(&"Meal prep"));
 
     for action in &actions {
-        assert!(action.parent_id.is_none(), "health actions should all be top-level");
+        assert!(
+            action.parent_id.is_none(),
+            "health actions should all be top-level"
+        );
         assert_eq!(action.state, ActionState::NotStarted);
     }
 }

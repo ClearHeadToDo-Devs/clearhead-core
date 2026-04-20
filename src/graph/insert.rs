@@ -3,9 +3,9 @@
 //! This module owns the "put things in" direction: domain model → RDF triples.
 
 use super::{
-    actions_pred, bfo_pred, cco_node, ns, phase_node, rdf_type, rdfs_pred, GraphError, Result,
-    Store, BFO_HAS_PART, BFO_PART_OF, CCO_IS_SUCCESSOR_OF, CCO_PLAN, CCO_PLANNED_ACT,
-    CCO_PRESCRIBED_BY, CCO_PRESCRIBES, CCO_STATUS_PROP, RDFS_COMMENT, RDFS_LABEL, XSD_NS,
+    BFO_HAS_PART, BFO_PART_OF, CCO_IS_SUCCESSOR_OF, CCO_PLAN, CCO_PLANNED_ACT, CCO_PRESCRIBED_BY,
+    CCO_PRESCRIBES, CCO_STATUS_PROP, GraphError, RDFS_COMMENT, RDFS_LABEL, Result, Store, XSD_NS,
+    actions_pred, bfo_pred, cco_node, ns, phase_node, rdf_type, rdfs_pred,
 };
 use crate::domain::{Charter, DomainModel, Plan, PlannedAct};
 use crate::workspace::actions::convert::INBOX_CHARTER_NS;
@@ -344,10 +344,9 @@ mod tests {
                     }),
                     alias: Some("graph_tests".to_string()),
                     is_sequential: Some(true),
-                    depends_on: Some(vec![Uuid::parse_str(
-                        "019d7100-4444-7444-8444-444444444444",
-                    )
-                    .unwrap()]),
+                    depends_on: Some(vec![
+                        Uuid::parse_str("019d7100-4444-7444-8444-444444444444").unwrap(),
+                    ]),
                     acts: vec![PlannedAct {
                         id: act_id,
                         plan_id,

@@ -191,7 +191,10 @@ mod tests {
             let mut action = make_action("task");
             action.state = action_state;
             let plan = Plan::from(&action);
-            assert_eq!(plan.acts[0].phase, expected_phase, "state: {action_state:?}");
+            assert_eq!(
+                plan.acts[0].phase, expected_phase,
+                "state: {action_state:?}"
+            );
         }
     }
 
@@ -260,8 +263,14 @@ mod tests {
         let mut action = make_action("task");
         let resolved_id = Uuid::new_v4();
         action.predecessors = Some(vec![
-            PredecessorRef { raw_ref: "some name".to_string(), resolved_uuid: None },
-            PredecessorRef { raw_ref: resolved_id.to_string(), resolved_uuid: Some(resolved_id) },
+            PredecessorRef {
+                raw_ref: "some name".to_string(),
+                resolved_uuid: None,
+            },
+            PredecessorRef {
+                raw_ref: resolved_id.to_string(),
+                resolved_uuid: Some(resolved_id),
+            },
         ]);
 
         let plan = Plan::from(&action);
@@ -278,7 +287,11 @@ mod tests {
         let make_plan = |id: Uuid, name: &str| Plan {
             id,
             name: name.to_string(),
-            acts: vec![PlannedAct { id: Uuid::new_v5(&id, b"act-0"), plan_id: id, ..Default::default() }],
+            acts: vec![PlannedAct {
+                id: Uuid::new_v5(&id, b"act-0"),
+                plan_id: id,
+                ..Default::default()
+            }],
             ..Default::default()
         };
 
@@ -286,7 +299,11 @@ mod tests {
             charters: vec![Charter {
                 id: Uuid::new_v4(),
                 title: "test".to_string(),
-                plans: vec![make_plan(id_a, "Alpha"), make_plan(id_b, "Beta"), make_plan(id_c, "Gamma")],
+                plans: vec![
+                    make_plan(id_a, "Alpha"),
+                    make_plan(id_b, "Beta"),
+                    make_plan(id_c, "Gamma"),
+                ],
                 ..Default::default()
             }],
             objectives: vec![],
@@ -331,7 +348,11 @@ mod tests {
     #[test]
     fn representative_act_synthesizes_blank_when_no_acts() {
         let plan_id = Uuid::new_v4();
-        let plan = Plan { id: plan_id, name: "empty".to_string(), ..Default::default() };
+        let plan = Plan {
+            id: plan_id,
+            name: "empty".to_string(),
+            ..Default::default()
+        };
 
         let action = Action::from(&plan);
         assert_eq!(action.do_duration, None);

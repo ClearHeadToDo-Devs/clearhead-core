@@ -1,12 +1,12 @@
 use super::source::{
     NodeWrapper, SourceMetadata, SourceRange, create_node_wrapper, get_node_text, get_prefixed_text,
 };
-use tree_sitter::Tree;
 use crate::domain::Recurrence;
 use chrono::{DateTime, Local};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt;
+use tree_sitter::Tree;
 use uuid::Uuid;
 
 /// A collection of [`Action`]s, typically representing a parsed `.actions` document.
@@ -110,7 +110,7 @@ impl Default for Action {
             recurrence: None,
             due_date_time: None,
             due_recurrence: None,
-                        completed_date_time: None,
+            completed_date_time: None,
             created_date_time: Some(Local::now()),
             predecessors: None,
             charter: None,
@@ -844,7 +844,7 @@ mod tests {
             recurrence: None,
             due_date_time: None,
             due_recurrence: None,
-                        completed_date_time: None,
+            completed_date_time: None,
             created_date_time: None,
             predecessors: Some(vec![pred_ref]),
             charter: None,
