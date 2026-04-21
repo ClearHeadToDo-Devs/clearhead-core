@@ -22,10 +22,7 @@ pub use actions::{
     SourceRange, SourcedAction, diff_actions, format, parse_actions, parse_actions_with_mode,
     parse_document, parse_tree, patch_action_list,
 };
-pub use acts::{
-    closed_acts_path, merge_acts_into_model, open_acts_path, read_acts, write_acts,
-    write_acts_for_plans,
-};
+pub use acts::{completed_acts_path, read_acts, write_acts};
 pub use charter::{format_charter, implicit_charter, parse_charter};
 pub use ics::occurrence_act_id;
 pub use plans::{

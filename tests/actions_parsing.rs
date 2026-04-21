@@ -26,7 +26,7 @@ fn work_actions_count_and_uuids() {
         .find(|a| a.name == "Write quarterly report")
         .expect("missing");
     assert_eq!(write.id.to_string(), "01960000-0001-7000-0000-000000000001");
-    assert_eq!(write.state, ActionState::NotStarted);
+    assert_eq!(write.state, ActionState::InProgress);
     assert!(write.parent_id.is_none());
 }
 

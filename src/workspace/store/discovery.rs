@@ -5,6 +5,13 @@ use std::path::{Path, PathBuf};
 pub(crate) fn discover_action_files(dir: &Path) -> Result<Vec<PathBuf>, WorkspaceError> {
     let mut files = Vec::new();
     discover_recursive(dir, "actions", &mut files)?;
+    // Exclude `.completed.actions` files — those are closed-act archives, not plan/act sources.
+    files.retain(|p| {
+        p.file_name()
+            .and_then(|n| n.to_str())
+            .map(|n| !n.ends_with(".completed.actions"))
+            .unwrap_or(true)
+    });
     files.sort();
     Ok(files)
 }

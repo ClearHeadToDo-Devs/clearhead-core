@@ -3,7 +3,6 @@ use super::pathing::{infer_charter_name_for_workspace, infer_parent_charter_name
 use super::{WorkspaceError, resolve_workspace_layout};
 use crate::domain::{Charter, DomainModel};
 use crate::workspace::actions::convert::from_actions_with_charter;
-use crate::workspace::acts::{closed_acts_path, merge_acts_into_model, open_acts_path, read_acts};
 use crate::workspace::charter::parse_charter;
 use crate::workspace::ics::parse_ics_file;
 use crate::workspace::plans::collect_plan_files;
@@ -19,7 +18,6 @@ pub fn load_domain_model(root: &Path) -> Result<DomainModel, WorkspaceError> {
     let layout = resolve_workspace_layout(root);
     let mut charters: HashMap<String, Charter> = HashMap::new();
     let mut path_for_name: HashMap<String, PathBuf> = HashMap::new();
-    let mut action_file_paths: Vec<PathBuf> = Vec::new();
 
     for file_path in discover_action_files(&layout.data_root)? {
         let relative = file_path
@@ -70,7 +68,6 @@ pub fn load_domain_model(root: &Path) -> Result<DomainModel, WorkspaceError> {
             .and_modify(|c| c.plans.extend(charter.plans.clone()))
             .or_insert(charter);
         path_for_name.entry(name).or_insert(relative);
-        action_file_paths.push(file_path);
     }
 
     for file_path in discover_charter_files(&layout.data_root)? {
@@ -159,21 +156,6 @@ pub fn load_domain_model(root: &Path) -> Result<DomainModel, WorkspaceError> {
         objectives: vec![],
         charters: charters.into_values().collect(),
     };
-
-    let mut all_acts = Vec::new();
-    for file_path in &action_file_paths {
-        let open = open_acts_path(file_path);
-        let closed = closed_acts_path(file_path);
-        all_acts.extend(
-            read_acts(&open)
-                .map_err(|e| WorkspaceError::Acts(format!("{}: {}", open.display(), e)))?,
-        );
-        all_acts.extend(
-            read_acts(&closed)
-                .map_err(|e| WorkspaceError::Acts(format!("{}: {}", closed.display(), e)))?,
-        );
-    }
-    merge_acts_into_model(&mut model, all_acts);
 
     // Load ICS schedules: each .ics VEVENT becomes a Plan in the matching charter.
     for entry in collect_plan_files(&layout.data_root)? {

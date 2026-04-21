@@ -578,58 +578,6 @@ impl DomainModel {
             .collect()
     }
 
-    /// Expand recurring plans into multiple PlannedActs up to a limit of days.
-    pub fn expand_recurring_plans(&mut self, days: u32) {
-        use chrono::Duration;
-
-        let now = Local::now();
-        let end_date = now + Duration::days(days as i64);
-
-        for charter in &mut self.charters {
-            for plan in &mut charter.plans {
-                if plan.recurrence.is_some() {
-                    let dtstart = charter
-                        .acts
-                        .iter()
-                        .find(|a| a.plan_id == Some(plan.id))
-                        .and_then(|a| a.scheduled_at);
-                    let dtstart = match dtstart {
-                        Some(dt) => dt,
-                        None => continue,
-                    };
-
-                    let existing_ids: std::collections::HashSet<Uuid> =
-                        charter.acts.iter().map(|a| a.id).collect();
-
-                    let occurrences = plan.expand_occurrences(dtstart, 1000);
-                    let template_duration = charter
-                        .acts
-                        .iter()
-                        .find(|a| a.plan_id == Some(plan.id))
-                        .and_then(|a| a.duration);
-                    for (i, occ) in occurrences.iter().enumerate() {
-                        let occ_local = occ.with_timezone(&Local);
-                        if occ_local > end_date {
-                            break;
-                        }
-
-                        let act_id = Uuid::new_v5(&plan.id, format!("act-{}", i).as_bytes());
-
-                        if !existing_ids.contains(&act_id) {
-                            charter.acts.push(PlannedAct {
-                                id: act_id,
-                                plan_id: Some(plan.id),
-                                scheduled_at: Some(occ_local),
-                                duration: template_duration,
-                                created_at: Some(now),
-                                ..Default::default()
-                            });
-                        }
-                    }
-                }
-            }
-        }
-    }
 }
 
 #[cfg(test)]
@@ -674,42 +622,4 @@ mod tests {
         assert_eq!(occurrences[2].format("%Y-%m-%d").to_string(), "2025-01-03");
     }
 
-    #[test]
-    fn test_expand_acts_running_twice_should_not_change_structure() {
-        let mut model = DomainModel::new();
-
-        let plan_id = Uuid::new_v4();
-
-        let charter = Charter {
-            id: Uuid::new_v4(),
-            title: "Test Charter".to_string(),
-            plans: vec![Plan {
-                id: plan_id,
-                name: "Test Recurring".to_string(),
-                recurrence: Some(Recurrence {
-                    frequency: "daily".to_string(),
-                    interval: Some(1),
-                    count: Some(2),
-                    ..Default::default()
-                }),
-                ..Default::default()
-            }],
-            acts: vec![PlannedAct {
-                id: Uuid::new_v4(),
-                plan_id: Some(plan_id),
-                scheduled_at: Some(Local::now()),
-                duration: Some(30),
-                created_at: Some(Local::now()),
-                ..Default::default()
-            }],
-            ..Default::default()
-        };
-
-        model.charters.push(charter);
-
-        model.expand_recurring_plans(7);
-        assert_eq!(model.all_acts().len(), 3);
-        model.expand_recurring_plans(7);
-        assert_eq!(model.all_acts().len(), 3); // No duplicates should be created
-    }
 }

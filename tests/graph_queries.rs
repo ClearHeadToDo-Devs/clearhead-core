@@ -89,14 +89,14 @@ fn every_plan_has_exactly_one_act() {
 }
 
 // ============================================================================
-// Sidecar act is loaded and wins over the synthetic representative
+// Act state from .actions file is reflected in domain model and graph
 // ============================================================================
 
 #[test]
-fn sidecar_act_replaces_synthetic_for_loaded_plan() {
+fn act_state_from_actions_file_is_reflected_in_graph() {
     let (model, store) = user_flat_store();
 
-    // Domain model: sidecar replaced synthetic — InProgress, not the default NotStarted
+    // Domain model: act state from .actions file — InProgress ([-]), not default NotStarted
     let work = model.charters.iter().find(|c| c.title == "work").unwrap();
     let report = work
         .plans
@@ -140,7 +140,7 @@ fn sidecar_act_replaces_synthetic_for_loaded_plan() {
 // ============================================================================
 
 #[test]
-fn in_progress_acts_surface_only_sidecar_sourced_plan() {
+fn in_progress_acts_listed_correctly() {
     let (_, store) = user_flat_store();
 
     let sparql = "
@@ -160,8 +160,8 @@ fn in_progress_acts_surface_only_sidecar_sourced_plan() {
         .filter_map(|r| r.get("name").map(String::as_str))
         .collect();
 
-    // "Morning run" is [-] (deferred → InProgress synthetic act)
-    // "Write quarterly report" is InProgress from the sidecar act
+    // "Morning run" is [-] in personal.actions
+    // "Write quarterly report" is [-] in work.actions
     assert!(
         names.contains(&"Write quarterly report"),
         "got: {:?}",
