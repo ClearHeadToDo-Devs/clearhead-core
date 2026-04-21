@@ -56,6 +56,14 @@ pub enum PlanFieldChange {
         old: Option<Vec<Uuid>>,
         new: Option<Vec<Uuid>>,
     },
+    ExternalId {
+        old: Option<String>,
+        new: Option<String>,
+    },
+    TemplateName {
+        old: Option<String>,
+        new: Option<String>,
+    },
 }
 
 /// A change to a single field on a PlannedAct.
@@ -402,6 +410,18 @@ fn compare_plans(old: &Plan, new: &Plan) -> Vec<PlanFieldChange> {
         changes.push(PlanFieldChange::DependsOn {
             old: old.depends_on.clone(),
             new: new.depends_on.clone(),
+        });
+    }
+    if old.external_id != new.external_id {
+        changes.push(PlanFieldChange::ExternalId {
+            old: old.external_id.clone(),
+            new: new.external_id.clone(),
+        });
+    }
+    if old.template_name != new.template_name {
+        changes.push(PlanFieldChange::TemplateName {
+            old: old.template_name.clone(),
+            new: new.template_name.clone(),
         });
     }
     changes

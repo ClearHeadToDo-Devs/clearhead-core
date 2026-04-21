@@ -271,6 +271,39 @@ impl fmt::Display for Recurrence {
     }
 }
 
+impl Recurrence {
+    /// Parse an RFC 5545 RRULE string (without the "RRULE:" prefix) into a `Recurrence`.
+    pub fn from_rrule_str(s: &str) -> Option<Self> {
+        let s = s.strip_prefix("R:").unwrap_or(s);
+        let s = s.strip_prefix("RRULE:").unwrap_or(s);
+        let mut r = Recurrence::default();
+        for part in s.split(';') {
+            let (key, value) = part.split_once('=')?;
+            match key {
+                "FREQ" => r.frequency = value.to_lowercase(),
+                "INTERVAL" => r.interval = value.parse().ok(),
+                "COUNT" => r.count = value.parse().ok(),
+                "UNTIL" => r.until = Some(value.to_string()),
+                "BYSECOND" => r.by_second = Some(value.split(',').filter_map(|v| v.parse().ok()).collect()),
+                "BYMINUTE" => r.by_minute = Some(value.split(',').filter_map(|v| v.parse().ok()).collect()),
+                "BYHOUR" => r.by_hour = Some(value.split(',').filter_map(|v| v.parse().ok()).collect()),
+                "BYDAY" => r.by_day = Some(value.split(',').map(|v| v.to_string()).collect()),
+                "BYMONTHDAY" => r.by_month_day = Some(value.split(',').filter_map(|v| v.parse().ok()).collect()),
+                "BYYEARDAY" => r.by_year_day = Some(value.split(',').filter_map(|v| v.parse().ok()).collect()),
+                "BYWEEKNO" => r.by_week_no = Some(value.split(',').filter_map(|v| v.parse().ok()).collect()),
+                "BYMONTH" => r.by_month = Some(value.split(',').filter_map(|v| v.parse().ok()).collect()),
+                "BYSETPOS" => r.by_set_pos = Some(value.split(',').filter_map(|v| v.parse().ok()).collect()),
+                "WKST" => r.week_start = Some(value.to_string()),
+                _ => {}
+            }
+        }
+        if r.frequency.is_empty() {
+            return None;
+        }
+        Some(r)
+    }
+}
+
 /// Lifecycle phase of a [`PlannedAct`].
 ///
 /// Maps to `actions:ActPhase` (subclass of bfo:Quality).
@@ -315,6 +348,12 @@ pub struct Plan {
     pub is_sequential: Option<bool>,
     /// Plans this plan depends on (predecessor relationships)
     pub depends_on: Option<Vec<Uuid>>,
+    /// Raw VEVENT UID when this plan was loaded from an ICS file (null for .actions-sourced plans)
+    pub external_id: Option<String>,
+    /// X-CLEARHEAD-TEMPLATE value from VEVENT (null for .actions-sourced plans)
+    pub template_name: Option<String>,
+    /// Recurrence anchor (DTSTART from VEVENT); None for .actions-sourced plans
+    pub dtstart: Option<DateTime<Local>>,
 }
 
 impl Plan {
@@ -339,7 +378,7 @@ impl Plan {
     ///     id: Uuid::new_v4(),
     ///     name: "Daily".to_string(),
     ///     recurrence: Some(Recurrence { frequency: "daily".to_string(), count: Some(2), ..Default::default() }),
-    ///     description: None, priority: None, contexts: None, due_recurrence: None, parent: None, alias: None, is_sequential: None, depends_on: None,
+    ///     description: None, priority: None, contexts: None, due_recurrence: None, parent: None, alias: None, is_sequential: None, depends_on: None, external_id: None, template_name: None, dtstart: None,
     /// };
     ///
     /// let occurrences = plan.expand_occurrences(dt_start, 10);
@@ -388,6 +427,9 @@ impl Default for Plan {
             alias: None,
             is_sequential: None,
             depends_on: None,
+            external_id: None,
+            template_name: None,
+            dtstart: None,
         }
     }
 }
@@ -620,15 +662,8 @@ mod tests {
         let plan = Plan {
             id: Uuid::new_v4(),
             name: "Daily Standup".to_string(),
-            description: None,
-            priority: None,
-            contexts: None,
             recurrence: Some(recurrence),
-            due_recurrence: None,
-            parent: None,
-            alias: None,
-            is_sequential: None,
-            depends_on: None,
+            ..Default::default()
         };
 
         let occurrences = plan.expand_occurrences(dt_start, 10);

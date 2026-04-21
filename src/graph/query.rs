@@ -461,51 +461,14 @@ fn get_plan_by_id(store: &Store, id: Uuid) -> Result<Plan> {
         alias: node.lit(actions_pred("hasAlias")),
         is_sequential: node.lit_bool(actions_pred("hasSequentialChildren")),
         depends_on: (!depends_on.is_empty()).then_some(depends_on),
+        external_id: node.lit(actions_pred("hasExternalId")),
+        template_name: node.lit(actions_pred("hasTemplateName")),
+        dtstart: None,
     })
 }
 
 fn parse_recurrence_rule(rrule: &str) -> Option<Recurrence> {
-    let mut frequency = None;
-    let mut interval = None;
-    let mut by_day = Vec::new();
-
-    for part in rrule.split(';') {
-        let (key, value) = part.split_once('=')?;
-        match key {
-            "FREQ" => frequency = Some(value.to_lowercase()),
-            "INTERVAL" => interval = value.parse::<u32>().ok(),
-            "BYDAY" => {
-                by_day.extend(
-                    value
-                        .split(',')
-                        .filter(|day| !day.is_empty())
-                        .map(str::to_string),
-                );
-            }
-            _ => {}
-        }
-    }
-
-    Some(Recurrence {
-        frequency: frequency?,
-        interval,
-        count: None,
-        until: None,
-        by_second: None,
-        by_minute: None,
-        by_hour: None,
-        by_day: if by_day.is_empty() {
-            None
-        } else {
-            Some(by_day)
-        },
-        by_month_day: None,
-        by_year_day: None,
-        by_week_no: None,
-        by_month: None,
-        by_set_pos: None,
-        week_start: None,
-    })
+    Recurrence::from_rrule_str(rrule)
 }
 
 fn get_planned_act_by_id(store: &Store, id: Uuid) -> Result<PlannedAct> {

@@ -5,6 +5,8 @@ use crate::domain::{Charter, DomainModel};
 use crate::workspace::actions::convert::from_actions_with_charter;
 use crate::workspace::acts::{closed_acts_path, merge_acts_into_model, open_acts_path, read_acts};
 use crate::workspace::charter::parse_charter;
+use crate::workspace::ics::parse_ics_file;
+use crate::workspace::plans::collect_plan_files;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -172,6 +174,20 @@ pub fn load_domain_model(root: &Path) -> Result<DomainModel, WorkspaceError> {
         );
     }
     merge_acts_into_model(&mut model, all_acts);
+
+    // Load ICS schedules: each .ics VEVENT becomes a Plan in the matching charter.
+    for entry in collect_plan_files(&layout.data_root)? {
+        let plans = parse_ics_file(&entry.path)?;
+        if plans.is_empty() {
+            continue;
+        }
+        if let Some(charter) = model.charters.iter_mut().find(|c| {
+            c.alias.as_deref() == Some(&entry.charter_name)
+                || c.title == entry.charter_name
+        }) {
+            charter.plans.extend(plans);
+        }
+    }
 
     Ok(model)
 }

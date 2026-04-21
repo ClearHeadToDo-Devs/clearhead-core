@@ -21,6 +21,9 @@
                     alias: None,
                     is_sequential: None,
                     depends_on: None,
+                    external_id: None,
+                    template_name: None,
+                    dtstart: None,
                 ),
                 (
                     id: "01960000-0005-7000-0000-000000000002",
@@ -34,6 +37,9 @@
                     alias: None,
                     is_sequential: None,
                     depends_on: None,
+                    external_id: None,
+                    template_name: None,
+                    dtstart: None,
                 ),
             ],
             acts: [
@@ -83,6 +89,9 @@
                     alias: None,
                     is_sequential: None,
                     depends_on: None,
+                    external_id: None,
+                    template_name: None,
+                    dtstart: None,
                 ),
                 (
                     id: "01960000-0003-7000-0000-000000000002",
@@ -96,6 +105,9 @@
                     alias: None,
                     is_sequential: None,
                     depends_on: None,
+                    external_id: None,
+                    template_name: None,
+                    dtstart: None,
                 ),
             ],
             acts: [
@@ -145,6 +157,9 @@
                     alias: None,
                     is_sequential: None,
                     depends_on: None,
+                    external_id: None,
+                    template_name: None,
+                    dtstart: None,
                 ),
                 (
                     id: "01960000-0004-7000-0000-000000000002",
@@ -158,6 +173,9 @@
                     alias: None,
                     is_sequential: None,
                     depends_on: None,
+                    external_id: None,
+                    template_name: None,
+                    dtstart: None,
                 ),
             ],
             acts: [

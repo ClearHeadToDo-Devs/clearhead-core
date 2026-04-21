@@ -11,6 +11,7 @@ pub mod actions;
 pub mod acts;
 pub mod charter;
 pub mod detection;
+pub mod ics;
 pub mod plans;
 pub mod store;
 

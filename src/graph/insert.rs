@@ -223,6 +223,20 @@ fn insert_plan(store: &Store, plan: &Plan, charter_acts: &[PlannedAct]) -> Resul
         )?;
     }
 
+    if let Some(ext_id) = &plan.external_id {
+        add(
+            actions_pred("hasExternalId"),
+            Term::Literal(Literal::new_simple_literal(ext_id)),
+        )?;
+    }
+
+    if let Some(tmpl) = &plan.template_name {
+        add(
+            actions_pred("hasTemplateName"),
+            Term::Literal(Literal::new_simple_literal(tmpl)),
+        )?;
+    }
+
     // cco:prescribes (ont00001942) — forward link from Plan to each PlannedAct
     for act in charter_acts.iter().filter(|a| a.plan_id == Some(plan.id)) {
         let act_uri = NamedNode::new(format!("urn:uuid:{}", act.id)).unwrap();

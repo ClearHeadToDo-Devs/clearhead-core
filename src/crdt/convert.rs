@@ -227,6 +227,7 @@ impl From<&SyncPlan> for Plan {
             alias: p.alias.clone(),
             is_sequential: p.is_sequential,
             depends_on: p.depends_on.clone(),
+            ..Default::default()
         }
     }
 }

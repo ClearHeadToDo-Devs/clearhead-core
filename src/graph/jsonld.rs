@@ -38,15 +38,7 @@ const ACTIONS_CONTEXT_V4: &str = include_str!("../resources/actions.context.v4.j
 ///         plans: vec![Plan {
 ///             id: plan_id,
 ///             name: "Write docs".to_string(),
-///             description: None,
-///             priority: None,
-///             contexts: None,
-///             recurrence: None,
-///             due_recurrence: None,
-///             parent: None,
-///             alias: None,
-///             is_sequential: None,
-///             depends_on: None,
+///             ..Plan::default()
 ///         }],
 ///         acts: vec![PlannedAct {
 ///             id: Uuid::new_v4(),

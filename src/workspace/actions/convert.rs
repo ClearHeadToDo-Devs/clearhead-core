@@ -65,6 +65,7 @@ fn plan_and_act_from_action(action: &Action) -> (Plan, PlannedAct) {
             .predecessors
             .as_ref()
             .map(|preds| preds.iter().filter_map(|p| p.resolved_uuid).collect()),
+        ..Default::default()
     };
 
     (plan, act)
