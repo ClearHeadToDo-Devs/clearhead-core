@@ -11,6 +11,7 @@ pub mod actions;
 pub mod acts;
 pub mod charter;
 pub mod detection;
+pub mod plans;
 pub mod store;
 
 // Re-export key types at workspace level
@@ -24,6 +25,10 @@ pub use acts::{
     write_acts_for_plans,
 };
 pub use charter::{format_charter, implicit_charter, parse_charter};
+pub use plans::{
+    PlanFileEntry, collect_plan_files, infer_plan_charter_name, infer_plan_charter_name_for_workspace,
+    infer_plan_parent, infer_plan_parent_for_workspace,
+};
 
 pub use detection::check_for_workspace;
 pub use store::{
