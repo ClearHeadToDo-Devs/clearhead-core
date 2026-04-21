@@ -1,7 +1,6 @@
 use super::source::{
     NodeWrapper, SourceMetadata, SourceRange, create_node_wrapper, get_node_text, get_prefixed_text,
 };
-use crate::domain::Recurrence;
 use chrono::{DateTime, Local};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -66,15 +65,9 @@ pub struct Action {
     /// Expected duration in minutes (D-syntax).
     #[serde(rename = "doDuration", skip_serializing_if = "Option::is_none")]
     pub do_duration: Option<u32>,
-    /// Recurrence rule for the scheduled time.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub recurrence: Option<Recurrence>,
     /// Deadline or due date (:-syntax).
     #[serde(rename = "dueDateTime", skip_serializing_if = "Option::is_none")]
     pub due_date_time: Option<DateTime<Local>>,
-    /// Recurrence rule for the due date.
-    #[serde(rename = "dueRecurrence", skip_serializing_if = "Option::is_none")]
-    pub due_recurrence: Option<Recurrence>,
     /// When the action was marked as completed (%-syntax).
     #[serde(rename = "completedDate", skip_serializing_if = "Option::is_none")]
     pub completed_date_time: Option<DateTime<Local>>,
@@ -107,9 +100,7 @@ impl Default for Action {
             context_list: None,
             do_date_time: None,
             do_duration: None,
-            recurrence: None,
             due_date_time: None,
-            due_recurrence: None,
             completed_date_time: None,
             created_date_time: Some(Local::now()),
             predecessors: None,
@@ -163,15 +154,9 @@ impl Action {
             if let Some(duration) = self.do_duration {
                 write!(f, " D{}", duration)?;
             }
-            if let Some(recurrence) = &self.recurrence {
-                write!(f, " {}", recurrence)?;
-            }
         }
         if let Some(due_date_time) = &self.due_date_time {
             write!(f, " :{}", due_date_time.format("%Y-%m-%dT%H:%M"))?;
-            if let Some(recurrence) = &self.due_recurrence {
-                write!(f, " {}", recurrence)?;
-            }
         }
         if let Some(completed_date_time) = &self.completed_date_time {
             write!(f, " %{}", completed_date_time.format("%Y-%m-%dT%H:%M"))?;
@@ -188,39 +173,6 @@ impl Action {
             write!(f, " #{}", self.id)?;
         }
         Ok(())
-    }
-
-    /// Expand recurrence rule into a list of occurrence dates.
-    ///
-    /// Uses `do_date_time` as DTSTART and `recurrence` as RRULE.
-    /// Returns an empty vector if no recurrence or do_date_time is present.
-    pub fn expand_occurrences(&self, limit: u16) -> Vec<DateTime<rrule::Tz>> {
-        let dtstart = match self.do_date_time {
-            Some(dt) => dt,
-            None => return Vec::new(),
-        };
-
-        let recurrence = match &self.recurrence {
-            Some(r) => r,
-            None => return Vec::new(),
-        };
-
-        let recurrence_str = recurrence.to_string();
-        let clean_recurrence = recurrence_str.strip_prefix("R:").unwrap_or(&recurrence_str);
-
-        let rrule_str = format!(
-            "DTSTART:{}\nRRULE:{}",
-            dtstart.format("%Y%m%dT%H%M%S"),
-            clean_recurrence
-        );
-
-        match rrule_str.parse::<rrule::RRuleSet>() {
-            Ok(rrule_set) => rrule_set.all(limit).dates,
-            Err(e) => {
-                eprintln!("Failed to parse recurrence rule: {}", e);
-                Vec::new()
-            }
-        }
     }
 
     /// Compute the depth of this action by walking up the parent chain
@@ -306,7 +258,6 @@ pub fn parse_action_recursive(
     let mut charter = None;
     let mut do_date_time = None;
     let mut do_duration = None;
-    let mut recurrence = None;
     let mut completed_date_time = None;
     let mut created_date_time = None;
     let mut predecessors = Vec::new();
@@ -315,7 +266,6 @@ pub fn parse_action_recursive(
 
     let mut do_date_range = None;
     let mut due_date_time = None;
-    let mut due_recurrence = None;
     let mut due_date_range = None;
     let mut completed_date_range = None;
     let mut created_date_range = None;
@@ -359,11 +309,9 @@ pub fn parse_action_recursive(
             "do_date" => {
                 (do_date_time, do_date_range) = parse_date_field(&meta, &node.source);
                 do_duration = parse_duration_field(&meta, &node.source);
-                recurrence = parse_recurrence_field(&meta, &node.source);
             }
             "due_date" => {
                 (due_date_time, due_date_range) = parse_date_field(&meta, &node.source);
-                due_recurrence = parse_recurrence_field(&meta, &node.source);
             }
             "completed_date" => {
                 (completed_date_time, completed_date_range) = parse_date_field(&meta, &node.source);
@@ -439,9 +387,7 @@ pub fn parse_action_recursive(
         context_list,
         do_date_time,
         do_duration,
-        recurrence,
         due_date_time,
-        due_recurrence,
         completed_date_time,
         created_date_time,
         predecessors: if predecessors.is_empty() {
@@ -552,84 +498,6 @@ fn parse_duration_field(node: &tree_sitter::Node, source: &str) -> Option<u32> {
         .and_then(|m| get_node_text(&m, source).parse().ok())
 }
 
-/// Parse recurrence from a do_date node
-fn parse_recurrence_field(node: &tree_sitter::Node, source: &str) -> Option<Recurrence> {
-    node.child_by_field_name("recurrence")
-        .and_then(|r| r.child_by_field_name("rrule"))
-        .and_then(|rrule| parse_rrule(&get_node_text(&rrule, source)))
-}
-
-fn parse_rrule(rrule_str: &str) -> Option<Recurrence> {
-    let mut frequency = String::new();
-    let mut interval = None;
-    let mut count = None;
-    let mut until = None;
-    let mut by_second = None;
-    let mut by_minute = None;
-    let mut by_hour = None;
-    let mut by_day = None;
-    let mut by_month_day = None;
-    let mut by_year_day = None;
-    let mut by_week_no = None;
-    let mut by_month = None;
-    let mut by_set_pos = None;
-    let mut week_start = None;
-
-    // Remove "R:" prefix if present (it should be handled by tree-sitter but just in case)
-    let clean_rrule = if rrule_str.trim().starts_with("R:") {
-        &rrule_str.trim()[2..]
-    } else {
-        rrule_str.trim()
-    };
-
-    for part in clean_rrule.split(';') {
-        let (key, value) = part.split_once('=')?;
-
-        match key {
-            "FREQ" => frequency = value.to_lowercase(),
-            "INTERVAL" => interval = value.parse().ok(),
-            "COUNT" => count = value.parse().ok(),
-            "UNTIL" => until = Some(value.to_string()),
-            "BYSECOND" => by_second = Some(parse_int_list(value)),
-            "BYMINUTE" => by_minute = Some(parse_int_list(value)),
-            "BYHOUR" => by_hour = Some(parse_int_list(value)),
-            "BYDAY" => by_day = Some(value.split(',').map(|s| s.to_string()).collect()),
-            "BYMONTHDAY" => by_month_day = Some(parse_int_list(value)),
-            "BYYEARDAY" => by_year_day = Some(parse_int_list(value)),
-            "BYWEEKNO" => by_week_no = Some(parse_int_list(value)),
-            "BYMONTH" => by_month = Some(parse_int_list(value)),
-            "BYSETPOS" => by_set_pos = Some(parse_int_list(value)),
-            "WKST" => week_start = Some(value.to_string()),
-            _ => {}
-        }
-    }
-
-    if frequency.is_empty() {
-        return None;
-    }
-
-    Some(Recurrence {
-        frequency,
-        interval,
-        count,
-        until,
-        by_second,
-        by_minute,
-        by_hour,
-        by_day,
-        by_month_day,
-        by_year_day,
-        by_week_no,
-        by_month,
-        by_set_pos,
-        week_start,
-    })
-}
-
-fn parse_int_list<T: std::str::FromStr>(s: &str) -> Vec<T> {
-    s.split(',').filter_map(|x| x.parse().ok()).collect()
-}
-
 /// Parse raw text into a tree-sitter Tree
 pub fn parse_tree(input: &str) -> Result<Tree, String> {
     let mut parser = tree_sitter::Parser::new();
@@ -711,74 +579,6 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_recurrence_and_duration() {
-        let source = "[ ] Recurring Task @2025-01-20T14:00 D60 R:FREQ=WEEKLY;BYDAY=MO;INTERVAL=2";
-        let actions = parse_actions(source);
-
-        assert_eq!(actions.len(), 1);
-        let action = &actions[0];
-
-        assert_eq!(action.name, "Recurring Task");
-        assert!(action.do_date_time.is_some());
-        assert_eq!(action.do_duration, Some(60));
-
-        let recurrence = action
-            .recurrence
-            .as_ref()
-            .expect("Recurrence should be present");
-        assert_eq!(recurrence.frequency, "weekly");
-        assert_eq!(recurrence.by_day, Some(vec!["MO".to_string()]));
-        assert_eq!(recurrence.interval, Some(2));
-    }
-
-    #[test]
-    fn test_format_recurrence_and_duration() {
-        let recurrence = Recurrence {
-            frequency: "weekly".to_string(),
-            interval: Some(2),
-            count: None,
-            until: None,
-            by_second: None,
-            by_minute: None,
-            by_hour: None,
-            by_day: Some(vec!["MO".to_string()]),
-            by_month_day: None,
-            by_year_day: None,
-            by_week_no: None,
-            by_month: None,
-            by_set_pos: None,
-            week_start: None,
-        };
-
-        let action = Action {
-            id: Uuid::new_v4(),
-            parent_id: None,
-            state: ActionState::NotStarted,
-            name: "Recurring".to_string(),
-            description: None,
-            priority: None,
-            context_list: None,
-            do_date_time: Some(Local::now()),
-            do_duration: Some(60),
-            recurrence: Some(recurrence),
-            due_date_time: None,
-            due_recurrence: None,
-            completed_date_time: None,
-            created_date_time: None,
-            predecessors: None,
-            charter: None,
-            alias: None,
-            is_sequential: None,
-        };
-
-        let formatted = format!("{}", action);
-        assert!(formatted.contains("D60"));
-        assert!(formatted.contains("R:FREQ=WEEKLY"));
-        assert!(formatted.contains(";INTERVAL=2"));
-        assert!(formatted.contains(";BYDAY=MO"));
-    }
-
-    #[test]
     fn test_parse_with_predecessors_uuid() {
         let pred_uuid = "01951111-cfa6-718d-b303-d7107f4005b3";
         let source = format!("[ ] Task B < {}", pred_uuid);
@@ -841,9 +641,7 @@ mod tests {
             context_list: None,
             do_date_time: None,
             do_duration: None,
-            recurrence: None,
             due_date_time: None,
-            due_recurrence: None,
             completed_date_time: None,
             created_date_time: None,
             predecessors: Some(vec![pred_ref]),

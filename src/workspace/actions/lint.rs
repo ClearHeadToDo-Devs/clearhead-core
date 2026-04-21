@@ -80,9 +80,8 @@ pub type DocumentCheck = fn(&ParsedDocument) -> Vec<LintDiagnostic>;
 /// Action-level error checks (E001-E007)
 /// Gaps: E004 (orphaned child), E005 (skipped level), E007 (no state) - parser handles these
 pub const ACTION_ERROR_CHECKS: &[ActionCheck] = &[
-    check_duration_without_do_date,   // E001
-    check_recurrence_without_do_date, // E002
-    check_empty_context,              // E003
+    check_duration_without_do_date, // E001
+    check_empty_context,            // E003
     // E004, E005 - parser/grammar level
     check_invalid_uuid, // E006
     // E007 - parser level
@@ -225,22 +224,6 @@ fn check_hierarchy_levels(doc: &ParsedDocument) -> Vec<LintDiagnostic> {
     }
     diagnostics
 }
-/// Check if recurrence is present without a do-date (E002)
-fn check_recurrence_without_do_date(
-    action: &Action,
-    metadata: &SourceMetadata,
-) -> Option<LintDiagnostic> {
-    if action.recurrence.is_some() && action.do_date_time.is_none() {
-        Some(LintDiagnostic::error(
-            "E002",
-            "Recurrence requires a do-date as the starting point (E002).".to_string(),
-            metadata.root,
-        ))
-    } else {
-        None
-    }
-}
-
 /// Check if action is missing a UUID (Info - style preference)
 fn check_missing_id(_action: &Action, metadata: &SourceMetadata) -> Option<LintDiagnostic> {
     if metadata.is_id_generated && metadata.raw_id.is_none() {
@@ -578,9 +561,7 @@ mod tests {
             context_list: None,
             do_date_time: None,
             do_duration: None,
-            recurrence: None,
             due_date_time: None,
-            due_recurrence: None,
             completed_date_time: None,
             created_date_time: None,
             predecessors: None,
@@ -690,9 +671,7 @@ mod tests {
             context_list: Some(vec!["work".to_string(), "".to_string()]),
             do_date_time: None,
             do_duration: None,
-            recurrence: None,
             due_date_time: None,
-            due_recurrence: None,
             completed_date_time: None,
             created_date_time: None,
             predecessors: None,
@@ -773,9 +752,7 @@ mod tests {
             context_list: None,
             do_date_time: None,    // No do-date
             do_duration: Some(60), // Has duration
-            recurrence: None,
             due_date_time: None,
-            due_recurrence: None,
             completed_date_time: None,
             created_date_time: None,
             predecessors: None,
@@ -824,9 +801,7 @@ mod tests {
             context_list: None,
             do_date_time: Some(Local::now()), // Has do-date
             do_duration: Some(60),            // Has duration
-            recurrence: None,
             due_date_time: None,
-            due_recurrence: None,
             completed_date_time: None,
             created_date_time: None,
             predecessors: None,
@@ -859,136 +834,4 @@ mod tests {
         assert!(result.is_none());
     }
 
-    #[test]
-    fn test_check_recurrence_without_do_date() {
-        use crate::domain::Recurrence;
-        use crate::workspace::actions::Action;
-        let action = Action {
-            id: uuid::Uuid::parse_str("01942d99-4c27-77f6-9316-107024843939").unwrap(),
-            parent_id: None,
-            state: ActionState::NotStarted,
-            name: "Daily standup".to_string(),
-            description: None,
-            priority: None,
-            context_list: None,
-            do_date_time: None, // No do-date
-            do_duration: None,
-            recurrence: Some(Recurrence {
-                // Has recurrence
-                frequency: "daily".to_string(),
-                interval: None,
-                count: None,
-                until: None,
-                by_second: None,
-                by_minute: None,
-                by_hour: None,
-                by_day: None,
-                by_month_day: None,
-                by_year_day: None,
-                by_week_no: None,
-                by_month: None,
-                by_set_pos: None,
-                week_start: None,
-            }),
-            due_date_time: None,
-            due_recurrence: None,
-            completed_date_time: None,
-            created_date_time: None,
-            predecessors: None,
-            charter: None,
-            alias: None,
-            is_sequential: None,
-        };
-        let metadata = SourceMetadata {
-            root: SourceRange {
-                start_row: 0,
-                start_col: 0,
-                end_row: 0,
-                end_col: 20,
-            },
-            line_range: SourceRange {
-                start_row: 0,
-                start_col: 0,
-                end_row: 0,
-                end_col: 20,
-            },
-            do_date: None,
-            due_date: None,
-            completed_date: None,
-            created_date: None,
-            is_id_generated: false,
-            raw_id: None,
-        };
-
-        let result = check_recurrence_without_do_date(&action, &metadata);
-        assert!(result.is_some());
-        let diag = result.unwrap();
-        assert_eq!(diag.code, "E002");
-        assert_eq!(diag.severity, LintSeverity::Error);
-    }
-
-    #[test]
-    fn test_check_recurrence_with_do_date_ok() {
-        use crate::domain::Recurrence;
-        use crate::workspace::actions::Action;
-        let action = Action {
-            id: uuid::Uuid::parse_str("01942d99-4c27-77f6-9316-107024843939").unwrap(),
-            parent_id: None,
-            state: ActionState::NotStarted,
-            name: "Daily standup".to_string(),
-            description: None,
-            priority: None,
-            context_list: None,
-            do_date_time: Some(Local::now()), // Has do-date
-            do_duration: None,
-            recurrence: Some(Recurrence {
-                // Has recurrence
-                frequency: "daily".to_string(),
-                interval: None,
-                count: None,
-                until: None,
-                by_second: None,
-                by_minute: None,
-                by_hour: None,
-                by_day: None,
-                by_month_day: None,
-                by_year_day: None,
-                by_week_no: None,
-                by_month: None,
-                by_set_pos: None,
-                week_start: None,
-            }),
-            due_date_time: None,
-            due_recurrence: None,
-            completed_date_time: None,
-            created_date_time: None,
-            predecessors: None,
-            charter: None,
-            alias: None,
-            is_sequential: None,
-        };
-        let metadata = SourceMetadata {
-            root: SourceRange {
-                start_row: 0,
-                start_col: 0,
-                end_row: 0,
-                end_col: 20,
-            },
-            line_range: SourceRange {
-                start_row: 0,
-                start_col: 0,
-                end_row: 0,
-                end_col: 20,
-            },
-            do_date: None,
-            due_date: None,
-            completed_date: None,
-            created_date: None,
-            is_id_generated: false,
-            raw_id: None,
-        };
-
-        let result = check_recurrence_without_do_date(&action, &metadata);
-        assert!(result.is_none());
-    }
 }

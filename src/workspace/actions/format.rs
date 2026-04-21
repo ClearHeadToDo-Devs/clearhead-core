@@ -239,7 +239,6 @@ fn format_as_table(
         println!("  priority    - Numerical priority (1-9, higher = more important)");
         println!("  due         - Due date/time");
         println!("  dur         - Estimated duration in minutes");
-        println!("  recurrence  - Recurrence pattern (DAILY, WEEKLY, etc.)");
         println!("  context     - Context tags");
         println!("  description - Task description");
         println!("  id          - First 8 chars of UUID");
@@ -306,11 +305,6 @@ fn format_as_table(
                 .map(|d| format!("{}m", d))
                 .unwrap_or_else(|| "-".to_string()),
             action
-                .recurrence
-                .as_ref()
-                .map(|r| r.frequency.to_uppercase())
-                .unwrap_or_else(|| "-".to_string()),
-            action
                 .context_list
                 .as_ref()
                 .map(|c| c.join(", "))
@@ -320,8 +314,8 @@ fn format_as_table(
                 .as_ref()
                 .map(|d| d.to_string())
                 .unwrap_or_else(|| "-".to_string()),
-            action.id.to_string()[..8].to_string(),
-            action.charter.as_deref().unwrap_or("-").to_string(), // "Story" alias → same as Charter
+            action.id.to_string()[..8].to_string(), // ID (index 8)
+            action.charter.as_deref().unwrap_or("-").to_string(), // Story (index 9) — alias for Charter
         ];
 
         // Select only requested columns, using colored state cell for index 0
@@ -342,23 +336,22 @@ fn format_as_table(
     Ok(table.to_string())
 }
 
-pub const COLUMN_NAMES: [&str; 11] = [
+pub const COLUMN_NAMES: [&str; 10] = [
     "State",       // 0
     "Name",        // 1
     "Charter",     // 2
     "Priority",    // 3
     "Due",         // 4
     "Dur",         // 5
-    "Recurrence",  // 6
-    "Context",     // 7
-    "Description", // 8 — excluded from default; use `show` for detail
-    "ID",          // 9
-    "Story",       // 10 — excluded from default (internal alias key)
+    "Context",     // 6
+    "Description", // 7 — excluded from default; use `show` for detail
+    "ID",          // 8
+    "Story",       // 9 — excluded from default (internal alias key)
 ];
 
 /// Default column set for list views: everything except Description and Story.
 /// Description belongs in `show`, not in a summary table.
-pub const DEFAULT_COLUMNS: &[usize] = &[0, 1, 2, 3, 4, 5, 6, 7, 9];
+pub const DEFAULT_COLUMNS: &[usize] = &[0, 1, 2, 3, 4, 5, 6, 8];
 
 pub fn columns_to_show(names: &[String]) -> Vec<usize> {
     names
