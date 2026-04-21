@@ -16,6 +16,15 @@ use uuid::{Uuid, uuid};
 /// Namespace UUID for deriving deterministic Plan IDs from VEVENT UIDs.
 const ICS_NAMESPACE: Uuid = uuid!("6ba7b810-9dad-11d1-80b4-00c04fd430c8");
 
+/// Derive a deterministic UUID for a generated act from its schedule identity and occurrence key.
+///
+/// Per the ICS schedule spec: UUID v5 from `(externalScheduleId, externalOccurrenceKey)`.
+/// Running expansion multiple times with the same inputs always yields the same UUID.
+pub fn occurrence_act_id(vevent_uid: &str, occurrence_rfc3339: &str) -> uuid::Uuid {
+    let key = format!("{}:{}", vevent_uid, occurrence_rfc3339);
+    uuid::Uuid::new_v5(&ICS_NAMESPACE, key.as_bytes())
+}
+
 /// Parse all VEVENTs in an `.ics` file into [`Plan`] structs.
 ///
 /// Each VEVENT becomes one Plan:
@@ -201,5 +210,17 @@ mod tests {
 
         let plans = parse_ics_file(f.path()).unwrap();
         assert_eq!(plans.len(), 0);
+    }
+
+    #[test]
+    fn occurrence_act_id_is_deterministic() {
+        let uid = "weekly-review@example.com";
+        let occ = "2026-04-27T10:00:00+00:00";
+        let id1 = occurrence_act_id(uid, occ);
+        let id2 = occurrence_act_id(uid, occ);
+        assert_eq!(id1, id2, "same inputs must yield same UUID");
+
+        let other = occurrence_act_id(uid, "2026-05-04T10:00:00+00:00");
+        assert_ne!(id1, other, "different occurrence must yield different UUID");
     }
 }
