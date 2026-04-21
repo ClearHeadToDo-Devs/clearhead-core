@@ -121,7 +121,7 @@ pub fn write_acts_for_plans(
     path: &Path,
 ) -> Result<(), WorkspaceError> {
     let mut existing = read_acts(path)?;
-    existing.retain(|a| !plan_ids.contains(&a.plan_id));
+    existing.retain(|a| a.plan_id.map(|id| !plan_ids.contains(&id)).unwrap_or(true));
     existing.extend_from_slice(updated);
     write_acts(&existing, path)
 }
@@ -132,17 +132,57 @@ pub fn write_acts_for_plans(
 /// the loaded acts where `plan_id` matches. Plans with no matching acts
 /// in the sidecar keep their existing (synthetic) acts as a fallback.
 pub fn merge_acts_into_model(model: &mut DomainModel, acts: Vec<PlannedAct>) {
-    let mut acts_by_plan: HashMap<Uuid, Vec<PlannedAct>> = HashMap::new();
+    let plan_to_charter: HashMap<Uuid, Uuid> = model
+        .charters
+        .iter()
+        .flat_map(|c| c.plans.iter().map(move |p| (p.id, c.id)))
+        .collect();
+    let mut acts_by_charter: HashMap<Uuid, Vec<PlannedAct>> = HashMap::new();
+    let mut planless_count = 0usize;
+    let mut orphaned_count = 0usize;
     for act in acts {
-        acts_by_plan.entry(act.plan_id).or_default().push(act);
+        if let Some(plan_id) = act.plan_id {
+            if let Some(charter_id) = plan_to_charter.get(&plan_id) {
+                acts_by_charter.entry(*charter_id).or_default().push(act);
+            } else {
+                orphaned_count += 1;
+            }
+        } else {
+            if let Some(charter) = model.charters.first() {
+                acts_by_charter.entry(charter.id).or_default().push(act);
+                planless_count += 1;
+            } else {
+                orphaned_count += 1;
+            }
+        }
     }
 
     for charter in &mut model.charters {
-        for plan in &mut charter.plans {
-            if let Some(loaded) = acts_by_plan.remove(&plan.id) {
-                plan.acts = loaded;
-            }
+        if let Some(loaded) = acts_by_charter.remove(&charter.id) {
+            let replaced_plan_ids: HashSet<Uuid> =
+                loaded.iter().filter_map(|a| a.plan_id).collect();
+            let mut merged: Vec<PlannedAct> = charter
+                .acts
+                .iter()
+                .filter(|a| {
+                    a.plan_id
+                        .map(|id| !replaced_plan_ids.contains(&id))
+                        .unwrap_or(true)
+                })
+                .cloned()
+                .collect();
+            merged.extend(loaded);
+            merged.sort_by_key(|a| a.id);
+            merged.dedup_by_key(|a| a.id);
+            charter.acts = merged;
         }
+    }
+
+    if planless_count > 0 || orphaned_count > 0 {
+        eprintln!(
+            "warning: merged {} planless acts and ignored {} orphaned acts during model merge",
+            planless_count, orphaned_count
+        );
     }
 }
 
@@ -159,7 +199,7 @@ mod tests {
     fn make_act(plan_id: Uuid) -> PlannedAct {
         PlannedAct {
             id: Uuid::new_v4(),
-            plan_id,
+            plan_id: Some(plan_id),
             scheduled_at: Some(
                 chrono::Local
                     .with_ymd_and_hms(2026, 3, 18, 9, 0, 0)
@@ -287,7 +327,7 @@ mod tests {
         for phase in phases {
             let act = PlannedAct {
                 id: Uuid::new_v4(),
-                plan_id,
+                plan_id: Some(plan_id),
                 phase,
                 ..Default::default()
             };
@@ -297,6 +337,26 @@ mod tests {
             let loaded = read_acts(&path).expect("read");
             assert_eq!(loaded[0].phase, phase);
         }
+    }
+
+    #[test]
+    fn test_roundtrip_planless_act_is_readable() {
+        let act = PlannedAct {
+            id: Uuid::new_v4(),
+            plan_id: None,
+            phase: ActPhase::NotStarted,
+            ..Default::default()
+        };
+
+        let tmp_dir = tempfile::tempdir().expect("tempdir");
+        let path = tmp_dir.path().join("planless.open.ttl");
+
+        write_acts(&[act.clone()], &path).expect("write");
+        let loaded = read_acts(&path).expect("read");
+
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].id, act.id);
+        assert_eq!(loaded[0].plan_id, None);
     }
 
     // ========================================================================
@@ -310,12 +370,12 @@ mod tests {
 
         let act_a = PlannedAct {
             id: Uuid::new_v4(),
-            plan_id: plan_a,
+            plan_id: Some(plan_a),
             ..Default::default()
         };
         let act_b = PlannedAct {
             id: Uuid::new_v4(),
-            plan_id: plan_b,
+            plan_id: Some(plan_b),
             ..Default::default()
         };
 
@@ -337,8 +397,14 @@ mod tests {
         let loaded = read_acts(&path).expect("read");
         assert_eq!(loaded.len(), 2);
 
-        let loaded_a = loaded.iter().find(|a| a.plan_id == plan_a).expect("act_a");
-        let loaded_b = loaded.iter().find(|a| a.plan_id == plan_b).expect("act_b");
+        let loaded_a = loaded
+            .iter()
+            .find(|a| a.plan_id == Some(plan_a))
+            .expect("act_a");
+        let loaded_b = loaded
+            .iter()
+            .find(|a| a.plan_id == Some(plan_b))
+            .expect("act_b");
         assert_eq!(loaded_a.phase, ActPhase::InProgress);
         assert_eq!(loaded_b.id, act_b.id);
     }
@@ -352,7 +418,7 @@ mod tests {
         let plan_id = Uuid::new_v4();
         let act = PlannedAct {
             id: Uuid::new_v4(),
-            plan_id,
+            plan_id: Some(plan_id),
             phase: ActPhase::Completed,
             ..Default::default()
         };
@@ -360,7 +426,6 @@ mod tests {
         let plan = Plan {
             id: plan_id,
             name: "Test plan".to_string(),
-            acts: Vec::new(),
             ..Default::default()
         };
 
@@ -372,6 +437,7 @@ mod tests {
             parent: None,
             objectives: None,
             plans: vec![plan],
+            acts: vec![],
         };
 
         let mut model = DomainModel {
@@ -381,7 +447,7 @@ mod tests {
 
         merge_acts_into_model(&mut model, vec![act.clone()]);
 
-        let loaded_acts = &model.charters[0].plans[0].acts;
+        let loaded_acts = &model.charters[0].acts;
         assert_eq!(loaded_acts.len(), 1);
         assert_eq!(loaded_acts[0].id, act.id);
         assert_eq!(loaded_acts[0].phase, ActPhase::Completed);

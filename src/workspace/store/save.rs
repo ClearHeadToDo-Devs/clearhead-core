@@ -1,8 +1,8 @@
-use super::WorkspaceLayout;
 use super::discovery::discover_action_files;
-use super::{WorkspaceError, resolve_workspace_layout};
+use super::WorkspaceLayout;
+use super::{resolve_workspace_layout, WorkspaceError};
 use crate::domain::{Charter, DomainModel, Plan};
-use crate::workspace::{Action, ActionList, OutputFormat, format};
+use crate::workspace::{format, Action, ActionList, OutputFormat};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
@@ -217,22 +217,14 @@ fn prune_empty_directories(start: &Path, stop_at: &Path) -> Result<(), Workspace
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::{Charter, DomainModel, Plan, PlannedAct};
+    use crate::domain::{Charter, DomainModel, Plan};
     use crate::workspace::store::load_domain_model;
-    use chrono::Local;
 
     fn test_plan(name: &str) -> Plan {
         let id = Uuid::new_v4();
         Plan {
             id,
             name: name.to_string(),
-            acts: vec![PlannedAct {
-                id: Uuid::new_v5(&id, b"act-0"),
-                plan_id: id,
-                duration: Some(30),
-                created_at: Some(Local::now()),
-                ..Default::default()
-            }],
             ..Default::default()
         }
     }
@@ -318,6 +310,7 @@ mod tests {
                     parent: None,
                     objectives: None,
                     plans: vec![test_plan("Quarter plan")],
+                    acts: vec![],
                 },
                 Charter {
                     id: Uuid::new_v4(),
@@ -327,6 +320,7 @@ mod tests {
                     parent: Some("work".to_string()),
                     objectives: None,
                     plans: vec![test_plan("Backups")],
+                    acts: vec![],
                 },
             ],
         };
@@ -356,6 +350,7 @@ mod tests {
                     parent: None,
                     objectives: None,
                     plans: vec![test_plan("Quarter plan")],
+                    acts: vec![],
                 },
                 Charter {
                     id: ops_id,
@@ -365,6 +360,7 @@ mod tests {
                     parent: Some("work".to_string()),
                     objectives: None,
                     plans: vec![test_plan("Backups")],
+                    acts: vec![],
                 },
             ],
         };
@@ -416,6 +412,7 @@ mod tests {
                     parent: None,
                     objectives: None,
                     plans: vec![test_plan("Quarter plan")],
+                    acts: vec![],
                 },
                 Charter {
                     id: ops_id,
@@ -425,6 +422,7 @@ mod tests {
                     parent: Some("work".to_string()),
                     objectives: None,
                     plans: vec![test_plan("Backups")],
+                    acts: vec![],
                 },
             ],
         };

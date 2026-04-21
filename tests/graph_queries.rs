@@ -103,8 +103,13 @@ fn sidecar_act_replaces_synthetic_for_loaded_plan() {
         .iter()
         .find(|p| p.name == "Write quarterly report")
         .unwrap();
-    assert_eq!(report.acts.len(), 1);
-    assert_eq!(report.acts[0].phase, ActPhase::InProgress);
+    let report_acts: Vec<_> = work
+        .acts
+        .iter()
+        .filter(|a| a.plan_id == Some(report.id))
+        .collect();
+    assert_eq!(report_acts.len(), 1);
+    assert_eq!(report_acts[0].phase, ActPhase::InProgress);
 
     // Graph: query the specific act linked to "Write quarterly report"
     let sparql = "

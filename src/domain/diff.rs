@@ -116,7 +116,7 @@ pub enum CharterFieldChange {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ActDiff {
     pub id: Uuid,
-    pub plan_id: Uuid,
+    pub plan_id: Option<Uuid>,
     pub changes: Vec<ActFieldChange>,
 }
 
@@ -236,7 +236,7 @@ fn diff_charters(old: &Charter, new: &Charter) -> CharterDiff {
 
     for (id, new_plan) in &new_plans {
         if let Some(old_plan) = old_plans.get(id) {
-            let plan_diff = diff_plans(old_plan, new_plan);
+            let plan_diff = diff_plans(old_plan, new_plan, &old.acts, &new.acts);
             if !plan_diff.is_empty() {
                 plans_modified.push(plan_diff);
             }
@@ -260,11 +260,24 @@ fn diff_charters(old: &Charter, new: &Charter) -> CharterDiff {
     }
 }
 
-fn diff_plans(old: &Plan, new: &Plan) -> PlanDiff {
+fn diff_plans(
+    old: &Plan,
+    new: &Plan,
+    old_charter_acts: &[PlannedAct],
+    new_charter_acts: &[PlannedAct],
+) -> PlanDiff {
     let changes = compare_plans(old, new);
 
-    let old_acts: HashMap<Uuid, &PlannedAct> = old.acts.iter().map(|a| (a.id, a)).collect();
-    let new_acts: HashMap<Uuid, &PlannedAct> = new.acts.iter().map(|a| (a.id, a)).collect();
+    let old_acts: HashMap<Uuid, &PlannedAct> = old_charter_acts
+        .iter()
+        .filter(|a| a.plan_id == Some(old.id))
+        .map(|a| (a.id, a))
+        .collect();
+    let new_acts: HashMap<Uuid, &PlannedAct> = new_charter_acts
+        .iter()
+        .filter(|a| a.plan_id == Some(new.id))
+        .map(|a| (a.id, a))
+        .collect();
 
     let mut acts_added = Vec::new();
     let mut acts_removed = Vec::new();
@@ -470,11 +483,11 @@ mod tests {
                 plans: vec![Plan {
                     id: plan_id,
                     name: name.to_string(),
-                    acts: vec![PlannedAct {
-                        id: act_id,
-                        plan_id,
-                        ..Default::default()
-                    }],
+                    ..Default::default()
+                }],
+                acts: vec![PlannedAct {
+                    id: act_id,
+                    plan_id: Some(plan_id),
                     ..Default::default()
                 }],
                 ..Default::default()
@@ -524,12 +537,10 @@ mod tests {
         assert_eq!(diff.charters_modified.len(), 1);
         let charter_diff = &diff.charters_modified[0];
         assert_eq!(charter_diff.plans_modified.len(), 1);
-        assert!(
-            charter_diff.plans_modified[0]
-                .changes
-                .iter()
-                .any(|c| matches!(c, PlanFieldChange::Name { .. }))
-        );
+        assert!(charter_diff.plans_modified[0]
+            .changes
+            .iter()
+            .any(|c| matches!(c, PlanFieldChange::Name { .. })));
     }
 
     #[test]
@@ -537,7 +548,7 @@ mod tests {
         let id = "019baaec-00b6-7991-be34-94b68212619a";
         let old = make_model(id, "Task");
         let mut new = old.clone();
-        new.charters[0].plans[0].acts[0].phase = ActPhase::Completed;
+        new.charters[0].acts[0].phase = ActPhase::Completed;
 
         let diff = diff_domain_models(&old, &new);
 
@@ -545,12 +556,10 @@ mod tests {
         let charter_diff = &diff.charters_modified[0];
         assert_eq!(charter_diff.plans_modified.len(), 1);
         assert_eq!(charter_diff.plans_modified[0].acts_modified.len(), 1);
-        assert!(
-            charter_diff.plans_modified[0].acts_modified[0]
-                .changes
-                .iter()
-                .any(|c| matches!(c, ActFieldChange::Phase { .. }))
-        );
+        assert!(charter_diff.plans_modified[0].acts_modified[0]
+            .changes
+            .iter()
+            .any(|c| matches!(c, ActFieldChange::Phase { .. })));
     }
 
     #[test]

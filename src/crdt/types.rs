@@ -75,6 +75,7 @@ pub struct SyncCharter {
     pub parent: Option<String>,
     pub objectives: Option<Vec<String>>,
     pub plans: Vec<SyncPlan>,
+    pub acts: Vec<SyncPlannedAct>,
 }
 
 /// CRDT mirror of `domain::Plan`.
@@ -91,7 +92,6 @@ pub struct SyncPlan {
     pub alias: Option<String>,
     pub is_sequential: Option<bool>,
     pub depends_on: Option<Vec<Uuid>>,
-    pub acts: Vec<SyncPlannedAct>,
 }
 
 /// CRDT mirror of `domain::PlannedAct`.
@@ -100,7 +100,9 @@ pub struct SyncPlan {
 #[derive(Debug, Clone, Reconcile, Hydrate)]
 pub struct SyncPlannedAct {
     pub id: Uuid,
-    pub plan_id: Uuid,
+    pub plan_id: Option<Uuid>,
+    pub external_schedule_id: Option<String>,
+    pub external_occurrence_key: Option<String>,
     pub phase: SyncActPhase,
     #[autosurgeon(reconcile = "reconcile_date", hydrate = "hydrate_date")]
     pub scheduled_at: Option<chrono::DateTime<chrono::Local>>,

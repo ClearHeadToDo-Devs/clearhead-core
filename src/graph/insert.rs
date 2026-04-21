@@ -3,9 +3,9 @@
 //! This module owns the "put things in" direction: domain model → RDF triples.
 
 use super::{
-    BFO_HAS_PART, BFO_PART_OF, CCO_IS_SUCCESSOR_OF, CCO_PLAN, CCO_PLANNED_ACT, CCO_PRESCRIBED_BY,
-    CCO_PRESCRIBES, CCO_STATUS_PROP, GraphError, RDFS_COMMENT, RDFS_LABEL, Result, Store, XSD_NS,
-    actions_pred, bfo_pred, cco_node, ns, phase_node, rdf_type, rdfs_pred,
+    actions_pred, bfo_pred, cco_node, ns, phase_node, rdf_type, rdfs_pred, GraphError, Result,
+    Store, BFO_HAS_PART, BFO_PART_OF, CCO_IS_SUCCESSOR_OF, CCO_PLAN, CCO_PLANNED_ACT,
+    CCO_PRESCRIBED_BY, CCO_PRESCRIBES, CCO_STATUS_PROP, RDFS_COMMENT, RDFS_LABEL, XSD_NS,
 };
 use crate::domain::{Charter, DomainModel, Plan, PlannedAct};
 use crate::workspace::actions::convert::INBOX_CHARTER_NS;
@@ -126,13 +126,13 @@ fn insert_charter(
     for plan in &charter.plans {
         let plan_uri = NamedNode::new(format!("urn:uuid:{}", plan.id)).unwrap();
         add(bfo_pred(BFO_HAS_PART), Term::NamedNode(plan_uri))?;
-        insert_plan(store, plan)?;
+        insert_plan(store, plan, &charter.acts)?;
     }
 
     Ok(())
 }
 
-fn insert_plan(store: &Store, plan: &Plan) -> Result<()> {
+fn insert_plan(store: &Store, plan: &Plan, charter_acts: &[PlannedAct]) -> Result<()> {
     let subject =
         NamedOrBlankNode::NamedNode(NamedNode::new(format!("urn:uuid:{}", plan.id)).unwrap());
     let graph = GraphName::DefaultGraph;
@@ -224,7 +224,7 @@ fn insert_plan(store: &Store, plan: &Plan) -> Result<()> {
     }
 
     // cco:prescribes (ont00001942) — forward link from Plan to each PlannedAct
-    for act in &plan.acts {
+    for act in charter_acts.iter().filter(|a| a.plan_id == Some(plan.id)) {
         let act_uri = NamedNode::new(format!("urn:uuid:{}", act.id)).unwrap();
         add(cco_node(CCO_PRESCRIBES), Term::NamedNode(act_uri))?;
     }
@@ -249,8 +249,24 @@ fn insert_planned_act(store: &Store, act: &PlannedAct) -> Result<()> {
         Term::Literal(Literal::new_simple_literal(act.id.to_string())),
     )?;
 
-    let plan_uri = NamedNode::new(format!("urn:uuid:{}", act.plan_id)).unwrap();
-    add(cco_node(CCO_PRESCRIBED_BY), Term::NamedNode(plan_uri))?;
+    if let Some(plan_id) = act.plan_id {
+        let plan_uri = NamedNode::new(format!("urn:uuid:{}", plan_id)).unwrap();
+        add(cco_node(CCO_PRESCRIBED_BY), Term::NamedNode(plan_uri))?;
+    }
+
+    if let Some(external_schedule_id) = &act.external_schedule_id {
+        add(
+            actions_pred("hasExternalScheduleId"),
+            Term::Literal(Literal::new_simple_literal(external_schedule_id)),
+        )?;
+    }
+
+    if let Some(external_occurrence_key) = &act.external_occurrence_key {
+        add(
+            actions_pred("hasExternalOccurrenceKey"),
+            Term::Literal(Literal::new_simple_literal(external_occurrence_key)),
+        )?;
+    }
 
     // cco:is_measured_by_nominal (ont00001868) — status as nominal ICE
     add(
@@ -344,24 +360,25 @@ mod tests {
                     }),
                     alias: Some("graph_tests".to_string()),
                     is_sequential: Some(true),
-                    depends_on: Some(vec![
-                        Uuid::parse_str("019d7100-4444-7444-8444-444444444444").unwrap(),
-                    ]),
-                    acts: vec![PlannedAct {
-                        id: act_id,
-                        plan_id,
-                        phase: ActPhase::InProgress,
-                        scheduled_at: Some(
-                            chrono::Local
-                                .with_ymd_and_hms(2026, 4, 9, 10, 0, 0)
-                                .unwrap(),
-                        ),
-                        duration: Some(45),
-                        created_at: Some(
-                            chrono::Local.with_ymd_and_hms(2026, 4, 9, 9, 0, 0).unwrap(),
-                        ),
-                        ..Default::default()
-                    }],
+                    depends_on: Some(vec![Uuid::parse_str(
+                        "019d7100-4444-7444-8444-444444444444",
+                    )
+                    .unwrap()]),
+                    ..Default::default()
+                }],
+                acts: vec![PlannedAct {
+                    id: act_id,
+                    plan_id: Some(plan_id),
+                    external_schedule_id: Some("weekly-review@example.com".to_string()),
+                    external_occurrence_key: Some("2026-04-09T10:00:00-07:00".to_string()),
+                    phase: ActPhase::InProgress,
+                    scheduled_at: Some(
+                        chrono::Local
+                            .with_ymd_and_hms(2026, 4, 9, 10, 0, 0)
+                            .unwrap(),
+                    ),
+                    duration: Some(45),
+                    created_at: Some(chrono::Local.with_ymd_and_hms(2026, 4, 9, 9, 0, 0).unwrap()),
                     ..Default::default()
                 }],
                 ..Default::default()
@@ -467,6 +484,18 @@ mod tests {
             act,
             actions_pred("hasDurationMinutes").as_ref(),
             LiteralRef::new_typed_literal("45", ns(XSD_NS, "integer").as_ref()).into(),
+        ));
+        assert!(has_term(
+            &store,
+            act,
+            actions_pred("hasExternalScheduleId").as_ref(),
+            LiteralRef::new_simple_literal("weekly-review@example.com").into(),
+        ));
+        assert!(has_term(
+            &store,
+            act,
+            actions_pred("hasExternalOccurrenceKey").as_ref(),
+            LiteralRef::new_simple_literal("2026-04-09T10:00:00-07:00").into(),
         ));
         assert!(has_predicate(
             &store,

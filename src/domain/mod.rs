@@ -315,8 +315,6 @@ pub struct Plan {
     pub is_sequential: Option<bool>,
     /// Plans this plan depends on (predecessor relationships)
     pub depends_on: Option<Vec<Uuid>>,
-    /// [`PlannedAct`]s that realize this plan (nested hierarchy)
-    pub acts: Vec<PlannedAct>,
 }
 
 impl Plan {
@@ -341,7 +339,6 @@ impl Plan {
     ///     id: Uuid::new_v4(),
     ///     name: "Daily".to_string(),
     ///     recurrence: Some(Recurrence { frequency: "daily".to_string(), count: Some(2), ..Default::default() }),
-    ///     acts: vec![],
     ///     description: None, priority: None, contexts: None, due_recurrence: None, parent: None, alias: None, is_sequential: None, depends_on: None,
     /// };
     ///
@@ -391,7 +388,6 @@ impl Default for Plan {
             alias: None,
             is_sequential: None,
             depends_on: None,
-            acts: vec![],
         }
     }
 }
@@ -423,6 +419,8 @@ pub struct Charter {
     pub objectives: Option<Vec<String>>,
     /// [`Plan`]s organized under this charter (nested hierarchy)
     pub plans: Vec<Plan>,
+    /// [`PlannedAct`]s scoped to this charter; each may optionally reference a plan.
+    pub acts: Vec<PlannedAct>,
 }
 
 pub fn charter_from_plans_and_name(name: String, plans: Vec<Plan>) -> Charter {
@@ -434,6 +432,7 @@ pub fn charter_from_plans_and_name(name: String, plans: Vec<Plan>) -> Charter {
         parent: None,
         objectives: None,
         plans,
+        acts: vec![],
     }
 }
 
@@ -447,7 +446,11 @@ pub fn charter_from_plans_and_name(name: String, plans: Vec<Plan>) -> Charter {
 pub struct PlannedAct {
     pub id: Uuid,
     /// The [`Plan`] this act realizes (prescribes relationship, inverse)
-    pub plan_id: Uuid,
+    pub plan_id: Option<Uuid>,
+    /// Optional external schedule-series identifier (integration profile bridge)
+    pub external_schedule_id: Option<String>,
+    /// Optional external occurrence identifier within a schedule series
+    pub external_occurrence_key: Option<String>,
     /// Current lifecycle phase
     pub phase: ActPhase,
     /// Scheduled date/time for this occurrence (@-syntax)
@@ -466,7 +469,9 @@ impl Default for PlannedAct {
     fn default() -> Self {
         Self {
             id: Uuid::nil(),
-            plan_id: Uuid::nil(),
+            plan_id: None,
+            external_schedule_id: None,
+            external_occurrence_key: None,
             phase: ActPhase::NotStarted,
             scheduled_at: None,
             due_date: None,
@@ -500,11 +505,7 @@ impl DomainModel {
 
     /// Flatten all acts across all charters and plans.
     pub fn all_acts(&self) -> Vec<&PlannedAct> {
-        self.charters
-            .iter()
-            .flat_map(|c| c.plans.iter())
-            .flat_map(|p| p.acts.iter())
-            .collect()
+        self.charters.iter().flat_map(|c| c.acts.iter()).collect()
     }
 
     /// Find a Plan by ID, searching across the hierarchy.
@@ -521,11 +522,10 @@ impl DomainModel {
 
     /// Find all PlannedActs for a given Plan
     pub fn acts_for_plan(&self, plan_id: Uuid) -> Vec<&PlannedAct> {
-        self.all_plans()
+        self.all_acts()
             .into_iter()
-            .find(|p| p.id == plan_id)
-            .map(|p| p.acts.iter().collect())
-            .unwrap_or_default()
+            .filter(|a| a.plan_id == Some(plan_id))
+            .collect()
     }
 
     /// Get all incomplete acts across the hierarchy.
@@ -546,17 +546,25 @@ impl DomainModel {
         for charter in &mut self.charters {
             for plan in &mut charter.plans {
                 if plan.recurrence.is_some() {
-                    let dtstart = plan.acts.first().and_then(|a| a.scheduled_at);
+                    let dtstart = charter
+                        .acts
+                        .iter()
+                        .find(|a| a.plan_id == Some(plan.id))
+                        .and_then(|a| a.scheduled_at);
                     let dtstart = match dtstart {
                         Some(dt) => dt,
                         None => continue,
                     };
 
                     let existing_ids: std::collections::HashSet<Uuid> =
-                        plan.acts.iter().map(|a| a.id).collect();
+                        charter.acts.iter().map(|a| a.id).collect();
 
                     let occurrences = plan.expand_occurrences(dtstart, 1000);
-                    let template_duration = plan.acts.first().and_then(|a| a.duration);
+                    let template_duration = charter
+                        .acts
+                        .iter()
+                        .find(|a| a.plan_id == Some(plan.id))
+                        .and_then(|a| a.duration);
                     for (i, occ) in occurrences.iter().enumerate() {
                         let occ_local = occ.with_timezone(&Local);
                         if occ_local > end_date {
@@ -566,9 +574,9 @@ impl DomainModel {
                         let act_id = Uuid::new_v5(&plan.id, format!("act-{}", i).as_bytes());
 
                         if !existing_ids.contains(&act_id) {
-                            plan.acts.push(PlannedAct {
+                            charter.acts.push(PlannedAct {
                                 id: act_id,
-                                plan_id: plan.id,
+                                plan_id: Some(plan.id),
                                 scheduled_at: Some(occ_local),
                                 duration: template_duration,
                                 created_at: Some(now),
@@ -621,7 +629,6 @@ mod tests {
             alias: None,
             is_sequential: None,
             depends_on: None,
-            acts: vec![],
         };
 
         let occurrences = plan.expand_occurrences(dt_start, 10);
@@ -650,14 +657,14 @@ mod tests {
                     count: Some(2),
                     ..Default::default()
                 }),
-                acts: vec![PlannedAct {
-                    id: Uuid::new_v4(),
-                    plan_id,
-                    scheduled_at: Some(Local::now()),
-                    duration: Some(30),
-                    created_at: Some(Local::now()),
-                    ..Default::default()
-                }],
+                ..Default::default()
+            }],
+            acts: vec![PlannedAct {
+                id: Uuid::new_v4(),
+                plan_id: Some(plan_id),
+                scheduled_at: Some(Local::now()),
+                duration: Some(30),
+                created_at: Some(Local::now()),
                 ..Default::default()
             }],
             ..Default::default()

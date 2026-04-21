@@ -74,6 +74,7 @@ impl From<&Charter> for SyncCharter {
             parent: c.parent.clone(),
             objectives: c.objectives.clone(),
             plans: c.plans.iter().map(SyncPlan::from).collect(),
+            acts: c.acts.iter().map(SyncPlannedAct::from).collect(),
         }
     }
 }
@@ -92,7 +93,6 @@ impl From<&Plan> for SyncPlan {
             alias: p.alias.clone(),
             is_sequential: p.is_sequential,
             depends_on: p.depends_on.clone(),
-            acts: p.acts.iter().map(SyncPlannedAct::from).collect(),
         }
     }
 }
@@ -102,6 +102,8 @@ impl From<&PlannedAct> for SyncPlannedAct {
         SyncPlannedAct {
             id: a.id,
             plan_id: a.plan_id,
+            external_schedule_id: a.external_schedule_id.clone(),
+            external_occurrence_key: a.external_occurrence_key.clone(),
             phase: SyncActPhase::from(a.phase),
             scheduled_at: a.scheduled_at,
             due_date: a.due_date,
@@ -206,6 +208,7 @@ impl From<&SyncCharter> for Charter {
             parent: c.parent.clone(),
             objectives: c.objectives.clone(),
             plans: c.plans.iter().map(Plan::from).collect(),
+            acts: c.acts.iter().map(PlannedAct::from).collect(),
         }
     }
 }
@@ -224,7 +227,6 @@ impl From<&SyncPlan> for Plan {
             alias: p.alias.clone(),
             is_sequential: p.is_sequential,
             depends_on: p.depends_on.clone(),
-            acts: p.acts.iter().map(PlannedAct::from).collect(),
         }
     }
 }
@@ -234,6 +236,8 @@ impl From<&SyncPlannedAct> for PlannedAct {
         PlannedAct {
             id: a.id,
             plan_id: a.plan_id,
+            external_schedule_id: a.external_schedule_id.clone(),
+            external_occurrence_key: a.external_occurrence_key.clone(),
             phase: ActPhase::from(a.phase),
             scheduled_at: a.scheduled_at,
             due_date: a.due_date,

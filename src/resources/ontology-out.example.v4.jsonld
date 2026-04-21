@@ -28,6 +28,8 @@
       "dueDate": "2026-04-11T00:00:00Z",
       "completedDate": "2026-04-10T00:00:00Z",
       "durationMinutes": 15,
+      "externalScheduleId": "weekly-review@example.com",
+      "externalOccurrenceKey": "2026-04-10T00:00:00Z",
       "status": "Completed"
     },
     {

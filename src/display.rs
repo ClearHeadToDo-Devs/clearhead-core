@@ -73,11 +73,8 @@ pub fn format_domain_as_table(
             let indent = "  ".repeat(depth);
 
             // State from first act, or synthesized NotStarted
-            let phase = plan
-                .acts
-                .first()
-                .map(|a| a.phase)
-                .unwrap_or(ActPhase::NotStarted);
+            let first_act = charter.acts.iter().find(|a| a.plan_id == Some(plan.id));
+            let phase = first_act.map(|a| a.phase).unwrap_or(ActPhase::NotStarted);
 
             let state_cell = match phase {
                 ActPhase::NotStarted => Cell::new("Not Started"),
@@ -86,8 +83,6 @@ pub fn format_domain_as_table(
                 ActPhase::Blocked => Cell::new("Blocked").fg(Color::Red),
                 ActPhase::Cancelled => Cell::new("Cancelled").fg(Color::DarkGrey),
             };
-
-            let first_act = plan.acts.first();
 
             let all_strings: Vec<String> = vec![
                 String::new(), // placeholder — state rendered as colored Cell

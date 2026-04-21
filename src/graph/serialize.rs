@@ -2,7 +2,7 @@
 //!
 //! This module owns the "turn a store into text" direction.
 
-use super::{GraphError, Result, Store, create_store};
+use super::{create_store, GraphError, Result, Store};
 use crate::domain::{ActPhase, DomainModel, PlannedAct};
 use oxigraph::io::RdfFormat;
 use oxigraph::model::GraphNameRef;
@@ -62,7 +62,7 @@ fn store_to_turtle(store: &Store) -> Result<String> {
 }
 
 /// Filter a `DomainModel` to only include acts matching `predicate`,
-/// preserving the charter → plan → act hierarchy.
+/// preserving the charter hierarchy.
 fn filter_model_by_phase(
     model: &DomainModel,
     predicate: impl Fn(&ActPhase) -> bool,
@@ -70,23 +70,15 @@ fn filter_model_by_phase(
     let mut filtered_charters = Vec::new();
 
     for charter in &model.charters {
-        let mut filtered_plans = Vec::new();
-        for plan in &charter.plans {
-            let filtered_acts: Vec<PlannedAct> = plan
-                .acts
-                .iter()
-                .filter(|a| predicate(&a.phase))
-                .cloned()
-                .collect();
-            if !filtered_acts.is_empty() {
-                let mut filtered_plan = plan.clone();
-                filtered_plan.acts = filtered_acts;
-                filtered_plans.push(filtered_plan);
-            }
-        }
-        if !filtered_plans.is_empty() {
+        let filtered_acts: Vec<PlannedAct> = charter
+            .acts
+            .iter()
+            .filter(|a| predicate(&a.phase))
+            .cloned()
+            .collect();
+        if !filtered_acts.is_empty() {
             let mut filtered_charter = charter.clone();
-            filtered_charter.plans = filtered_plans;
+            filtered_charter.acts = filtered_acts;
             filtered_charters.push(filtered_charter);
         }
     }

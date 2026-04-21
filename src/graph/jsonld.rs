@@ -8,10 +8,10 @@
 //! in `src/resources/` are used so export behavior and tests remain stable
 //! without network dependencies.
 
-use super::{GraphError, Result, Store, create_store};
+use super::{create_store, GraphError, Result, Store};
 use crate::domain::{ActPhase, Charter, DomainModel, Plan};
 use crate::graph::{load_domain_model, load_domain_model_from_store};
-use serde_json::{Map, Value, json};
+use serde_json::{json, Map, Value};
 use std::collections::BTreeMap;
 
 const ACTIONS_CONTEXT_V4: &str = include_str!("../resources/actions.context.v4.json");
@@ -47,16 +47,18 @@ const ACTIONS_CONTEXT_V4: &str = include_str!("../resources/actions.context.v4.j
 ///             alias: None,
 ///             is_sequential: None,
 ///             depends_on: None,
-///             acts: vec![PlannedAct {
-///                 id: Uuid::new_v4(),
-///                 plan_id,
-///                 phase: ActPhase::NotStarted,
-///                 scheduled_at: None,
-///                 due_date: None,
-///                 duration: Some(30),
-///                 completed_at: None,
-///                 created_at: None,
-///             }],
+///         }],
+///         acts: vec![PlannedAct {
+///             id: Uuid::new_v4(),
+///             plan_id: Some(plan_id),
+///             external_schedule_id: None,
+///             external_occurrence_key: None,
+///             phase: ActPhase::NotStarted,
+///             scheduled_at: None,
+///             due_date: None,
+///             duration: Some(30),
+///             completed_at: None,
+///             created_at: None,
 ///         }],
 ///     }],
 /// };
@@ -96,6 +98,7 @@ fn build_jsonld_document(model: &DomainModel) -> Result<Value> {
     let mut charter_children: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let mut alias_to_charter_id: BTreeMap<String, String> = BTreeMap::new();
     let mut title_to_charter_id: BTreeMap<String, String> = BTreeMap::new();
+    let mut acts_by_plan: BTreeMap<String, Vec<String>> = BTreeMap::new();
 
     for charter in &model.charters {
         let charter_id = uuid_urn(charter.id.to_string());
@@ -106,6 +109,14 @@ fn build_jsonld_document(model: &DomainModel) -> Result<Value> {
 
         for plan in &charter.plans {
             plan_charter_id.insert(uuid_urn(plan.id.to_string()), charter_id.clone());
+        }
+        for act in &charter.acts {
+            if let Some(plan_id) = act.plan_id {
+                acts_by_plan
+                    .entry(uuid_urn(plan_id.to_string()))
+                    .or_default()
+                    .push(uuid_urn(act.id.to_string()));
+            }
         }
     }
 
@@ -132,7 +143,7 @@ fn build_jsonld_document(model: &DomainModel) -> Result<Value> {
 
     for charter in &model.charters {
         for plan in &charter.plans {
-            nodes.push(plan_to_jsonld(plan, &plan_charter_id));
+            nodes.push(plan_to_jsonld(plan, &plan_charter_id, &acts_by_plan));
         }
     }
 
@@ -165,7 +176,11 @@ fn charter_to_jsonld(charter: &Charter, charter_children: &BTreeMap<String, Vec<
     Value::Object(node)
 }
 
-fn plan_to_jsonld(plan: &Plan, plan_charter_id: &BTreeMap<String, String>) -> Value {
+fn plan_to_jsonld(
+    plan: &Plan,
+    plan_charter_id: &BTreeMap<String, String>,
+    acts_by_plan: &BTreeMap<String, Vec<String>>,
+) -> Value {
     let plan_id = uuid_urn(plan.id.to_string());
     let mut node = ordered_node(plan_id.clone(), "Plan");
 
@@ -180,11 +195,7 @@ fn plan_to_jsonld(plan: &Plan, plan_charter_id: &BTreeMap<String, String>) -> Va
         insert_id(&mut node, "partOf", charter_id.clone());
     }
 
-    let planned_acts: Vec<String> = plan
-        .acts
-        .iter()
-        .map(|a| uuid_urn(a.id.to_string()))
-        .collect();
+    let planned_acts: Vec<String> = acts_by_plan.get(&plan_id).cloned().unwrap_or_default();
     insert_id_or_many(&mut node, "plannedActs", planned_acts);
 
     if let Some(depends_on) = &plan.depends_on {
@@ -236,6 +247,12 @@ fn planned_act_to_jsonld(act: &crate::domain::PlannedAct) -> Value {
     }
     if let Some(duration) = act.duration {
         node.insert("durationMinutes".to_string(), json!(duration));
+    }
+    if let Some(external_schedule_id) = &act.external_schedule_id {
+        insert_str(&mut node, "externalScheduleId", external_schedule_id);
+    }
+    if let Some(external_occurrence_key) = &act.external_occurrence_key {
+        insert_str(&mut node, "externalOccurrenceKey", external_occurrence_key);
     }
 
     Value::Object(node)
@@ -371,21 +388,21 @@ mod tests {
                     }),
                     alias: Some("graph_tests".to_string()),
                     is_sequential: Some(true),
-                    acts: vec![PlannedAct {
-                        id: act_id,
-                        plan_id,
-                        phase: ActPhase::InProgress,
-                        scheduled_at: Some(
-                            chrono::Local
-                                .with_ymd_and_hms(2026, 4, 9, 10, 0, 0)
-                                .unwrap(),
-                        ),
-                        duration: Some(45),
-                        created_at: Some(
-                            chrono::Local.with_ymd_and_hms(2026, 4, 9, 9, 0, 0).unwrap(),
-                        ),
-                        ..Default::default()
-                    }],
+                    ..Default::default()
+                }],
+                acts: vec![PlannedAct {
+                    id: act_id,
+                    plan_id: Some(plan_id),
+                    external_schedule_id: Some("weekly-review@example.com".to_string()),
+                    external_occurrence_key: Some("2026-04-09T10:00:00-07:00".to_string()),
+                    phase: ActPhase::InProgress,
+                    scheduled_at: Some(
+                        chrono::Local
+                            .with_ymd_and_hms(2026, 4, 9, 10, 0, 0)
+                            .unwrap(),
+                    ),
+                    duration: Some(45),
+                    created_at: Some(chrono::Local.with_ymd_and_hms(2026, 4, 9, 9, 0, 0).unwrap()),
                     ..Default::default()
                 }],
                 ..Default::default()
@@ -408,17 +425,13 @@ mod tests {
             .and_then(Value::as_array)
             .expect("@graph array");
 
-        assert!(
-            graph
-                .iter()
-                .any(|n| n.get("type") == Some(&json!("Charter")))
-        );
+        assert!(graph
+            .iter()
+            .any(|n| n.get("type") == Some(&json!("Charter"))));
         assert!(graph.iter().any(|n| n.get("type") == Some(&json!("Plan"))));
-        assert!(
-            graph
-                .iter()
-                .any(|n| n.get("type") == Some(&json!("PlannedAct")))
-        );
+        assert!(graph
+            .iter()
+            .any(|n| n.get("type") == Some(&json!("PlannedAct"))));
     }
 
     #[test]
@@ -481,6 +494,8 @@ mod tests {
         assert!(act.get("status").is_some());
         assert!(act.get("scheduledAt").is_some());
         assert!(act.get("durationMinutes").is_some());
+        assert!(act.get("externalScheduleId").is_some());
+        assert!(act.get("externalOccurrenceKey").is_some());
         assert_eq!(act.get("status"), Some(&json!("InProgress")));
     }
 

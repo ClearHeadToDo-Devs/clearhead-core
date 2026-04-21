@@ -75,6 +75,7 @@ pub fn parse_charter(content: &str) -> Result<Charter, String> {
         parent: fm.parent,
         objectives: fm.objectives,
         plans: vec![],
+        acts: vec![],
     })
 }
 
@@ -90,6 +91,7 @@ pub fn implicit_charter(name: &str) -> Charter {
         parent: None,
         objectives: None,
         plans: vec![],
+        acts: vec![],
     }
 }
 
@@ -195,7 +197,11 @@ fn extract_title_and_description(body: &str) -> (Option<String>, Option<String>)
         None
     } else {
         let desc = desc_lines.join("\n").trim().to_string();
-        if desc.is_empty() { None } else { Some(desc) }
+        if desc.is_empty() {
+            None
+        } else {
+            Some(desc)
+        }
     };
 
     (title, description)
@@ -294,6 +300,7 @@ Stay healthy and fit through regular exercise and diet.
             parent: None,
             objectives: Some(vec!["obj1".to_string()]),
             plans: vec![],
+            acts: vec![],
         };
 
         let formatted = format_charter(&charter);
