@@ -2,6 +2,7 @@ use super::ActionList;
 use super::lint::LintDiagnostic;
 use super::parser::{parse_action_recursive, parse_tree};
 use std::collections::HashMap;
+use std::fmt;
 use tree_sitter::{Node, Tree};
 use uuid::Uuid;
 
@@ -15,6 +16,55 @@ pub struct ParsedDocument {
     pub tag_index: HashMap<String, Vec<SourceRange>>,
     pub syntax_errors: Vec<LintDiagnostic>,
 }
+
+/// Parse policy for `.actions` source handling.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ParseMode {
+    /// Fail if any syntax error is detected.
+    Strict,
+    /// Return recoverable actions and diagnostics.
+    Recover,
+}
+
+/// Structured outcome for parser boundary consumers.
+#[derive(Debug, Clone)]
+pub struct ParseOutcome {
+    pub document: ParsedDocument,
+    pub syntax_errors: Vec<LintDiagnostic>,
+    pub lint_warnings: Vec<LintDiagnostic>,
+    pub recovery: RecoveryReport,
+}
+
+/// Recovery metadata for observability and policy decisions.
+#[derive(Debug, Clone, Default)]
+pub struct RecoveryReport {
+    /// Number of actions successfully recovered from source.
+    pub recoverable_actions: usize,
+}
+
+/// Systemic parse failure used by strict-mode mutation boundaries.
+#[derive(Debug, Clone)]
+pub struct ParseFailure {
+    pub code: &'static str,
+    pub message: String,
+    pub range: SourceRange,
+    pub hint: Option<String>,
+}
+
+impl fmt::Display for ParseFailure {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{} at line {}, column {}: {}",
+            self.code,
+            self.range.start_row + 1,
+            self.range.start_col + 1,
+            self.message
+        )
+    }
+}
+
+impl std::error::Error for ParseFailure {}
 
 /// Source location metadata for a single action.
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -55,17 +105,40 @@ impl SourceRange {
 
 /// Parse a `.actions` file into a structured `ActionList`, returning an error on syntax problems.
 pub fn parse_actions(input: &str) -> Result<ActionList, String> {
-    let parsed_doc = parse_document(input)?;
-    if !parsed_doc.syntax_errors.is_empty() {
-        let err = &parsed_doc.syntax_errors[0];
-        return Err(format!(
-            "Syntax error at line {}, column {}: {}",
-            err.range.start_row + 1,
-            err.range.start_col + 1,
-            err.message
-        ));
+    let outcome = parse_actions_with_mode(input, ParseMode::Strict)
+        .map_err(|e| e.to_string())?;
+    Ok(outcome.document.actions)
+}
+
+/// Parse a `.actions` document with explicit policy mode.
+pub fn parse_actions_with_mode(input: &str, mode: ParseMode) -> Result<ParseOutcome, ParseFailure> {
+    let document = parse_document(input).map_err(|e| ParseFailure {
+        code: "parse-io",
+        message: e,
+        range: SourceRange::default(),
+        hint: None,
+    })?;
+
+    let syntax_errors = document.syntax_errors.clone();
+
+    if mode == ParseMode::Strict && !syntax_errors.is_empty() {
+        let first = &syntax_errors[0];
+        return Err(ParseFailure {
+            code: "syntax-error",
+            message: first.message.clone(),
+            range: first.range,
+            hint: Some("Fix syntax errors before running mutating commands".to_string()),
+        });
     }
-    Ok(parsed_doc.actions)
+
+    Ok(ParseOutcome {
+        recovery: RecoveryReport {
+            recoverable_actions: document.actions.len(),
+        },
+        document,
+        syntax_errors,
+        lint_warnings: Vec::new(),
+    })
 }
 
 /// Parse a `.actions` file into a `ParsedDocument` (actions + source metadata + errors).

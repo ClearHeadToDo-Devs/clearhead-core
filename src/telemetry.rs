@@ -173,6 +173,27 @@ pub enum TelemetryEvent {
         parse_time_ms: u64,
     },
 
+    #[serde(rename = "parse_failed")]
+    ParseFailed {
+        file_path: String,
+        error_count: usize,
+        first_error_code: String,
+    },
+
+    #[serde(rename = "parse_recovered")]
+    ParseRecovered {
+        file_path: String,
+        error_count: usize,
+        recoverable_count: usize,
+    },
+
+    #[serde(rename = "mutation_skipped_due_to_parse")]
+    MutationSkippedDueToParse {
+        command: String,
+        file_path: String,
+        error_count: usize,
+    },
+
     #[serde(rename = "lsp_started")]
     LspStarted {
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -206,6 +227,9 @@ impl TelemetryEvent {
             TelemetryEvent::ConflictResolved { .. } => "conflict_resolved",
             TelemetryEvent::WorkspaceOpened { .. } => "workspace_opened",
             TelemetryEvent::FileParsed { .. } => "file_parsed",
+            TelemetryEvent::ParseFailed { .. } => "parse_failed",
+            TelemetryEvent::ParseRecovered { .. } => "parse_recovered",
+            TelemetryEvent::MutationSkippedDueToParse { .. } => "mutation_skipped_due_to_parse",
             TelemetryEvent::LspStarted { .. } => "lsp_started",
         }
     }

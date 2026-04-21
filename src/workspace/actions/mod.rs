@@ -21,7 +21,8 @@ pub use parser::{Action, ActionList, ActionState, PredecessorRef, parse_tree};
 
 // Parse pipeline
 pub use source::{
-    ParsedDocument, SourceMetadata, SourceRange, get_node_text, parse_actions, parse_document,
+    ParseFailure, ParseMode, ParseOutcome, ParsedDocument, RecoveryReport, SourceMetadata,
+    SourceRange, get_node_text, parse_actions, parse_actions_with_mode, parse_document,
 };
 
 // Storage

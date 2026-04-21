@@ -18,8 +18,9 @@ pub mod store;
 // Re-export key types at workspace level
 pub use actions::{
     Action, ActionList, ActionRepository, ActionSource, ActionState, Diff, OutputFormat,
-    ParsedDocument, SourceMetadata, SourceRange, SourcedAction, diff_actions, format,
-    parse_actions, parse_document, parse_tree, patch_action_list,
+    ParseFailure, ParseMode, ParseOutcome, ParsedDocument, RecoveryReport, SourceMetadata,
+    SourceRange, SourcedAction, diff_actions, format, parse_actions, parse_actions_with_mode,
+    parse_document, parse_tree, patch_action_list,
 };
 pub use acts::{
     closed_acts_path, merge_acts_into_model, open_acts_path, read_acts, write_acts,

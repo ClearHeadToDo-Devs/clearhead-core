@@ -8,7 +8,7 @@
 //! `parse_document`, asserting field-level values: IDs, states, names, and
 //! parent-child links.
 
-use clearhead_core::{ActionState, parse_actions, parse_document};
+use clearhead_core::{ActionState, ParseMode, parse_actions, parse_actions_with_mode, parse_document};
 
 // Use compile-time embedding so fixture content is verified to exist at build time.
 const WORK_ACTIONS: &str = include_str!("fixtures/workspace/user-flat/work.actions");
@@ -114,4 +114,27 @@ fn parse_document_captures_syntax_errors_without_panicking() {
             // A hard parse error is also acceptable — just not a panic.
         }
     }
+}
+
+#[test]
+fn parse_mode_strict_fails_on_syntax_errors() {
+    let result = parse_actions_with_mode("not valid actions syntax !!!", ParseMode::Strict);
+    assert!(result.is_err(), "strict mode should fail on syntax issues");
+    let err = result.expect_err("expected parse failure");
+    assert_eq!(err.code, "syntax-error");
+}
+
+#[test]
+fn parse_mode_recover_returns_diagnostics() {
+    let result = parse_actions_with_mode("not valid actions syntax !!!", ParseMode::Recover)
+        .expect("recover mode should not fail");
+    assert!(
+        !result.syntax_errors.is_empty(),
+        "recover mode should surface syntax diagnostics"
+    );
+    assert_eq!(
+        result.recovery.recoverable_actions,
+        result.document.actions.len(),
+        "recovery metadata should track recoverable action count"
+    );
 }
