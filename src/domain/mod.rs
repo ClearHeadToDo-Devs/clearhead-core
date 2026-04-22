@@ -350,7 +350,7 @@ pub struct Plan {
     pub depends_on: Option<Vec<Uuid>>,
     /// Raw VEVENT UID when this plan was loaded from an ICS file (null for .actions-sourced plans)
     pub external_id: Option<String>,
-    /// X-CLEARHEAD-TEMPLATE value from VEVENT (null for .actions-sourced plans)
+    /// Template name extracted from VEVENT DESCRIPTION (null for .actions-sourced plans)
     pub template_name: Option<String>,
     /// Recurrence anchor (DTSTART from VEVENT); None for .actions-sourced plans
     pub dtstart: Option<DateTime<Local>>,

@@ -14,6 +14,7 @@ pub mod detection;
 pub mod ics;
 pub mod plans;
 pub mod store;
+pub mod templates;
 
 // Re-export key types at workspace level
 pub use actions::{
@@ -30,6 +31,7 @@ pub use plans::{
     infer_plan_parent, infer_plan_parent_for_workspace,
 };
 
+pub use templates::{instantiate_template, resolve_template};
 pub use detection::check_for_workspace;
 pub use store::{
     ManifestSourceType, WorkspaceError, WorkspaceManifestEntry, collect_workspace_manifest,

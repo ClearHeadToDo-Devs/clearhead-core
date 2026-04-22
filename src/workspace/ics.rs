@@ -33,7 +33,7 @@ pub fn occurrence_act_id(vevent_uid: &str, occurrence_rfc3339: &str) -> uuid::Uu
 /// - `Plan.recurrence` — parsed from RRULE
 /// - `Plan.dtstart` — DTSTART as local time (recurrence expansion anchor)
 /// - `Plan.external_id` — raw VEVENT UID string
-/// - `Plan.template_name` — X-CLEARHEAD-TEMPLATE custom property
+/// - `Plan.template_name` — extracted from DESCRIPTION if it starts with `template: <name>`
 pub fn parse_ics_file(path: &Path) -> Result<Vec<Plan>, WorkspaceError> {
     let content = fs::read_to_string(path)
         .map_err(WorkspaceError::Io)?;
@@ -58,14 +58,16 @@ pub fn parse_ics_file(path: &Path) -> Result<Vec<Plan>, WorkspaceError> {
         let recurrence = event
             .property_value("RRULE")
             .and_then(Recurrence::from_rrule_str);
-        let template_name = event
-            .property_value("X-CLEARHEAD-TEMPLATE")
-            .map(str::to_string);
+
+        let (template_name, description) = event
+            .get_description()
+            .map(parse_template_from_description)
+            .unwrap_or((None, None));
 
         plans.push(Plan {
             id: plan_id,
             name: summary.to_string(),
-            description: event.get_description().map(str::to_string),
+            description,
             recurrence,
             dtstart,
             external_id: Some(uid.to_string()),
@@ -75,6 +77,28 @@ pub fn parse_ics_file(path: &Path) -> Result<Vec<Plan>, WorkspaceError> {
     }
 
     Ok(plans)
+}
+
+/// Extract template name from a VEVENT DESCRIPTION.
+///
+/// If the description starts with `template: <name>` (case-sensitive, single space),
+/// the first line is consumed as the template binding. The remainder becomes the
+/// description. Works with standard calendar apps — users put `template: weekly-review`
+/// as the first line of the event notes.
+fn parse_template_from_description(desc: &str) -> (Option<String>, Option<String>) {
+    let first_line = desc.lines().next().unwrap_or("");
+    if let Some(name) = first_line.strip_prefix("template: ") {
+        let name = name.trim();
+        if name.is_empty() {
+            return (None, Some(desc.to_string()));
+        }
+        let rest: String = desc.lines().skip(1).collect::<Vec<_>>().join("\n");
+        let rest = rest.trim().to_string();
+        let description = if rest.is_empty() { None } else { Some(rest) };
+        (Some(name.to_string()), description)
+    } else {
+        (None, Some(desc.to_string()))
+    }
 }
 
 fn parse_dtstart(event: &icalendar::Event) -> Option<DateTime<Local>> {
@@ -154,7 +178,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_vevent_with_template() {
+    fn parse_vevent_with_template_in_description() {
         let f = write_ics(
             "BEGIN:VCALENDAR\r\n\
              BEGIN:VEVENT\r\n\
@@ -162,7 +186,7 @@ mod tests {
              SUMMARY:Weekly Review\r\n\
              DTSTART:20260427T100000\r\n\
              RRULE:FREQ=WEEKLY;BYDAY=SU\r\n\
-             X-CLEARHEAD-TEMPLATE:weekly-review\r\n\
+             DESCRIPTION:template: weekly-review\\nReflect on the past week\r\n\
              END:VEVENT\r\n\
              END:VCALENDAR\r\n",
         );
@@ -170,7 +194,44 @@ mod tests {
         let plans = parse_ics_file(f.path()).unwrap();
         assert_eq!(plans.len(), 1);
         assert_eq!(plans[0].template_name.as_deref(), Some("weekly-review"));
+        assert_eq!(plans[0].description.as_deref(), Some("Reflect on the past week"));
         assert!(plans[0].recurrence.is_some());
+    }
+
+    #[test]
+    fn template_only_description_has_no_remaining_text() {
+        let f = write_ics(
+            "BEGIN:VCALENDAR\r\n\
+             BEGIN:VEVENT\r\n\
+             UID:tpl-only@example.com\r\n\
+             SUMMARY:Just Template\r\n\
+             DTSTART:20260427T100000\r\n\
+             DESCRIPTION:template: release-checklist\r\n\
+             END:VEVENT\r\n\
+             END:VCALENDAR\r\n",
+        );
+
+        let plans = parse_ics_file(f.path()).unwrap();
+        assert_eq!(plans[0].template_name.as_deref(), Some("release-checklist"));
+        assert!(plans[0].description.is_none());
+    }
+
+    #[test]
+    fn description_without_template_prefix_is_plain_description() {
+        let f = write_ics(
+            "BEGIN:VCALENDAR\r\n\
+             BEGIN:VEVENT\r\n\
+             UID:no-tpl@example.com\r\n\
+             SUMMARY:Normal Event\r\n\
+             DTSTART:20260427T100000\r\n\
+             DESCRIPTION:Just a regular event description\r\n\
+             END:VEVENT\r\n\
+             END:VCALENDAR\r\n",
+        );
+
+        let plans = parse_ics_file(f.path()).unwrap();
+        assert!(plans[0].template_name.is_none());
+        assert_eq!(plans[0].description.as_deref(), Some("Just a regular event description"));
     }
 
     #[test]
@@ -210,6 +271,25 @@ mod tests {
 
         let plans = parse_ics_file(f.path()).unwrap();
         assert_eq!(plans.len(), 0);
+    }
+
+    #[test]
+    fn parse_template_from_description_cases() {
+        let (tpl, desc) = parse_template_from_description("template: weekly-review\nSome notes");
+        assert_eq!(tpl.as_deref(), Some("weekly-review"));
+        assert_eq!(desc.as_deref(), Some("Some notes"));
+
+        let (tpl, desc) = parse_template_from_description("template: weekly-review");
+        assert_eq!(tpl.as_deref(), Some("weekly-review"));
+        assert!(desc.is_none());
+
+        let (tpl, desc) = parse_template_from_description("No template here");
+        assert!(tpl.is_none());
+        assert_eq!(desc.as_deref(), Some("No template here"));
+
+        let (tpl, desc) = parse_template_from_description("template: ");
+        assert!(tpl.is_none());
+        assert_eq!(desc.as_deref(), Some("template: "));
     }
 
     #[test]
