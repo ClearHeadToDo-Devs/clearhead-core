@@ -64,6 +64,10 @@ pub enum PlanFieldChange {
         old: Option<String>,
         new: Option<String>,
     },
+    DtStart {
+        old: Option<chrono::DateTime<chrono::Local>>,
+        new: Option<chrono::DateTime<chrono::Local>>,
+    },
 }
 
 /// A change to a single field on a PlannedAct.
@@ -422,6 +426,12 @@ fn compare_plans(old: &Plan, new: &Plan) -> Vec<PlanFieldChange> {
         changes.push(PlanFieldChange::TemplateName {
             old: old.template_name.clone(),
             new: new.template_name.clone(),
+        });
+    }
+    if !dates_equal(&old.dtstart, &new.dtstart) {
+        changes.push(PlanFieldChange::DtStart {
+            old: old.dtstart,
+            new: new.dtstart,
         });
     }
     changes

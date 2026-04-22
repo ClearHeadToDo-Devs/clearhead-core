@@ -1,0 +1,14 @@
+[
+    (
+        path: "health.md",
+        charter_name: "health",
+        inferred_parent: Some("project-mixed"),
+        source_type: MarkdownPlusIcs,
+    ),
+    (
+        path: "next.actions",
+        charter_name: "project-mixed",
+        inferred_parent: None,
+        source_type: Actions,
+    ),
+]

@@ -649,3 +649,46 @@ fn unresolvable_parent_does_not_crash_load() {
         "bad parent should be preserved, not silently dropped"
     );
 }
+
+#[test]
+fn mixed_workspace_loads_actions_and_ics_plans() {
+    let root = fixture_path("project-mixed");
+    let model = load_domain_model(&root).expect("load failed");
+
+    let mut names: Vec<String> = model.charters.iter().map(|c| c.alias.clone().unwrap_or_default()).collect();
+    names.sort();
+    assert_eq!(names, vec!["health", "project-mixed"]);
+
+    let project = model
+        .charters
+        .iter()
+        .find(|c| c.alias.as_deref() == Some("project-mixed"))
+        .unwrap();
+    assert_eq!(project.plans.len(), 1);
+    assert_eq!(project.plans[0].name, "Buy domain name");
+
+    let health = model
+        .charters
+        .iter()
+        .find(|c| c.alias.as_deref() == Some("health"))
+        .unwrap();
+    assert_eq!(health.plans.len(), 1);
+    
+    let plan = &health.plans[0];
+    assert_eq!(plan.name, "Go for a run");
+    assert_eq!(plan.external_id.as_deref(), Some("health-workout-1"));
+    assert_eq!(plan.template_name.as_deref(), Some("workout"));
+    assert!(plan.recurrence.is_some(), "recurrence should be populated");
+}
+
+#[test]
+fn mixed_workspace_ron_snapshots() {
+    let root = fixture_path("project-mixed");
+    let model = load_domain_model(&root).expect("load failed");
+    let ron = model_to_ron(&model);
+    assert_snapshot(&fixture_path("project-mixed.ron"), &ron);
+
+    let manifest = collect_workspace_manifest(&root).expect("manifest failed");
+    let manifest_ron = manifest_to_ron(&manifest);
+    assert_snapshot(&fixture_path("project-mixed-manifest.ron"), &manifest_ron);
+}

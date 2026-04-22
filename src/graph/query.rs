@@ -538,6 +538,9 @@ mod tests {
                         "019d7100-4444-7444-8444-444444444444",
                     )
                     .unwrap()]),
+                    external_id: Some("health-workout-1".to_string()),
+                    template_name: Some("workout".to_string()),
+                    dtstart: Some(chrono::Local::now()),
                     ..Default::default()
                 }],
                 acts: vec![PlannedAct {
