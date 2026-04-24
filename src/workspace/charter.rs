@@ -18,9 +18,62 @@
 //! ```
 
 use serde::Deserialize;
+use std::path::PathBuf;
 use uuid::Uuid;
 
-use crate::domain::Charter;
+use crate::domain::{Charter, Plan, PlannedAct};
+
+/// A charter as it exists in the workspace — carries file paths alongside domain data.
+///
+/// Use `From<MarkdownCharter> for Charter` to obtain a pure domain object.
+#[derive(Debug, Clone)]
+pub struct MarkdownCharter {
+    pub id: Uuid,
+    pub title: String,
+    pub description: Option<String>,
+    pub alias: Option<String>,
+    pub parent: Option<String>,
+    pub objectives: Option<Vec<String>>,
+    pub plans: Vec<Plan>,
+    pub acts: Vec<PlannedAct>,
+
+    pub md_file: Option<PathBuf>,
+    pub acts_file: Option<PathBuf>,
+    pub ics_file: Option<PathBuf>,
+}
+
+impl From<MarkdownCharter> for Charter {
+    fn from(mc: MarkdownCharter) -> Charter {
+        Charter {
+            id: mc.id,
+            title: mc.title,
+            description: mc.description,
+            alias: mc.alias,
+            parent: mc.parent,
+            objectives: mc.objectives,
+            plans: mc.plans,
+            acts: mc.acts,
+        }
+    }
+}
+
+impl From<Charter> for MarkdownCharter {
+    fn from(c: Charter) -> MarkdownCharter {
+        MarkdownCharter {
+            id: c.id,
+            title: c.title,
+            description: c.description,
+            alias: c.alias,
+            parent: c.parent,
+            objectives: c.objectives,
+            plans: c.plans,
+            acts: c.acts,
+            md_file: None,
+            acts_file: None,
+            ics_file: None,
+        }
+    }
+}
 
 /// Namespace UUID for deterministic charter IDs (v5).
 const CHARTER_NS: Uuid = Uuid::from_bytes([

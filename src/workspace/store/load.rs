@@ -3,20 +3,32 @@ use super::pathing::{infer_charter_name_for_workspace, infer_parent_charter_name
 use super::{WorkspaceError, resolve_workspace_layout};
 use crate::domain::{Charter, DomainModel};
 use crate::workspace::actions::convert::from_actions_with_charter;
-use crate::workspace::charter::parse_charter;
+use crate::workspace::charter::{MarkdownCharter, parse_charter};
 use crate::workspace::ics::parse_ics_file;
 use crate::workspace::plans::collect_plan_files;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 /// Load a `DomainModel` from a workspace root directory.
+///
+/// Delegates to `load_markdown_charters` and strips file-path metadata.
 pub fn load_domain_model(root: &Path) -> Result<DomainModel, WorkspaceError> {
+    let charters = load_markdown_charters(root)?;
+    Ok(DomainModel {
+        objectives: vec![],
+        charters: charters.into_iter().map(Charter::from).collect(),
+    })
+}
+
+/// Load the workspace as a `Vec<MarkdownCharter>`, preserving the file paths
+/// each charter's plans and acts came from.
+pub fn load_markdown_charters(root: &Path) -> Result<Vec<MarkdownCharter>, WorkspaceError> {
     if !root.is_dir() {
         return Err(WorkspaceError::InvalidPath(root.to_path_buf()));
     }
 
     let layout = resolve_workspace_layout(root);
-    let mut charters: HashMap<String, Charter> = HashMap::new();
+    let mut charters: HashMap<String, MarkdownCharter> = HashMap::new();
     let mut path_for_name: HashMap<String, PathBuf> = HashMap::new();
 
     for file_path in discover_action_files(&layout.data_root)? {
@@ -62,11 +74,13 @@ pub fn load_domain_model(root: &Path) -> Result<DomainModel, WorkspaceError> {
             }
         }
 
-        let charter = from_actions_with_charter(&actions, name.clone());
+        let base: Charter = from_actions_with_charter(&actions, name.clone());
+        let mut mc = MarkdownCharter::from(base);
+        mc.acts_file = Some(relative.clone());
         charters
             .entry(name.clone())
-            .and_modify(|c| c.plans.extend(charter.plans.clone()))
-            .or_insert(charter);
+            .and_modify(|c| c.plans.extend(mc.plans.clone()))
+            .or_insert(mc);
         path_for_name.entry(name).or_insert(relative);
     }
 
@@ -82,6 +96,7 @@ pub fn load_domain_model(root: &Path) -> Result<DomainModel, WorkspaceError> {
         let explicit = parse_charter(&std::fs::read_to_string(&file_path)?)
             .map_err(|e| WorkspaceError::Parse(format!("{}: {}", file_path.display(), e)))?;
 
+        let md_relative = relative.clone();
         charters
             .entry(name)
             .and_modify(|implicit| {
@@ -97,14 +112,19 @@ pub fn load_domain_model(root: &Path) -> Result<DomainModel, WorkspaceError> {
                 if explicit.objectives.is_some() {
                     implicit.objectives = explicit.objectives.clone();
                 }
+                implicit.md_file = Some(md_relative.clone());
             })
-            .or_insert(explicit);
+            .or_insert_with(|| {
+                let mut mc = MarkdownCharter::from(explicit);
+                mc.md_file = Some(md_relative);
+                mc
+            });
     }
 
     // Explicit frontmatter wins: translate filesystem-inferred parent names to their
     // resolved aliases so that e.g. a root charter with alias "build_clearhead" (not
     // the raw directory name "workspace") is what sibling charters reference.
-    let name_to_alias: std::collections::HashMap<String, String> = charters
+    let name_to_alias: HashMap<String, String> = charters
         .iter()
         .filter_map(|(name, c)| c.alias.as_ref().map(|a| (name.clone(), a.clone())))
         .collect();
@@ -152,10 +172,7 @@ pub fn load_domain_model(root: &Path) -> Result<DomainModel, WorkspaceError> {
         }
     }
 
-    let mut model = DomainModel {
-        objectives: vec![],
-        charters: charters.into_values().collect(),
-    };
+    let mut charters: Vec<MarkdownCharter> = charters.into_values().collect();
 
     // Load ICS schedules: each .ics VEVENT becomes a Plan in the matching charter.
     for entry in collect_plan_files(&layout.data_root)? {
@@ -163,15 +180,16 @@ pub fn load_domain_model(root: &Path) -> Result<DomainModel, WorkspaceError> {
         if plans.is_empty() {
             continue;
         }
-        if let Some(charter) = model.charters.iter_mut().find(|c| {
+        if let Some(charter) = charters.iter_mut().find(|c| {
             c.alias.as_deref() == Some(&entry.charter_name)
                 || c.title == entry.charter_name
         }) {
+            charter.ics_file = Some(entry.relative_path.clone());
             charter.plans.extend(plans);
         }
     }
 
-    Ok(model)
+    Ok(charters)
 }
 
 fn parent_hints(

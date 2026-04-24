@@ -24,7 +24,7 @@ pub use actions::{
     parse_document, parse_tree, patch_action_list,
 };
 pub use acts::{completed_acts_path, read_acts, write_acts};
-pub use charter::{format_charter, implicit_charter, parse_charter};
+pub use charter::{MarkdownCharter, format_charter, implicit_charter, parse_charter};
 pub use ics::occurrence_act_id;
 pub use plans::{
     PlanFileEntry, collect_plan_files, infer_plan_charter_name, infer_plan_charter_name_for_workspace,
@@ -37,5 +37,5 @@ pub use store::{
     ManifestSourceType, WorkspaceError, WorkspaceManifestEntry, collect_workspace_manifest,
     infer_charter_name, infer_charter_name_for_workspace, infer_parent_charter_name,
     infer_parent_charter_name_for_workspace, list_action_files, load_domain_model,
-    save_domain_model, workspace_data_root,
+    load_markdown_charters, save_domain_model, workspace_data_root,
 };

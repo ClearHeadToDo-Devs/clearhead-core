@@ -28,7 +28,7 @@ mod save;
 
 use std::path::{Path, PathBuf};
 
-pub use load::load_domain_model;
+pub use load::{load_domain_model, load_markdown_charters};
 pub use manifest::{ManifestSourceType, WorkspaceManifestEntry, collect_workspace_manifest};
 pub use pathing::{
     infer_charter_name, infer_charter_name_for_workspace, infer_parent_charter_name,
