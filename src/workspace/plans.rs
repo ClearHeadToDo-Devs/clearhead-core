@@ -19,11 +19,11 @@ pub struct PlanFileEntry {
 pub fn collect_plan_files(root: &Path) -> Result<Vec<PlanFileEntry>, WorkspaceError> {
     let layout = resolve_workspace_layout(root);
     let mut files = Vec::new();
-    discover_plan_paths(&layout.data_root, &mut files)?;
+    discover_plan_paths(&layout.charter_root, &mut files)?;
 
     let mut entries = Vec::new();
     for path in files {
-        let Ok(relative_path) = path.strip_prefix(&layout.data_root) else {
+        let Ok(relative_path) = path.strip_prefix(&layout.charter_root) else {
             return Err(WorkspaceError::InvalidPath(path));
         };
 

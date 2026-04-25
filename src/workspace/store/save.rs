@@ -18,13 +18,13 @@ pub fn save_domain_model(root: &Path, model: &DomainModel) -> Result<(), Workspa
     }
 
     let layout = resolve_workspace_layout(root);
-    std::fs::create_dir_all(&layout.data_root)?;
+    std::fs::create_dir_all(&layout.charter_root)?;
 
     let manifest = build_action_file_manifest(model, &layout)?;
 
     // Write only files whose content differs from what's on disk.
     for (relative_path, content) in &manifest {
-        let absolute_path = layout.data_root.join(relative_path);
+        let absolute_path = layout.charter_root.join(relative_path);
         let needs_write = std::fs::read_to_string(&absolute_path)
             .map(|existing| existing != *content)
             .unwrap_or(true); // file missing → write it
@@ -39,15 +39,15 @@ pub fn save_domain_model(root: &Path, model: &DomainModel) -> Result<(), Workspa
 
     // Remove orphaned files (on disk but not in the new manifest).
     let manifest_paths: HashSet<PathBuf> = manifest.keys().cloned().collect();
-    for existing in discover_action_files(&layout.data_root)? {
+    for existing in discover_action_files(&layout.charter_root)? {
         let relative = existing
-            .strip_prefix(&layout.data_root)
+            .strip_prefix(&layout.charter_root)
             .unwrap_or(&existing)
             .to_path_buf();
         if !manifest_paths.contains(&relative) {
             std::fs::remove_file(&existing)?;
             if let Some(parent) = existing.parent() {
-                prune_empty_directories(parent, &layout.data_root)?;
+                prune_empty_directories(parent, &layout.charter_root)?;
             }
         }
     }
@@ -233,9 +233,9 @@ mod tests {
     fn save_project_local_layout() {
         let temp = tempfile::tempdir().expect("tempdir");
         let root = temp.path().join("platform");
-        std::fs::create_dir_all(root.join(".clearhead")).expect("create .clearhead");
+        std::fs::create_dir_all(root.join(".clearhead/charters")).expect("create charters");
 
-        std::fs::write(root.join(".clearhead").join("stale.actions"), "[ ] stale\n")
+        std::fs::write(root.join(".clearhead/charters/stale.actions"), "[ ] stale\n")
             .expect("write stale");
 
         let model = DomainModel {
@@ -269,10 +269,10 @@ mod tests {
 
         save_domain_model(&root, &model).expect("save model");
 
-        assert!(root.join(".clearhead/next.actions").exists());
-        assert!(root.join(".clearhead/infra.actions").exists());
-        assert!(root.join(".clearhead/infra/deploy.actions").exists());
-        assert!(!root.join(".clearhead/stale.actions").exists());
+        assert!(root.join(".clearhead/charters/next.actions").exists());
+        assert!(root.join(".clearhead/charters/infra.actions").exists());
+        assert!(root.join(".clearhead/charters/infra/deploy.actions").exists());
+        assert!(!root.join(".clearhead/charters/stale.actions").exists());
 
         let loaded = load_domain_model(&root).expect("load model");
         let mut names: Vec<String> = loaded.charters.iter().map(|c| c.title.clone()).collect();
@@ -327,8 +327,8 @@ mod tests {
 
         save_domain_model(&root, &model).expect("save model");
 
-        assert!(root.join("work.actions").exists());
-        assert!(root.join("work/ops.actions").exists());
+        assert!(root.join("charters/work.actions").exists());
+        assert!(root.join("charters/work/ops.actions").exists());
     }
 
     #[test]
@@ -369,7 +369,7 @@ mod tests {
 
         // Capture the content of the unchanged file before the second save.
         let work_content_before =
-            std::fs::read_to_string(root.join("work.actions")).expect("read work.actions");
+            std::fs::read_to_string(root.join("charters/work.actions")).expect("read work.actions");
 
         // Save again with only ops modified.
         let mut updated = model.clone();
@@ -378,7 +378,7 @@ mod tests {
 
         // ops should reflect the change.
         let ops_content =
-            std::fs::read_to_string(root.join("work/ops.actions")).expect("read ops.actions");
+            std::fs::read_to_string(root.join("charters/work/ops.actions")).expect("read ops.actions");
         assert!(
             ops_content.contains("Backups v2"),
             "ops file should be updated"
@@ -386,7 +386,7 @@ mod tests {
 
         // work should be byte-for-byte identical — not rewritten.
         let work_content_after =
-            std::fs::read_to_string(root.join("work.actions")).expect("read work.actions");
+            std::fs::read_to_string(root.join("charters/work.actions")).expect("read work.actions");
         assert_eq!(
             work_content_before, work_content_after,
             "unchanged charter file should not be rewritten"
@@ -428,7 +428,7 @@ mod tests {
         };
 
         save_domain_model(&root, &model).expect("initial save");
-        assert!(root.join("work/ops.actions").exists());
+        assert!(root.join("charters/work/ops.actions").exists());
 
         // Remove ops from the model and save again.
         let mut trimmed = model.clone();
@@ -436,11 +436,11 @@ mod tests {
         save_domain_model(&root, &trimmed).expect("trimmed save");
 
         assert!(
-            !root.join("work/ops.actions").exists(),
+            !root.join("charters/work/ops.actions").exists(),
             "orphaned file should be removed"
         );
         assert!(
-            root.join("work.actions").exists(),
+            root.join("charters/work.actions").exists(),
             "surviving file should remain"
         );
     }

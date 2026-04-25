@@ -31,9 +31,9 @@ pub fn load_markdown_charters(root: &Path) -> Result<Vec<MarkdownCharter>, Works
     let mut charters: HashMap<String, MarkdownCharter> = HashMap::new();
     let mut path_for_name: HashMap<String, PathBuf> = HashMap::new();
 
-    for file_path in discover_action_files(&layout.data_root)? {
+    for file_path in discover_action_files(&layout.charter_root)? {
         let relative = file_path
-            .strip_prefix(&layout.data_root)
+            .strip_prefix(&layout.charter_root)
             .unwrap_or(&file_path)
             .to_path_buf();
         let name =
@@ -84,9 +84,9 @@ pub fn load_markdown_charters(root: &Path) -> Result<Vec<MarkdownCharter>, Works
         path_for_name.entry(name).or_insert(relative);
     }
 
-    for file_path in discover_charter_files(&layout.data_root)? {
+    for file_path in discover_charter_files(&layout.charter_root)? {
         let relative = file_path
-            .strip_prefix(&layout.data_root)
+            .strip_prefix(&layout.charter_root)
             .unwrap_or(&file_path)
             .to_path_buf();
         let name =

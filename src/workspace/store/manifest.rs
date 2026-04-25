@@ -49,8 +49,8 @@ pub fn collect_workspace_manifest(
 ) -> Result<Vec<WorkspaceManifestEntry>, WorkspaceError> {
     let layout = resolve_workspace_layout(root);
 
-    let action_files = discover_action_files(&layout.data_root)?;
-    let charter_files = discover_charter_files(&layout.data_root)?;
+    let action_files = discover_action_files(&layout.charter_root)?;
+    let charter_files = discover_charter_files(&layout.charter_root)?;
     let plan_files = collect_plan_files(root)?;
 
     let mut entries_by_charter: HashMap<String, WorkspaceManifestEntry> = HashMap::new();
@@ -85,7 +85,7 @@ pub fn collect_workspace_manifest(
 
     for file_path in action_files {
         let relative = file_path
-            .strip_prefix(&layout.data_root)
+            .strip_prefix(&layout.charter_root)
             .unwrap_or(&file_path);
         let charter_name =
             infer_charter_name_for_workspace(relative, layout.project_root_charter.as_deref())
@@ -108,7 +108,7 @@ pub fn collect_workspace_manifest(
 
     for file_path in charter_files {
         let relative = file_path
-            .strip_prefix(&layout.data_root)
+            .strip_prefix(&layout.charter_root)
             .unwrap_or(&file_path);
         let charter_name =
             infer_charter_name_for_workspace(relative, layout.project_root_charter.as_deref())

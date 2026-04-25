@@ -33,7 +33,7 @@ pub use workspace::{
     infer_plan_charter_name_for_workspace, infer_plan_parent, infer_plan_parent_for_workspace,
     list_action_files, load_domain_model, load_markdown_charters, occurrence_act_id, parse_actions,
     parse_actions_with_mode, parse_charter, parse_document, parse_tree, patch_action_list,
-    read_acts, save_domain_model, workspace_data_root, write_acts,
+    charter_root, read_acts, save_domain_model, workspace_data_root, write_acts,
 };
 
 pub mod domain;

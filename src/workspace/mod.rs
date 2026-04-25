@@ -36,6 +36,6 @@ pub use store::{
     ManifestSourceType, WorkspaceError, WorkspaceManifestEntry, collect_workspace_manifest,
     infer_charter_name, infer_charter_name_for_workspace, infer_parent_charter_name,
     infer_parent_charter_name_for_workspace, list_action_files, load_domain_model,
-    load_markdown_charters, save_domain_model, workspace_data_root,
+    charter_root, load_markdown_charters, save_domain_model, workspace_data_root,
 };
 pub use templates::{instantiate_template, resolve_template};

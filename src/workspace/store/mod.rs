@@ -36,20 +36,24 @@ pub use pathing::{
 };
 pub use save::save_domain_model;
 
-/// Returns the data root directory for this workspace.
+/// Returns the workspace root directory (`.clearhead/` for project layout).
 ///
-/// In a project layout (`.clearhead/` subdirectory exists), returns `.clearhead/`.
-/// In a user layout, returns the root itself.
+/// Use this for non-charter files: `archive.ttl`, `objectives/`, `templates/`.
 pub fn workspace_data_root(root: &Path) -> PathBuf {
     resolve_workspace_layout(root).data_root
 }
 
-/// Returns absolute paths to all `.actions` files in the workspace.
+/// Returns the charter tree root (`<data_root>/charters/`).
 ///
-/// Handles both project layout (`.clearhead/` subdirectory) and user layout.
+/// All `.actions` and `.md` charter files live here. Use this for charter/act path resolution.
+pub fn charter_root(root: &Path) -> PathBuf {
+    resolve_workspace_layout(root).charter_root
+}
+
+/// Returns absolute paths to all `.actions` files in the workspace.
 pub fn list_action_files(root: &Path) -> Result<Vec<PathBuf>, WorkspaceError> {
     let layout = resolve_workspace_layout(root);
-    discovery::discover_action_files(&layout.data_root)
+    discovery::discover_action_files(&layout.charter_root)
 }
 
 /// Errors that can occur when interacting with a workspace.
@@ -71,7 +75,10 @@ pub enum WorkspaceError {
 
 #[derive(Debug, Clone)]
 pub(crate) struct WorkspaceLayout {
+    /// `.clearhead/` (or workspace root for user layout) — for non-charter files.
     pub(crate) data_root: PathBuf,
+    /// `<data_root>/charters/` — where the charter tree lives.
+    pub(crate) charter_root: PathBuf,
     pub(crate) project_root_charter: Option<String>,
 }
 
@@ -85,7 +92,9 @@ pub(crate) struct WorkspaceLayout {
 pub(crate) fn resolve_workspace_layout(root: &Path) -> WorkspaceLayout {
     let project_data = root.join(".clearhead");
     if project_data.is_dir() {
+        let charter_root = project_data.join("charters");
         return WorkspaceLayout {
+            charter_root: charter_root.clone(),
             data_root: project_data,
             project_root_charter: root
                 .file_name()
@@ -94,7 +103,9 @@ pub(crate) fn resolve_workspace_layout(root: &Path) -> WorkspaceLayout {
         };
     }
 
+    let charter_root = root.join("charters");
     WorkspaceLayout {
+        charter_root: charter_root.clone(),
         data_root: root.to_path_buf(),
         project_root_charter: None,
     }
