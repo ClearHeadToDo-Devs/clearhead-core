@@ -49,7 +49,7 @@ pub enum Tool {
 #[serde(tag = "event")]
 pub enum TelemetryEvent {
     // =========================================================================
-    // Action Lifecycle
+    // Action (PlannedAct file layer) Lifecycle
     // =========================================================================
     #[serde(rename = "action_created")]
     ActionCreated { name: String, file_path: String },
@@ -83,6 +83,15 @@ pub enum TelemetryEvent {
 
     #[serde(rename = "action_deleted")]
     ActionDeleted { name: String },
+
+    // =========================================================================
+    // Plan (ICS VEVENT) Lifecycle
+    // =========================================================================
+    #[serde(rename = "plan_created")]
+    PlanCreated { name: String, file_path: String },
+
+    #[serde(rename = "plan_deleted")]
+    PlanDeleted { name: String },
 
     // =========================================================================
     // Property Changes
@@ -231,6 +240,8 @@ impl TelemetryEvent {
             TelemetryEvent::ParseRecovered { .. } => "parse_recovered",
             TelemetryEvent::MutationSkippedDueToParse { .. } => "mutation_skipped_due_to_parse",
             TelemetryEvent::LspStarted { .. } => "lsp_started",
+            TelemetryEvent::PlanCreated { .. } => "plan_created",
+            TelemetryEvent::PlanDeleted { .. } => "plan_deleted",
         }
     }
 }
