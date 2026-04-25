@@ -567,10 +567,12 @@ mod tests {
         assert_eq!(diff.charters_modified.len(), 1);
         let charter_diff = &diff.charters_modified[0];
         assert_eq!(charter_diff.plans_modified.len(), 1);
-        assert!(charter_diff.plans_modified[0]
-            .changes
-            .iter()
-            .any(|c| matches!(c, PlanFieldChange::Name { .. })));
+        assert!(
+            charter_diff.plans_modified[0]
+                .changes
+                .iter()
+                .any(|c| matches!(c, PlanFieldChange::Name { .. }))
+        );
     }
 
     #[test]
@@ -586,10 +588,12 @@ mod tests {
         let charter_diff = &diff.charters_modified[0];
         assert_eq!(charter_diff.plans_modified.len(), 1);
         assert_eq!(charter_diff.plans_modified[0].acts_modified.len(), 1);
-        assert!(charter_diff.plans_modified[0].acts_modified[0]
-            .changes
-            .iter()
-            .any(|c| matches!(c, ActFieldChange::Phase { .. })));
+        assert!(
+            charter_diff.plans_modified[0].acts_modified[0]
+                .changes
+                .iter()
+                .any(|c| matches!(c, ActFieldChange::Phase { .. }))
+        );
     }
 
     #[test]

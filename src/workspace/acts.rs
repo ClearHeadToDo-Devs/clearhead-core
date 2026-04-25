@@ -79,8 +79,8 @@ pub fn write_acts(acts: &[Action], path: &Path) -> Result<(), WorkspaceError> {
     }
 
     let list: ActionList = acts.to_vec();
-    let content = format(&list, OutputFormat::Actions, None, None)
-        .map_err(|e| WorkspaceError::Acts(e))?;
+    let content =
+        format(&list, OutputFormat::Actions, None, None).map_err(|e| WorkspaceError::Acts(e))?;
     std::fs::write(path, content).map_err(WorkspaceError::Io)
 }
 

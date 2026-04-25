@@ -175,14 +175,13 @@ pub fn load_markdown_charters(root: &Path) -> Result<Vec<MarkdownCharter>, Works
     let mut charters: Vec<MarkdownCharter> = charters.into_values().collect();
 
     // Load ICS schedules: each .ics VEVENT becomes a Plan in the matching charter.
-    for entry in collect_plan_files(&layout.data_root)? {
+    for entry in collect_plan_files(root)? {
         let plans = parse_ics_file(&entry.path)?;
         if plans.is_empty() {
             continue;
         }
         if let Some(charter) = charters.iter_mut().find(|c| {
-            c.alias.as_deref() == Some(&entry.charter_name)
-                || c.title == entry.charter_name
+            c.alias.as_deref() == Some(&entry.charter_name) || c.title == entry.charter_name
         }) {
             charter.ics_file = Some(entry.relative_path.clone());
             charter.plans.extend(plans);

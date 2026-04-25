@@ -128,10 +128,14 @@ mod tests {
         ];
 
         let counter = std::sync::atomic::AtomicU64::new(1);
-        let result = instantiate_template(&template, |_| {
-            let n = counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            Uuid::from_u128(n as u128)
-        }, None);
+        let result = instantiate_template(
+            &template,
+            |_| {
+                let n = counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                Uuid::from_u128(n as u128)
+            },
+            None,
+        );
 
         assert_eq!(result.len(), 2);
         assert_ne!(result[0].id, parent_id);

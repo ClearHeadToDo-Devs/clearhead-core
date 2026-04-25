@@ -36,10 +36,8 @@ pub fn collect_plan_files(root: &Path) -> Result<Vec<PlanFileEntry>, WorkspaceEr
             continue;
         };
 
-        let inferred_parent = infer_plan_parent_for_workspace(
-            &relative_path,
-            layout.project_root_charter.as_deref(),
-        );
+        let inferred_parent =
+            infer_plan_parent_for_workspace(&relative_path, layout.project_root_charter.as_deref());
 
         entries.push(PlanFileEntry {
             path,
@@ -241,8 +239,11 @@ mod tests {
 
         fs::write(data.join("next.ics"), "BEGIN:VCALENDAR\nEND:VCALENDAR\n").expect("write");
         fs::write(data.join("inbox.ics"), "BEGIN:VCALENDAR\nEND:VCALENDAR\n").expect("write");
-        fs::write(data.join("work").join("next.ics"), "BEGIN:VCALENDAR\nEND:VCALENDAR\n")
-            .expect("write");
+        fs::write(
+            data.join("work").join("next.ics"),
+            "BEGIN:VCALENDAR\nEND:VCALENDAR\n",
+        )
+        .expect("write");
         fs::write(
             data.join("work").join("ops.ics"),
             "BEGIN:VCALENDAR\nEND:VCALENDAR\n",
@@ -276,9 +277,17 @@ mod tests {
         assert_eq!(
             summarized,
             vec![
-                ("inbox.ics".into(), "inbox".into(), Some("my-project".into())),
+                (
+                    "inbox.ics".into(),
+                    "inbox".into(),
+                    Some("my-project".into())
+                ),
                 ("next.ics".into(), "my-project".into(), None),
-                ("work/next.ics".into(), "work".into(), Some("my-project".into())),
+                (
+                    "work/next.ics".into(),
+                    "work".into(),
+                    Some("my-project".into())
+                ),
                 (
                     "work/ops/next.ics".into(),
                     "ops".into(),

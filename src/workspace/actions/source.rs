@@ -105,8 +105,7 @@ impl SourceRange {
 
 /// Parse a `.actions` file into a structured `ActionList`, returning an error on syntax problems.
 pub fn parse_actions(input: &str) -> Result<ActionList, String> {
-    let outcome = parse_actions_with_mode(input, ParseMode::Strict)
-        .map_err(|e| e.to_string())?;
+    let outcome = parse_actions_with_mode(input, ParseMode::Strict).map_err(|e| e.to_string())?;
     Ok(outcome.document.actions)
 }
 

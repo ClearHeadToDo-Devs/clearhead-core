@@ -5,8 +5,8 @@
 
 use super::discovery::{discover_action_files, discover_charter_files};
 use super::pathing::{infer_charter_name_for_workspace, infer_parent_charter_name_for_workspace};
-use crate::workspace::plans::collect_plan_files;
 use super::{WorkspaceError, resolve_workspace_layout};
+use crate::workspace::plans::collect_plan_files;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
@@ -51,18 +51,35 @@ pub fn collect_workspace_manifest(
 
     let action_files = discover_action_files(&layout.data_root)?;
     let charter_files = discover_charter_files(&layout.data_root)?;
-    let plan_files = collect_plan_files(&layout.data_root)?;
+    let plan_files = collect_plan_files(root)?;
 
     let mut entries_by_charter: HashMap<String, WorkspaceManifestEntry> = HashMap::new();
 
     // Helper to merge source types
-    fn merge_sources(current: &ManifestSourceType, new_source: ManifestSourceType) -> ManifestSourceType {
+    fn merge_sources(
+        current: &ManifestSourceType,
+        new_source: ManifestSourceType,
+    ) -> ManifestSourceType {
         match (current, new_source) {
-            (ManifestSourceType::Actions, ManifestSourceType::Markdown) | (ManifestSourceType::Markdown, ManifestSourceType::Actions) => ManifestSourceType::ActionsPlusMarkdown,
-            (ManifestSourceType::Actions, ManifestSourceType::Ics) | (ManifestSourceType::Ics, ManifestSourceType::Actions) => ManifestSourceType::ActionsPlusIcs,
-            (ManifestSourceType::Markdown, ManifestSourceType::Ics) | (ManifestSourceType::Ics, ManifestSourceType::Markdown) => ManifestSourceType::MarkdownPlusIcs,
-            (ManifestSourceType::ActionsPlusMarkdown, ManifestSourceType::Ics) | (ManifestSourceType::Ics, ManifestSourceType::ActionsPlusMarkdown) | (ManifestSourceType::ActionsPlusIcs, ManifestSourceType::Markdown) | (ManifestSourceType::MarkdownPlusIcs, ManifestSourceType::Actions) => ManifestSourceType::ActionsPlusMarkdownPlusIcs,
-            _ => current.clone() // fallback or same
+            (ManifestSourceType::Actions, ManifestSourceType::Markdown)
+            | (ManifestSourceType::Markdown, ManifestSourceType::Actions) => {
+                ManifestSourceType::ActionsPlusMarkdown
+            }
+            (ManifestSourceType::Actions, ManifestSourceType::Ics)
+            | (ManifestSourceType::Ics, ManifestSourceType::Actions) => {
+                ManifestSourceType::ActionsPlusIcs
+            }
+            (ManifestSourceType::Markdown, ManifestSourceType::Ics)
+            | (ManifestSourceType::Ics, ManifestSourceType::Markdown) => {
+                ManifestSourceType::MarkdownPlusIcs
+            }
+            (ManifestSourceType::ActionsPlusMarkdown, ManifestSourceType::Ics)
+            | (ManifestSourceType::Ics, ManifestSourceType::ActionsPlusMarkdown)
+            | (ManifestSourceType::ActionsPlusIcs, ManifestSourceType::Markdown)
+            | (ManifestSourceType::MarkdownPlusIcs, ManifestSourceType::Actions) => {
+                ManifestSourceType::ActionsPlusMarkdownPlusIcs
+            }
+            _ => current.clone(), // fallback or same
         }
     }
 
@@ -78,12 +95,15 @@ pub fn collect_workspace_manifest(
             layout.project_root_charter.as_deref(),
         );
 
-        entries_by_charter.insert(charter_name.clone(), WorkspaceManifestEntry {
-            path: relative.to_string_lossy().into_owned(),
-            charter_name,
-            inferred_parent,
-            source_type: ManifestSourceType::Actions,
-        });
+        entries_by_charter.insert(
+            charter_name.clone(),
+            WorkspaceManifestEntry {
+                path: relative.to_string_lossy().into_owned(),
+                charter_name,
+                inferred_parent,
+                source_type: ManifestSourceType::Actions,
+            },
+        );
     }
 
     for file_path in charter_files {
@@ -101,12 +121,15 @@ pub fn collect_workspace_manifest(
         if let Some(entry) = entries_by_charter.get_mut(&charter_name) {
             entry.source_type = merge_sources(&entry.source_type, ManifestSourceType::Markdown);
         } else {
-            entries_by_charter.insert(charter_name.clone(), WorkspaceManifestEntry {
-                path: relative.to_string_lossy().into_owned(),
-                charter_name,
-                inferred_parent,
-                source_type: ManifestSourceType::Markdown,
-            });
+            entries_by_charter.insert(
+                charter_name.clone(),
+                WorkspaceManifestEntry {
+                    path: relative.to_string_lossy().into_owned(),
+                    charter_name,
+                    inferred_parent,
+                    source_type: ManifestSourceType::Markdown,
+                },
+            );
         }
     }
 
@@ -115,12 +138,15 @@ pub fn collect_workspace_manifest(
         if let Some(existing) = entries_by_charter.get_mut(&charter_name) {
             existing.source_type = merge_sources(&existing.source_type, ManifestSourceType::Ics);
         } else {
-            entries_by_charter.insert(charter_name.clone(), WorkspaceManifestEntry {
-                path: entry.relative_path.to_string_lossy().into_owned(),
-                charter_name,
-                inferred_parent: entry.inferred_parent,
-                source_type: ManifestSourceType::Ics,
-            });
+            entries_by_charter.insert(
+                charter_name.clone(),
+                WorkspaceManifestEntry {
+                    path: entry.relative_path.to_string_lossy().into_owned(),
+                    charter_name,
+                    inferred_parent: entry.inferred_parent,
+                    source_type: ManifestSourceType::Ics,
+                },
+            );
         }
     }
 

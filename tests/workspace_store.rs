@@ -141,6 +141,53 @@ fn project_layout_next_actions_uses_project_name_as_charter() {
 }
 
 #[test]
+fn project_layout_next_ics_uses_project_name_as_charter() {
+    let (_outer, project) = make_named_project(
+        "my-project",
+        &[
+            (
+                "next.actions",
+                "[ ] Root task #01951111-0000-7000-0000-000000000051\n",
+            ),
+            (
+                "next.ics",
+                "BEGIN:VCALENDAR\n\
+VERSION:2.0\n\
+PRODID:-//clearhead//NONSGML v1.0//EN\n\
+BEGIN:VEVENT\n\
+UID:root-plan-1\n\
+DTSTART:20260101T080000Z\n\
+SUMMARY:Project root plan\n\
+END:VEVENT\n\
+END:VCALENDAR\n",
+            ),
+        ],
+    );
+
+    let model = load_domain_model(&project).expect("load failed");
+
+    assert_eq!(model.charters.len(), 1);
+    assert_eq!(model.charters[0].alias.as_deref(), Some("my-project"));
+    assert_eq!(model.charters[0].plans.len(), 2);
+    assert!(
+        model.charters[0]
+            .plans
+            .iter()
+            .any(|plan| plan.name == "Project root plan"),
+        "root next.ics plan should be attached to the project charter"
+    );
+
+    let manifest = collect_workspace_manifest(&project).expect("manifest failed");
+    assert_eq!(manifest.len(), 1);
+    assert_eq!(manifest[0].path, "next.actions");
+    assert_eq!(manifest[0].charter_name, "my-project");
+    assert_eq!(
+        manifest[0].source_type,
+        ManifestSourceType::ActionsPlusIcs
+    );
+}
+
+#[test]
 fn user_layout_uses_filename_as_charter() {
     // In user layout (no `.clearhead/`), there is no special project root —
     // every file's stem becomes the charter name directly.
@@ -655,7 +702,11 @@ fn mixed_workspace_loads_actions_and_ics_plans() {
     let root = fixture_path("project-mixed");
     let model = load_domain_model(&root).expect("load failed");
 
-    let mut names: Vec<String> = model.charters.iter().map(|c| c.alias.clone().unwrap_or_default()).collect();
+    let mut names: Vec<String> = model
+        .charters
+        .iter()
+        .map(|c| c.alias.clone().unwrap_or_default())
+        .collect();
     names.sort();
     assert_eq!(names, vec!["health", "project-mixed"]);
 
@@ -673,7 +724,7 @@ fn mixed_workspace_loads_actions_and_ics_plans() {
         .find(|c| c.alias.as_deref() == Some("health"))
         .unwrap();
     assert_eq!(health.plans.len(), 1);
-    
+
     let plan = &health.plans[0];
     assert_eq!(plan.name, "Go for a run");
     assert_eq!(plan.external_id.as_deref(), Some("health-workout-1"));

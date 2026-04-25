@@ -8,7 +8,9 @@
 //! `parse_document`, asserting field-level values: IDs, states, names, and
 //! parent-child links.
 
-use clearhead_core::{ActionState, ParseMode, parse_actions, parse_actions_with_mode, parse_document};
+use clearhead_core::{
+    ActionState, ParseMode, parse_actions, parse_actions_with_mode, parse_document,
+};
 
 // Use compile-time embedding so fixture content is verified to exist at build time.
 const WORK_ACTIONS: &str = include_str!("fixtures/workspace/user-flat/work.actions");

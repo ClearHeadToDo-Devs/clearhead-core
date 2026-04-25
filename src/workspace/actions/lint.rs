@@ -833,5 +833,4 @@ mod tests {
         let result = check_duration_without_do_date(&action, &metadata);
         assert!(result.is_none());
     }
-
 }

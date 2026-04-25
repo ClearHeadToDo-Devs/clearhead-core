@@ -250,11 +250,7 @@ fn extract_title_and_description(body: &str) -> (Option<String>, Option<String>)
         None
     } else {
         let desc = desc_lines.join("\n").trim().to_string();
-        if desc.is_empty() {
-            None
-        } else {
-            Some(desc)
-        }
+        if desc.is_empty() { None } else { Some(desc) }
     };
 
     (title, description)

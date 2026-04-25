@@ -284,15 +284,31 @@ impl Recurrence {
                 "INTERVAL" => r.interval = value.parse().ok(),
                 "COUNT" => r.count = value.parse().ok(),
                 "UNTIL" => r.until = Some(value.to_string()),
-                "BYSECOND" => r.by_second = Some(value.split(',').filter_map(|v| v.parse().ok()).collect()),
-                "BYMINUTE" => r.by_minute = Some(value.split(',').filter_map(|v| v.parse().ok()).collect()),
-                "BYHOUR" => r.by_hour = Some(value.split(',').filter_map(|v| v.parse().ok()).collect()),
+                "BYSECOND" => {
+                    r.by_second = Some(value.split(',').filter_map(|v| v.parse().ok()).collect())
+                }
+                "BYMINUTE" => {
+                    r.by_minute = Some(value.split(',').filter_map(|v| v.parse().ok()).collect())
+                }
+                "BYHOUR" => {
+                    r.by_hour = Some(value.split(',').filter_map(|v| v.parse().ok()).collect())
+                }
                 "BYDAY" => r.by_day = Some(value.split(',').map(|v| v.to_string()).collect()),
-                "BYMONTHDAY" => r.by_month_day = Some(value.split(',').filter_map(|v| v.parse().ok()).collect()),
-                "BYYEARDAY" => r.by_year_day = Some(value.split(',').filter_map(|v| v.parse().ok()).collect()),
-                "BYWEEKNO" => r.by_week_no = Some(value.split(',').filter_map(|v| v.parse().ok()).collect()),
-                "BYMONTH" => r.by_month = Some(value.split(',').filter_map(|v| v.parse().ok()).collect()),
-                "BYSETPOS" => r.by_set_pos = Some(value.split(',').filter_map(|v| v.parse().ok()).collect()),
+                "BYMONTHDAY" => {
+                    r.by_month_day = Some(value.split(',').filter_map(|v| v.parse().ok()).collect())
+                }
+                "BYYEARDAY" => {
+                    r.by_year_day = Some(value.split(',').filter_map(|v| v.parse().ok()).collect())
+                }
+                "BYWEEKNO" => {
+                    r.by_week_no = Some(value.split(',').filter_map(|v| v.parse().ok()).collect())
+                }
+                "BYMONTH" => {
+                    r.by_month = Some(value.split(',').filter_map(|v| v.parse().ok()).collect())
+                }
+                "BYSETPOS" => {
+                    r.by_set_pos = Some(value.split(',').filter_map(|v| v.parse().ok()).collect())
+                }
                 "WKST" => r.week_start = Some(value.to_string()),
                 _ => {}
             }
@@ -577,7 +593,6 @@ impl DomainModel {
             .filter(|a| !matches!(a.phase, ActPhase::Completed | ActPhase::Cancelled))
             .collect()
     }
-
 }
 
 #[cfg(test)]
@@ -621,5 +636,4 @@ mod tests {
         assert_eq!(occurrences[1].format("%Y-%m-%d").to_string(), "2025-01-02");
         assert_eq!(occurrences[2].format("%Y-%m-%d").to_string(), "2025-01-03");
     }
-
 }

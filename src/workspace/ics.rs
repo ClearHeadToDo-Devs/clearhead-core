@@ -40,8 +40,7 @@ pub fn occurrence_act_id(vevent_uid: &str, occurrence_rfc3339: &str) -> uuid::Uu
 /// - `Plan.external_id` — raw VEVENT UID string
 /// - `Plan.template_name` — extracted from DESCRIPTION if it starts with `template: <name>`
 pub fn parse_ics_file(path: &Path) -> Result<Vec<Plan>, WorkspaceError> {
-    let content = fs::read_to_string(path)
-        .map_err(WorkspaceError::Io)?;
+    let content = fs::read_to_string(path).map_err(WorkspaceError::Io)?;
 
     let calendar: Calendar = content
         .parse()
@@ -55,7 +54,9 @@ pub fn parse_ics_file(path: &Path) -> Result<Vec<Plan>, WorkspaceError> {
         };
 
         let Some(uid) = event.get_uid() else { continue };
-        let Some(summary) = event.get_summary() else { continue };
+        let Some(summary) = event.get_summary() else {
+            continue;
+        };
 
         let plan_id = plan_id_from_ics_uid(uid);
 
@@ -87,7 +88,9 @@ pub fn parse_ics_file(path: &Path) -> Result<Vec<Plan>, WorkspaceError> {
             recurrence,
             dtstart,
             external_id: Some(uid.to_string()),
-            alias: event.property_value("X-CLEARHEAD-ALIAS").map(ToString::to_string),
+            alias: event
+                .property_value("X-CLEARHEAD-ALIAS")
+                .map(ToString::to_string),
             template_name,
             ..Default::default()
         });
@@ -124,9 +127,7 @@ fn parse_dtstart(event: &icalendar::Event) -> Option<DateTime<Local>> {
         DatePerhapsTime::DateTime(CalendarDateTime::Floating(naive)) => {
             Local.from_local_datetime(&naive).earliest()
         }
-        DatePerhapsTime::DateTime(CalendarDateTime::Utc(utc)) => {
-            Some(utc.with_timezone(&Local))
-        }
+        DatePerhapsTime::DateTime(CalendarDateTime::Utc(utc)) => Some(utc.with_timezone(&Local)),
         DatePerhapsTime::DateTime(CalendarDateTime::WithTimezone { date_time, .. }) => {
             Local.from_local_datetime(&date_time).earliest()
         }
@@ -164,7 +165,10 @@ mod tests {
         let plans = parse_ics_file(f.path()).unwrap();
         assert_eq!(plans.len(), 1);
         assert_eq!(plans[0].name, "Weekly Review");
-        assert_eq!(plans[0].external_id.as_deref(), Some("test-uid-001@example.com"));
+        assert_eq!(
+            plans[0].external_id.as_deref(),
+            Some("test-uid-001@example.com")
+        );
         assert!(plans[0].dtstart.is_some());
         assert!(plans[0].recurrence.is_none());
         assert!(plans[0].template_name.is_none());
@@ -190,7 +194,10 @@ mod tests {
         assert_eq!(plans.len(), 1);
         let r = plans[0].recurrence.as_ref().unwrap();
         assert_eq!(r.frequency, "daily");
-        let expected: Vec<String> = ["MO", "TU", "WE", "TH", "FR"].iter().map(|s| s.to_string()).collect();
+        let expected: Vec<String> = ["MO", "TU", "WE", "TH", "FR"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
         assert_eq!(r.by_day.as_deref(), Some(expected.as_slice()));
     }
 
@@ -211,7 +218,10 @@ mod tests {
         let plans = parse_ics_file(f.path()).unwrap();
         assert_eq!(plans.len(), 1);
         assert_eq!(plans[0].template_name.as_deref(), Some("weekly-review"));
-        assert_eq!(plans[0].description.as_deref(), Some("Reflect on the past week"));
+        assert_eq!(
+            plans[0].description.as_deref(),
+            Some("Reflect on the past week")
+        );
         assert!(plans[0].recurrence.is_some());
     }
 
@@ -248,7 +258,10 @@ mod tests {
 
         let plans = parse_ics_file(f.path()).unwrap();
         assert!(plans[0].template_name.is_none());
-        assert_eq!(plans[0].description.as_deref(), Some("Just a regular event description"));
+        assert_eq!(
+            plans[0].description.as_deref(),
+            Some("Just a regular event description")
+        );
     }
 
     #[test]
