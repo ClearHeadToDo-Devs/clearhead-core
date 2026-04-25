@@ -16,6 +16,11 @@ use uuid::{Uuid, uuid};
 /// Namespace UUID for deriving deterministic Plan IDs from VEVENT UIDs.
 const ICS_NAMESPACE: Uuid = uuid!("6ba7b810-9dad-11d1-80b4-00c04fd430c8");
 
+/// Derive the stable domain Plan ID for a VEVENT UID.
+pub fn plan_id_from_ics_uid(uid: &str) -> uuid::Uuid {
+    Uuid::new_v5(&ICS_NAMESPACE, uid.as_bytes())
+}
+
 /// Derive a deterministic UUID for a generated act from its schedule identity and occurrence key.
 ///
 /// Per the ICS schedule spec: UUID v5 from `(externalScheduleId, externalOccurrenceKey)`.
@@ -52,7 +57,7 @@ pub fn parse_ics_file(path: &Path) -> Result<Vec<Plan>, WorkspaceError> {
         let Some(uid) = event.get_uid() else { continue };
         let Some(summary) = event.get_summary() else { continue };
 
-        let plan_id = Uuid::new_v5(&ICS_NAMESPACE, uid.as_bytes());
+        let plan_id = plan_id_from_ics_uid(uid);
 
         let dtstart = parse_dtstart(&event);
         let recurrence = event
@@ -68,9 +73,21 @@ pub fn parse_ics_file(path: &Path) -> Result<Vec<Plan>, WorkspaceError> {
             id: plan_id,
             name: summary.to_string(),
             description,
+            priority: event
+                .property_value("PRIORITY")
+                .and_then(|value| value.parse().ok()),
+            contexts: event.property_value("CATEGORIES").map(|value| {
+                value
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(ToString::to_string)
+                    .collect()
+            }),
             recurrence,
             dtstart,
             external_id: Some(uid.to_string()),
+            alias: event.property_value("X-CLEARHEAD-ALIAS").map(ToString::to_string),
             template_name,
             ..Default::default()
         });
