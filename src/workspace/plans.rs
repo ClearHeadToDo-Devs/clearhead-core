@@ -10,12 +10,12 @@ pub struct PlanFileEntry {
     pub inferred_parent: Option<String>,
 }
 
-/// Discover all `.ics` plan files and infer charter relationships.
+/// Discover all vdir `.ics` plan files and infer charter relationships.
 ///
 /// This applies workspace layout rules from the naming-conventions spec:
-/// - Project layout: `<project>/.clearhead/next.ics` maps to the project charter.
-/// - User layout: filenames map directly to charter names.
-/// - Folder `next.ics` files map to their parent folder charter.
+/// - Plans live only in `plans/` directories.
+/// - Root charter plans live at `charters/plans/<uid>.ics`.
+/// - Sub-charter plans live at `charters/<charter>/plans/<uid>.ics`.
 pub fn collect_plan_files(root: &Path) -> Result<Vec<PlanFileEntry>, WorkspaceError> {
     let layout = resolve_workspace_layout(root);
     let mut files = Vec::new();
@@ -51,93 +51,50 @@ pub fn collect_plan_files(root: &Path) -> Result<Vec<PlanFileEntry>, WorkspaceEr
     Ok(entries)
 }
 
-/// Infer charter name for a `.ics` file path, with optional project-root behavior.
+/// Infer charter name for a vdir `.ics` file path, with optional project-root behavior.
 pub fn infer_plan_charter_name_for_workspace(
     relative_path: &Path,
     project_root_charter: Option<&str>,
 ) -> Option<String> {
-    let filename = relative_path.file_name()?.to_str()?;
-    let components: Vec<_> = relative_path.components().collect();
+    let charter_components = charter_components(relative_path)?;
 
-    if components.len() == 1
-        && is_primary_plan_filename(filename)
-        && let Some(project_name) = project_root_charter
-    {
-        return Some(project_name.to_string());
+    if charter_components.is_empty() {
+        return project_root_charter.map(ToString::to_string);
     }
 
-    infer_plan_charter_name(relative_path)
+    charter_components.last().cloned()
 }
 
-/// Infer charter name for a `.ics` file path.
+/// Infer charter name for a vdir `.ics` file path.
 pub fn infer_plan_charter_name(relative_path: &Path) -> Option<String> {
-    let components: Vec<_> = relative_path.components().collect();
-    if components.is_empty() {
-        return None;
-    }
-
-    let filename = relative_path.file_name()?.to_str()?;
-    if components.len() == 1 {
-        let stem = relative_path.file_stem()?.to_str()?;
-        return Some(stem.to_string());
-    }
-
-    if is_primary_plan_filename(filename) {
-        if let std::path::Component::Normal(name) = components[components.len() - 2] {
-            return name.to_str().map(ToString::to_string);
-        }
-        return None;
-    }
-
-    let stem = relative_path.file_stem()?.to_str()?;
-    Some(stem.to_string())
+    let charter_components = charter_components(relative_path)?;
+    charter_components.last().cloned()
 }
 
-/// Infer parent charter for a `.ics` file path, with optional project-root behavior.
+/// Infer parent charter for a vdir `.ics` file path, with optional project-root behavior.
 pub fn infer_plan_parent_for_workspace(
     relative_path: &Path,
     project_root_charter: Option<&str>,
 ) -> Option<String> {
-    let filename = relative_path.file_name()?.to_str()?;
-    let components: Vec<_> = relative_path.components().collect();
+    let charter_components = charter_components(relative_path)?;
 
-    if let Some(project_name) = project_root_charter {
-        if components.len() == 1 {
-            if is_primary_plan_filename(filename) {
-                return None;
-            }
-            return Some(project_name.to_string());
-        }
-
-        if components.len() == 2 && is_primary_plan_filename(filename) {
-            return Some(project_name.to_string());
-        }
-    }
-
-    infer_plan_parent(relative_path)
-}
-
-/// Infer parent charter for a `.ics` file path.
-pub fn infer_plan_parent(relative_path: &Path) -> Option<String> {
-    let components: Vec<_> = relative_path.components().collect();
-    let filename = relative_path.file_name()?.to_str()?;
-
-    if components.len() <= 1 {
+    if charter_components.is_empty() {
         return None;
     }
 
-    if is_primary_plan_filename(filename) {
-        if components.len() == 2 {
-            return None;
-        }
-        if let std::path::Component::Normal(name) = components[components.len() - 3] {
-            return name.to_str().map(ToString::to_string);
-        }
-    } else if let std::path::Component::Normal(name) = components[components.len() - 2] {
-        return name.to_str().map(ToString::to_string);
+    if charter_components.len() == 1 {
+        return project_root_charter.map(ToString::to_string);
     }
 
-    None
+    charter_components.get(charter_components.len() - 2).cloned()
+}
+
+/// Infer parent charter for a vdir `.ics` file path.
+pub fn infer_plan_parent(relative_path: &Path) -> Option<String> {
+    let charter_components = charter_components(relative_path)?;
+    charter_components
+        .get(charter_components.len().checked_sub(2)?)
+        .cloned()
 }
 
 fn discover_plan_paths(dir: &Path, files: &mut Vec<PathBuf>) -> Result<(), WorkspaceError> {
@@ -159,10 +116,7 @@ fn discover_plan_paths(dir: &Path, files: &mut Vec<PathBuf>) -> Result<(), Works
             continue;
         }
 
-        if path.is_file()
-            && let Some(ext) = path.extension()
-            && *ext == *"ics"
-        {
+        if path.is_file() && is_vdir_plan_file(&path) {
             files.push(path);
         }
     }
@@ -170,8 +124,35 @@ fn discover_plan_paths(dir: &Path, files: &mut Vec<PathBuf>) -> Result<(), Works
     Ok(())
 }
 
-fn is_primary_plan_filename(filename: &str) -> bool {
-    filename == "next.ics"
+fn is_vdir_plan_file(path: &Path) -> bool {
+    path.extension().is_some_and(|ext| ext == "ics")
+        && path
+            .parent()
+            .and_then(|parent| parent.file_name())
+            .is_some_and(|name| name == "plans")
+}
+
+fn charter_components(relative_path: &Path) -> Option<Vec<String>> {
+    let mut components = Vec::new();
+    let mut saw_plans = false;
+
+    for component in relative_path.components() {
+        let std::path::Component::Normal(name) = component else {
+            return None;
+        };
+        let name = name.to_str()?;
+        if name == "plans" {
+            saw_plans = true;
+            break;
+        }
+        components.push(name.to_string());
+    }
+
+    if !saw_plans || relative_path.extension().and_then(|ext| ext.to_str()) != Some("ics") {
+        return None;
+    }
+
+    Some(components)
 }
 
 #[cfg(test)]
@@ -182,29 +163,29 @@ mod tests {
     #[test]
     fn infer_plan_charter_names() {
         assert_eq!(
-            infer_plan_charter_name(Path::new("inbox.ics")),
+            infer_plan_charter_name(Path::new("inbox/plans/weekly-review.ics")),
             Some("inbox".into())
         );
         assert_eq!(
-            infer_plan_charter_name(Path::new("new/next.ics")),
+            infer_plan_charter_name(Path::new("new/plans/weekly-review.ics")),
             Some("new".into())
         );
         assert_eq!(
-            infer_plan_charter_name(Path::new("new/subcharter.ics")),
+            infer_plan_charter_name(Path::new("new/subcharter/plans/sprint.ics")),
             Some("subcharter".into())
         );
     }
 
     #[test]
     fn infer_plan_parent_names() {
-        assert_eq!(infer_plan_parent(Path::new("inbox.ics")), None);
+        assert_eq!(infer_plan_parent(Path::new("inbox/plans/weekly-review.ics")), None);
         assert_eq!(
-            infer_plan_parent(Path::new("new/subcharter.ics")),
+            infer_plan_parent(Path::new("new/subcharter/plans/sprint.ics")),
             Some("new".into())
         );
-        assert_eq!(infer_plan_parent(Path::new("new/next.ics")), None);
+        assert_eq!(infer_plan_parent(Path::new("new/plans/weekly-review.ics")), None);
         assert_eq!(
-            infer_plan_parent(Path::new("new/sub/next.ics")),
+            infer_plan_parent(Path::new("new/sub/plans/weekly-review.ics")),
             Some("new".into())
         );
     }
@@ -212,20 +193,20 @@ mod tests {
     #[test]
     fn infer_workspace_project_root_rules() {
         assert_eq!(
-            infer_plan_charter_name_for_workspace(Path::new("next.ics"), Some("platform")),
+            infer_plan_charter_name_for_workspace(Path::new("plans/root.ics"), Some("platform")),
             Some("platform".into())
         );
         assert_eq!(
-            infer_plan_parent_for_workspace(Path::new("next.ics"), Some("platform")),
+            infer_plan_parent_for_workspace(Path::new("plans/root.ics"), Some("platform")),
             None
         );
         assert_eq!(
-            infer_plan_parent_for_workspace(Path::new("work.ics"), Some("platform")),
+            infer_plan_parent_for_workspace(Path::new("work/plans/release.ics"), Some("platform")),
             Some("platform".into())
         );
         assert_eq!(
-            infer_plan_parent_for_workspace(Path::new("work/next.ics"), Some("platform")),
-            Some("platform".into())
+            infer_plan_parent_for_workspace(Path::new("work/ops/plans/deploy.ics"), Some("platform")),
+            Some("work".into())
         );
     }
 
@@ -233,24 +214,23 @@ mod tests {
     fn collect_plan_files_uses_layout_and_inference() {
         let outer = tempfile::tempdir().expect("tempdir");
         let project = outer.path().join("my-project");
-        let data = project.join(".clearhead");
-        fs::create_dir_all(data.join("work")).expect("create dirs");
-        fs::create_dir_all(data.join("work").join("ops")).expect("create nested dirs");
+        let data = project.join(".clearhead").join("charters");
+        fs::create_dir_all(data.join("plans")).expect("create root plans");
+        fs::create_dir_all(data.join("work").join("plans")).expect("create dirs");
+        fs::create_dir_all(data.join("work").join("ops").join("plans")).expect("create nested dirs");
 
-        fs::write(data.join("next.ics"), "BEGIN:VCALENDAR\nEND:VCALENDAR\n").expect("write");
-        fs::write(data.join("inbox.ics"), "BEGIN:VCALENDAR\nEND:VCALENDAR\n").expect("write");
         fs::write(
-            data.join("work").join("next.ics"),
+            data.join("plans").join("root.ics"),
             "BEGIN:VCALENDAR\nEND:VCALENDAR\n",
         )
         .expect("write");
         fs::write(
-            data.join("work").join("ops.ics"),
+            data.join("work").join("plans").join("release.ics"),
             "BEGIN:VCALENDAR\nEND:VCALENDAR\n",
         )
         .expect("write");
         fs::write(
-            data.join("work").join("ops").join("next.ics"),
+            data.join("work").join("ops").join("plans").join("deploy.ics"),
             "BEGIN:VCALENDAR\nEND:VCALENDAR\n",
         )
         .expect("write");
@@ -278,22 +258,20 @@ mod tests {
             summarized,
             vec![
                 (
-                    "inbox.ics".into(),
-                    "inbox".into(),
-                    Some("my-project".into())
-                ),
-                ("next.ics".into(), "my-project".into(), None),
-                (
-                    "work/next.ics".into(),
-                    "work".into(),
-                    Some("my-project".into())
+                    "plans/root.ics".into(),
+                    "my-project".into(),
+                    None
                 ),
                 (
-                    "work/ops/next.ics".into(),
+                    "work/ops/plans/deploy.ics".into(),
                     "ops".into(),
                     Some("work".into())
                 ),
-                ("work/ops.ics".into(), "ops".into(), Some("work".into())),
+                (
+                    "work/plans/release.ics".into(),
+                    "work".into(),
+                    Some("my-project".into())
+                ),
             ]
         );
     }

@@ -135,13 +135,18 @@ pub fn collect_workspace_manifest(
 
     for entry in plan_files {
         let charter_name = entry.charter_name.clone();
+        let plans_dir = entry
+            .relative_path
+            .parent()
+            .map(|path| path.to_string_lossy().into_owned())
+            .unwrap_or_else(|| entry.relative_path.to_string_lossy().into_owned());
         if let Some(existing) = entries_by_charter.get_mut(&charter_name) {
             existing.source_type = merge_sources(&existing.source_type, ManifestSourceType::Ics);
         } else {
             entries_by_charter.insert(
                 charter_name.clone(),
                 WorkspaceManifestEntry {
-                    path: entry.relative_path.to_string_lossy().into_owned(),
+                    path: plans_dir,
                     charter_name,
                     inferred_parent: entry.inferred_parent,
                     source_type: ManifestSourceType::Ics,

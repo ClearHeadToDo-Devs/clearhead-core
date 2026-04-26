@@ -1,6 +1,6 @@
 [
     (
-        path: "health.md",
+        path: "health/README.md",
         charter_name: "health",
         inferred_parent: Some("project-mixed"),
         source_type: MarkdownPlusIcs,

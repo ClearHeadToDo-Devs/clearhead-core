@@ -3,7 +3,7 @@ use super::pathing::{infer_charter_name_for_workspace, infer_parent_charter_name
 use super::{WorkspaceError, resolve_workspace_layout};
 use crate::domain::{Charter, DomainModel};
 use crate::workspace::actions::convert::from_actions_with_charter;
-use crate::workspace::charter::{MarkdownCharter, parse_charter};
+use crate::workspace::charter::{MarkdownCharter, implicit_charter, parse_charter};
 use crate::workspace::ics::parse_ics_file;
 use crate::workspace::plans::collect_plan_files;
 use std::collections::HashMap;
@@ -172,7 +172,7 @@ pub fn load_markdown_charters(root: &Path) -> Result<Vec<MarkdownCharter>, Works
         }
     }
 
-    let mut charters: Vec<MarkdownCharter> = charters.into_values().collect();
+    let mut charters_by_name = charters;
 
     // Load ICS schedules: each .ics VEVENT becomes a Plan in the matching charter.
     for entry in collect_plan_files(root)? {
@@ -180,13 +180,27 @@ pub fn load_markdown_charters(root: &Path) -> Result<Vec<MarkdownCharter>, Works
         if plans.is_empty() {
             continue;
         }
-        if let Some(charter) = charters.iter_mut().find(|c| {
+        let plans_dir = entry
+            .relative_path
+            .parent()
+            .map(std::path::Path::to_path_buf)
+            .ok_or_else(|| WorkspaceError::InvalidPath(entry.relative_path.clone()))?;
+        if let Some(charter) = charters_by_name.values_mut().find(|c| {
             c.alias.as_deref() == Some(&entry.charter_name) || c.title == entry.charter_name
         }) {
-            charter.ics_file = Some(entry.relative_path.clone());
+            charter.plans_dir = Some(plans_dir.clone());
             charter.plans.extend(plans);
+        } else {
+            let mut charter = MarkdownCharter::from(implicit_charter(&entry.charter_name));
+            charter.parent = entry.inferred_parent.clone();
+            charter.plans_dir = Some(plans_dir.clone());
+            charter.plans = plans;
+            path_for_name.entry(entry.charter_name.clone()).or_insert(plans_dir);
+            charters_by_name.insert(entry.charter_name.clone(), charter);
         }
     }
+
+    let charters: Vec<MarkdownCharter> = charters_by_name.into_values().collect();
 
     Ok(charters)
 }

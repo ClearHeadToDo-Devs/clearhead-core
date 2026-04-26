@@ -39,7 +39,7 @@ pub struct MarkdownCharter {
 
     pub md_file: Option<PathBuf>,
     pub acts_file: Option<PathBuf>,
-    pub ics_file: Option<PathBuf>,
+    pub plans_dir: Option<PathBuf>,
 }
 
 impl From<MarkdownCharter> for Charter {
@@ -70,7 +70,7 @@ impl From<Charter> for MarkdownCharter {
             acts: c.acts,
             md_file: None,
             acts_file: None,
-            ics_file: None,
+            plans_dir: None,
         }
     }
 }

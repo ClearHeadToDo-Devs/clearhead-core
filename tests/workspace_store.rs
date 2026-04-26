@@ -19,10 +19,14 @@ use tempfile::TempDir;
 /// uses the root directory name as `project_root_charter`.
 fn make_workspace(files: &[(&str, &str)]) -> TempDir {
     let dir = tempfile::tempdir().expect("failed to create temp dir");
-    let data = dir.path().join(".clearhead");
+    let data = dir.path().join(".clearhead").join("charters");
     fs::create_dir_all(&data).expect("failed to create .clearhead dir");
     for (name, content) in files {
-        fs::write(data.join(name), content).expect("failed to write fixture file");
+        let path = data.join(name);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).expect("failed to create fixture parent");
+        }
+        fs::write(path, content).expect("failed to write fixture file");
     }
     dir
 }
@@ -34,10 +38,14 @@ fn make_workspace(files: &[(&str, &str)]) -> TempDir {
 fn make_named_project(name: &str, files: &[(&str, &str)]) -> (TempDir, std::path::PathBuf) {
     let outer = tempfile::tempdir().expect("failed to create temp dir");
     let project = outer.path().join(name);
-    let data = project.join(".clearhead");
+    let data = project.join(".clearhead").join("charters");
     fs::create_dir_all(&data).expect("failed to create project dir");
     for (filename, content) in files {
-        fs::write(data.join(filename), content).expect("failed to write fixture file");
+        let path = data.join(filename);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).expect("failed to create fixture parent");
+        }
+        fs::write(path, content).expect("failed to write fixture file");
     }
     (outer, project)
 }
@@ -46,8 +54,14 @@ fn make_named_project(name: &str, files: &[(&str, &str)]) -> (TempDir, std::path
 /// `project_root_charter` will be `None` — charter names come purely from filenames.
 fn make_user_workspace(files: &[(&str, &str)]) -> TempDir {
     let dir = tempfile::tempdir().expect("failed to create temp dir");
+    let data = dir.path().join("charters");
+    fs::create_dir_all(&data).expect("failed to create charters dir");
     for (name, content) in files {
-        fs::write(dir.path().join(name), content).expect("failed to write fixture file");
+        let path = data.join(name);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).expect("failed to create fixture parent");
+        }
+        fs::write(path, content).expect("failed to write fixture file");
     }
     dir
 }
@@ -99,7 +113,7 @@ fn load_discovers_all_action_files() {
 fn load_infers_parent_charter_from_directory_structure() {
     // A file nested under a subdirectory should infer a parent charter.
     let dir = tempfile::tempdir().expect("failed to create temp dir");
-    let data = dir.path().join(".clearhead");
+    let data = dir.path().join(".clearhead").join("charters");
     let nested = data.join("project");
     fs::create_dir_all(&nested).expect("failed to create nested dir");
     fs::write(
@@ -141,7 +155,7 @@ fn project_layout_next_actions_uses_project_name_as_charter() {
 }
 
 #[test]
-fn project_layout_next_ics_uses_project_name_as_charter() {
+fn project_layout_root_plans_dir_uses_project_name_as_charter() {
     let (_outer, project) = make_named_project(
         "my-project",
         &[
@@ -150,7 +164,7 @@ fn project_layout_next_ics_uses_project_name_as_charter() {
                 "[ ] Root task #01951111-0000-7000-0000-000000000051\n",
             ),
             (
-                "next.ics",
+                "plans/root-plan-1.ics",
                 "BEGIN:VCALENDAR\n\
 VERSION:2.0\n\
 PRODID:-//clearhead//NONSGML v1.0//EN\n\
@@ -174,7 +188,7 @@ END:VCALENDAR\n",
             .plans
             .iter()
             .any(|plan| plan.name == "Project root plan"),
-        "root next.ics plan should be attached to the project charter"
+        "root plans/ plan should be attached to the project charter"
     );
 
     let manifest = collect_workspace_manifest(&project).expect("manifest failed");
@@ -231,7 +245,7 @@ fn explicit_charter_title_does_not_overwrite_alias() {
     // An explicit .md file with a human-readable title and NO alias in frontmatter
     // should NOT clobber the alias set by implicit_charter() during .actions loading.
     let dir = tempfile::tempdir().expect("tempdir");
-    let data = dir.path().join(".clearhead");
+    let data = dir.path().join(".clearhead").join("charters");
     fs::create_dir_all(&data).expect("create .clearhead");
 
     fs::write(
@@ -267,7 +281,7 @@ fn explicit_charter_title_does_not_overwrite_alias() {
 fn explicit_charter_with_alias_in_frontmatter_overrides_correctly() {
     // An explicit .md with `alias: fitness` should override the inferred alias ("h").
     let dir = tempfile::tempdir().expect("tempdir");
-    let data = dir.path().join(".clearhead");
+    let data = dir.path().join(".clearhead").join("charters");
     fs::create_dir_all(&data).expect("create .clearhead");
 
     fs::write(
@@ -297,7 +311,7 @@ fn alias_is_always_set_after_load() {
     // alias should be Some(...) for every charter regardless of whether it has
     // an explicit .md file, an aliased .md file, or no .md at all.
     let dir = tempfile::tempdir().expect("tempdir");
-    let data = dir.path().join(".clearhead");
+    let data = dir.path().join(".clearhead").join("charters");
     fs::create_dir_all(&data).expect("create .clearhead");
 
     // Implicit only
@@ -343,7 +357,7 @@ fn parent_reference_uses_machine_key_not_title() {
     // When a parent charter has a human-readable title (from .md), child charters
     // discovered via path inference should still have parent = machine key (inferred name).
     let dir = tempfile::tempdir().expect("tempdir");
-    let data = dir.path().join(".clearhead");
+    let data = dir.path().join(".clearhead").join("charters");
     let work_sub = data.join("work");
     fs::create_dir_all(&work_sub).expect("create work subdir");
 
@@ -393,7 +407,7 @@ fn load_md_only_charter_produces_empty_plan_list() {
     // A .md file with no matching .actions file should produce a charter with zero plans,
     // not be silently dropped.
     let dir = tempfile::tempdir().expect("tempdir");
-    let data = dir.path().join(".clearhead");
+    let data = dir.path().join(".clearhead").join("charters");
     fs::create_dir_all(&data).expect("create .clearhead");
 
     fs::write(
@@ -670,7 +684,7 @@ fn unresolvable_parent_does_not_crash_load() {
     // not abort. We can't easily capture stderr here, so we just assert
     // the load succeeds and the parent string is preserved as-is.
     let dir = tempfile::tempdir().expect("tempdir");
-    let data = dir.path().join(".clearhead");
+    let data = dir.path().join(".clearhead").join("charters");
     fs::create_dir_all(&data).expect("create .clearhead");
 
     fs::write(
