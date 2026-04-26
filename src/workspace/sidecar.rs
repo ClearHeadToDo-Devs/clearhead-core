@@ -62,6 +62,25 @@ pub fn read_sidecar(path: &Path) -> Result<CharterMetadata, WorkspaceError> {
     serde_json::from_str(&content).map_err(|e| WorkspaceError::Parse(format!("sidecar: {}", e)))
 }
 
+/// Hydrate acts with metadata from the sidecar.
+///
+/// For each act, if the sidecar has a matching entry (by UUID string key),
+/// fills in `created_at` and `external_schedule_id` where the act doesn't
+/// already have them (DSL values are authoritative).
+pub fn hydrate_acts(acts: &mut [crate::domain::PlannedAct], metadata: &CharterMetadata) {
+    for act in acts.iter_mut() {
+        let key = act.id.to_string();
+        if let Some(meta) = metadata.acts.get(&key) {
+            if act.created_at.is_none() {
+                act.created_at = meta.created;
+            }
+            if act.external_schedule_id.is_none() {
+                act.external_schedule_id = meta.source_vevent.clone();
+            }
+        }
+    }
+}
+
 /// Write sidecar metadata to disk.
 pub fn write_sidecar(path: &Path, metadata: &CharterMetadata) -> Result<(), WorkspaceError> {
     let content =
@@ -178,6 +197,99 @@ mod tests {
         let parsed: CharterMetadata = serde_json::from_str("{}").unwrap();
         assert!(parsed.charter.is_none());
         assert!(parsed.acts.is_empty());
+    }
+
+    // ===== Hydration =====
+
+    #[test]
+    fn hydrate_fills_created_at_from_sidecar() {
+        use crate::domain::PlannedAct;
+        use uuid::Uuid;
+
+        let id = Uuid::now_v7();
+        let created = Local::now();
+        let mut acts = vec![PlannedAct {
+            id,
+            ..Default::default()
+        }];
+        let mut meta = CharterMetadata::default();
+        meta.acts.insert(
+            id.to_string(),
+            ActMeta {
+                created: Some(created),
+                source_vevent: None,
+            },
+        );
+
+        hydrate_acts(&mut acts, &meta);
+        assert_eq!(acts[0].created_at, Some(created));
+    }
+
+    #[test]
+    fn hydrate_does_not_overwrite_existing_created_at() {
+        use crate::domain::PlannedAct;
+        use uuid::Uuid;
+
+        let id = Uuid::now_v7();
+        let dsl_created = Local::now();
+        let sidecar_created = dsl_created - chrono::Duration::hours(1);
+        let mut acts = vec![PlannedAct {
+            id,
+            created_at: Some(dsl_created),
+            ..Default::default()
+        }];
+        let mut meta = CharterMetadata::default();
+        meta.acts.insert(
+            id.to_string(),
+            ActMeta {
+                created: Some(sidecar_created),
+                source_vevent: None,
+            },
+        );
+
+        hydrate_acts(&mut acts, &meta);
+        assert_eq!(acts[0].created_at, Some(dsl_created));
+    }
+
+    #[test]
+    fn hydrate_fills_external_schedule_id() {
+        use crate::domain::PlannedAct;
+        use uuid::Uuid;
+
+        let id = Uuid::now_v7();
+        let mut acts = vec![PlannedAct {
+            id,
+            ..Default::default()
+        }];
+        let mut meta = CharterMetadata::default();
+        meta.acts.insert(
+            id.to_string(),
+            ActMeta {
+                created: None,
+                source_vevent: Some("weekly-review@clearhead.us".to_string()),
+            },
+        );
+
+        hydrate_acts(&mut acts, &meta);
+        assert_eq!(
+            acts[0].external_schedule_id.as_deref(),
+            Some("weekly-review@clearhead.us")
+        );
+    }
+
+    #[test]
+    fn hydrate_skips_acts_not_in_sidecar() {
+        use crate::domain::PlannedAct;
+        use uuid::Uuid;
+
+        let mut acts = vec![PlannedAct {
+            id: Uuid::now_v7(),
+            ..Default::default()
+        }];
+        let meta = CharterMetadata::default();
+
+        hydrate_acts(&mut acts, &meta);
+        assert!(acts[0].created_at.is_none());
     }
 
     // ===== Filesystem read/write =====

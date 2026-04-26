@@ -6,6 +6,7 @@ use crate::workspace::actions::convert::from_actions_with_charter;
 use crate::workspace::charter::{MarkdownCharter, implicit_charter, parse_charter};
 use crate::workspace::ics::parse_ics_file;
 use crate::workspace::plans::collect_plan_files;
+use crate::workspace::sidecar::{hydrate_acts, read_sidecar, sidecar_path};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -77,6 +78,11 @@ pub fn load_workspace(root: &Path) -> Result<Vec<MarkdownCharter>, WorkspaceErro
         let base: Charter = from_actions_with_charter(&actions, name.clone());
         let mut mc = MarkdownCharter::from(base);
         mc.acts_file = Some(relative.clone());
+
+        let sc_path = layout.charter_root.join(sidecar_path(&relative));
+        let sidecar = read_sidecar(&sc_path)?;
+        hydrate_acts(&mut mc.acts, &sidecar);
+
         charters
             .entry(name.clone())
             .and_modify(|c| c.plans.extend(mc.plans.clone()))
