@@ -11,9 +11,9 @@ use std::path::{Path, PathBuf};
 
 /// Load a `DomainModel` from a workspace root directory.
 ///
-/// Delegates to `load_markdown_charters` and strips file-path metadata.
+/// Delegates to `load_workspace` and strips file-path metadata.
 pub fn load_domain_model(root: &Path) -> Result<DomainModel, WorkspaceError> {
-    let charters = load_markdown_charters(root)?;
+    let charters = load_workspace(root)?;
     Ok(DomainModel {
         objectives: vec![],
         charters: charters.into_iter().map(Charter::from).collect(),
@@ -22,7 +22,7 @@ pub fn load_domain_model(root: &Path) -> Result<DomainModel, WorkspaceError> {
 
 /// Load the workspace as a `Vec<MarkdownCharter>`, preserving the file paths
 /// each charter's plans and acts came from.
-pub fn load_markdown_charters(root: &Path) -> Result<Vec<MarkdownCharter>, WorkspaceError> {
+pub fn load_workspace(root: &Path) -> Result<Vec<MarkdownCharter>, WorkspaceError> {
     if !root.is_dir() {
         return Err(WorkspaceError::InvalidPath(root.to_path_buf()));
     }

@@ -1,0 +1,210 @@
+//! Per-charter `.<charter>.json` sidecar for machine-oriented metadata.
+//!
+//! Hidden JSON files that live alongside `.actions` files, holding data
+//! that tooling needs but humans don't want cluttering the DSL:
+//! created timestamps, VEVENT linkage, etc.
+
+use chrono::{DateTime, Local};
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+
+use super::acts::charter_stem;
+use super::store::WorkspaceError;
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct CharterMetadata {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub charter: Option<CharterMeta>,
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub acts: HashMap<String, ActMeta>,
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub plans: HashMap<String, PlanMeta>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct CharterMeta {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created: Option<DateTime<Local>>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ActMeta {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created: Option<DateTime<Local>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_vevent: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct PlanMeta {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_expanded: Option<DateTime<Local>>,
+}
+
+/// Derive the sidecar path from an `.actions` file path.
+///
+/// - `inbox.actions`                → `.inbox.json`
+/// - `health.actions`               → `.health.json`
+/// - `work/next.actions`            → `work/.work.json`
+pub fn sidecar_path(actions_path: &Path) -> PathBuf {
+    let stem = charter_stem(actions_path);
+    let dir = actions_path.parent().unwrap_or(Path::new(""));
+    dir.join(format!(".{}.json", stem))
+}
+
+/// Read sidecar metadata from disk. Returns default if the file doesn't exist.
+pub fn read_sidecar(path: &Path) -> Result<CharterMetadata, WorkspaceError> {
+    if !path.exists() {
+        return Ok(CharterMetadata::default());
+    }
+    let content = std::fs::read_to_string(path)?;
+    serde_json::from_str(&content).map_err(|e| WorkspaceError::Parse(format!("sidecar: {}", e)))
+}
+
+/// Write sidecar metadata to disk.
+pub fn write_sidecar(path: &Path, metadata: &CharterMetadata) -> Result<(), WorkspaceError> {
+    let content =
+        serde_json::to_string_pretty(metadata).map_err(|e| WorkspaceError::Parse(e.to_string()))?;
+    std::fs::write(path, content)?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+
+    // ===== Path derivation =====
+
+    #[test]
+    fn sidecar_path_simple_charter() {
+        let path = sidecar_path(Path::new("inbox.actions"));
+        assert_eq!(path, PathBuf::from(".inbox.json"));
+    }
+
+    #[test]
+    fn sidecar_path_named_charter() {
+        let path = sidecar_path(Path::new("health.actions"));
+        assert_eq!(path, PathBuf::from(".health.json"));
+    }
+
+    #[test]
+    fn sidecar_path_directory_form() {
+        let path = sidecar_path(Path::new("work/next.actions"));
+        assert_eq!(path, PathBuf::from("work/.work.json"));
+    }
+
+    #[test]
+    fn sidecar_path_nested_charter() {
+        let path = sidecar_path(Path::new("work/feature/next.actions"));
+        assert_eq!(path, PathBuf::from("work/feature/.feature.json"));
+    }
+
+    #[test]
+    fn sidecar_path_non_next_in_directory() {
+        let path = sidecar_path(Path::new("work/bugs.actions"));
+        assert_eq!(path, PathBuf::from("work/.bugs.json"));
+    }
+
+    // ===== Roundtrip serialization =====
+
+    #[test]
+    fn empty_metadata_roundtrips() {
+        let meta = CharterMetadata::default();
+        let json = serde_json::to_string(&meta).unwrap();
+        let parsed: CharterMetadata = serde_json::from_str(&json).unwrap();
+        assert!(parsed.charter.is_none());
+        assert!(parsed.acts.is_empty());
+        assert!(parsed.plans.is_empty());
+    }
+
+    #[test]
+    fn metadata_with_act_roundtrips() {
+        let mut meta = CharterMetadata::default();
+        meta.acts.insert(
+            "019dad29-c05d-7781-a92c-40d71adfb88e".to_string(),
+            ActMeta {
+                created: Some(Local::now()),
+                source_vevent: Some("weekly-review@clearhead.us".to_string()),
+            },
+        );
+        let json = serde_json::to_string_pretty(&meta).unwrap();
+        let parsed: CharterMetadata = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.acts.len(), 1);
+        let act = &parsed.acts["019dad29-c05d-7781-a92c-40d71adfb88e"];
+        assert!(act.created.is_some());
+        assert_eq!(
+            act.source_vevent.as_deref(),
+            Some("weekly-review@clearhead.us")
+        );
+    }
+
+    #[test]
+    fn metadata_with_charter_and_plan_roundtrips() {
+        let mut meta = CharterMetadata::default();
+        meta.charter = Some(CharterMeta {
+            created: Some(Local::now()),
+        });
+        meta.plans.insert(
+            "weekly-review".to_string(),
+            PlanMeta {
+                last_expanded: Some(Local::now()),
+            },
+        );
+        let json = serde_json::to_string_pretty(&meta).unwrap();
+        let parsed: CharterMetadata = serde_json::from_str(&json).unwrap();
+        assert!(parsed.charter.is_some());
+        assert_eq!(parsed.plans.len(), 1);
+    }
+
+    #[test]
+    fn deserialize_ignores_unknown_fields() {
+        let json = r#"{
+            "acts": {
+                "some-id": {
+                    "created": "2026-04-20T16:11:00-05:00",
+                    "custom_tool_field": "should not break"
+                }
+            },
+            "unknown_section": { "whatever": true }
+        }"#;
+        let parsed: CharterMetadata = serde_json::from_str(json).unwrap();
+        assert_eq!(parsed.acts.len(), 1);
+    }
+
+    #[test]
+    fn empty_json_object_parses() {
+        let parsed: CharterMetadata = serde_json::from_str("{}").unwrap();
+        assert!(parsed.charter.is_none());
+        assert!(parsed.acts.is_empty());
+    }
+
+    // ===== Filesystem read/write =====
+
+    #[test]
+    fn read_sidecar_missing_file_returns_default() {
+        let result = read_sidecar(Path::new("/nonexistent/.inbox.json")).unwrap();
+        assert!(result.acts.is_empty());
+    }
+
+    #[test]
+    fn write_and_read_sidecar_roundtrip() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(".test.json");
+
+        let mut meta = CharterMetadata::default();
+        meta.acts.insert(
+            "test-uuid".to_string(),
+            ActMeta {
+                created: Some(Local::now()),
+                source_vevent: None,
+            },
+        );
+
+        write_sidecar(&path, &meta).unwrap();
+        let loaded = read_sidecar(&path).unwrap();
+        assert_eq!(loaded.acts.len(), 1);
+        assert!(loaded.acts.contains_key("test-uuid"));
+    }
+}

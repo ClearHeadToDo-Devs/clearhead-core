@@ -18,7 +18,7 @@ use crate::workspace::store::WorkspaceError;
 // Path derivation
 // ============================================================================
 
-fn charter_stem(actions_path: &Path) -> String {
+pub(crate) fn charter_stem(actions_path: &Path) -> String {
     let filename = actions_path
         .file_name()
         .and_then(|n| n.to_str())
