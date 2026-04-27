@@ -69,7 +69,12 @@ pub fn read_sidecar(path: &Path) -> Result<CharterMetadata, WorkspaceError> {
 /// already have them (DSL values are authoritative).
 pub fn hydrate_acts(acts: &mut [crate::domain::PlannedAct], metadata: &CharterMetadata) {
     for act in acts.iter_mut() {
-        let key = act.id.to_string();
+        // Sidecar keys are the action UUID from the DSL (= plan_id on PlannedAct).
+        // Fall back to act.id for acts constructed without a plan_id (e.g. unit tests).
+        let key = act
+            .plan_id
+            .map(|id| id.to_string())
+            .unwrap_or_else(|| act.id.to_string());
         if let Some(meta) = metadata.acts.get(&key) {
             if act.created_at.is_none() {
                 act.created_at = meta.created;

@@ -757,3 +757,58 @@ fn mixed_workspace_ron_snapshots() {
     let manifest_ron = manifest_to_ron(&manifest);
     assert_snapshot(&fixture_path("project-mixed-manifest.ron"), &manifest_ron);
 }
+
+#[test]
+fn sidecar_hydrates_acts_on_load() {
+    use uuid::Uuid;
+
+    let uuid = "01951111-0000-7000-0000-000000000001";
+    let sidecar_json = format!(
+        r#"{{"acts": {{"{uuid}": {{"created": "2024-01-15T08:00:00+00:00"}}}}}}"#
+    );
+    let workspace = make_workspace(&[
+        ("work.actions", &format!("[ ] Task one #{uuid}\n")),
+        (".work.json", &sidecar_json),
+    ]);
+
+    let model = load_domain_model(workspace.path()).unwrap();
+    let expected_plan_id: Uuid = uuid.parse().unwrap();
+    let act = model
+        .charters
+        .iter()
+        .flat_map(|c| c.acts.iter())
+        .find(|a| a.plan_id == Some(expected_plan_id))
+        .expect("act not found in model");
+
+    assert!(act.created_at.is_some(), "sidecar created date should be hydrated into PlannedAct");
+}
+
+#[test]
+fn sidecar_does_not_overwrite_dsl_created() {
+    use uuid::Uuid;
+
+    let uuid = "01951111-0000-7000-0000-000000000002";
+    let sidecar_json = format!(
+        r#"{{"acts": {{"{uuid}": {{"created": "2020-01-01T00:00:00+00:00"}}}}}}"#
+    );
+    let workspace = make_workspace(&[
+        ("work.actions", &format!("[ ] Task #{uuid}\n  ^ 2024-06-01T10:00:00\n")),
+        (".work.json", &sidecar_json),
+    ]);
+
+    let model = load_domain_model(workspace.path()).unwrap();
+    let expected_plan_id: Uuid = uuid.parse().unwrap();
+    let act = model
+        .charters
+        .iter()
+        .flat_map(|c| c.acts.iter())
+        .find(|a| a.plan_id == Some(expected_plan_id))
+        .expect("act not found in model");
+
+    let created = act.created_at.expect("created_at should be set from DSL ^ date");
+    assert_eq!(
+        created.format("%Y").to_string(),
+        "2024",
+        "DSL ^ date (2024) must win over sidecar date (2020)"
+    );
+}
