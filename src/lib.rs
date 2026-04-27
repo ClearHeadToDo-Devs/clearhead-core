@@ -31,7 +31,8 @@ pub use workspace::{
     implicit_charter, infer_charter_name, infer_charter_name_for_workspace,
     infer_parent_charter_name, infer_parent_charter_name_for_workspace, infer_plan_charter_name,
     infer_plan_charter_name_for_workspace, infer_plan_parent, infer_plan_parent_for_workspace,
-    list_action_files, load_domain_model, load_workspace, occurrence_act_id, parse_actions,
+    expand_plans_into_acts, list_action_files, load_domain_model, load_workspace,
+    occurrence_act_id, parse_actions,
     parse_actions_with_mode, parse_charter, parse_document, parse_tree, patch_action_list,
     charter_root, read_acts, save_domain_model, workspace_data_root, write_acts,
 };

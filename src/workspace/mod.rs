@@ -11,6 +11,7 @@ pub mod actions;
 pub mod acts;
 pub mod charter;
 pub mod detection;
+pub mod expand;
 pub mod ics;
 pub mod plans;
 pub mod sidecar;
@@ -34,6 +35,7 @@ pub use plans::{
 };
 
 pub use detection::check_for_workspace;
+pub use expand::expand_plans_into_acts;
 pub use store::{
     ManifestSourceType, WorkspaceError, WorkspaceManifestEntry, collect_workspace_manifest,
     infer_charter_name, infer_charter_name_for_workspace, infer_parent_charter_name,
