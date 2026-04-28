@@ -9,7 +9,6 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use super::acts::charter_stem;
 use super::store::WorkspaceError;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -46,9 +45,13 @@ pub struct PlanMeta {
 ///
 /// - `inbox.actions`                → `.inbox.json`
 /// - `health.actions`               → `.health.json`
-/// - `work/next.actions`            → `work/.work.json`
+/// - `work/next.actions`            → `work/.next.json`
+/// - `work/feature/next.actions`    → `work/feature/.next.json`
 pub fn sidecar_path(actions_path: &Path) -> PathBuf {
-    let stem = charter_stem(actions_path);
+    let stem = actions_path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("unknown");
     let dir = actions_path.parent().unwrap_or(Path::new(""));
     dir.join(format!(".{}.json", stem))
 }
@@ -116,13 +119,13 @@ mod tests {
     #[test]
     fn sidecar_path_directory_form() {
         let path = sidecar_path(Path::new("work/next.actions"));
-        assert_eq!(path, PathBuf::from("work/.work.json"));
+        assert_eq!(path, PathBuf::from("work/.next.json"));
     }
 
     #[test]
     fn sidecar_path_nested_charter() {
         let path = sidecar_path(Path::new("work/feature/next.actions"));
-        assert_eq!(path, PathBuf::from("work/feature/.feature.json"));
+        assert_eq!(path, PathBuf::from("work/feature/.next.json"));
     }
 
     #[test]
