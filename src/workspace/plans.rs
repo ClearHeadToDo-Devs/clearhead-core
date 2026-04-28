@@ -129,7 +129,8 @@ fn is_vdir_plan_file(path: &Path) -> bool {
         && path
             .parent()
             .and_then(|parent| parent.file_name())
-            .is_some_and(|name| name == "plans")
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name == "plans" || name.ends_with(".plans"))
 }
 
 fn charter_components(relative_path: &Path) -> Option<Vec<String>> {
@@ -142,6 +143,11 @@ fn charter_components(relative_path: &Path) -> Option<Vec<String>> {
         };
         let name = name.to_str()?;
         if name == "plans" {
+            saw_plans = true;
+            break;
+        }
+        if let Some(stem) = name.strip_suffix(".plans") {
+            components.push(stem.to_string());
             saw_plans = true;
             break;
         }
@@ -174,6 +180,15 @@ mod tests {
             infer_plan_charter_name(Path::new("new/subcharter/plans/sprint.ics")),
             Some("subcharter".into())
         );
+        // .plans suffix form (flat charter sibling dir)
+        assert_eq!(
+            infer_plan_charter_name(Path::new("subproject.plans/a1b2.ics")),
+            Some("subproject".into())
+        );
+        assert_eq!(
+            infer_plan_charter_name(Path::new("work/sub.plans/a1b2.ics")),
+            Some("sub".into())
+        );
     }
 
     #[test]
@@ -187,6 +202,12 @@ mod tests {
         assert_eq!(
             infer_plan_parent(Path::new("new/sub/plans/weekly-review.ics")),
             Some("new".into())
+        );
+        // .plans suffix form
+        assert_eq!(infer_plan_parent(Path::new("subproject.plans/a1b2.ics")), None);
+        assert_eq!(
+            infer_plan_parent(Path::new("work/sub.plans/a1b2.ics")),
+            Some("work".into())
         );
     }
 
@@ -271,6 +292,52 @@ mod tests {
                     "work/plans/release.ics".into(),
                     "work".into(),
                     Some("my-project".into())
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn collect_plan_files_dotplans_sibling_dir() {
+        let outer = tempfile::tempdir().expect("tempdir");
+        let project = outer.path().join("my-project");
+        let data = project.join(".clearhead").join("charters");
+
+        // flat charter: subproject.actions + subproject.plans/
+        fs::create_dir_all(data.join("subproject.plans")).expect("create .plans dir");
+        fs::write(data.join("subproject.actions"), "").expect("write actions");
+        fs::write(
+            data.join("subproject.plans").join("a1b2c3d4.ics"),
+            "BEGIN:VCALENDAR\nEND:VCALENDAR\n",
+        )
+        .expect("write ics");
+
+        // nested: work/feature.plans/
+        fs::create_dir_all(data.join("work").join("feature.plans")).expect("create nested .plans dir");
+        fs::write(
+            data.join("work").join("feature.plans").join("b2c3d4e5.ics"),
+            "BEGIN:VCALENDAR\nEND:VCALENDAR\n",
+        )
+        .expect("write nested ics");
+
+        let entries = collect_plan_files(&project).expect("collect failed");
+        let summarized: Vec<(String, String, Option<String>)> = entries
+            .into_iter()
+            .map(|e| (e.relative_path.display().to_string(), e.charter_name, e.inferred_parent))
+            .collect();
+
+        assert_eq!(
+            summarized,
+            vec![
+                (
+                    "subproject.plans/a1b2c3d4.ics".into(),
+                    "subproject".into(),
+                    Some("my-project".into()) // root charter is inferred parent
+                ),
+                (
+                    "work/feature.plans/b2c3d4e5.ics".into(),
+                    "feature".into(),
+                    Some("work".into())
                 ),
             ]
         );

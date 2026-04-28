@@ -13,9 +13,9 @@ use clearhead_core::{
 };
 
 // Use compile-time embedding so fixture content is verified to exist at build time.
-const WORK_ACTIONS: &str = include_str!("fixtures/workspace/user-flat/work.actions");
-const PERSONAL_ACTIONS: &str = include_str!("fixtures/workspace/user-flat/personal.actions");
-const HEALTH_ACTIONS: &str = include_str!("fixtures/workspace/md-merge/.clearhead/health.actions");
+const WORK_ACTIONS: &str = include_str!("fixtures/workspace/user-flat/charters/work.actions");
+const PERSONAL_ACTIONS: &str = include_str!("fixtures/workspace/user-flat/charters/personal.actions");
+const HEALTH_ACTIONS: &str = include_str!("fixtures/workspace/md-merge/.clearhead/charters/health.actions");
 
 #[test]
 fn work_actions_count_and_uuids() {
