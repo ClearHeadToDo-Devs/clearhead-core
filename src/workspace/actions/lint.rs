@@ -89,12 +89,12 @@ pub const ACTION_ERROR_CHECKS: &[ActionCheck] = &[
     check_skipped_level,  // E011
 ];
 
-/// Action-level warning checks (W004-W006)
+/// Action-level warning checks (W005-W006)
 /// W001-W003 are either not implemented or document-level
+/// W004 (missing creation date) removed — creation dates now live in the sidecar, not the DSL.
 pub const ACTION_WARNING_CHECKS: &[ActionCheck] = &[
     // W001 (hierarchy depth) - not implemented
     // W002, W003 - document-level (check_tree_consistency)
-    check_missing_creation_date,      // W004
     check_future_creation_date,       // W005
     check_completion_before_creation, // W006
 ];
@@ -385,27 +385,6 @@ fn check_empty_context(action: &Action, metadata: &SourceMetadata) -> Option<Lin
     })
 }
 
-/// Check if action is missing creation date (W004)
-fn check_missing_creation_date(
-    action: &Action,
-    metadata: &SourceMetadata,
-) -> Option<LintDiagnostic> {
-    let is_v7 = !metadata.is_id_generated
-        && action.id.get_variant() == uuid::Variant::RFC4122
-        && action.id.get_version_num() == 7;
-
-    if action.created_date_time.is_none() && !is_v7 {
-        Some(LintDiagnostic::warning(
-            "W004",
-            "Action is missing a creation date. Consider adding ^ or using UUIDv7 (W004)."
-                .to_string(),
-            metadata.root,
-        ))
-    } else {
-        None
-    }
-}
-
 // ============================================================================
 // Action-Level Checks (continued)
 // ============================================================================
@@ -496,7 +475,7 @@ mod tests {
         let parsed = get_parsed_document(text).unwrap();
 
         let results = lint_document(&parsed);
-        // Only missing-id (Info) - created date is auto-injected when ID is generated
+        // Only missing-id (Info) - creation date lives in sidecar, not DSL
         assert_eq!(results.info.len(), 1);
         assert!(results.errors.is_empty());
         assert!(results.warnings.is_empty());

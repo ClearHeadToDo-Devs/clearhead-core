@@ -102,7 +102,7 @@ impl Default for Action {
             do_duration: None,
             due_date_time: None,
             completed_date_time: None,
-            created_date_time: Some(Local::now()),
+            created_date_time: None,
             predecessors: None,
             charter: None,
             alias: None,
@@ -161,9 +161,7 @@ impl Action {
         if let Some(completed_date_time) = &self.completed_date_time {
             write!(f, " %{}", completed_date_time.format("%Y-%m-%dT%H:%M"))?;
         }
-        if let Some(created_date_time) = &self.created_date_time {
-            write!(f, " ^{}", created_date_time.format("%Y-%m-%dT%H:%M"))?;
-        }
+
         if let Some(predecessors) = &self.predecessors {
             for pred in predecessors {
                 write!(f, " <{}", pred.raw_ref)?;
@@ -349,12 +347,6 @@ pub fn parse_action_recursive(
 
     // Generate ID if not present (using UUIDv7 for embedded timestamp)
     let action_id = id.unwrap_or_else(Uuid::now_v7);
-
-    // When generating an ID, also inject created_date if missing
-    // This makes logical sense: the action is "created" when it gets its formal ID
-    if is_id_generated && created_date_time.is_none() {
-        created_date_time = Some(chrono::Local::now());
-    }
 
     // Record metadata
     source_map.insert(

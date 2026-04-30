@@ -170,6 +170,11 @@ fn insert_plan(store: &Store, plan: &Plan, charter_acts: &[PlannedAct]) -> Resul
         )?;
     }
 
+    // Intentional: contexts stored as plain literals in the internal graph.
+    // Full actions:Context node semantics (requiresContext / contextIdentifier)
+    // are handled at the JSON-LD export layer in graph/jsonld.rs.
+    // Promoting to first-class graph nodes is deferred until the domain model
+    // has a Context type and query paths require it.
     if let Some(contexts) = &plan.contexts {
         for context in contexts {
             add(
