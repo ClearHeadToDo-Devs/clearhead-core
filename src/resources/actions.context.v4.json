@@ -3,7 +3,7 @@
     "@version": 1.1,
     "id": "@id",
     "type": "@type",
-    "actions": "https://clearhead.us/vocab/actions/v4#",
+    "actionsv": "https://clearhead.us/vocab/actions/v4#",
     "cco": "https://www.commoncoreontologies.org/",
     "bfo": "http://purl.obolibrary.org/obo/",
     "rdfs": "http://www.w3.org/2000/01/rdf-schema#",
@@ -22,11 +22,11 @@
     "name": "rdfs:label",
     "description": "http://purl.org/dc/terms/description",
     "inServiceOf": {
-      "@id": "actions:inServiceOf",
+      "@id": "actionsv:inServiceOf",
       "@type": "@id"
     },
     "requiresContext": {
-      "@id": "actions:requiresContext",
+      "@id": "actionsv:requiresContext",
       "@type": "@id"
     },
     "partOf": {
@@ -42,11 +42,11 @@
       "@type": "@id"
     },
     "priority": {
-      "@id": "actions:hasPriority",
+      "@id": "actionsv:hasPriority",
       "@type": "xsd:integer"
     },
     "subCharters": {
-      "@id": "actions:hasSubCharter",
+      "@id": "actionsv:hasSubCharter",
       "@type": "@id"
     },
     "isSuccessorOf": {
@@ -54,67 +54,67 @@
       "@type": "@id"
     },
     "uuid": {
-      "@id": "actions:hasUUID",
+      "@id": "actionsv:hasUUID",
       "@type": "xsd:string"
     },
     "alias": {
-      "@id": "actions:hasAlias",
+      "@id": "actionsv:hasAlias",
       "@type": "xsd:string"
     },
     "sequentialChildren": {
-      "@id": "actions:hasSequentialChildren",
+      "@id": "actionsv:hasSequentialChildren",
       "@type": "xsd:boolean"
     },
     "recurrence": {
-      "@id": "actions:hasRecurrenceRule",
+      "@id": "actionsv:hasRecurrenceRule",
       "@type": "xsd:string"
     },
     "durationMinutes": {
-      "@id": "actions:hasDurationMinutes",
+      "@id": "actionsv:hasDurationMinutes",
       "@type": "xsd:integer"
     },
     "scheduledAt": {
-      "@id": "actions:hasScheduledDateTime",
+      "@id": "actionsv:hasScheduledDateTime",
       "@type": "xsd:dateTime"
     },
     "dueDate": {
-      "@id": "actions:hasDueDateTime",
+      "@id": "actionsv:hasDueDateTime",
       "@type": "xsd:dateTime"
     },
     "dueRecurrence": {
-      "@id": "actions:hasDueRecurrenceRule",
+      "@id": "actionsv:hasDueRecurrenceRule",
       "@type": "xsd:string"
     },
     "completedDate": {
-      "@id": "actions:hasCompletedDateTime",
+      "@id": "actionsv:hasCompletedDateTime",
       "@type": "xsd:dateTime"
     },
     "createdDate": {
-      "@id": "actions:hasCreatedDateTime",
+      "@id": "actionsv:hasCreatedDateTime",
       "@type": "xsd:dateTime"
     },
     "externalScheduleId": {
-      "@id": "actions:hasExternalScheduleId",
+      "@id": "actionsv:hasExternalScheduleId",
       "@type": "xsd:string"
     },
     "externalOccurrenceKey": {
-      "@id": "actions:hasExternalOccurrenceKey",
+      "@id": "actionsv:hasExternalOccurrenceKey",
       "@type": "xsd:string"
     },
     "contextType": {
-      "@id": "actions:hasContextType",
+      "@id": "actionsv:hasContextType",
       "@type": "@id"
     },
     "contextIdentifier": {
-      "@id": "actions:hasContextIdentifier",
+      "@id": "actionsv:hasContextIdentifier",
       "@type": "xsd:string"
     },
     "contextBroader": {
-      "@id": "actions:contextBroader",
+      "@id": "actionsv:contextBroader",
       "@type": "@id"
     },
     "contextNarrower": {
-      "@id": "actions:contextNarrower",
+      "@id": "actionsv:contextNarrower",
       "@type": "@id"
     }
   }
