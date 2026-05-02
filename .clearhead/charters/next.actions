@@ -1,1 +1,10 @@
-[ ] Add state concept in charters  $ right now the library doesnt encode state even if people do write it so we want to atleast capture it when necessary $ ^2026-04-03T23:47 #019d573f-95fd-7e93-a1ac-78dbec9be4b8
+[ ] Add state concept in charters  $ right now the library doesnt encode state even if people do write it so we want to atleast capture it when necessary $ #019d573f-95fd-7e93-a1ac-78dbec9be4b8
+[ ] replace PlannedAct with Action in domain model  #019de698-0eb4-7ed1-b763-999f7a22282a
+    >[ ] enrich Action struct with name, description, priority, contexts, alias, parent, is_sequential, depends_on  #019de698-49a4-7193-9db6-5f577c799ecf
+    >[ ] thin Plan struct to scheduling only - recurrence, dtstart, template_name  #019de698-49ac-7b92-becf-6fa707e512af
+    >[ ] update Charter struct - rename acts to actions, typed as Action list  #019de698-49b5-7be0-bc39-2fa157008b00
+    >[ ] update from_actions_with_charter to produce Actions not Plan-PlannedAct pairs  #019de698-7d30-7391-9e92-be2ed38844e5
+    >[ ] update graph insert - insert_planned_act becomes insert_action with new fields  #019de698-7d3b-7a93-92ee-ba5b43461d2e
+    >[ ] update graph query reconstruction for Action type  #019de698-7d44-7992-896c-b14196c49d1e
+    >[ ] update domain diff for Action  #019de698-7d4e-7802-8cb2-296e92d701f2
+    >[ ] update roundtrip and integration tests for new semantics  #019de698-7d57-71b3-9cea-d72373b8742f
