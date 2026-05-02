@@ -1,4 +1,4 @@
-use crate::domain::{Charter, DomainModel, Plan, PlannedAct};
+use crate::domain::{Action, Charter, DomainModel, Plan};
 use std::fmt;
 use uuid::Uuid;
 
@@ -190,9 +190,9 @@ pub fn filter_model_for_plan(model: &DomainModel, plan_id: Uuid) -> DomainModel 
 
 pub fn filter_model_for_act(model: &DomainModel, act_id: Uuid) -> DomainModel {
     for charter in &model.charters {
-        if let Some(act) = charter.acts.iter().find(|a| a.id == act_id) {
+        if let Some(act) = charter.actions.iter().find(|a| a.id == act_id) {
             let mut charter_copy = charter.clone();
-            charter_copy.acts = vec![act.clone()];
+            charter_copy.actions = vec![act.clone()];
             if let Some(plan_id) = act.plan_id {
                 charter_copy.plans.retain(|p| p.id == plan_id);
             } else {
@@ -317,9 +317,9 @@ fn resolve_act_global(
     model: &DomainModel,
     segment: &str,
 ) -> Result<ReferenceTarget, ReferenceError> {
-    let mut matches: Vec<&PlannedAct> = Vec::new();
+    let mut matches: Vec<&Action> = Vec::new();
     for charter in &model.charters {
-        for act in &charter.acts {
+        for act in &charter.actions {
             if act_matches_segment(act, segment) {
                 matches.push(act);
             }
@@ -405,8 +405,8 @@ fn resolve_path(model: &DomainModel, segments: &[&str]) -> Result<ReferenceTarge
                     .filter(|p| p.parent == Some(plan.id) && plan_matches_segment(p, segment))
                     .collect();
 
-                let child_acts: Vec<&PlannedAct> = charter
-                    .acts
+                let child_acts: Vec<&Action> = charter
+                    .actions
                     .iter()
                     .filter(|a| a.plan_id == Some(plan.id))
                     .filter(|a| act_matches_segment(a, segment))
@@ -492,7 +492,7 @@ fn plan_matches_segment(plan: &Plan, segment: &str) -> bool {
     }
 }
 
-fn act_matches_segment(act: &PlannedAct, segment: &str) -> bool {
+fn act_matches_segment(act: &Action, segment: &str) -> bool {
     matches_uuid(&act.id, segment)
 }
 
@@ -534,9 +534,10 @@ mod tests {
         }
     }
 
-    fn make_act(id: Uuid, plan_id: Uuid) -> PlannedAct {
-        PlannedAct {
+    fn make_act(id: Uuid, plan_id: Uuid) -> Action {
+        Action {
             id,
+            name: "act".to_string(),
             plan_id: Some(plan_id),
             ..Default::default()
         }
@@ -562,7 +563,7 @@ mod tests {
             parent: None,
             objectives: None,
             plans: vec![plan, subplan],
-            acts: vec![make_act(act_id, plan_id)],
+            actions: vec![make_act(act_id, plan_id)],
         };
 
         let child_charter = Charter {
@@ -573,7 +574,7 @@ mod tests {
             parent: Some("build".to_string()),
             objectives: None,
             plans: vec![],
-            acts: vec![],
+            actions: vec![],
         };
 
         let implicit_charter = Charter {
@@ -584,7 +585,7 @@ mod tests {
             parent: None,
             objectives: None,
             plans: vec![],
-            acts: vec![],
+            actions: vec![],
         };
 
         DomainModel {

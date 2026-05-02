@@ -81,7 +81,7 @@ pub fn load_workspace(root: &Path) -> Result<Vec<MarkdownCharter>, WorkspaceErro
 
         let sc_path = layout.charter_root.join(sidecar_path(&relative));
         let sidecar = read_sidecar(&sc_path)?;
-        hydrate_acts(&mut mc.acts, &sidecar);
+        hydrate_acts(&mut mc.actions, &sidecar);
 
         charters
             .entry(name.clone())

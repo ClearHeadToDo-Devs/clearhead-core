@@ -90,7 +90,7 @@ fn roundtrip_preserves_model() {
 
 #[test]
 fn load_discovers_all_action_files() {
-    // Two files → two charters, three plans total.
+    // Two files → two charters, three direct actions total.
     let workspace = make_workspace(&[
         (
             "work.actions",
@@ -106,7 +106,7 @@ fn load_discovers_all_action_files() {
     let model = load_domain_model(workspace.path()).expect("load failed");
 
     assert_eq!(model.charters.len(), 2, "expected 2 charters");
-    assert_eq!(model.all_plans().len(), 3, "expected 3 plans total");
+    assert_eq!(model.all_actions().len(), 3, "expected 3 actions total");
 }
 
 #[test]
@@ -182,7 +182,8 @@ END:VCALENDAR\n",
 
     assert_eq!(model.charters.len(), 1);
     assert_eq!(model.charters[0].alias.as_deref(), Some("my-project"));
-    assert_eq!(model.charters[0].plans.len(), 2);
+    assert_eq!(model.charters[0].plans.len(), 1);
+    assert_eq!(model.charters[0].actions.len(), 1);
     assert!(
         model.charters[0]
             .plans
@@ -404,7 +405,7 @@ fn parent_reference_uses_machine_key_not_title() {
 
 #[test]
 fn load_md_only_charter_produces_empty_plan_list() {
-    // A .md file with no matching .actions file should produce a charter with zero plans,
+    // A .md file with no matching .actions file should produce a charter with zero plans/actions,
     // not be silently dropped.
     let dir = tempfile::tempdir().expect("tempdir");
     let data = dir.path().join(".clearhead").join("charters");
@@ -429,6 +430,7 @@ fn load_md_only_charter_produces_empty_plan_list() {
         0,
         "charter from .md-only should have no plans"
     );
+    assert_eq!(charter.actions.len(), 0, "charter from .md-only should have no actions");
     assert_eq!(charter.title, "Health & Fitness");
 }
 
@@ -459,6 +461,7 @@ fn model_to_ron(model: &clearhead_core::DomainModel) -> String {
     sorted.charters.sort_by(|a, b| a.title.cmp(&b.title));
     for charter in &mut sorted.charters {
         charter.plans.sort_by(|a, b| a.id.cmp(&b.id));
+        charter.actions.sort_by(|a, b| a.id.cmp(&b.id));
     }
     ron::ser::to_string_pretty(&sorted, ron::ser::PrettyConfig::default())
         .expect("RON serialization failed")
@@ -482,15 +485,15 @@ fn assert_snapshot(snapshot_path: &Path, actual: &str) {
     }
     let expected = fs::read_to_string(snapshot_path).expect("failed to read snapshot");
     assert_eq!(
-        actual,
-        expected,
+        actual.trim_end(),
+        expected.trim_end(),
         "snapshot mismatch — run with UPDATE_SNAPSHOTS=1 to regenerate: {}",
         snapshot_path.display()
     );
 }
 
 #[test]
-fn fixture_user_flat_charter_names_and_plan_counts() {
+fn fixture_user_flat_charter_names_and_action_counts() {
     let root = fixture_path("user-flat");
     let model = load_domain_model(&root).expect("load failed");
 
@@ -499,14 +502,14 @@ fn fixture_user_flat_charter_names_and_plan_counts() {
     assert_eq!(names, vec!["personal", "work"]);
 
     let work = model.charters.iter().find(|c| c.title == "work").unwrap();
-    assert_eq!(work.plans.len(), 3, "work: 2 top-level + 1 subtask");
+    assert_eq!(work.actions.len(), 3, "work: 2 top-level + 1 subtask");
 
     let personal = model
         .charters
         .iter()
         .find(|c| c.title == "personal")
         .unwrap();
-    assert_eq!(personal.plans.len(), 2);
+    assert_eq!(personal.actions.len(), 2);
 }
 
 #[test]
@@ -568,7 +571,7 @@ fn fixture_md_merge_title_alias_and_description() {
     let charter = &model.charters[0];
     assert_eq!(charter.title, "Health & Fitness");
     assert_eq!(charter.alias.as_deref(), Some("health"));
-    assert_eq!(charter.plans.len(), 2);
+    assert_eq!(charter.actions.len(), 2);
     assert!(
         charter.description.is_some(),
         "description should be populated from .md body"
@@ -672,9 +675,9 @@ fn load_recovers_valid_actions_when_file_has_parse_issues() {
         .find(|c| c.title == "work")
         .expect("work charter");
 
-    assert_eq!(work.plans.len(), 2, "valid actions should still be loaded");
-    assert!(work.plans.iter().any(|p| p.name == "Valid one"));
-    assert!(work.plans.iter().any(|p| p.name == "Valid two"));
+    assert_eq!(work.actions.len(), 2, "valid actions should still be loaded");
+    assert!(work.actions.iter().any(|a| a.name == "Valid one"));
+    assert!(work.actions.iter().any(|a| a.name == "Valid two"));
 }
 
 #[test]
@@ -729,8 +732,9 @@ fn mixed_workspace_loads_actions_and_ics_plans() {
         .iter()
         .find(|c| c.alias.as_deref() == Some("project-mixed"))
         .unwrap();
-    assert_eq!(project.plans.len(), 1);
-    assert_eq!(project.plans[0].name, "Buy domain name");
+    assert_eq!(project.plans.len(), 0);
+    assert_eq!(project.actions.len(), 1);
+    assert_eq!(project.actions[0].name, "Buy domain name");
 
     let health = model
         .charters
@@ -772,15 +776,14 @@ fn sidecar_hydrates_acts_on_load() {
     ]);
 
     let model = load_domain_model(workspace.path()).unwrap();
-    let expected_plan_id: Uuid = uuid.parse().unwrap();
     let act = model
         .charters
         .iter()
-        .flat_map(|c| c.acts.iter())
-        .find(|a| a.plan_id == Some(expected_plan_id))
+        .flat_map(|c| c.actions.iter())
+        .find(|a| a.id == Uuid::parse_str(uuid).unwrap())
         .expect("act not found in model");
 
-    assert!(act.created_at.is_some(), "sidecar created date should be hydrated into PlannedAct");
+    assert!(act.created_at.is_some(), "sidecar created date should be hydrated into Action");
 }
 
 #[test]
@@ -797,12 +800,11 @@ fn sidecar_does_not_overwrite_dsl_created() {
     ]);
 
     let model = load_domain_model(workspace.path()).unwrap();
-    let expected_plan_id: Uuid = uuid.parse().unwrap();
     let act = model
         .charters
         .iter()
-        .flat_map(|c| c.acts.iter())
-        .find(|a| a.plan_id == Some(expected_plan_id))
+        .flat_map(|c| c.actions.iter())
+        .find(|a| a.id == Uuid::parse_str(uuid).unwrap())
         .expect("act not found in model");
 
     let created = act.created_at.expect("created_at should be set from DSL ^ date");

@@ -1,7 +1,7 @@
 //! RDF graph module for storing and querying actions using Oxigraph.
 //!
 //! Implements the RDF schema from the Actions Vocabulary v4 ontology.
-//! The domain model (Plan, PlannedAct, Charter) maps to CCO-aligned classes.
+//! The domain model (Plan, Action, Charter) maps to CCO-aligned classes.
 //!
 //! # Submodules
 //!
@@ -66,7 +66,7 @@ pub(crate) const BFO_PART_OF: &str = "BFO_0000050";
 
 // CCO class and property identifiers
 pub(crate) const CCO_PLAN: &str = "ont00000974";
-pub(crate) const CCO_PLANNED_ACT: &str = "ont00000228";
+pub(crate) const ACTIONS_ACTION: &str = "Action";
 pub(crate) const CCO_IS_SUCCESSOR_OF: &str = "ont00001775";
 pub(crate) const CCO_PRESCRIBES: &str = "ont00001942";
 pub(crate) const CCO_PRESCRIBED_BY: &str = "ont00001920";

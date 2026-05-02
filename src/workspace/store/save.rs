@@ -1,7 +1,7 @@
 use super::WorkspaceLayout;
 use super::discovery::discover_action_files;
 use super::{WorkspaceError, resolve_workspace_layout};
-use crate::domain::{Charter, DomainModel, Plan};
+use crate::domain::{Charter, DomainModel};
 use crate::workspace::{Action, ActionList, OutputFormat, format};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -176,13 +176,13 @@ fn charter_reference_name(charter: &Charter) -> String {
 }
 
 fn actions_for_charter(charter: &Charter, charter_name: &str) -> ActionList {
-    let mut plans: Vec<&Plan> = charter.plans.iter().collect();
-    plans.sort_by_key(|plan| plan.id.to_string());
+    let mut actions = charter.actions.clone();
+    actions.sort_by_key(|action| action.id.to_string());
 
-    plans
+    actions
         .into_iter()
-        .map(|plan| {
-            let mut action = Action::from(plan);
+        .map(|action| {
+            let mut action = Action::from(&action);
             action.charter = Some(charter_name.to_string());
             action
         })
@@ -310,7 +310,7 @@ mod tests {
                     parent: None,
                     objectives: None,
                     plans: vec![test_plan("Quarter plan")],
-                    acts: vec![],
+                    actions: vec![],
                 },
                 Charter {
                     id: Uuid::new_v4(),
@@ -320,7 +320,7 @@ mod tests {
                     parent: Some("work".to_string()),
                     objectives: None,
                     plans: vec![test_plan("Backups")],
-                    acts: vec![],
+                    actions: vec![],
                 },
             ],
         };
@@ -350,7 +350,7 @@ mod tests {
                     parent: None,
                     objectives: None,
                     plans: vec![test_plan("Quarter plan")],
-                    acts: vec![],
+                    actions: vec![],
                 },
                 Charter {
                     id: ops_id,
@@ -360,7 +360,7 @@ mod tests {
                     parent: Some("work".to_string()),
                     objectives: None,
                     plans: vec![test_plan("Backups")],
-                    acts: vec![],
+                    actions: vec![],
                 },
             ],
         };
@@ -371,17 +371,18 @@ mod tests {
         let work_content_before =
             std::fs::read_to_string(root.join("charters/work.actions")).expect("read work.actions");
 
-        // Save again with only ops modified.
+        // Save again with only ops plan metadata modified. Under the Action model,
+        // `.actions` files are projected from `charter.actions`, not synthesized from plans.
         let mut updated = model.clone();
         updated.charters[1].plans[0].name = "Backups v2".to_string();
         save_domain_model(&root, &updated).expect("incremental save");
 
-        // ops should reflect the change.
+        // ops should remain byte-stable because no charter actions changed.
         let ops_content =
             std::fs::read_to_string(root.join("charters/work/ops.actions")).expect("read ops.actions");
         assert!(
-            ops_content.contains("Backups v2"),
-            "ops file should be updated"
+            !ops_content.contains("Backups v2"),
+            "plan-only changes must not rewrite the charter action file"
         );
 
         // work should be byte-for-byte identical — not rewritten.
@@ -412,7 +413,7 @@ mod tests {
                     parent: None,
                     objectives: None,
                     plans: vec![test_plan("Quarter plan")],
-                    acts: vec![],
+                    actions: vec![],
                 },
                 Charter {
                     id: ops_id,
@@ -422,7 +423,7 @@ mod tests {
                     parent: Some("work".to_string()),
                     objectives: None,
                     plans: vec![test_plan("Backups")],
-                    acts: vec![],
+                    actions: vec![],
                 },
             ],
         };

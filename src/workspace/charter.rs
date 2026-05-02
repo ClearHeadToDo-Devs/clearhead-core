@@ -21,7 +21,7 @@ use serde::Deserialize;
 use std::path::PathBuf;
 use uuid::Uuid;
 
-use crate::domain::{Charter, Plan, PlannedAct};
+use crate::domain::{Action, Charter, Plan};
 
 /// A charter as it exists in the workspace — carries file paths alongside domain data.
 ///
@@ -35,7 +35,7 @@ pub struct MarkdownCharter {
     pub parent: Option<String>,
     pub objectives: Option<Vec<String>>,
     pub plans: Vec<Plan>,
-    pub acts: Vec<PlannedAct>,
+    pub actions: Vec<Action>,
 
     pub md_file: Option<PathBuf>,
     pub acts_file: Option<PathBuf>,
@@ -52,7 +52,7 @@ impl From<MarkdownCharter> for Charter {
             parent: mc.parent,
             objectives: mc.objectives,
             plans: mc.plans,
-            acts: mc.acts,
+            actions: mc.actions,
         }
     }
 }
@@ -67,7 +67,7 @@ impl From<Charter> for MarkdownCharter {
             parent: c.parent,
             objectives: c.objectives,
             plans: c.plans,
-            acts: c.acts,
+            actions: c.actions,
             md_file: None,
             acts_file: None,
             plans_dir: None,
@@ -128,7 +128,7 @@ pub fn parse_charter(content: &str) -> Result<Charter, String> {
         parent: fm.parent,
         objectives: fm.objectives,
         plans: vec![],
-        acts: vec![],
+        actions: vec![],
     })
 }
 
@@ -144,7 +144,7 @@ pub fn implicit_charter(name: &str) -> Charter {
         parent: None,
         objectives: None,
         plans: vec![],
-        acts: vec![],
+        actions: vec![],
     }
 }
 
@@ -349,7 +349,7 @@ Stay healthy and fit through regular exercise and diet.
             parent: None,
             objectives: Some(vec!["obj1".to_string()]),
             plans: vec![],
-            acts: vec![],
+            actions: vec![],
         };
 
         let formatted = format_charter(&charter);

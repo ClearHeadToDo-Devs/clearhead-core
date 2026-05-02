@@ -1,11 +1,11 @@
 //! SPARQL query and graph reconstruction utilities.
 
 use super::{
-    ACTIONS_NS, BFO_HAS_PART, BFO_NS, BFO_PART_OF, CCO_IS_SUCCESSOR_OF, CCO_NS, CCO_PLAN,
-    CCO_PLANNED_ACT, CCO_PRESCRIBED_BY, CCO_PRESCRIBES, CCO_STATUS_PROP, GraphError, RDFS_COMMENT,
+    ACTIONS_ACTION, ACTIONS_NS, BFO_HAS_PART, BFO_NS, BFO_PART_OF, CCO_IS_SUCCESSOR_OF, CCO_NS,
+    CCO_PLAN, CCO_PRESCRIBED_BY, CCO_PRESCRIBES, CCO_STATUS_PROP, GraphError, RDFS_COMMENT,
     RDFS_LABEL, Result, Store, actions_pred, bfo_pred, cco_node, rdfs_pred,
 };
-use crate::domain::{ActPhase, Charter, DomainModel, Plan, PlannedAct, Recurrence};
+use crate::domain::{ActPhase, Action, Charter, DomainModel, Plan, Recurrence};
 use chrono::{DateTime, Local};
 use oxigraph::model::{GraphName, NamedNode, NamedOrBlankNode, Term};
 use oxigraph::sparql::{QueryResults, SparqlEvaluator};
@@ -59,7 +59,7 @@ pub fn build_where_query(where_clause: &str, _select: Option<&str>, _from: Optio
 pub fn load_domain_model_from_store(store: &Store) -> Result<DomainModel> {
     let charters = query_charters(store)?;
     let plans = query_plans(store)?;
-    let acts = query_acts(store)?;
+    let actions = query_actions(store)?;
 
     let mut plans_by_id: HashMap<Uuid, Plan> =
         plans.into_iter().map(|plan| (plan.id, plan)).collect();
@@ -73,11 +73,20 @@ pub fn load_domain_model_from_store(store: &Store) -> Result<DomainModel> {
         }
     }
 
-    let mut acts_by_charter: HashMap<Uuid, Vec<PlannedAct>> = HashMap::new();
-    for act in acts {
-        if let Some(plan_id) = act.plan_id {
+    let mut actions_by_id: HashMap<Uuid, Action> =
+        actions.into_iter().map(|action| (action.id, action)).collect();
+    let mut actions_by_charter: HashMap<Uuid, Vec<Action>> = HashMap::new();
+
+    for (action_id, charter_id) in query_charter_action_edges(store)? {
+        if let Some(action) = actions_by_id.remove(&action_id) {
+            actions_by_charter.entry(charter_id).or_default().push(action);
+        }
+    }
+
+    for (_, action) in actions_by_id {
+        if let Some(plan_id) = action.plan_id {
             if let Some(charter_id) = plan_to_charter.get(&plan_id) {
-                acts_by_charter.entry(*charter_id).or_default().push(act);
+                actions_by_charter.entry(*charter_id).or_default().push(action);
             }
         }
     }
@@ -88,9 +97,9 @@ pub fn load_domain_model_from_store(store: &Store) -> Result<DomainModel> {
             let mut charter_plans = plans_by_charter.remove(&charter.id).unwrap_or_default();
             charter_plans.sort_by_key(|p| p.id);
             charter.plans = charter_plans;
-            let mut charter_acts = acts_by_charter.remove(&charter.id).unwrap_or_default();
-            charter_acts.sort_by_key(|a| a.id);
-            charter.acts = charter_acts;
+            let mut charter_actions = actions_by_charter.remove(&charter.id).unwrap_or_default();
+            charter_actions.sort_by_key(|a| a.id);
+            charter.actions = charter_actions;
             charter
         })
         .collect();
@@ -102,8 +111,8 @@ pub fn load_domain_model_from_store(store: &Store) -> Result<DomainModel> {
     })
 }
 
-pub fn load_planned_acts_from_store(store: &Store) -> Result<Vec<PlannedAct>> {
-    query_acts(store)
+pub fn load_planned_acts_from_store(store: &Store) -> Result<Vec<Action>> {
+    query_actions(store)
 }
 
 pub fn validate_actions_vocabulary(store: &Store) -> Result<Vec<String>> {
@@ -111,16 +120,17 @@ pub fn validate_actions_vocabulary(store: &Store) -> Result<Vec<String>> {
 
     let q_missing_status = format!(
         "SELECT ?act WHERE {{ \
-            ?act a <{cco}{planned_act}> . \
+            ?act a <{actions}{action}> . \
             FILTER NOT EXISTS {{ ?act <{cco}{status_prop}> ?s }} \
         }}",
+        actions = ACTIONS_NS,
+        action = ACTIONS_ACTION,
         cco = CCO_NS,
-        planned_act = CCO_PLANNED_ACT,
         status_prop = CCO_STATUS_PROP,
     );
     for uri in query_term_values(store, &q_missing_status, "act")? {
         violations.push(format!(
-            "PlannedActStatusShape: <{uri}> is missing a status (cco:{prop})",
+            "ActionStatusShape: <{uri}> is missing a status (cco:{prop})",
             prop = CCO_STATUS_PROP,
         ));
     }
@@ -142,7 +152,7 @@ pub fn validate_actions_vocabulary(store: &Store) -> Result<Vec<String>> {
     );
     for uri in query_term_values(store, &q_invalid_status, "act")? {
         violations.push(format!(
-            "PlannedActStatusShape (sh:in): <{uri}> has an unrecognized status value",
+            "ActionStatusShape (sh:in): <{uri}> has an unrecognized status value",
         ));
     }
 
@@ -150,16 +160,17 @@ pub fn validate_actions_vocabulary(store: &Store) -> Result<Vec<String>> {
         "SELECT ?plan WHERE {{ \
             ?plan a <{cco}{plan_cls}> . \
             ?plan <{cco}{prescribes}> ?target . \
-            FILTER NOT EXISTS {{ ?target a <{cco}{planned_act}> }} \
+            FILTER NOT EXISTS {{ ?target a <{actions}{action}> }} \
         }}",
+        actions = ACTIONS_NS,
+        action = ACTIONS_ACTION,
         cco = CCO_NS,
         plan_cls = CCO_PLAN,
         prescribes = CCO_PRESCRIBES,
-        planned_act = CCO_PLANNED_ACT,
     );
     for uri in query_term_values(store, &q_prescribes_wrong_target, "plan")? {
         violations.push(format!(
-            "PlanPrescribesShape: <{uri}> has a prescribes target that is not a PlannedAct",
+            "PlanPrescribesShape: <{uri}> has a prescribes target that is not an Action",
         ));
     }
 
@@ -190,16 +201,15 @@ fn query_plans(store: &Store) -> Result<Vec<Plan>> {
         .collect()
 }
 
-fn query_acts(store: &Store) -> Result<Vec<PlannedAct>> {
+fn query_actions(store: &Store) -> Result<Vec<Action>> {
     let sparql = format!(
-        "SELECT ?id WHERE {{ ?s a <{cco}{planned_act}> . ?s <{actions}hasUUID> ?id . }}",
-        cco = CCO_NS,
-        planned_act = CCO_PLANNED_ACT,
+        "SELECT ?id WHERE {{ ?s a <{actions}{action}> . ?s <{actions}hasUUID> ?id . }}",
         actions = ACTIONS_NS,
+        action = ACTIONS_ACTION,
     );
     let ids = query_uuids(store, &sparql, "id", "act")?;
     ids.into_iter()
-        .map(|id| get_planned_act_by_id(store, id))
+        .map(|id| get_action_by_id(store, id))
         .collect()
 }
 
@@ -233,6 +243,35 @@ fn query_charter_plan_edges(store: &Store) -> Result<Vec<(Uuid, Uuid)>> {
         .collect()
 }
 
+fn query_charter_action_edges(store: &Store) -> Result<Vec<(Uuid, Uuid)>> {
+    let sparql = format!(
+        "SELECT ?charterId ?actionId WHERE {{ \
+            ?charter a <{actions}Charter> ; <{actions}hasUUID> ?charterId ; <{bfo}{has_part}> ?action . \
+            ?action a <{actions}{action}> ; <{actions}hasUUID> ?actionId . \
+        }}",
+        actions = ACTIONS_NS,
+        bfo = BFO_NS,
+        has_part = BFO_HAS_PART,
+        action = ACTIONS_ACTION,
+    );
+
+    let rows = execute_select_rows(store, &sparql)?;
+    rows.into_iter()
+        .map(|row| {
+            let charter_id = row
+                .get("charterId")
+                .ok_or_else(|| GraphError::Domain("Missing charterId in edge row".to_string()))?;
+            let action_id = row
+                .get("actionId")
+                .ok_or_else(|| GraphError::Domain("Missing actionId in edge row".to_string()))?;
+            Ok((
+                parse_uuid(action_id, "action")?,
+                parse_uuid(charter_id, "charter")?,
+            ))
+        })
+        .collect()
+}
+
 fn get_charter_by_id(store: &Store, id: Uuid) -> Result<Charter> {
     let node = NodeView::new(store, id);
     let title = node
@@ -248,7 +287,7 @@ fn get_charter_by_id(store: &Store, id: Uuid) -> Result<Charter> {
         parent: query_charter_parent_alias_or_title(store, id)?,
         objectives: None,
         plans: vec![],
-        acts: vec![],
+        actions: vec![],
     })
 }
 
@@ -471,9 +510,22 @@ fn parse_recurrence_rule(rrule: &str) -> Option<Recurrence> {
     Recurrence::from_rrule_str(rrule)
 }
 
-fn get_planned_act_by_id(store: &Store, id: Uuid) -> Result<PlannedAct> {
+fn get_action_by_id(store: &Store, id: Uuid) -> Result<Action> {
     let node = NodeView::new(store, id);
     let plan_id = node.uuid_node(cco_node(CCO_PRESCRIBED_BY));
+
+    let contexts: Vec<String> = node
+        .many(actions_pred("hasContext"))
+        .into_iter()
+        .filter_map(|term| match term {
+            Term::Literal(lit) => Some(lit.value().to_string()),
+            _ => None,
+        })
+        .collect();
+
+    let mut depends_on = node.uuid_nodes(cco_node(CCO_IS_SUCCESSOR_OF));
+    depends_on.sort_unstable();
+    depends_on.dedup();
 
     let phase = match node.one(cco_node(CCO_STATUS_PROP)) {
         Some(Term::NamedNode(nn)) => match nn.as_str().split('#').next_back() {
@@ -486,8 +538,18 @@ fn get_planned_act_by_id(store: &Store, id: Uuid) -> Result<PlannedAct> {
         _ => ActPhase::NotStarted,
     };
 
-    Ok(PlannedAct {
+    Ok(Action {
         id,
+        name: node
+            .lit(rdfs_pred(RDFS_LABEL))
+            .unwrap_or_else(|| "".to_string()),
+        description: node.lit(rdfs_pred(RDFS_COMMENT)),
+        priority: node.lit_u32(actions_pred("hasPriority")),
+        contexts: (!contexts.is_empty()).then_some(contexts),
+        parent: node.uuid_node(bfo_pred(BFO_PART_OF)),
+        alias: node.lit(actions_pred("hasAlias")),
+        is_sequential: node.lit_bool(actions_pred("hasSequentialChildren")),
+        depends_on: (!depends_on.is_empty()).then_some(depends_on),
         plan_id,
         external_schedule_id: node.lit(actions_pred("hasExternalScheduleId")),
         external_occurrence_key: node.lit(actions_pred("hasExternalOccurrenceKey")),
@@ -542,8 +604,17 @@ mod tests {
                     dtstart: Some(chrono::Local::now()),
                     ..Default::default()
                 }],
-                acts: vec![PlannedAct {
+                actions: vec![Action {
                     id: act_id,
+                    name: "Write graph tests".to_string(),
+                    description: Some("Lock down graph semantics".to_string()),
+                    priority: Some(1),
+                    contexts: Some(vec!["dev".to_string()]),
+                    alias: Some("graph_tests".to_string()),
+                    is_sequential: Some(true),
+                    depends_on: Some(vec![
+                        Uuid::parse_str("019d7100-4444-7444-8444-444444444444").unwrap(),
+                    ]),
                     plan_id: Some(plan_id),
                     external_schedule_id: Some("weekly-review@example.com".to_string()),
                     external_occurrence_key: Some("2026-04-09T10:00:00-07:00".to_string()),
@@ -564,14 +635,14 @@ mod tests {
         assert_eq!(rebuilt.charters[0].title, "Platform");
         assert_eq!(rebuilt.charters[0].plans.len(), 1);
         assert_eq!(rebuilt.charters[0].plans[0].name, "Write graph tests");
-        assert_eq!(rebuilt.charters[0].acts.len(), 1);
-        assert_eq!(rebuilt.charters[0].acts[0].id, act_id);
+        assert_eq!(rebuilt.charters[0].actions.len(), 1);
+        assert_eq!(rebuilt.charters[0].actions[0].id, act_id);
         assert_eq!(
-            rebuilt.charters[0].acts[0].external_schedule_id.as_deref(),
+            rebuilt.charters[0].actions[0].external_schedule_id.as_deref(),
             Some("weekly-review@example.com")
         );
         assert_eq!(
-            rebuilt.charters[0].acts[0]
+            rebuilt.charters[0].actions[0]
                 .external_occurrence_key
                 .as_deref(),
             Some("2026-04-09T10:00:00-07:00")
@@ -617,12 +688,12 @@ mod tests {
         let ttl = format!(
             "@prefix actions: <{actions}> .\n\
              @prefix cco: <{cco}> .\n\
-             <urn:uuid:019d7100-2222-7222-8222-222222222222> a cco:{planned_act} ;\n\
-               actions:hasUUID \"019d7100-2222-7222-8222-222222222222\" ;\n\
-               cco:{prescribed_by} <urn:uuid:019d7100-1111-7111-8111-111111111111> .\n",
+              <urn:uuid:019d7100-2222-7222-8222-222222222222> a actions:{action} ;\n\
+                actions:hasUUID \"019d7100-2222-7222-8222-222222222222\" ;\n\
+                cco:{prescribed_by} <urn:uuid:019d7100-1111-7111-8111-111111111111> .\n",
             actions = ACTIONS_NS,
             cco = CCO_NS,
-            planned_act = CCO_PLANNED_ACT,
+            action = ACTIONS_ACTION,
             prescribed_by = CCO_PRESCRIBED_BY,
         );
         crate::graph::load_turtle(&store, &ttl).expect("load turtle");
@@ -749,11 +820,11 @@ mod tests {
                rdfs:label \"Plan\" ;\n\
                actions:hasDueRecurrenceRule \"FREQ=DAILY\" ;\n\
                cco:{prescribes} <urn:uuid:{act}> .\n\
-             <urn:uuid:{act}> a cco:{planned_act} ;\n\
-               actions:hasUUID \"{act}\" ;\n\
-               cco:{prescribed_by} <urn:uuid:{plan}> ;\n\
-               cco:{status} actions:NotStarted ;\n\
-               actions:hasDueDateTime \"2026-04-12T09:00:00+00:00\"^^xsd:dateTime .\n",
+              <urn:uuid:{act}> a actions:{action} ;\n\
+                actions:hasUUID \"{act}\" ;\n\
+                cco:{prescribed_by} <urn:uuid:{plan}> ;\n\
+                cco:{status} actions:NotStarted ;\n\
+                actions:hasDueDateTime \"2026-04-12T09:00:00+00:00\"^^xsd:dateTime .\n",
             actions = ACTIONS_NS,
             cco = CCO_NS,
             bfo = BFO_NS,
@@ -762,7 +833,7 @@ mod tests {
             act = act_id,
             plan_class = CCO_PLAN,
             prescribes = CCO_PRESCRIBES,
-            planned_act = CCO_PLANNED_ACT,
+            action = ACTIONS_ACTION,
             prescribed_by = CCO_PRESCRIBED_BY,
             status = CCO_STATUS_PROP,
         );
@@ -786,13 +857,13 @@ mod tests {
         let ttl = format!(
             "@prefix actions: <{actions}> .\n\
              @prefix cco: <{cco}> .\n\
-             <urn:uuid:{act}> a cco:{planned_act} ;\n\
-               actions:hasUUID \"{act}\" ;\n\
-               cco:{status} actions:NotStarted .\n",
+              <urn:uuid:{act}> a actions:{action} ;\n\
+                actions:hasUUID \"{act}\" ;\n\
+                cco:{status} actions:NotStarted .\n",
             actions = ACTIONS_NS,
             cco = CCO_NS,
             act = act_id,
-            planned_act = CCO_PLANNED_ACT,
+            action = ACTIONS_ACTION,
             status = CCO_STATUS_PROP,
         );
         crate::graph::load_turtle(&store, &ttl).expect("load turtle");
@@ -801,6 +872,38 @@ mod tests {
         assert_eq!(acts.len(), 1);
         assert_eq!(acts[0].id, act_id);
         assert_eq!(acts[0].plan_id, None);
+    }
+
+    #[test]
+    fn roundtrip_keeps_planless_charter_action() {
+        let store = create_store().expect("store");
+
+        let charter_id = Uuid::parse_str("019d7100-3333-7333-8333-333333333333").unwrap();
+        let action_id = Uuid::parse_str("019d7100-5555-7555-8555-555555555555").unwrap();
+
+        let model = DomainModel {
+            objectives: vec![],
+            charters: vec![Charter {
+                id: charter_id,
+                title: "Inbox".to_string(),
+                alias: Some("inbox".to_string()),
+                actions: vec![Action {
+                    id: action_id,
+                    name: "Loose task".to_string(),
+                    phase: ActPhase::NotStarted,
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }],
+        };
+
+        load_domain_model(&store, &model).expect("load domain model");
+        let rebuilt = load_domain_model_from_store(&store).expect("rebuild from store");
+
+        assert_eq!(rebuilt.charters.len(), 1);
+        assert_eq!(rebuilt.charters[0].actions.len(), 1);
+        assert_eq!(rebuilt.charters[0].actions[0].id, action_id);
+        assert_eq!(rebuilt.charters[0].actions[0].plan_id, None);
     }
 
     #[test]

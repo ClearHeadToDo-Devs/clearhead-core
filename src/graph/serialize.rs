@@ -3,11 +3,11 @@
 //! This module owns the "turn a store into text" direction.
 
 use super::{GraphError, Result, Store, create_store};
-use crate::domain::{ActPhase, DomainModel, PlannedAct};
+use crate::domain::{ActPhase, Action, DomainModel};
 use oxigraph::io::RdfFormat;
 use oxigraph::model::GraphNameRef;
 
-/// Serialize all PlannedActs from a `DomainModel` to Turtle format.
+/// Serialize all Actions from a `DomainModel` to Turtle format.
 ///
 /// Loads the full model (Plans + Acts) into a temporary store,
 /// then serializes the default graph to Turtle.
@@ -70,15 +70,15 @@ fn filter_model_by_phase(
     let mut filtered_charters = Vec::new();
 
     for charter in &model.charters {
-        let filtered_acts: Vec<PlannedAct> = charter
-            .acts
+        let filtered_acts: Vec<Action> = charter
+            .actions
             .iter()
             .filter(|a| predicate(&a.phase))
             .cloned()
             .collect();
         if !filtered_acts.is_empty() {
             let mut filtered_charter = charter.clone();
-            filtered_charter.acts = filtered_acts;
+            filtered_charter.actions = filtered_acts;
             filtered_charters.push(filtered_charter);
         }
     }

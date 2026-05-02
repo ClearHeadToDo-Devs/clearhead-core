@@ -1,6 +1,5 @@
 use super::{Action, ActionList, ActionState, PredecessorRef};
-use crate::domain::{ActPhase, Charter, DomainModel, Plan, PlannedAct};
-use std::collections::HashMap;
+use crate::domain::{ActPhase, Action as DomainAction, Charter, DomainModel};
 use uuid::Uuid;
 
 /// Namespace UUID for the synthetic inbox charter.
@@ -11,29 +10,24 @@ pub const INBOX_CHARTER_NS: Uuid = Uuid::from_bytes([
 /// Convert an ActionList into a Charter with a deterministic ID derived from the name.
 pub fn from_actions_with_charter(actions: &ActionList, charter_name: String) -> Charter {
     let mut charter = crate::workspace::charter::implicit_charter(&charter_name);
-    let pairs: Vec<(Plan, PlannedAct)> = actions.iter().map(plan_and_act_from_action).collect();
-    charter.plans = pairs.iter().map(|(p, _)| p.clone()).collect();
-    charter.acts = pairs.into_iter().map(|(_, a)| a).collect();
+    charter.actions = actions.iter().map(domain_action_from_action).collect();
     charter
 }
 
-/// Split an Action into its Plan and PlannedAct components.
-///
-/// The Action.id becomes the Plan.id (it identifies the task definition).
-/// The PlannedAct gets a new UUID (it's a specific occurrence).
-impl From<&Action> for Plan {
-    fn from(action: &Action) -> Self {
-        plan_and_act_from_action(action).0
-    }
-}
-
-fn plan_and_act_from_action(action: &Action) -> (Plan, PlannedAct) {
-    let plan_id = action.id;
-    let act_id = Uuid::new_v5(&plan_id, b"act-0");
-
-    let act = PlannedAct {
-        id: act_id,
-        plan_id: Some(plan_id),
+fn domain_action_from_action(action: &Action) -> DomainAction {
+    DomainAction {
+        id: action.id,
+        name: action.name.clone(),
+        description: action.description.clone(),
+        priority: action.priority,
+        contexts: action.context_list.clone(),
+        parent: action.parent_id,
+        alias: action.alias.clone(),
+        is_sequential: action.is_sequential,
+        depends_on: action.predecessors.as_ref().map(|preds| {
+            preds.iter().filter_map(|p| p.resolved_uuid).collect()
+        }),
+        plan_id: None,
         external_schedule_id: None,
         external_occurrence_key: None,
         phase: match action.state {
@@ -48,77 +42,32 @@ fn plan_and_act_from_action(action: &Action) -> (Plan, PlannedAct) {
         duration: action.do_duration,
         completed_at: action.completed_date_time,
         created_at: action.created_date_time,
-    };
-
-    let plan = Plan {
-        id: plan_id,
-        name: action.name.clone(),
-        description: action.description.clone(),
-        priority: action.priority,
-        contexts: action.context_list.clone(),
-        recurrence: None,
-        due_recurrence: None,
-        parent: action.parent_id,
-        alias: action.alias.clone(),
-        is_sequential: action.is_sequential,
-        depends_on: action
-            .predecessors
-            .as_ref()
-            .map(|preds| preds.iter().filter_map(|p| p.resolved_uuid).collect()),
         ..Default::default()
-    };
-
-    (plan, act)
+    }
 }
 
-/// Select the canonical act for a plan.
-///
-/// Selection order:
-/// 1. The act whose ID is `new_v5(plan.id, b"act-0")` — the deterministic primary.
-/// 2. The first act in the list — preserves data from externally-constructed models
-///    that don't use the act-0 convention.
-/// 3. A synthesized blank act — for plans that haven't been expanded yet.
-fn representative_act(plan: &Plan, acts: &[PlannedAct]) -> PlannedAct {
-    let act_0_id = Uuid::new_v5(&plan.id, b"act-0");
-    acts.iter()
-        .filter(|a| a.plan_id == Some(plan.id))
-        .find(|a| a.id == act_0_id)
-        .or_else(|| acts.iter().find(|a| a.plan_id == Some(plan.id)))
-        .cloned()
-        .unwrap_or_else(|| PlannedAct {
-            id: act_0_id,
-            plan_id: Some(plan.id),
-            ..Default::default()
-        })
-}
-
-/// Reconstruct an Action from a Plan using its canonical representative act.
-///
-/// `charter` is not recoverable from a Plan (it lives on the Charter struct),
-/// so it is always set to None here. Callers that need it should set it after.
-impl From<&Plan> for Action {
-    fn from(plan: &Plan) -> Self {
-        let act = representative_act(plan, &[]);
+impl From<&DomainAction> for Action {
+    fn from(action: &DomainAction) -> Self {
         Action {
-            id: plan.id,
-            parent_id: plan.parent,
-            state: match act.phase {
+            id: action.id,
+            parent_id: action.parent,
+            state: match action.phase {
                 ActPhase::NotStarted => ActionState::NotStarted,
                 ActPhase::InProgress => ActionState::InProgress,
                 ActPhase::Completed => ActionState::Completed,
                 ActPhase::Blocked => ActionState::BlockedorAwaiting,
                 ActPhase::Cancelled => ActionState::Cancelled,
             },
-            name: plan.name.clone(),
-            description: plan.description.clone(),
-            priority: plan.priority,
-            context_list: plan.contexts.clone(),
-            do_date_time: act.scheduled_at,
-            do_duration: act.duration,
-            due_date_time: act.due_date,
-            completed_date_time: act.completed_at,
-            created_date_time: act.created_at,
-            predecessors: plan.depends_on.as_ref().map(|uuids| {
+            name: action.name.clone(),
+            description: action.description.clone(),
+            priority: action.priority,
+            context_list: action.contexts.clone(),
+            do_date_time: action.scheduled_at,
+            do_duration: action.duration,
+            due_date_time: action.due_date,
+            completed_date_time: action.completed_at,
+            created_date_time: action.created_at,
+            predecessors: action.depends_on.as_ref().map(|uuids| {
                 uuids
                     .iter()
                     .map(|u| PredecessorRef {
@@ -128,8 +77,8 @@ impl From<&Plan> for Action {
                     .collect()
             }),
             charter: None,
-            alias: plan.alias.clone(),
-            is_sequential: plan.is_sequential,
+            alias: action.alias.clone(),
+            is_sequential: action.is_sequential,
         }
     }
 }
@@ -148,44 +97,27 @@ pub fn patch_action_list(primary: &mut ActionList, secondary: &ActionList) {
 }
 
 /// Convert a DomainModel back to an ActionList.
-///
-/// Walks the charter → plan → act hierarchy.
 pub fn to_action_list(model: &DomainModel) -> ActionList {
-    let plan_ids: Vec<String> = model.all_plans().iter().map(|p| p.id.to_string()).collect();
-    to_action_list_ordered(model, &plan_ids)
+    model
+        .charters
+        .iter()
+        .flat_map(|charter| charter.actions.iter())
+        .map(Action::from)
+        .collect()
 }
 
 /// Convert a DomainModel back to an ActionList in a specific order.
-///
-/// Only includes plans whose ID appears in `plan_order`.
 pub fn to_action_list_ordered(model: &DomainModel, plan_order: &[String]) -> ActionList {
-    let mut plan_map: HashMap<String, (&Plan, &Vec<PlannedAct>)> = HashMap::new();
-    for charter in &model.charters {
-        for plan in &charter.plans {
-            plan_map.insert(plan.id.to_string(), (plan, &charter.acts));
-        }
-    }
-
     plan_order
         .iter()
-        .filter_map(|id| plan_map.get(id).copied())
-        .map(|(plan, acts)| {
-            let act = representative_act(plan, acts);
-            let mut action = Action::from(plan);
-            action.state = match act.phase {
-                ActPhase::NotStarted => ActionState::NotStarted,
-                ActPhase::InProgress => ActionState::InProgress,
-                ActPhase::Completed => ActionState::Completed,
-                ActPhase::Blocked => ActionState::BlockedorAwaiting,
-                ActPhase::Cancelled => ActionState::Cancelled,
-            };
-            action.do_date_time = act.scheduled_at;
-            action.do_duration = act.duration;
-            action.due_date_time = act.due_date;
-            action.completed_date_time = act.completed_at;
-            action.created_date_time = act.created_at;
-            action
+        .filter_map(|id| {
+            model
+                .charters
+                .iter()
+                .flat_map(|charter| charter.actions.iter())
+                .find(|action| action.id.to_string() == *id)
         })
+        .map(Action::from)
         .collect()
 }
 
@@ -203,7 +135,7 @@ mod tests {
     }
 
     #[test]
-    fn action_to_plan_state_mapping() {
+    fn action_to_domain_action_state_mapping() {
         use ActionState::*;
         let cases = [
             (NotStarted, ActPhase::NotStarted),
@@ -216,49 +148,10 @@ mod tests {
             let mut action = make_action("task");
             action.state = action_state;
             assert_eq!(
-                plan_and_act_from_action(&action).1.phase,
+                domain_action_from_action(&action).phase,
                 expected_phase,
                 "state: {action_state:?}"
             );
-        }
-    }
-
-    #[test]
-    fn plan_to_action_state_mapping() {
-        use ActPhase::*;
-        let cases = [
-            (NotStarted, ActionState::NotStarted),
-            (InProgress, ActionState::InProgress),
-            (Completed, ActionState::Completed),
-            (Blocked, ActionState::BlockedorAwaiting),
-            (Cancelled, ActionState::Cancelled),
-        ];
-        for (phase, expected_state) in cases {
-            let id = Uuid::new_v4();
-            let plan = Plan {
-                id,
-                name: "task".to_string(),
-                ..Default::default()
-            };
-            let acts = vec![PlannedAct {
-                id: Uuid::new_v5(&id, b"act-0"),
-                plan_id: Some(id),
-                phase,
-                ..Default::default()
-            }];
-            let action = {
-                let act = representative_act(&plan, &acts);
-                let mut action = Action::from(&plan);
-                action.state = match act.phase {
-                    ActPhase::NotStarted => ActionState::NotStarted,
-                    ActPhase::InProgress => ActionState::InProgress,
-                    ActPhase::Completed => ActionState::Completed,
-                    ActPhase::Blocked => ActionState::BlockedorAwaiting,
-                    ActPhase::Cancelled => ActionState::Cancelled,
-                };
-                action
-            };
-            assert_eq!(action.state, expected_state, "phase: {phase:?}");
         }
     }
 
@@ -316,8 +209,8 @@ mod tests {
             },
         ]);
 
-        let plan = Plan::from(&action);
-        let depends_on = plan.depends_on.unwrap();
+        let domain_action = domain_action_from_action(&action);
+        let depends_on = domain_action.depends_on.unwrap();
         assert_eq!(depends_on, vec![resolved_id]);
     }
 
@@ -327,35 +220,24 @@ mod tests {
         let id_b = Uuid::new_v4();
         let id_c = Uuid::new_v4();
 
-        let make_plan = |id: Uuid, name: &str| Plan {
-            id,
-            name: name.to_string(),
-            ..Default::default()
-        };
-
         let model = DomainModel {
             charters: vec![Charter {
                 id: Uuid::new_v4(),
                 title: "test".to_string(),
-                plans: vec![
-                    make_plan(id_a, "Alpha"),
-                    make_plan(id_b, "Beta"),
-                    make_plan(id_c, "Gamma"),
-                ],
-                acts: vec![
-                    PlannedAct {
-                        id: Uuid::new_v5(&id_a, b"act-0"),
-                        plan_id: Some(id_a),
+                actions: vec![
+                    DomainAction {
+                        id: id_a,
+                        name: "Alpha".to_string(),
                         ..Default::default()
                     },
-                    PlannedAct {
-                        id: Uuid::new_v5(&id_b, b"act-0"),
-                        plan_id: Some(id_b),
+                    DomainAction {
+                        id: id_b,
+                        name: "Beta".to_string(),
                         ..Default::default()
                     },
-                    PlannedAct {
-                        id: Uuid::new_v5(&id_c, b"act-0"),
-                        plan_id: Some(id_c),
+                    DomainAction {
+                        id: id_c,
+                        name: "Gamma".to_string(),
                         ..Default::default()
                     },
                 ],
@@ -374,48 +256,24 @@ mod tests {
     }
 
     #[test]
-    fn representative_act_falls_back_to_first_when_no_act_zero() {
-        // External code building a DomainModel (e.g. CRDT merge, tests) won't
-        // necessarily use the new_v5(&plan_id, b"act-0") convention.
-        // representative_act must not silently drop their data.
-        let plan_id = Uuid::new_v4();
-        let external_act_id = Uuid::new_v4(); // deliberately NOT new_v5(&plan_id, b"act-0")
-        let plan = Plan {
-            id: plan_id,
+    fn domain_action_to_workspace_action_preserves_fields() {
+        let action = DomainAction {
+            id: Uuid::new_v4(),
             name: "task".to_string(),
-            ..Default::default()
-        };
-        let acts = vec![PlannedAct {
-            id: external_act_id,
-            plan_id: Some(plan_id),
             duration: Some(45),
+            phase: ActPhase::InProgress,
             ..Default::default()
-        }];
-
-        let action = {
-            let act = representative_act(&plan, &acts);
-            let mut action = Action::from(&plan);
-            action.do_duration = act.duration;
-            action
         };
-        assert_eq!(
-            action.do_duration,
-            Some(45),
-            "duration from non-canonical act must not be silently dropped"
-        );
+
+        let workspace_action = Action::from(&action);
+        assert_eq!(workspace_action.do_duration, Some(45));
+        assert_eq!(workspace_action.state, ActionState::InProgress);
     }
 
     #[test]
-    fn representative_act_synthesizes_blank_when_no_acts() {
-        let plan_id = Uuid::new_v4();
-        let plan = Plan {
-            id: plan_id,
-            name: "empty".to_string(),
-            ..Default::default()
-        };
-
-        let action = Action::from(&plan);
-        assert_eq!(action.do_duration, None);
-        assert_eq!(action.state, ActionState::NotStarted);
+    fn from_actions_with_charter_produces_domain_actions_not_plans() {
+        let charter = from_actions_with_charter(&vec![make_action("empty")], "demo".to_string());
+        assert!(charter.plans.is_empty());
+        assert_eq!(charter.actions.len(), 1);
     }
 }

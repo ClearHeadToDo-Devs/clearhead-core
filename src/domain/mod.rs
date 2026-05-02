@@ -1,18 +1,18 @@
 //! Domain model aligned with the Actions Vocabulary v4 ontology.
 //!
-//! This module provides structs that map to the CCO-aligned ontology:
-//! - [`Plan`] (cco:Plan) - task definition / template (information content)
-//! - [`PlannedAct`] (cco:PlannedAct) - actual execution (occurrence)
-//! - [`ActPhase`] - lifecycle state (custom BFO Quality)
+//! This module provides structs that map to the ClearHead domain model:
+//! - [`Plan`] - schedule definition for recurring work
+//! - [`Action`] - actionable work item, optionally prescribed by a plan
+//! - [`ActPhase`] - lifecycle state for actions
 //!
-//! The key insight from BFO: information vs occurrence.
-//! - A [`Plan`] is a *continuant* — persists and can be realized multiple times
-//! - A [`PlannedAct`] is an *occurrent* — unfolds through time
+//! The key distinction is schedule vs actionable work.
+//! - A [`Plan`] holds recurrence/schedule semantics
+//! - An [`Action`] holds the task/execution-facing data users manipulate directly
 //!
 //! # Example
 //!
-//! "Do laundry weekly" is one [`Plan`]. Each week's laundry is a separate [`PlannedAct`].
-//! For non-recurring tasks, there's still one [`Plan`] and one [`PlannedAct`].
+//! "Do laundry weekly" is one [`Plan`]. Each week's laundry can become a separate [`Action`].
+//! Non-recurring work can exist directly as an [`Action`] without any [`Plan`].
 
 pub mod diff;
 
@@ -68,7 +68,7 @@ pub struct Metric {
 ///
 /// Maps to `actions:Objective` — the topmost organizational layer.
 /// Objectives sit above charters in the hierarchy:
-/// [`Objective`] → [`Charter`] → [`Plan`] → [`PlannedAct`]
+/// [`Objective`] → [`Charter`] → [`Plan`] / [`Action`]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Objective {
     pub id: Uuid,
@@ -81,7 +81,7 @@ pub struct Objective {
 
 /// Recurrence rule per RFC 5545 RRULE specification.
 ///
-/// Used by [`Plan`] to prescribe multiple [`PlannedAct`]s.
+/// Used by [`Plan`] to prescribe multiple [`Action`]s.
 ///
 /// # Examples
 ///
@@ -477,8 +477,8 @@ pub struct Charter {
     pub objectives: Option<Vec<String>>,
     /// [`Plan`]s organized under this charter (nested hierarchy)
     pub plans: Vec<Plan>,
-    /// [`PlannedAct`]s scoped to this charter; each may optionally reference a plan.
-    pub acts: Vec<PlannedAct>,
+    /// [`Action`]s scoped to this charter; each may optionally reference a plan.
+    pub actions: Vec<Action>,
 }
 
 pub fn charter_from_plans_and_name(name: String, plans: Vec<Plan>) -> Charter {
@@ -490,20 +490,26 @@ pub fn charter_from_plans_and_name(name: String, plans: Vec<Plan>) -> Charter {
         parent: None,
         objectives: None,
         plans,
-        acts: vec![],
+        actions: vec![],
     }
 }
 
-/// Actual execution or occurrence of a [`Plan`].
+/// Actionable unit of work.
 ///
-/// Maps to `cco:PlannedAct` — something that unfolds through time.
-/// Each realization of a [`Plan`] creates a [`PlannedAct`].
-///
-/// [`PlannedAct`]s hold the "when" and "status" — scheduled time, completion, phase.
+/// An [`Action`] may exist independently or be prescribed by a recurring [`Plan`].
+/// It carries the task-facing fields and lifecycle state.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct PlannedAct {
+pub struct Action {
     pub id: Uuid,
-    /// The [`Plan`] this act realizes (prescribes relationship, inverse)
+    pub name: String,
+    pub description: Option<String>,
+    pub priority: Option<u32>,
+    pub contexts: Option<Vec<String>>,
+    pub parent: Option<Uuid>,
+    pub alias: Option<String>,
+    pub is_sequential: Option<bool>,
+    pub depends_on: Option<Vec<Uuid>>,
+    /// The [`Plan`] that prescribed this action, when applicable.
     pub plan_id: Option<Uuid>,
     /// Optional external schedule-series identifier (integration profile bridge)
     pub external_schedule_id: Option<String>,
@@ -523,10 +529,18 @@ pub struct PlannedAct {
     pub created_at: Option<DateTime<Local>>,
 }
 
-impl Default for PlannedAct {
+impl Default for Action {
     fn default() -> Self {
         Self {
             id: Uuid::nil(),
+            name: String::new(),
+            description: None,
+            priority: None,
+            contexts: None,
+            parent: None,
+            alias: None,
+            is_sequential: None,
+            depends_on: None,
             plan_id: None,
             external_schedule_id: None,
             external_occurrence_key: None,
@@ -561,9 +575,14 @@ impl DomainModel {
         self.charters.iter().flat_map(|c| c.plans.iter()).collect()
     }
 
-    /// Flatten all acts across all charters and plans.
-    pub fn all_acts(&self) -> Vec<&PlannedAct> {
-        self.charters.iter().flat_map(|c| c.acts.iter()).collect()
+    /// Flatten all actions across all charters.
+    pub fn all_actions(&self) -> Vec<&Action> {
+        self.charters.iter().flat_map(|c| c.actions.iter()).collect()
+    }
+
+    /// Back-compat alias while callers migrate to `all_actions`.
+    pub fn all_acts(&self) -> Vec<&Action> {
+        self.all_actions()
     }
 
     /// Find a Plan by ID, searching across the hierarchy.
@@ -578,22 +597,34 @@ impl DomainModel {
             .find(|c| c.plans.iter().any(|p| p.id == plan_id))
     }
 
-    /// Find all PlannedActs for a given Plan
-    pub fn acts_for_plan(&self, plan_id: Uuid) -> Vec<&PlannedAct> {
-        self.all_acts()
+    /// Find all Actions for a given Plan.
+    pub fn actions_for_plan(&self, plan_id: Uuid) -> Vec<&Action> {
+        self.all_actions()
             .into_iter()
             .filter(|a| a.plan_id == Some(plan_id))
             .collect()
     }
 
+    /// Back-compat alias while callers migrate to `actions_for_plan`.
+    pub fn acts_for_plan(&self, plan_id: Uuid) -> Vec<&Action> {
+        self.actions_for_plan(plan_id)
+    }
+
     /// Get all incomplete acts across the hierarchy.
-    pub fn incomplete_acts(&self) -> Vec<&PlannedAct> {
-        self.all_acts()
+    pub fn incomplete_actions(&self) -> Vec<&Action> {
+        self.all_actions()
             .into_iter()
             .filter(|a| !matches!(a.phase, ActPhase::Completed | ActPhase::Cancelled))
             .collect()
     }
+
+    /// Back-compat alias while callers migrate to `incomplete_actions`.
+    pub fn incomplete_acts(&self) -> Vec<&Action> {
+        self.incomplete_actions()
+    }
 }
+
+pub type PlannedAct = Action;
 
 #[cfg(test)]
 mod tests {

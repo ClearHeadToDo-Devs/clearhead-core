@@ -9,7 +9,7 @@
 //! without network dependencies.
 
 use super::{GraphError, Result, Store, create_store};
-use crate::domain::{ActPhase, Charter, DomainModel, Plan};
+use crate::domain::{ActPhase, Action, Charter, DomainModel, Plan};
 use crate::graph::{load_domain_model, load_domain_model_from_store};
 use serde_json::{Map, Value, json};
 use std::collections::BTreeMap;
@@ -21,7 +21,7 @@ const ACTIONS_CONTEXT_V4: &str = include_str!("../resources/actions.context.v4.j
 /// # Example
 ///
 /// ```
-/// use clearhead_core::domain::{ActPhase, Charter, DomainModel, Plan, PlannedAct};
+/// use clearhead_core::domain::{ActPhase, Action, Charter, DomainModel, Plan};
 /// use clearhead_core::graph::{create_store, load_domain_model, serialize_store_to_jsonld};
 /// use uuid::Uuid;
 ///
@@ -40,8 +40,16 @@ const ACTIONS_CONTEXT_V4: &str = include_str!("../resources/actions.context.v4.j
 ///             name: "Write docs".to_string(),
 ///             ..Plan::default()
 ///         }],
-///         acts: vec![PlannedAct {
+///         actions: vec![Action {
 ///             id: Uuid::new_v4(),
+///             name: "Write docs".to_string(),
+///             description: None,
+///             priority: None,
+///             contexts: None,
+///             parent: None,
+///             alias: None,
+///             is_sequential: None,
+///             depends_on: None,
 ///             plan_id: Some(plan_id),
 ///             external_schedule_id: None,
 ///             external_occurrence_key: None,
@@ -102,7 +110,7 @@ fn build_jsonld_document(model: &DomainModel) -> Result<Value> {
         for plan in &charter.plans {
             plan_charter_id.insert(uuid_urn(plan.id.to_string()), charter_id.clone());
         }
-        for act in &charter.acts {
+        for act in &charter.actions {
             if let Some(plan_id) = act.plan_id {
                 acts_by_plan
                     .entry(uuid_urn(plan_id.to_string()))
@@ -139,8 +147,8 @@ fn build_jsonld_document(model: &DomainModel) -> Result<Value> {
         }
     }
 
-    for act in model.all_acts() {
-        nodes.push(planned_act_to_jsonld(act));
+    for act in model.all_actions() {
+        nodes.push(action_to_jsonld(act));
     }
 
     nodes.sort_by_key(node_sort_key);
@@ -187,8 +195,8 @@ fn plan_to_jsonld(
         insert_id(&mut node, "partOf", charter_id.clone());
     }
 
-    let planned_acts: Vec<String> = acts_by_plan.get(&plan_id).cloned().unwrap_or_default();
-    insert_id_or_many(&mut node, "plannedActs", planned_acts);
+    let actions: Vec<String> = acts_by_plan.get(&plan_id).cloned().unwrap_or_default();
+    insert_id_or_many(&mut node, "actions", actions);
 
     if let Some(depends_on) = &plan.depends_on {
         let deps: Vec<String> = depends_on
@@ -224,8 +232,30 @@ fn plan_to_jsonld(
     Value::Object(node)
 }
 
-fn planned_act_to_jsonld(act: &crate::domain::PlannedAct) -> Value {
-    let mut node = ordered_node(uuid_urn(act.id.to_string()), "PlannedAct");
+fn action_to_jsonld(act: &Action) -> Value {
+    let mut node = ordered_node(uuid_urn(act.id.to_string()), "Action");
+    insert_str(&mut node, "name", &act.name);
+    if let Some(description) = &act.description {
+        insert_str(&mut node, "description", description);
+    }
+    if let Some(alias) = &act.alias {
+        insert_str(&mut node, "alias", alias);
+    }
+    if let Some(priority) = act.priority {
+        node.insert("priority".to_string(), json!(priority));
+    }
+    if let Some(contexts) = &act.contexts {
+        let ids: Vec<String> = contexts.iter().map(|c| context_id(c)).collect();
+        insert_id_or_many(&mut node, "requiresContext", ids);
+    }
+    if let Some(parent_id) = act.parent {
+        insert_id(&mut node, "partOf", uuid_urn(parent_id.to_string()));
+    }
+    if let Some(depends_on) = &act.depends_on {
+        let deps: Vec<String> = depends_on.iter().map(|id| uuid_urn(id.to_string())).collect();
+        insert_id_or_many(&mut node, "isSuccessorOf", deps);
+    }
+    insert_str(&mut node, "uuid", &act.id.to_string());
     insert_str(&mut node, "status", phase_term(act.phase));
 
     if let Some(scheduled) = act.scheduled_at {
@@ -329,7 +359,7 @@ fn node_sort_key(node: &Value) -> (u8, String) {
         "Objective" => 1,
         "Context" => 2,
         "Plan" => 3,
-        "PlannedAct" => 4,
+        "Action" => 4,
         "ContextType" => 5,
         _ => 255,
     };
@@ -344,7 +374,7 @@ fn node_sort_key(node: &Value) -> (u8, String) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::{Charter, DomainModel, Plan, PlannedAct, Recurrence};
+    use crate::domain::{Action, Charter, DomainModel, Plan, Recurrence};
     use crate::graph::create_store;
     use chrono::TimeZone;
     use jsonschema::JSONSchema;
@@ -382,8 +412,14 @@ mod tests {
                     is_sequential: Some(true),
                     ..Default::default()
                 }],
-                acts: vec![PlannedAct {
+                actions: vec![Action {
                     id: act_id,
+                    name: "Write graph tests".to_string(),
+                    description: Some("Lock down graph semantics".to_string()),
+                    priority: Some(1),
+                    contexts: Some(vec!["@dev".to_string()]),
+                    alias: Some("graph_tests".to_string()),
+                    is_sequential: Some(true),
                     plan_id: Some(plan_id),
                     external_schedule_id: Some("weekly-review@example.com".to_string()),
                     external_occurrence_key: Some("2026-04-09T10:00:00-07:00".to_string()),
@@ -426,7 +462,7 @@ mod tests {
         assert!(
             graph
                 .iter()
-                .any(|n| n.get("type") == Some(&json!("PlannedAct")))
+                .any(|n| n.get("type") == Some(&json!("Action")))
         );
     }
 
@@ -452,7 +488,7 @@ mod tests {
         let charter_idx = types.iter().position(|t| t == "Charter").unwrap();
         let context_idx = types.iter().position(|t| t == "Context").unwrap();
         let plan_idx = types.iter().position(|t| t == "Plan").unwrap();
-        let act_idx = types.iter().position(|t| t == "PlannedAct").unwrap();
+        let act_idx = types.iter().position(|t| t == "Action").unwrap();
 
         assert!(charter_idx < context_idx);
         assert!(context_idx < plan_idx);
@@ -476,7 +512,7 @@ mod tests {
             .iter()
             .find(|n| n.get("type") == Some(&json!("Plan")))
             .expect("plan node");
-        assert!(plan.get("plannedActs").is_some());
+        assert!(plan.get("actions").is_some());
         assert!(plan.get("partOf").is_some());
         assert!(plan.get("uuid").is_some());
         assert!(plan.get("sequentialChildren").is_some());
@@ -485,8 +521,9 @@ mod tests {
 
         let act = graph
             .iter()
-            .find(|n| n.get("type") == Some(&json!("PlannedAct")))
+            .find(|n| n.get("type") == Some(&json!("Action")))
             .expect("act node");
+        assert!(act.get("name").is_some());
         assert!(act.get("status").is_some());
         assert!(act.get("scheduledAt").is_some());
         assert!(act.get("durationMinutes").is_some());

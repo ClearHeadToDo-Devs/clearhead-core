@@ -4,7 +4,7 @@
 //! plan-level changes, which contain act-level changes. This preserves
 //! charter context throughout — no post-hoc lookups needed.
 
-use super::{ActPhase, Charter, DomainModel, Plan, PlannedAct, Recurrence};
+use super::{ActPhase, Action, Charter, DomainModel, Plan, Recurrence};
 use chrono::{DateTime, Local};
 use std::collections::HashMap;
 use uuid::Uuid;
@@ -70,7 +70,7 @@ pub enum PlanFieldChange {
     },
 }
 
-/// A change to a single field on a PlannedAct.
+/// A change to a single field on an Action.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ActFieldChange {
     Phase {
@@ -124,7 +124,7 @@ pub enum CharterFieldChange {
 // Hierarchical diff structs
 // ============================================================================
 
-/// Changes detected for a single PlannedAct.
+/// Changes detected for a single Action.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ActDiff {
     pub id: Uuid,
@@ -137,8 +137,8 @@ pub struct ActDiff {
 pub struct PlanDiff {
     pub id: Uuid,
     pub changes: Vec<PlanFieldChange>,
-    pub acts_added: Vec<PlannedAct>,
-    pub acts_removed: Vec<PlannedAct>,
+    pub acts_added: Vec<Action>,
+    pub acts_removed: Vec<Action>,
     pub acts_modified: Vec<ActDiff>,
 }
 
@@ -209,7 +209,7 @@ impl DomainDiff {
 /// Diff two [`DomainModel`]s, producing a hierarchical [`DomainDiff`].
 ///
 /// [`Charter`]s are matched by `charter.id`. [`Plan`]s within a charter are matched
-/// by `plan.id`. [`PlannedAct`]s within a plan are matched by `act.id`.
+/// by `plan.id`. [`Action`]s within a plan are matched by `act.id`.
 pub fn diff_domain_models(old: &DomainModel, new: &DomainModel) -> DomainDiff {
     let old_charters: HashMap<Uuid, &Charter> = old.charters.iter().map(|c| (c.id, c)).collect();
     let new_charters: HashMap<Uuid, &Charter> = new.charters.iter().map(|c| (c.id, c)).collect();
@@ -248,7 +248,7 @@ fn diff_charters(old: &Charter, new: &Charter) -> CharterDiff {
 
     for (id, new_plan) in &new_plans {
         if let Some(old_plan) = old_plans.get(id) {
-            let plan_diff = diff_plans(old_plan, new_plan, &old.acts, &new.acts);
+            let plan_diff = diff_plans(old_plan, new_plan, &old.actions, &new.actions);
             if !plan_diff.is_empty() {
                 plans_modified.push(plan_diff);
             }
@@ -275,17 +275,17 @@ fn diff_charters(old: &Charter, new: &Charter) -> CharterDiff {
 fn diff_plans(
     old: &Plan,
     new: &Plan,
-    old_charter_acts: &[PlannedAct],
-    new_charter_acts: &[PlannedAct],
+    old_charter_acts: &[Action],
+    new_charter_acts: &[Action],
 ) -> PlanDiff {
     let changes = compare_plans(old, new);
 
-    let old_acts: HashMap<Uuid, &PlannedAct> = old_charter_acts
+    let old_acts: HashMap<Uuid, &Action> = old_charter_acts
         .iter()
         .filter(|a| a.plan_id == Some(old.id))
         .map(|a| (a.id, a))
         .collect();
-    let new_acts: HashMap<Uuid, &PlannedAct> = new_charter_acts
+    let new_acts: HashMap<Uuid, &Action> = new_charter_acts
         .iter()
         .filter(|a| a.plan_id == Some(new.id))
         .map(|a| (a.id, a))
@@ -437,7 +437,7 @@ fn compare_plans(old: &Plan, new: &Plan) -> Vec<PlanFieldChange> {
     changes
 }
 
-fn compare_acts(old: &PlannedAct, new: &PlannedAct) -> Vec<ActFieldChange> {
+fn compare_acts(old: &Action, new: &Action) -> Vec<ActFieldChange> {
     let mut changes = Vec::new();
     if old.phase != new.phase {
         changes.push(ActFieldChange::Phase {
@@ -498,7 +498,7 @@ fn dates_equal(a: &Option<DateTime<Local>>, b: &Option<DateTime<Local>>) -> bool
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::{ActPhase, Charter, PlannedAct};
+    use crate::domain::{ActPhase, Action, Charter};
 
     fn make_model(id: &str, name: &str) -> DomainModel {
         let plan_id = Uuid::parse_str(id).unwrap();
@@ -515,8 +515,9 @@ mod tests {
                     name: name.to_string(),
                     ..Default::default()
                 }],
-                acts: vec![PlannedAct {
+                actions: vec![Action {
                     id: act_id,
+                    name: name.to_string(),
                     plan_id: Some(plan_id),
                     ..Default::default()
                 }],
@@ -580,7 +581,7 @@ mod tests {
         let id = "019baaec-00b6-7991-be34-94b68212619a";
         let old = make_model(id, "Task");
         let mut new = old.clone();
-        new.charters[0].acts[0].phase = ActPhase::Completed;
+        new.charters[0].actions[0].phase = ActPhase::Completed;
 
         let diff = diff_domain_models(&old, &new);
 

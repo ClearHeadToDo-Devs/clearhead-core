@@ -33,7 +33,7 @@
                     dtstart: Some("2026-01-01T00:00:00-08:00"),
                 ),
             ],
-            acts: [],
+            actions: [],
         ),
         (
             id: "17d65180-da9e-5dff-b295-e22d8ba314e6",
@@ -42,28 +42,19 @@
             alias: Some("project-mixed"),
             parent: None,
             objectives: None,
-            plans: [
+            plans: [],
+            actions: [
                 (
                     id: "01951111-0000-7000-0000-000000000001",
                     name: "Buy domain name",
                     description: None,
                     priority: None,
                     contexts: None,
-                    recurrence: None,
-                    due_recurrence: None,
                     parent: None,
                     alias: None,
                     is_sequential: None,
                     depends_on: None,
-                    external_id: None,
-                    template_name: None,
-                    dtstart: None,
-                ),
-            ],
-            acts: [
-                (
-                    id: "f9fc93f2-3b3c-563e-8e22-87d52caac97d",
-                    plan_id: Some("01951111-0000-7000-0000-000000000001"),
+                    plan_id: None,
                     external_schedule_id: None,
                     external_occurrence_key: None,
                     phase: NotStarted,

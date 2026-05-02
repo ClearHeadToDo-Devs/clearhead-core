@@ -9,7 +9,7 @@
     "rdfs": "http://www.w3.org/2000/01/rdf-schema#",
     "xsd": "http://www.w3.org/2001/XMLSchema#",
     "Plan": "https://www.commoncoreontologies.org/ont00000974",
-    "PlannedAct": "https://www.commoncoreontologies.org/ont00000228",
+    "Action": "https://clearhead.us/vocab/actions/v4#Action",
     "Objective": "https://www.commoncoreontologies.org/ont00000476",
     "Charter": "https://clearhead.us/vocab/actions/v4#Charter",
     "Context": "https://clearhead.us/vocab/actions/v4#Context",
@@ -33,7 +33,7 @@
       "@id": "bfo:BFO_0000050",
       "@type": "@id"
     },
-    "plannedActs": {
+    "actions": {
       "@id": "cco:ont00001942",
       "@type": "@id"
     },

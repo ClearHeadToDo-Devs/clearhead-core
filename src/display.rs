@@ -12,8 +12,8 @@ use comfy_table::{Cell, Color, ContentArrangement, Table, presets::UTF8_FULL};
 /// Render a `DomainModel` as a human-readable table.
 ///
 /// Charter titles come directly from the `Charter` struct — no field enrichment needed.
-/// State and dates are read from the first `PlannedAct` on each plan, or synthesized
-/// as `NotStarted` if the plan has no acts.
+/// State and dates are read from the first matching action for each plan, or synthesized
+/// as `NotStarted` if the plan has no related actions.
 pub fn format_domain_as_table(
     model: &DomainModel,
     filters: Option<&TableFormatOptions>,
@@ -73,7 +73,7 @@ pub fn format_domain_as_table(
             let indent = "  ".repeat(depth);
 
             // State from first act, or synthesized NotStarted
-            let first_act = charter.acts.iter().find(|a| a.plan_id == Some(plan.id));
+            let first_act = charter.actions.iter().find(|a| a.plan_id == Some(plan.id));
             let phase = first_act.map(|a| a.phase).unwrap_or(ActPhase::NotStarted);
 
             let state_cell = match phase {

@@ -5,7 +5,7 @@
 //! the `crdt::types` side; domain types remain pure business objects.
 
 use crate::domain::{
-    ActPhase, Charter, DomainModel, Metric, Objective, Plan, PlannedAct, Recurrence, Reference,
+    ActPhase, Action, Charter, DomainModel, Metric, Objective, Plan, Recurrence, Reference,
 };
 
 use super::types::{
@@ -74,7 +74,7 @@ impl From<&Charter> for SyncCharter {
             parent: c.parent.clone(),
             objectives: c.objectives.clone(),
             plans: c.plans.iter().map(SyncPlan::from).collect(),
-            acts: c.acts.iter().map(SyncPlannedAct::from).collect(),
+            acts: c.actions.iter().map(SyncPlannedAct::from).collect(),
         }
     }
 }
@@ -97,8 +97,8 @@ impl From<&Plan> for SyncPlan {
     }
 }
 
-impl From<&PlannedAct> for SyncPlannedAct {
-    fn from(a: &PlannedAct) -> Self {
+impl From<&Action> for SyncPlannedAct {
+    fn from(a: &Action) -> Self {
         SyncPlannedAct {
             id: a.id,
             plan_id: a.plan_id,
@@ -208,7 +208,7 @@ impl From<&SyncCharter> for Charter {
             parent: c.parent.clone(),
             objectives: c.objectives.clone(),
             plans: c.plans.iter().map(Plan::from).collect(),
-            acts: c.acts.iter().map(PlannedAct::from).collect(),
+            actions: c.acts.iter().map(Action::from).collect(),
         }
     }
 }
@@ -232,10 +232,18 @@ impl From<&SyncPlan> for Plan {
     }
 }
 
-impl From<&SyncPlannedAct> for PlannedAct {
+impl From<&SyncPlannedAct> for Action {
     fn from(a: &SyncPlannedAct) -> Self {
-        PlannedAct {
+        Action {
             id: a.id,
+            name: String::new(),
+            description: None,
+            priority: None,
+            contexts: None,
+            parent: None,
+            alias: None,
+            is_sequential: None,
+            depends_on: None,
             plan_id: a.plan_id,
             external_schedule_id: a.external_schedule_id.clone(),
             external_occurrence_key: a.external_occurrence_key.clone(),

@@ -3,11 +3,11 @@
 //! This module owns the "put things in" direction: domain model → RDF triples.
 
 use super::{
-    BFO_HAS_PART, BFO_PART_OF, CCO_IS_SUCCESSOR_OF, CCO_PLAN, CCO_PLANNED_ACT, CCO_PRESCRIBED_BY,
+    ACTIONS_ACTION, BFO_HAS_PART, BFO_PART_OF, CCO_IS_SUCCESSOR_OF, CCO_PLAN, CCO_PRESCRIBED_BY,
     CCO_PRESCRIBES, CCO_STATUS_PROP, GraphError, RDFS_COMMENT, RDFS_LABEL, Result, Store, XSD_NS,
     actions_pred, bfo_pred, cco_node, ns, phase_node, rdf_type, rdfs_pred,
 };
-use crate::domain::{Charter, DomainModel, Plan, PlannedAct};
+use crate::domain::{Action, Charter, DomainModel, Plan};
 use crate::workspace::actions::convert::INBOX_CHARTER_NS;
 use oxigraph::io::RdfFormat;
 use oxigraph::model::{GraphName, Literal, NamedNode, NamedOrBlankNode, Quad, Term};
@@ -16,7 +16,7 @@ use uuid::Uuid;
 
 /// Load a `DomainModel` into the store using the v4 ontology.
 ///
-/// Inserts Charters, Plans, and PlannedActs with CCO/BFO-aligned types and
+/// Inserts Charters, Plans, and Actions with v4-aligned types and
 /// relationships, including Charter → Plan containment via `bfo:has_part`.
 pub fn load_domain_model(store: &Store, model: &DomainModel) -> Result<()> {
     // Build title → UUID map so hasSubCharter triples use the actual charter UUID
@@ -31,20 +31,20 @@ pub fn load_domain_model(store: &Store, model: &DomainModel) -> Result<()> {
     for charter in &model.charters {
         insert_charter(store, charter, &charter_id_by_title)?;
     }
-    for act in model.all_acts() {
-        insert_planned_act(store, act)?;
+    for action in model.all_actions() {
+        insert_action(store, action)?;
     }
     Ok(())
 }
 
-/// Insert a slice of `PlannedAct`s directly into the store.
+/// Insert a slice of `Action`s directly into the store.
 ///
 /// Used by the archive command to populate a store before serializing to
 /// `archive.ttl`.  Quad idempotence means calling this with already-present
 /// acts is safe.
-pub fn load_acts_into_store(store: &Store, acts: &[PlannedAct]) -> Result<()> {
+pub fn load_acts_into_store(store: &Store, acts: &[Action]) -> Result<()> {
     for act in acts {
-        insert_planned_act(store, act)?;
+        insert_action(store, act)?;
     }
     Ok(())
 }
@@ -126,13 +126,18 @@ fn insert_charter(
     for plan in &charter.plans {
         let plan_uri = NamedNode::new(format!("urn:uuid:{}", plan.id)).unwrap();
         add(bfo_pred(BFO_HAS_PART), Term::NamedNode(plan_uri))?;
-        insert_plan(store, plan, &charter.acts)?;
+        insert_plan(store, plan, &charter.actions)?;
+    }
+
+    for action in charter.actions.iter().filter(|a| a.plan_id.is_none()) {
+        let action_uri = NamedNode::new(format!("urn:uuid:{}", action.id)).unwrap();
+        add(bfo_pred(BFO_HAS_PART), Term::NamedNode(action_uri))?;
     }
 
     Ok(())
 }
 
-fn insert_plan(store: &Store, plan: &Plan, charter_acts: &[PlannedAct]) -> Result<()> {
+fn insert_plan(store: &Store, plan: &Plan, charter_actions: &[Action]) -> Result<()> {
     let subject =
         NamedOrBlankNode::NamedNode(NamedNode::new(format!("urn:uuid:{}", plan.id)).unwrap());
     let graph = GraphName::DefaultGraph;
@@ -242,16 +247,16 @@ fn insert_plan(store: &Store, plan: &Plan, charter_acts: &[PlannedAct]) -> Resul
         )?;
     }
 
-    // cco:prescribes (ont00001942) — forward link from Plan to each PlannedAct
-    for act in charter_acts.iter().filter(|a| a.plan_id == Some(plan.id)) {
-        let act_uri = NamedNode::new(format!("urn:uuid:{}", act.id)).unwrap();
-        add(cco_node(CCO_PRESCRIBES), Term::NamedNode(act_uri))?;
+    // cco:prescribes — forward link from recurring Plan to each Action it generated.
+    for action in charter_actions.iter().filter(|a| a.plan_id == Some(plan.id)) {
+        let action_uri = NamedNode::new(format!("urn:uuid:{}", action.id)).unwrap();
+        add(cco_node(CCO_PRESCRIBES), Term::NamedNode(action_uri))?;
     }
 
     Ok(())
 }
 
-fn insert_planned_act(store: &Store, act: &PlannedAct) -> Result<()> {
+fn insert_action(store: &Store, act: &Action) -> Result<()> {
     let subject =
         NamedOrBlankNode::NamedNode(NamedNode::new(format!("urn:uuid:{}", act.id)).unwrap());
     let graph = GraphName::DefaultGraph;
@@ -262,11 +267,68 @@ fn insert_planned_act(store: &Store, act: &PlannedAct) -> Result<()> {
             .map_err(|e| GraphError::Store(e.to_string()))
     };
 
-    add(rdf_type(), Term::NamedNode(cco_node(CCO_PLANNED_ACT)))?;
+    add(rdf_type(), Term::NamedNode(ns(super::ACTIONS_NS, ACTIONS_ACTION)))?;
     add(
         actions_pred("hasUUID"),
         Term::Literal(Literal::new_simple_literal(act.id.to_string())),
     )?;
+
+    add(
+        rdfs_pred(RDFS_LABEL),
+        Term::Literal(Literal::new_simple_literal(&act.name)),
+    )?;
+
+    if let Some(description) = &act.description {
+        add(
+            rdfs_pred(RDFS_COMMENT),
+            Term::Literal(Literal::new_simple_literal(description)),
+        )?;
+    }
+
+    if let Some(priority) = act.priority {
+        add(
+            actions_pred("hasPriority"),
+            Term::Literal(Literal::new_typed_literal(
+                priority.to_string(),
+                ns(XSD_NS, "integer"),
+            )),
+        )?;
+    }
+
+    if let Some(contexts) = &act.contexts {
+        for context in contexts {
+            add(
+                actions_pred("hasContext"),
+                Term::Literal(Literal::new_simple_literal(context)),
+            )?;
+        }
+    }
+
+    if let Some(parent_id) = act.parent {
+        let parent_uri = NamedNode::new(format!("urn:uuid:{}", parent_id)).unwrap();
+        add(bfo_pred(BFO_PART_OF), Term::NamedNode(parent_uri))?;
+    }
+
+    if let Some(depends_on) = &act.depends_on {
+        for dep_id in depends_on {
+            let dep_uri = NamedNode::new(format!("urn:uuid:{}", dep_id)).unwrap();
+            add(cco_node(CCO_IS_SUCCESSOR_OF), Term::NamedNode(dep_uri))?;
+        }
+    }
+
+    if let Some(alias) = &act.alias {
+        add(
+            actions_pred("hasAlias"),
+            Term::Literal(Literal::new_simple_literal(alias)),
+        )?;
+    }
+
+    if let Some(true) = act.is_sequential {
+        add(
+            actions_pred("hasSequentialChildren"),
+            Term::Literal(Literal::new_typed_literal("true", ns(XSD_NS, "boolean"))),
+        )?;
+    }
 
     if let Some(plan_id) = act.plan_id {
         let plan_uri = NamedNode::new(format!("urn:uuid:{}", plan_id)).unwrap();
@@ -349,7 +411,7 @@ fn insert_planned_act(store: &Store, act: &PlannedAct) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::{ActPhase, Charter, DomainModel, Plan, PlannedAct, Recurrence};
+    use crate::domain::{ActPhase, Action, Charter, DomainModel, Plan, Recurrence};
     use crate::graph::{self, validate_actions_vocabulary};
     use chrono::TimeZone;
     use oxigraph::model::{GraphNameRef, LiteralRef, NamedNodeRef, TermRef};
@@ -384,8 +446,16 @@ mod tests {
                     ]),
                     ..Default::default()
                 }],
-                acts: vec![PlannedAct {
+                actions: vec![Action {
                     id: act_id,
+                    name: "Write graph tests".to_string(),
+                    description: Some("Lock down graph semantics".to_string()),
+                    priority: Some(1),
+                    alias: Some("graph_tests".to_string()),
+                    is_sequential: Some(true),
+                    depends_on: Some(vec![
+                        Uuid::parse_str("019d7100-4444-7444-8444-444444444444").unwrap(),
+                    ]),
                     plan_id: Some(plan_id),
                     external_schedule_id: Some("weekly-review@example.com".to_string()),
                     external_occurrence_key: Some("2026-04-09T10:00:00-07:00".to_string()),
