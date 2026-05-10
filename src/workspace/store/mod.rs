@@ -50,6 +50,13 @@ pub fn charter_root(root: &Path) -> PathBuf {
     resolve_workspace_layout(root).charter_root
 }
 
+/// Returns the plans root (`<data_root>/plans/`).
+///
+/// All vdir `.ics` plan files live here. Each charter gets one subdirectory.
+pub fn plans_root(root: &Path) -> PathBuf {
+    resolve_workspace_layout(root).plans_root
+}
+
 /// Returns absolute paths to all `.actions` files in the workspace.
 pub fn list_action_files(root: &Path) -> Result<Vec<PathBuf>, WorkspaceError> {
     let layout = resolve_workspace_layout(root);
@@ -79,6 +86,8 @@ pub(crate) struct WorkspaceLayout {
     pub(crate) data_root: PathBuf,
     /// `<data_root>/charters/` — where the charter tree lives.
     pub(crate) charter_root: PathBuf,
+    /// `<data_root>/plans/` — where vdir plan files live (parallel to charters/).
+    pub(crate) plans_root: PathBuf,
     pub(crate) project_root_charter: Option<String>,
 }
 
@@ -92,9 +101,9 @@ pub(crate) struct WorkspaceLayout {
 pub(crate) fn resolve_workspace_layout(root: &Path) -> WorkspaceLayout {
     let project_data = root.join(".clearhead");
     if project_data.is_dir() {
-        let charter_root = project_data.join("charters");
         return WorkspaceLayout {
-            charter_root: charter_root.clone(),
+            charter_root: project_data.join("charters"),
+            plans_root: project_data.join("plans"),
             data_root: project_data,
             project_root_charter: root
                 .file_name()
@@ -103,9 +112,9 @@ pub(crate) fn resolve_workspace_layout(root: &Path) -> WorkspaceLayout {
         };
     }
 
-    let charter_root = root.join("charters");
     WorkspaceLayout {
-        charter_root: charter_root.clone(),
+        charter_root: root.join("charters"),
+        plans_root: root.join("plans"),
         data_root: root.to_path_buf(),
         project_root_charter: None,
     }

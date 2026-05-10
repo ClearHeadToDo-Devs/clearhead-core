@@ -181,18 +181,24 @@ pub fn load_workspace(root: &Path) -> Result<Vec<MarkdownCharter>, WorkspaceErro
     let mut charters_by_name = charters;
 
     // Load ICS schedules: each .ics VEVENT becomes a Plan in the matching charter.
+    // entry.relative_path is relative to plans_root (e.g. "inbox/uid.ics").
+    // entry.charter_name is the slug used as the directory name (e.g. "work-feature").
+    // Match against charters via computed slug: parent-alias + "-" + alias.
     for entry in collect_plan_files(root)? {
         let plans = parse_ics_file(&entry.path)?;
         if plans.is_empty() {
             continue;
         }
+        // plans_dir: the charter's subdirectory relative to plans_root (e.g. "inbox")
         let plans_dir = entry
             .relative_path
             .parent()
             .map(std::path::Path::to_path_buf)
             .ok_or_else(|| WorkspaceError::InvalidPath(entry.relative_path.clone()))?;
         if let Some(charter) = charters_by_name.values_mut().find(|c| {
-            c.alias.as_deref() == Some(&entry.charter_name) || c.title == entry.charter_name
+            charter_plans_slug(c) == entry.charter_name
+                || c.alias.as_deref() == Some(&entry.charter_name)
+                || c.title == entry.charter_name
         }) {
             charter.plans_dir = Some(plans_dir.clone());
             charter.plans.extend(plans);
@@ -209,6 +215,16 @@ pub fn load_workspace(root: &Path) -> Result<Vec<MarkdownCharter>, WorkspaceErro
     let charters: Vec<MarkdownCharter> = charters_by_name.into_values().collect();
 
     Ok(charters)
+}
+
+/// Compute the plans directory slug for a charter: `<parent>-<alias>` for sub-charters,
+/// `<alias>` for top-level charters. Matches the directory name under `plans/`.
+fn charter_plans_slug(c: &MarkdownCharter) -> String {
+    let alias = c.alias.as_deref().unwrap_or(&c.title);
+    match &c.parent {
+        None => alias.to_string(),
+        Some(parent) => format!("{}-{}", parent, alias),
+    }
 }
 
 fn parent_hints(

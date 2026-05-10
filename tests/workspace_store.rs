@@ -158,14 +158,17 @@ fn project_layout_next_actions_uses_project_name_as_charter() {
 fn project_layout_root_plans_dir_uses_project_name_as_charter() {
     let (_outer, project) = make_named_project(
         "my-project",
-        &[
-            (
-                "next.actions",
-                "[ ] Root task #01951111-0000-7000-0000-000000000051\n",
-            ),
-            (
-                "plans/root-plan-1.ics",
-                "BEGIN:VCALENDAR\n\
+        &[(
+            "next.actions",
+            "[ ] Root task #01951111-0000-7000-0000-000000000051\n",
+        )],
+    );
+    // Plans live at <data_root>/plans/ (parallel to charters/), root charter uses "next/" slug.
+    let plans_dir = project.join(".clearhead").join("plans").join("next");
+    fs::create_dir_all(&plans_dir).expect("create plans/next dir");
+    fs::write(
+        plans_dir.join("root-plan-1.ics"),
+        "BEGIN:VCALENDAR\n\
 VERSION:2.0\n\
 PRODID:-//clearhead//NONSGML v1.0//EN\n\
 BEGIN:VEVENT\n\
@@ -174,9 +177,8 @@ DTSTART:20260101T080000Z\n\
 SUMMARY:Project root plan\n\
 END:VEVENT\n\
 END:VCALENDAR\n",
-            ),
-        ],
-    );
+    )
+    .expect("write plan ics");
 
     let model = load_domain_model(&project).expect("load failed");
 

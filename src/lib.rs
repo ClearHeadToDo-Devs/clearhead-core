@@ -34,7 +34,7 @@ pub use workspace::{
     expand_plans_into_acts, list_action_files, load_domain_model, load_workspace,
     occurrence_act_id, parse_actions,
     parse_actions_with_mode, parse_charter, parse_document, parse_tree, patch_action_list,
-    charter_root, read_acts, save_domain_model, workspace_data_root, write_acts,
+    charter_root, plans_root, read_acts, save_domain_model, workspace_data_root, write_acts,
 };
 
 pub mod domain;
