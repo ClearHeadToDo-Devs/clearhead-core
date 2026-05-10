@@ -30,7 +30,7 @@
     rdfs:label "Not started task" ;
     cco:ont00001942 <urn:uuid:act-not-started-001> .
 
-<urn:uuid:act-not-started-001> a cco:ont00000228 ;
+<urn:uuid:act-not-started-001> a actions:Action ;
     cco:ont00001868 actions:NotStarted .
 
 # InProgress status
@@ -38,7 +38,7 @@
     rdfs:label "In progress task" ;
     cco:ont00001942 <urn:uuid:act-in-progress-001> .
 
-<urn:uuid:act-in-progress-001> a cco:ont00000228 ;
+<urn:uuid:act-in-progress-001> a actions:Action ;
     cco:ont00001868 actions:InProgress .
 
 # Completed status
@@ -46,7 +46,7 @@
     rdfs:label "Completed task" ;
     cco:ont00001942 <urn:uuid:act-completed-001> .
 
-<urn:uuid:act-completed-001> a cco:ont00000228 ;
+<urn:uuid:act-completed-001> a actions:Action ;
     cco:ont00001868 actions:Completed ;
     actions:hasCompletedDateTime "2025-01-14T11:30:00Z"^^xsd:dateTime .
 
@@ -56,7 +56,7 @@
     rdfs:comment "Waiting for approval from manager" ;
     cco:ont00001942 <urn:uuid:act-blocked-001> .
 
-<urn:uuid:act-blocked-001> a cco:ont00000228 ;
+<urn:uuid:act-blocked-001> a actions:Action ;
     cco:ont00001868 actions:Blocked .
 
 # Cancelled status
@@ -65,5 +65,5 @@
     rdfs:comment "No longer needed due to project cancellation" ;
     cco:ont00001942 <urn:uuid:act-cancelled-001> .
 
-<urn:uuid:act-cancelled-001> a cco:ont00000228 ;
+<urn:uuid:act-cancelled-001> a actions:Action ;
     cco:ont00001868 actions:Cancelled .
