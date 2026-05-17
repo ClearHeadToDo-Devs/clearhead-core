@@ -290,6 +290,16 @@ fn collect_contexts(model: &DomainModel) -> Vec<String> {
             }
         }
     }
+    // Also collect from Actions — an action may reference a context that no
+    // plan uses, and the Context entity node must still appear in the graph.
+    for action in model.all_actions() {
+        if let Some(values) = &action.contexts {
+            for value in values {
+                let id = context_id(value);
+                contexts.insert(id, value.clone());
+            }
+        }
+    }
     contexts.values().cloned().collect()
 }
 
