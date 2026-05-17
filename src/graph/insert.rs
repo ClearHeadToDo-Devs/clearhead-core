@@ -175,11 +175,14 @@ fn insert_plan(store: &Store, plan: &Plan, charter_actions: &[Action]) -> Result
         )?;
     }
 
-    // Intentional: contexts stored as plain literals in the internal graph.
-    // Full actions:Context node semantics (requiresContext / contextIdentifier)
-    // are handled at the JSON-LD export layer in graph/jsonld.rs.
-    // Promoting to first-class graph nodes is deferred until the domain model
-    // has a Context type and query paths require it.
+    // NOTE: contexts are stored as actions:hasContext plain string literals in the
+    // internal graph. The OWL defines actions:requiresContext as an object property
+    // (range: actions:Context), but promoting to full Context nodes requires a
+    // Context type in the domain model. The JSON-LD export layer (graph/jsonld.rs)
+    // performs this promotion at the semantic waist. Queries that use the ontology's
+    // requiresContext / contextIdentifier path will not match against this internal
+    // representation — use the JSON-LD export or the dedicated context SPARQL queries
+    // against exported graphs instead.
     if let Some(contexts) = &plan.contexts {
         for context in contexts {
             add(
@@ -235,7 +238,7 @@ fn insert_plan(store: &Store, plan: &Plan, charter_actions: &[Action]) -> Result
 
     if let Some(ext_id) = &plan.external_id {
         add(
-            actions_pred("hasExternalId"),
+            actions_pred("hasExternalScheduleId"),
             Term::Literal(Literal::new_simple_literal(ext_id)),
         )?;
     }

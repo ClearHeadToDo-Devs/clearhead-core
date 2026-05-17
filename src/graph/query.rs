@@ -500,7 +500,7 @@ fn get_plan_by_id(store: &Store, id: Uuid) -> Result<Plan> {
         alias: node.lit(actions_pred("hasAlias")),
         is_sequential: node.lit_bool(actions_pred("hasSequentialChildren")),
         depends_on: (!depends_on.is_empty()).then_some(depends_on),
-        external_id: node.lit(actions_pred("hasExternalId")),
+        external_id: node.lit(actions_pred("hasExternalScheduleId")),
         template_name: node.lit(actions_pred("hasTemplateName")),
         dtstart: None,
     })
