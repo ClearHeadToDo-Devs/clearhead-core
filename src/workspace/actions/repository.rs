@@ -1,4 +1,5 @@
-use super::parser::{Action, ActionList};
+use crate::domain::Action;
+use super::parser::ActionList;
 use crate::workspace::store::infer_charter_name;
 use std::path::{Path, PathBuf};
 

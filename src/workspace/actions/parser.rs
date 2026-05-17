@@ -1,8 +1,8 @@
 use super::source::{
     NodeWrapper, SourceMetadata, SourceRange, create_node_wrapper, get_node_text, get_prefixed_text,
 };
+use crate::domain::{Action, ActionState, PredecessorRef};
 use chrono::{DateTime, Local};
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt;
 use tree_sitter::Tree;
@@ -10,133 +10,16 @@ use uuid::Uuid;
 
 /// A collection of [`Action`]s, typically representing a parsed `.actions` document.
 pub type ActionList = Vec<Action>;
-
-/// Reference to a predecessor action.
-///
-/// Can be either a literal UUID or a name-based reference that is resolved
-/// during the workspace loading phase.
-#[derive(PartialEq, Debug, Clone, Serialize, Deserialize)]
-pub struct PredecessorRef {
-    /// The raw reference text from the source (e.g., "build core" or a UUID).
-    pub raw_ref: String,
-    /// The resolved UUID if resolution was successful.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub resolved_uuid: Option<Uuid>,
-}
-
-/// The core unit of work in the ClearHead DSL.
-///
-/// Represents a single line (or tree node) in a `.actions` file, containing
-/// state, identity, and metadata.
-///
-/// # Examples
-///
-/// ```
-/// use clearhead_core::workspace::Action;
-/// use clearhead_core::workspace::ActionState;
-///
-/// let mut action = Action::new("Fix the documentation");
-/// action.state = ActionState::InProgress;
-///
-/// assert_eq!(action.name, "Fix the documentation");
-/// assert_eq!(action.state, ActionState::InProgress);
-/// ```
-#[derive(PartialEq, Debug, Clone, Serialize, Deserialize)]
-pub struct Action {
-    pub id: Uuid,
-    /// Parent action ID for hierarchical organization.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub parent_id: Option<Uuid>,
-    /// Current lifecycle state (e.g., [ ], [x], [-]).
-    pub state: ActionState,
-    pub name: String,
-    /// Detailed description enclosed in $ ... $.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
-    /// Priority level (e.g., !1).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub priority: Option<u32>,
-    /// Associated contexts (e.g., +home,+work).
-    #[serde(rename = "contexts", skip_serializing_if = "Option::is_none")]
-    pub context_list: Option<Vec<String>>,
-    /// Scheduled execution time (@-syntax).
-    #[serde(rename = "doDateTime", skip_serializing_if = "Option::is_none")]
-    pub do_date_time: Option<DateTime<Local>>,
-    /// Expected duration in minutes (D-syntax).
-    #[serde(rename = "doDuration", skip_serializing_if = "Option::is_none")]
-    pub do_duration: Option<u32>,
-    /// Deadline or due date (:-syntax).
-    #[serde(rename = "dueDateTime", skip_serializing_if = "Option::is_none")]
-    pub due_date_time: Option<DateTime<Local>>,
-    /// When the action was marked as completed (%-syntax).
-    #[serde(rename = "completedDate", skip_serializing_if = "Option::is_none")]
-    pub completed_date_time: Option<DateTime<Local>>,
-    /// When the action was originally created (^-syntax).
-    #[serde(rename = "createdDate", skip_serializing_if = "Option::is_none")]
-    pub created_date_time: Option<DateTime<Local>>,
-    /// List of actions that must be completed before this one (<-syntax).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub predecessors: Option<Vec<PredecessorRef>>,
-    /// The charter this action belongs to (*-syntax).
-    #[serde(rename = "story", skip_serializing_if = "Option::is_none")]
-    pub charter: Option<String>,
-    /// Stable alias for references (=alias).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub alias: Option<String>,
-    /// Whether children are executed sequentially (~).
-    #[serde(rename = "isSequential", skip_serializing_if = "Option::is_none")]
-    pub is_sequential: Option<bool>,
-}
-
-impl Default for Action {
-    fn default() -> Self {
-        Self {
-            id: Uuid::now_v7(),
-            parent_id: None,
-            state: ActionState::NotStarted,
-            name: String::new(),
-            description: None,
-            priority: None,
-            context_list: None,
-            do_date_time: None,
-            do_duration: None,
-            due_date_time: None,
-            completed_date_time: None,
-            created_date_time: None,
-            predecessors: None,
-            charter: None,
-            alias: None,
-            is_sequential: None,
-        }
-    }
-}
-
 impl Action {
-    pub fn new(name: impl Into<String>) -> Self {
-        Self {
-            name: name.into(),
-            ..Default::default()
-        }
-    }
-
-    /// Serialize the action content (state, name, metadata) to a formatter
+    /// Serialize the action content (state, name, metadata) to a formatter.
     pub fn fmt_content(&self, f: &mut fmt::Formatter<'_>, include_id: bool) -> fmt::Result {
-        // State and name (required)
         write!(f, "[{}] {}", self.state, self.name)?;
-
-        // Alias (=alias_name)
         if let Some(alias) = &self.alias {
             write!(f, " ={}", alias)?;
         }
-
-        // Sequential marker (~) - marks children as sequential
         if self.is_sequential == Some(true) {
             write!(f, " ~")?;
         }
-
-        // Add metadata with spec-compliant spacing:
-        // - Description enclosed in $ ... $
-        // - No space after other icons
         if let Some(description) = &self.description {
             write!(f, " $ {} $", description)?;
         }
@@ -146,22 +29,21 @@ impl Action {
         if let Some(charter) = &self.charter {
             write!(f, " *{}", charter)?;
         }
-        if let Some(context_list) = &self.context_list {
-            write!(f, " +{}", context_list.join(","))?;
+        if let Some(contexts) = &self.contexts {
+            write!(f, " +{}", contexts.join(","))?;
         }
-        if let Some(do_date_time) = &self.do_date_time {
-            write!(f, " @{}", do_date_time.format("%Y-%m-%dT%H:%M"))?;
-            if let Some(duration) = self.do_duration {
+        if let Some(scheduled_at) = &self.scheduled_at {
+            write!(f, " @{}", scheduled_at.format("%Y-%m-%dT%H:%M"))?;
+            if let Some(duration) = self.duration {
                 write!(f, " D{}", duration)?;
             }
         }
-        if let Some(due_date_time) = &self.due_date_time {
-            write!(f, " :{}", due_date_time.format("%Y-%m-%dT%H:%M"))?;
+        if let Some(due_date) = &self.due_date {
+            write!(f, " :{}", due_date.format("%Y-%m-%dT%H:%M"))?;
         }
-        if let Some(completed_date_time) = &self.completed_date_time {
-            write!(f, " %{}", completed_date_time.format("%Y-%m-%dT%H:%M"))?;
+        if let Some(completed_at) = &self.completed_at {
+            write!(f, " %{}", completed_at.format("%Y-%m-%dT%H:%M"))?;
         }
-
         if let Some(predecessors) = &self.predecessors {
             for pred in predecessors {
                 write!(f, " <{}", pred.raw_ref)?;
@@ -173,18 +55,31 @@ impl Action {
         Ok(())
     }
 
-    /// Compute the depth of this action by walking up the parent chain
+    /// Compute the depth of this action by walking up the parent chain.
     pub fn depth(&self, action_list: &ActionList) -> u32 {
         let mut depth = 0;
         let mut current_id = self.parent_id;
-        while let Some(parent_id) = current_id {
+        while let Some(pid) = current_id {
             depth += 1;
             current_id = action_list
                 .iter()
-                .find(|a| a.id == parent_id)
+                .find(|a| a.id == pid)
                 .and_then(|a| a.parent_id);
         }
         depth
+    }
+}
+
+impl fmt::Display for ActionState {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = match self {
+            ActionState::NotStarted => " ",
+            ActionState::InProgress => "-",
+            ActionState::Completed => "x",
+            ActionState::BlockedOrAwaiting => "=",
+            ActionState::Cancelled => "_",
+        };
+        write!(f, "{}", s)
     }
 }
 
@@ -376,20 +271,17 @@ pub fn parse_action_recursive(
         name,
         description,
         priority,
-        context_list,
-        do_date_time,
-        do_duration,
-        due_date_time,
-        completed_date_time,
-        created_date_time,
-        predecessors: if predecessors.is_empty() {
-            None
-        } else {
-            Some(predecessors)
-        },
+        contexts: context_list,
+        scheduled_at: do_date_time,
+        duration: do_duration,
+        due_date: due_date_time,
+        completed_at: completed_date_time,
+        created_at: created_date_time,
+        predecessors: if predecessors.is_empty() { None } else { Some(predecessors) },
         charter,
         alias,
         is_sequential,
+        ..Default::default()
     });
 
     // Recursively parse children using field access
@@ -413,44 +305,12 @@ pub fn parse_action_recursive(
 /// - `NotStarted` -> `[ ]`
 /// - `Completed` -> `[x]`
 /// - `InProgress` -> `[-]`
-/// - `Blocked` -> `[=]`
-/// - `Cancelled` -> `[_]`
-#[derive(Default, Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ActionState {
-    /// Action is defined but not yet started.
-    #[default]
-    NotStarted,
-    /// Action has been successfully completed.
-    Completed,
-    /// Action is currently being worked on.
-    InProgress,
-    /// Action is blocked by a dependency or awaiting external input.
-    #[serde(rename = "blocked")]
-    BlockedorAwaiting,
-    /// Action has been cancelled and will not be completed.
-    Cancelled,
-}
-
-impl fmt::Display for ActionState {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let state_char = match self {
-            ActionState::NotStarted => " ",
-            ActionState::Completed => "x",
-            ActionState::InProgress => "-",
-            ActionState::BlockedorAwaiting => "=",
-            ActionState::Cancelled => "_",
-        };
-        write!(f, "{}", state_char)
-    }
-}
-
 fn parse_state_kind(kind: &str) -> Result<ActionState, &'static str> {
     match kind {
         "state_not_started" => Ok(ActionState::NotStarted),
         "state_completed" => Ok(ActionState::Completed),
         "state_in_progress" => Ok(ActionState::InProgress),
-        "state_blocked" => Ok(ActionState::BlockedorAwaiting),
+        "state_blocked" => Ok(ActionState::BlockedOrAwaiting),
         "state_cancelled" => Ok(ActionState::Cancelled),
         _ => Err("Unknown state type"),
     }
@@ -547,7 +407,7 @@ mod tests {
             Some("from the store")
         );
         assert_eq!(actions[0].priority, Some(1));
-        assert!(actions[0].context_list.is_some());
+        assert!(actions[0].contexts.is_some());
     }
 
     #[test]
@@ -628,18 +488,8 @@ mod tests {
             parent_id: None,
             state: ActionState::NotStarted,
             name: "Task B".to_string(),
-            description: None,
-            priority: None,
-            context_list: None,
-            do_date_time: None,
-            do_duration: None,
-            due_date_time: None,
-            completed_date_time: None,
-            created_date_time: None,
             predecessors: Some(vec![pred_ref]),
-            charter: None,
-            alias: None,
-            is_sequential: None,
+            ..Default::default()
         };
 
         let formatted = format!("{}", action);
@@ -656,8 +506,8 @@ mod tests {
         assert_eq!(actions.len(), 1);
 
         // The permissive grammar accepts "+", resulting in Some([""])
-        assert!(actions[0].context_list.is_some());
-        let contexts = actions[0].context_list.as_ref().unwrap();
+        assert!(actions[0].contexts.is_some());
+        let contexts = actions[0].contexts.as_ref().unwrap();
         assert_eq!(contexts.len(), 1);
         assert_eq!(contexts[0], "");
     }

@@ -117,26 +117,26 @@ fn compare_action(old: &Action, new: &Action) -> Vec<FieldChange> {
         });
     }
 
-    if old.do_date_time != new.do_date_time {
+    if old.scheduled_at != new.scheduled_at {
         changes.push(FieldChange::DoDate {
-            old: old.do_date_time.map(|d| d.to_rfc3339()),
-            new: new.do_date_time.map(|d| d.to_rfc3339()),
+            old: old.scheduled_at.map(|d| d.to_rfc3339()),
+            new: new.scheduled_at.map(|d| d.to_rfc3339()),
         });
     }
 
-    if old.completed_date_time != new.completed_date_time {
+    if old.completed_at != new.completed_at {
         changes.push(FieldChange::CompletedDate {
-            old: old.completed_date_time.map(|d| d.to_rfc3339()),
-            new: new.completed_date_time.map(|d| d.to_rfc3339()),
+            old: old.completed_at.map(|d| d.to_rfc3339()),
+            new: new.completed_at.map(|d| d.to_rfc3339()),
         });
     }
 
     // Compare contexts (as sets for robust comparison, but list equality for now)
-    if old.context_list != new.context_list {
+    if old.contexts != new.contexts {
         changes.push(FieldChange::Generic {
             field: "contexts".to_string(),
-            old: json!(old.context_list),
-            new: json!(new.context_list),
+            old: json!(old.contexts),
+            new: json!(new.contexts),
         });
     }
 
@@ -159,21 +159,9 @@ mod tests {
     fn make_action(id: &str, name: &str) -> Action {
         Action {
             id: Uuid::parse_str(id).unwrap(),
-            parent_id: None,
             state: ActionState::NotStarted,
             name: name.to_string(),
-            description: None,
-            priority: None,
-            context_list: None,
-            do_date_time: None,
-            do_duration: None,
-            due_date_time: None,
-            completed_date_time: None,
-            created_date_time: None,
-            predecessors: None,
-            charter: None,
-            alias: None,
-            is_sequential: None,
+            ..Default::default()
         }
     }
 

@@ -9,7 +9,7 @@
 //! without network dependencies.
 
 use super::{GraphError, Result, Store, create_store};
-use crate::domain::{ActPhase, Action, Charter, DomainModel, Plan};
+use crate::domain::{ActionState, Action, Charter, DomainModel, Plan};
 use crate::graph::{load_domain_model, load_domain_model_from_store};
 use serde_json::{Map, Value, json};
 use std::collections::BTreeMap;
@@ -21,7 +21,7 @@ const ACTIONS_CONTEXT_V4: &str = include_str!("../resources/actions.context.v4.j
 /// # Example
 ///
 /// ```
-/// use clearhead_core::domain::{ActPhase, Action, Charter, DomainModel, Plan};
+/// use clearhead_core::domain::{ActionState, Action, Charter, DomainModel, Plan};
 /// use clearhead_core::graph::{create_store, load_domain_model, serialize_store_to_jsonld};
 /// use uuid::Uuid;
 ///
@@ -43,22 +43,9 @@ const ACTIONS_CONTEXT_V4: &str = include_str!("../resources/actions.context.v4.j
 ///         actions: vec![Action {
 ///             id: Uuid::new_v4(),
 ///             name: "Write docs".to_string(),
-///             description: None,
-///             priority: None,
-///             contexts: None,
-///             parent: None,
-///             alias: None,
-///             is_sequential: None,
-///             depends_on: None,
 ///             plan_id: Some(plan_id),
-///             external_schedule_id: None,
-///             external_occurrence_key: None,
-///             phase: ActPhase::NotStarted,
-///             scheduled_at: None,
-///             due_date: None,
 ///             duration: Some(30),
-///             completed_at: None,
-///             created_at: None,
+///             ..Default::default()
 ///         }],
 ///     }],
 /// };
@@ -248,15 +235,16 @@ fn action_to_jsonld(act: &Action) -> Value {
         let ids: Vec<String> = contexts.iter().map(|c| context_id(c)).collect();
         insert_id_or_many(&mut node, "requiresContext", ids);
     }
-    if let Some(parent_id) = act.parent {
+    if let Some(parent_id) = act.parent_id {
         insert_id(&mut node, "partOf", uuid_urn(parent_id.to_string()));
     }
-    if let Some(depends_on) = &act.depends_on {
-        let deps: Vec<String> = depends_on.iter().map(|id| uuid_urn(id.to_string())).collect();
+    let deps_on = act.depends_on();
+    if !deps_on.is_empty() {
+        let deps: Vec<String> = deps_on.iter().map(|id| uuid_urn(id.to_string())).collect();
         insert_id_or_many(&mut node, "isSuccessorOf", deps);
     }
     insert_str(&mut node, "uuid", &act.id.to_string());
-    insert_str(&mut node, "status", phase_term(act.phase));
+    insert_str(&mut node, "status", phase_term(act.state));
 
     if let Some(scheduled) = act.scheduled_at {
         insert_str(&mut node, "scheduledAt", &scheduled.to_rfc3339());
@@ -323,13 +311,13 @@ fn uuid_urn(id: String) -> String {
     format!("urn:uuid:{id}")
 }
 
-fn phase_term(phase: ActPhase) -> &'static str {
+fn phase_term(phase: ActionState) -> &'static str {
     match phase {
-        ActPhase::NotStarted => "NotStarted",
-        ActPhase::InProgress => "InProgress",
-        ActPhase::Completed => "Completed",
-        ActPhase::Blocked => "Blocked",
-        ActPhase::Cancelled => "Cancelled",
+        ActionState::NotStarted => "NotStarted",
+        ActionState::InProgress => "InProgress",
+        ActionState::Completed => "Completed",
+        ActionState::BlockedOrAwaiting => "Blocked",
+        ActionState::Cancelled => "Cancelled",
     }
 }
 
@@ -433,7 +421,7 @@ mod tests {
                     plan_id: Some(plan_id),
                     external_schedule_id: Some("weekly-review@example.com".to_string()),
                     external_occurrence_key: Some("2026-04-09T10:00:00-07:00".to_string()),
-                    phase: ActPhase::InProgress,
+                    state: ActionState::InProgress,
                     scheduled_at: Some(
                         chrono::Local
                             .with_ymd_and_hms(2026, 4, 9, 10, 0, 0)

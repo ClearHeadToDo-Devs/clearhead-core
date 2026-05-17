@@ -283,7 +283,7 @@ fn format_as_table(
             super::ActionState::NotStarted => Cell::new("Not Started"),
             super::ActionState::Completed => Cell::new("Done").fg(Color::Green),
             super::ActionState::InProgress => Cell::new("In Progress").fg(Color::Yellow),
-            super::ActionState::BlockedorAwaiting => Cell::new("Blocked").fg(Color::Red),
+            super::ActionState::BlockedOrAwaiting => Cell::new("Blocked").fg(Color::Red),
             super::ActionState::Cancelled => Cell::new("Cancelled").fg(Color::DarkGrey),
         };
 
@@ -297,15 +297,15 @@ fn format_as_table(
                 .map(|p| p.to_string())
                 .unwrap_or_else(|| "-".to_string()),
             action
-                .do_date_time
+                .scheduled_at
                 .map(|dt| dt.format("%Y-%m-%d %H:%M").to_string())
                 .unwrap_or_else(|| "-".to_string()),
             action
-                .do_duration
+                .duration
                 .map(|d| format!("{}m", d))
                 .unwrap_or_else(|| "-".to_string()),
             action
-                .context_list
+                .contexts
                 .as_ref()
                 .map(|c| c.join(", "))
                 .unwrap_or_else(|| "-".to_string()),

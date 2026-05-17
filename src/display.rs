@@ -3,7 +3,7 @@
 //! Provides table rendering that operates directly on `DomainModel`,
 //! preserving the charter hierarchy instead of losing it through ActionList conversion.
 
-use crate::domain::{ActPhase, DomainModel, Plan};
+use crate::domain::{ActionState, DomainModel, Plan};
 use crate::workspace::actions::format::{
     COLUMN_NAMES, DEFAULT_COLUMNS, TableFormatOptions, columns_to_show, columns_without,
 };
@@ -74,14 +74,14 @@ pub fn format_domain_as_table(
 
             // State from first act, or synthesized NotStarted
             let first_act = charter.actions.iter().find(|a| a.plan_id == Some(plan.id));
-            let phase = first_act.map(|a| a.phase).unwrap_or(ActPhase::NotStarted);
+            let phase = first_act.map(|a| a.state).unwrap_or(ActionState::NotStarted);
 
             let state_cell = match phase {
-                ActPhase::NotStarted => Cell::new("Not Started"),
-                ActPhase::Completed => Cell::new("Done").fg(Color::Green),
-                ActPhase::InProgress => Cell::new("In Progress").fg(Color::Yellow),
-                ActPhase::Blocked => Cell::new("Blocked").fg(Color::Red),
-                ActPhase::Cancelled => Cell::new("Cancelled").fg(Color::DarkGrey),
+                ActionState::NotStarted => Cell::new("Not Started"),
+                ActionState::Completed => Cell::new("Done").fg(Color::Green),
+                ActionState::InProgress => Cell::new("In Progress").fg(Color::Yellow),
+                ActionState::BlockedOrAwaiting => Cell::new("Blocked").fg(Color::Red),
+                ActionState::Cancelled => Cell::new("Cancelled").fg(Color::DarkGrey),
             };
 
             let all_strings: Vec<String> = vec![

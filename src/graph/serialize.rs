@@ -3,7 +3,7 @@
 //! This module owns the "turn a store into text" direction.
 
 use super::{GraphError, Result, Store, create_store};
-use crate::domain::{ActPhase, Action, DomainModel};
+use crate::domain::{ActionState, Action, DomainModel};
 use oxigraph::io::RdfFormat;
 use oxigraph::model::GraphNameRef;
 
@@ -22,7 +22,7 @@ pub fn serialize_acts_to_turtle(model: &DomainModel) -> Result<String> {
 /// Useful for generating a "closed acts" archive file.
 pub fn serialize_closed_acts_to_turtle(model: &DomainModel) -> Result<String> {
     let filtered = filter_model_by_phase(model, |phase| {
-        matches!(phase, ActPhase::Completed | ActPhase::Cancelled)
+        matches!(phase, ActionState::Completed | ActionState::Cancelled)
     });
     let store = create_store()?;
     super::load_domain_model(&store, &filtered, None)?;
@@ -34,7 +34,7 @@ pub fn serialize_closed_acts_to_turtle(model: &DomainModel) -> Result<String> {
 /// Useful for generating an "upcoming acts" file.
 pub fn serialize_open_acts_to_turtle(model: &DomainModel) -> Result<String> {
     let filtered = filter_model_by_phase(model, |phase| {
-        !matches!(phase, ActPhase::Completed | ActPhase::Cancelled)
+        !matches!(phase, ActionState::Completed | ActionState::Cancelled)
     });
     let store = create_store()?;
     super::load_domain_model(&store, &filtered, None)?;
@@ -65,7 +65,7 @@ fn store_to_turtle(store: &Store) -> Result<String> {
 /// preserving the charter hierarchy.
 fn filter_model_by_phase(
     model: &DomainModel,
-    predicate: impl Fn(&ActPhase) -> bool,
+    predicate: impl Fn(&ActionState) -> bool,
 ) -> DomainModel {
     let mut filtered_charters = Vec::new();
 
@@ -73,7 +73,7 @@ fn filter_model_by_phase(
         let filtered_acts: Vec<Action> = charter
             .actions
             .iter()
-            .filter(|a| predicate(&a.phase))
+            .filter(|a| predicate(&a.state))
             .cloned()
             .collect();
         if !filtered_acts.is_empty() {

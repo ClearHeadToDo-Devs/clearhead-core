@@ -151,8 +151,8 @@ pub fn expand_plans_into_acts(
                 id: act_id,
                 state: ActionState::NotStarted,
                 name: plan.name.clone(),
-                do_date_time: Some(occ_local),
-                created_date_time: Some(now),
+                scheduled_at: Some(occ_local),
+                created_at: Some(now),
                 ..Default::default()
             };
 

@@ -126,7 +126,7 @@ fn check_duration_without_do_date(
     action: &Action,
     metadata: &SourceMetadata,
 ) -> Option<LintDiagnostic> {
-    if action.do_duration.is_some() && action.do_date_time.is_none() {
+    if action.duration.is_some() && action.scheduled_at.is_none() {
         Some(LintDiagnostic::error(
             "E001",
             "Duration requires a do-date to be meaningful (E001).".to_string(),
@@ -152,7 +152,7 @@ fn check_blocked_without_description(
     action: &Action,
     metadata: &SourceMetadata,
 ) -> Option<LintDiagnostic> {
-    if action.state == ActionState::BlockedorAwaiting && action.description.is_none() {
+    if action.state == ActionState::BlockedOrAwaiting && action.description.is_none() {
         Some(LintDiagnostic::info(
             "I008",
             "Blocked actions should have a description explaining why (I008).".to_string(),
@@ -166,7 +166,7 @@ fn check_blocked_without_description(
 /// Check if duration is excessive (I010)
 fn check_excessive_duration(action: &Action, metadata: &SourceMetadata) -> Option<LintDiagnostic> {
     const MAX_DURATION: u32 = 480; // 8 hours
-    if let Some(duration) = action.do_duration {
+    if let Some(duration) = action.duration {
         if duration > MAX_DURATION {
             Some(LintDiagnostic::info(
                 "I010",
@@ -328,7 +328,7 @@ fn check_missing_completion_date(
     action: &Action,
     metadata: &SourceMetadata,
 ) -> Option<LintDiagnostic> {
-    if action.state == ActionState::Completed && action.completed_date_time.is_none() {
+    if action.state == ActionState::Completed && action.completed_at.is_none() {
         Some(LintDiagnostic::info(
             "I001",
             "Completed action is missing a completion date (I001).".to_string(),
@@ -344,7 +344,7 @@ fn check_completion_date_without_state(
     action: &Action,
     metadata: &SourceMetadata,
 ) -> Option<LintDiagnostic> {
-    if action.state != ActionState::Completed && action.completed_date_time.is_some() {
+    if action.state != ActionState::Completed && action.completed_at.is_some() {
         Some(LintDiagnostic::info(
             "I002",
             "Action has a completion date but is not marked as completed (I002).".to_string(),
@@ -372,7 +372,7 @@ fn check_priority_range(action: &Action, metadata: &SourceMetadata) -> Option<Li
 
 /// Check for empty context tags (E003)
 fn check_empty_context(action: &Action, metadata: &SourceMetadata) -> Option<LintDiagnostic> {
-    action.context_list.as_ref().and_then(|contexts| {
+    action.contexts.as_ref().and_then(|contexts| {
         if contexts.iter().any(|c| c.is_empty()) {
             Some(LintDiagnostic::error(
                 "E003",
@@ -394,7 +394,7 @@ fn check_future_creation_date(
     action: &Action,
     metadata: &SourceMetadata,
 ) -> Option<LintDiagnostic> {
-    action.created_date_time.and_then(|created| {
+    action.created_at.and_then(|created| {
         if created > Local::now() {
             Some(LintDiagnostic::warning(
                 "W005",
@@ -412,7 +412,7 @@ fn check_completion_before_creation(
     action: &Action,
     metadata: &SourceMetadata,
 ) -> Option<LintDiagnostic> {
-    match (action.created_date_time, action.completed_date_time) {
+    match (action.created_at, action.completed_at) {
         (Some(created), Some(completed)) if completed < created => Some(LintDiagnostic::warning(
             "W006",
             "Completion date cannot be before creation date (W006).".to_string(),
@@ -532,21 +532,9 @@ mod tests {
         use crate::workspace::actions::Action;
         let action = Action {
             id: uuid::Uuid::nil(),
-            parent_id: None,
             state: ActionState::NotStarted,
             name: "Test".to_string(),
-            description: None,
-            priority: None,
-            context_list: None,
-            do_date_time: None,
-            do_duration: None,
-            due_date_time: None,
-            completed_date_time: None,
-            created_date_time: None,
-            predecessors: None,
-            charter: None,
-            alias: None,
-            is_sequential: None,
+            ..Default::default()
         };
         let metadata = SourceMetadata {
             root: SourceRange {
@@ -642,21 +630,10 @@ mod tests {
         use crate::workspace::actions::Action;
         let action = Action {
             id: uuid::Uuid::parse_str("01942d99-4c27-77f6-9316-107024843939").unwrap(),
-            parent_id: None,
             state: ActionState::NotStarted,
             name: "Test".to_string(),
-            description: None,
-            priority: None,
-            context_list: Some(vec!["work".to_string(), "".to_string()]),
-            do_date_time: None,
-            do_duration: None,
-            due_date_time: None,
-            completed_date_time: None,
-            created_date_time: None,
-            predecessors: None,
-            charter: None,
-            alias: None,
-            is_sequential: None,
+            contexts: Some(vec!["work".to_string(), "".to_string()]),
+            ..Default::default()
         };
         let metadata = SourceMetadata {
             root: SourceRange {
@@ -723,21 +700,10 @@ mod tests {
         use crate::workspace::actions::Action;
         let action = Action {
             id: uuid::Uuid::parse_str("01942d99-4c27-77f6-9316-107024843939").unwrap(),
-            parent_id: None,
             state: ActionState::NotStarted,
             name: "Meeting".to_string(),
-            description: None,
-            priority: None,
-            context_list: None,
-            do_date_time: None,    // No do-date
-            do_duration: Some(60), // Has duration
-            due_date_time: None,
-            completed_date_time: None,
-            created_date_time: None,
-            predecessors: None,
-            charter: None,
-            alias: None,
-            is_sequential: None,
+            duration: Some(60),
+            ..Default::default()
         };
         let metadata = SourceMetadata {
             root: SourceRange {
@@ -772,21 +738,11 @@ mod tests {
         use crate::workspace::actions::Action;
         let action = Action {
             id: uuid::Uuid::parse_str("01942d99-4c27-77f6-9316-107024843939").unwrap(),
-            parent_id: None,
             state: ActionState::NotStarted,
             name: "Meeting".to_string(),
-            description: None,
-            priority: None,
-            context_list: None,
-            do_date_time: Some(Local::now()), // Has do-date
-            do_duration: Some(60),            // Has duration
-            due_date_time: None,
-            completed_date_time: None,
-            created_date_time: None,
-            predecessors: None,
-            charter: None,
-            alias: None,
-            is_sequential: None,
+            scheduled_at: Some(Local::now()),
+            duration: Some(60),
+            ..Default::default()
         };
         let metadata = SourceMetadata {
             root: SourceRange {

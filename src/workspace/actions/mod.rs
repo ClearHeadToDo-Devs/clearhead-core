@@ -17,7 +17,8 @@ pub mod source;
 pub use crate::workspace::store::infer_charter_name;
 
 // Core action types
-pub use parser::{Action, ActionList, ActionState, PredecessorRef, parse_tree};
+pub use crate::domain::{Action, ActionState, PredecessorRef};
+pub use parser::{ActionList, parse_tree};
 
 // Parse pipeline
 pub use source::{

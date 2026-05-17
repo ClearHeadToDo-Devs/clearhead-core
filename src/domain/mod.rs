@@ -320,23 +320,39 @@ impl Recurrence {
     }
 }
 
-/// Lifecycle phase of a [`PlannedAct`].
+/// Lifecycle state of an [`Action`].
 ///
-/// Maps to `actions:ActPhase` (subclass of bfo:Quality).
-/// The phase inheres in the [`PlannedAct`], not the [`Plan`].
+/// Maps to `actions:ActionState`. The state inheres in the [`Action`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-pub enum ActPhase {
-    /// Act is defined but not yet ready for execution.
+#[serde(rename_all = "snake_case")]
+pub enum ActionState {
+    /// Action is defined but not yet started.
     #[default]
     NotStarted,
-    /// Act is currently being executed.
+    /// Action is currently being worked on.
     InProgress,
-    /// Act has been successfully completed.
+    /// Action has been successfully completed.
     Completed,
-    /// Act is unable to proceed due to a dependency or obstacle.
-    Blocked,
-    /// Act has been abandoned and will not be completed.
+    /// Action is blocked or awaiting something external.
+    #[serde(rename = "blocked")]
+    BlockedOrAwaiting,
+    /// Action has been abandoned and will not be completed.
     Cancelled,
+}
+
+
+/// Reference to a predecessor action.
+///
+/// Carries both the raw text from the DSL (`raw_ref`) and the resolved UUID
+/// after workspace loading. The raw form is required for file round-trips;
+/// the graph and CRDT layers use only `resolved_uuid`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PredecessorRef {
+    /// The raw reference text from the source (e.g., "build core" or a UUID).
+    pub raw_ref: String,
+    /// The resolved UUID if resolution was successful.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resolved_uuid: Option<Uuid>,
 }
 
 /// Task definition or template for execution.
@@ -398,7 +414,7 @@ impl Plan {
     ///     id: Uuid::new_v4(),
     ///     name: "Daily".to_string(),
     ///     recurrence: Some(Recurrence { frequency: "daily".to_string(), count: Some(2), ..Default::default() }),
-    ///     description: None, priority: None, contexts: None, due_recurrence: None, parent: None, alias: None, is_sequential: None, depends_on: None, external_id: None, template_name: None, dtstart: None,
+    ///     description: None, priority: None, contexts: None, due_recurrence: None, parent: None, alias: None, is_sequential: None, depends_on: None, external_id: None, template_name: None, primary_instances: None, dtstart: None,
     /// };
     ///
     /// let occurrences = plan.expand_occurrences(dt_start, 10);
@@ -499,63 +515,93 @@ pub fn charter_from_plans_and_name(name: String, plans: Vec<Plan>) -> Charter {
     }
 }
 
-/// Actionable unit of work.
+/// The single unified action type across file I/O, graph, and CRDT layers.
 ///
-/// An [`Action`] may exist independently or be prescribed by a recurring [`Plan`].
-/// It carries the task-facing fields and lifecycle state.
+/// Parsed directly from `.actions` files by the workspace parser and used
+/// unchanged by the graph, CRDT, and display layers. No conversion needed.
+///
+/// Fields set to `None` by the parser (no DSL syntax exists for them) are
+/// populated from the JSON sidecar or by the expansion workflow:
+/// - `plan_id`, `external_schedule_id`, `external_occurrence_key`
+///
+/// `predecessors` carries raw DSL references for file round-trips;
+/// call [`Action::depends_on`] to get resolved UUIDs for graph/CRDT work.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Action {
     pub id: Uuid,
+    /// Parent action ID for hierarchical nesting (`>` depth marker in DSL).
+    pub parent_id: Option<Uuid>,
+    /// Current lifecycle state.
+    pub state: ActionState,
     pub name: String,
     pub description: Option<String>,
     pub priority: Option<u32>,
+    /// Associated context tags (`+tag` in DSL).
     pub contexts: Option<Vec<String>>,
-    pub parent: Option<Uuid>,
+    /// Scheduled do-date/time (`@datetime` in DSL).
+    pub scheduled_at: Option<DateTime<Local>>,
+    /// Expected duration in minutes (`D30` in DSL).
+    pub duration: Option<u32>,
+    /// Deadline or due date (`:datetime` in DSL).
+    pub due_date: Option<DateTime<Local>>,
+    /// Completion timestamp (`%datetime` in DSL).
+    pub completed_at: Option<DateTime<Local>>,
+    /// Creation timestamp (`^datetime` in DSL).
+    pub created_at: Option<DateTime<Local>>,
+    /// Predecessor references (`<ref` in DSL). Raw text + resolved UUID.
+    /// Use [`Action::depends_on`] for resolved UUIDs.
+    pub predecessors: Option<Vec<PredecessorRef>>,
+    /// Charter hint (`*charter` in DSL). Informational; charter membership
+    /// is canonical in [`Charter::actions`].
+    pub charter: Option<String>,
     pub alias: Option<String>,
     pub is_sequential: Option<bool>,
-    pub depends_on: Option<Vec<Uuid>>,
-    /// The [`Plan`] that prescribed this action, when applicable.
+    /// The [`Plan`] that prescribed this action (populated from sidecar, not DSL).
     pub plan_id: Option<Uuid>,
-    /// Optional external schedule-series identifier (integration profile bridge)
+    /// External schedule-series identifier (from ICS VEVENT.UID via sidecar).
     pub external_schedule_id: Option<String>,
-    /// Optional external occurrence identifier within a schedule series
+    /// External occurrence identifier within a schedule series (from sidecar).
     pub external_occurrence_key: Option<String>,
-    /// Current lifecycle phase
-    pub phase: ActPhase,
-    /// Scheduled date/time for this occurrence (@-syntax)
-    pub scheduled_at: Option<DateTime<Local>>,
-    /// Deadline for this occurrence (:-syntax)
-    pub due_date: Option<DateTime<Local>>,
-    /// Duration in minutes
-    pub duration: Option<u32>,
-    /// When this act was completed
-    pub completed_at: Option<DateTime<Local>>,
-    /// When this act was created/scheduled
-    pub created_at: Option<DateTime<Local>>,
 }
 
 impl Default for Action {
     fn default() -> Self {
         Self {
-            id: Uuid::nil(),
+            id: Uuid::now_v7(),
+            parent_id: None,
+            state: ActionState::NotStarted,
             name: String::new(),
             description: None,
             priority: None,
             contexts: None,
-            parent: None,
+            scheduled_at: None,
+            duration: None,
+            due_date: None,
+            completed_at: None,
+            created_at: None,
+            predecessors: None,
+            charter: None,
             alias: None,
             is_sequential: None,
-            depends_on: None,
             plan_id: None,
             external_schedule_id: None,
             external_occurrence_key: None,
-            phase: ActPhase::NotStarted,
-            scheduled_at: None,
-            due_date: None,
-            duration: None,
-            completed_at: None,
-            created_at: None,
         }
+    }
+}
+
+impl Action {
+    pub fn new(name: impl Into<String>) -> Self {
+        Self { name: name.into(), ..Default::default() }
+    }
+
+    /// Resolved predecessor UUIDs. Used by graph and CRDT layers.
+    /// Unresolved references (name-only) are silently skipped.
+    pub fn depends_on(&self) -> Vec<Uuid> {
+        self.predecessors
+            .as_ref()
+            .map(|preds| preds.iter().filter_map(|p| p.resolved_uuid).collect())
+            .unwrap_or_default()
     }
 }
 
@@ -585,11 +631,6 @@ impl DomainModel {
         self.charters.iter().flat_map(|c| c.actions.iter()).collect()
     }
 
-    /// Back-compat alias while callers migrate to `all_actions`.
-    pub fn all_acts(&self) -> Vec<&Action> {
-        self.all_actions()
-    }
-
     /// Find a Plan by ID, searching across the hierarchy.
     pub fn plan(&self, id: Uuid) -> Option<&Plan> {
         self.all_plans().into_iter().find(|p| p.id == id)
@@ -610,26 +651,16 @@ impl DomainModel {
             .collect()
     }
 
-    /// Back-compat alias while callers migrate to `actions_for_plan`.
-    pub fn acts_for_plan(&self, plan_id: Uuid) -> Vec<&Action> {
-        self.actions_for_plan(plan_id)
-    }
-
     /// Get all incomplete acts across the hierarchy.
     pub fn incomplete_actions(&self) -> Vec<&Action> {
         self.all_actions()
             .into_iter()
-            .filter(|a| !matches!(a.phase, ActPhase::Completed | ActPhase::Cancelled))
+            .filter(|a| !matches!(a.state, ActionState::Completed | ActionState::Cancelled))
             .collect()
     }
 
-    /// Back-compat alias while callers migrate to `incomplete_actions`.
-    pub fn incomplete_acts(&self) -> Vec<&Action> {
-        self.incomplete_actions()
-    }
 }
 
-pub type PlannedAct = Action;
 
 #[cfg(test)]
 mod tests {

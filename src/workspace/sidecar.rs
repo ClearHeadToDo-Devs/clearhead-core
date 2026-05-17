@@ -70,9 +70,9 @@ pub fn read_sidecar(path: &Path) -> Result<CharterMetadata, WorkspaceError> {
 /// For each act, if the sidecar has a matching entry (by UUID string key),
 /// fills in `created_at` and `external_schedule_id` where the act doesn't
 /// already have them (DSL values are authoritative).
-pub fn hydrate_acts(acts: &mut [crate::domain::PlannedAct], metadata: &CharterMetadata) {
+pub fn hydrate_acts(acts: &mut [crate::domain::Action], metadata: &CharterMetadata) {
     for act in acts.iter_mut() {
-        // Sidecar keys are the action UUID from the DSL (= plan_id on PlannedAct).
+        // Sidecar keys are the action UUID from the DSL.
         // Fall back to act.id for acts constructed without a plan_id (e.g. unit tests).
         let key = act
             .plan_id
@@ -211,12 +211,12 @@ mod tests {
 
     #[test]
     fn hydrate_fills_created_at_from_sidecar() {
-        use crate::domain::PlannedAct;
+        use crate::domain::Action;
         use uuid::Uuid;
 
         let id = Uuid::now_v7();
         let created = Local::now();
-        let mut acts = vec![PlannedAct {
+        let mut acts = vec![Action {
             id,
             ..Default::default()
         }];
@@ -235,13 +235,13 @@ mod tests {
 
     #[test]
     fn hydrate_does_not_overwrite_existing_created_at() {
-        use crate::domain::PlannedAct;
+        use crate::domain::Action;
         use uuid::Uuid;
 
         let id = Uuid::now_v7();
         let dsl_created = Local::now();
         let sidecar_created = dsl_created - chrono::Duration::hours(1);
-        let mut acts = vec![PlannedAct {
+        let mut acts = vec![Action {
             id,
             created_at: Some(dsl_created),
             ..Default::default()
@@ -261,11 +261,11 @@ mod tests {
 
     #[test]
     fn hydrate_fills_external_schedule_id() {
-        use crate::domain::PlannedAct;
+        use crate::domain::Action;
         use uuid::Uuid;
 
         let id = Uuid::now_v7();
-        let mut acts = vec![PlannedAct {
+        let mut acts = vec![Action {
             id,
             ..Default::default()
         }];
@@ -287,10 +287,10 @@ mod tests {
 
     #[test]
     fn hydrate_skips_acts_not_in_sidecar() {
-        use crate::domain::PlannedAct;
+        use crate::domain::Action;
         use uuid::Uuid;
 
-        let mut acts = vec![PlannedAct {
+        let mut acts = vec![Action {
             id: Uuid::now_v7(),
             ..Default::default()
         }];

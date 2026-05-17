@@ -1,5 +1,4 @@
 use clearhead_core::{
-    domain::ActPhase,
     graph::{create_store, load_domain_model as load_into_store, query_raw},
     workspace::store::load_domain_model,
 };
@@ -104,7 +103,7 @@ fn action_state_from_actions_file_is_reflected_in_graph() {
         .filter(|a| a.name == "Write quarterly report")
         .collect();
     assert_eq!(report_actions.len(), 1);
-    assert_eq!(report_actions[0].phase, ActPhase::InProgress);
+    assert_eq!(report_actions[0].state, clearhead_core::ActionState::InProgress);
 
     let sparql = "
         PREFIX actions: <https://clearhead.us/vocab/actions/v4#>

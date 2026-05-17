@@ -365,7 +365,7 @@ pub fn event_from_state_change(
         (_, ActionState::InProgress) => Some(TelemetryEvent::ActionStarted {
             name: name.to_string(),
         }),
-        (_, ActionState::BlockedorAwaiting) => Some(TelemetryEvent::ActionBlocked {
+        (_, ActionState::BlockedOrAwaiting) => Some(TelemetryEvent::ActionBlocked {
             name: name.to_string(),
             reason: None,
         }),

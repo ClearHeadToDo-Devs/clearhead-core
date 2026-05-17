@@ -5,7 +5,7 @@
 //! the `crdt::types` side; domain types remain pure business objects.
 
 use crate::domain::{
-    ActPhase, Action, Charter, DomainModel, Metric, Objective, Plan, Recurrence, Reference,
+    ActionState, Action, Charter, DomainModel, Metric, Objective, Plan, Recurrence, Reference,
 };
 
 use super::types::{
@@ -104,7 +104,7 @@ impl From<&Action> for SyncPlannedAct {
             plan_id: a.plan_id,
             external_schedule_id: a.external_schedule_id.clone(),
             external_occurrence_key: a.external_occurrence_key.clone(),
-            phase: SyncActPhase::from(a.phase),
+            phase: SyncActPhase::from(a.state),
             scheduled_at: a.scheduled_at,
             due_date: a.due_date,
             duration: a.duration,
@@ -114,14 +114,14 @@ impl From<&Action> for SyncPlannedAct {
     }
 }
 
-impl From<ActPhase> for SyncActPhase {
-    fn from(p: ActPhase) -> Self {
+impl From<ActionState> for SyncActPhase {
+    fn from(p: ActionState) -> Self {
         match p {
-            ActPhase::NotStarted => SyncActPhase::NotStarted,
-            ActPhase::InProgress => SyncActPhase::InProgress,
-            ActPhase::Completed => SyncActPhase::Completed,
-            ActPhase::Blocked => SyncActPhase::Blocked,
-            ActPhase::Cancelled => SyncActPhase::Cancelled,
+            ActionState::NotStarted => SyncActPhase::NotStarted,
+            ActionState::InProgress => SyncActPhase::InProgress,
+            ActionState::Completed => SyncActPhase::Completed,
+            ActionState::BlockedOrAwaiting => SyncActPhase::Blocked,
+            ActionState::Cancelled => SyncActPhase::Cancelled,
         }
     }
 }
@@ -237,34 +237,28 @@ impl From<&SyncPlannedAct> for Action {
         Action {
             id: a.id,
             name: String::new(),
-            description: None,
-            priority: None,
-            contexts: None,
-            parent: None,
-            alias: None,
-            is_sequential: None,
-            depends_on: None,
             plan_id: a.plan_id,
             external_schedule_id: a.external_schedule_id.clone(),
             external_occurrence_key: a.external_occurrence_key.clone(),
-            phase: ActPhase::from(a.phase),
+            state: ActionState::from(a.phase),
             scheduled_at: a.scheduled_at,
             due_date: a.due_date,
             duration: a.duration,
             completed_at: a.completed_at,
             created_at: a.created_at,
+            ..Default::default()
         }
     }
 }
 
-impl From<SyncActPhase> for ActPhase {
+impl From<SyncActPhase> for ActionState {
     fn from(p: SyncActPhase) -> Self {
         match p {
-            SyncActPhase::NotStarted => ActPhase::NotStarted,
-            SyncActPhase::InProgress => ActPhase::InProgress,
-            SyncActPhase::Completed => ActPhase::Completed,
-            SyncActPhase::Blocked => ActPhase::Blocked,
-            SyncActPhase::Cancelled => ActPhase::Cancelled,
+            SyncActPhase::NotStarted => ActionState::NotStarted,
+            SyncActPhase::InProgress => ActionState::InProgress,
+            SyncActPhase::Completed => ActionState::Completed,
+            SyncActPhase::Blocked => ActionState::BlockedOrAwaiting,
+            SyncActPhase::Cancelled => ActionState::Cancelled,
         }
     }
 }

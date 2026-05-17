@@ -104,14 +104,14 @@ pub(crate) fn rdf_type() -> NamedNode {
     ns(RDF_NS, "type")
 }
 
-pub(crate) fn phase_node(phase: &crate::domain::ActPhase) -> NamedNode {
-    use crate::domain::ActPhase;
+pub(crate) fn phase_node(phase: &crate::domain::ActionState) -> NamedNode {
+    use crate::domain::ActionState;
     let name = match phase {
-        ActPhase::NotStarted => "NotStarted",
-        ActPhase::InProgress => "InProgress",
-        ActPhase::Completed => "Completed",
-        ActPhase::Blocked => "Blocked",
-        ActPhase::Cancelled => "Cancelled",
+        ActionState::NotStarted => "NotStarted",
+        ActionState::InProgress => "InProgress",
+        ActionState::Completed => "Completed",
+        ActionState::BlockedOrAwaiting => "Blocked",
+        ActionState::Cancelled => "Cancelled",
     };
     actions_pred(name)
 }

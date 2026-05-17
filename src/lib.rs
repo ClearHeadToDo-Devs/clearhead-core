@@ -28,7 +28,7 @@ pub mod config;
 pub use config::WorkspaceConfig;
 #[doc(inline)]
 pub use workspace::{
-    Action, ActionList, ActionState, Diff, MarkdownCharter, OutputFormat, ParseFailure, ParseMode,
+    Action, ActionList, Diff, MarkdownCharter, OutputFormat, ParseFailure, ParseMode,
     ParseOutcome, ParsedDocument, RecoveryReport, SourceMetadata, SourceRange, collect_plan_files,
     collect_workspace_manifest, completed_acts_path, diff_actions, format, format_charter,
     implicit_charter, infer_charter_name, infer_charter_name_for_workspace,
@@ -48,7 +48,7 @@ pub use domain::diff::{
     PlanFieldChange, diff_domain_models,
 };
 #[doc(inline)]
-pub use domain::{ActPhase, Charter, DomainModel, Metric, Objective, Plan, PlannedAct, Recurrence};
+pub use domain::{ActionState, PredecessorRef, Charter, DomainModel, Metric, Objective, Plan, Recurrence};
 
 pub mod crdt;
 

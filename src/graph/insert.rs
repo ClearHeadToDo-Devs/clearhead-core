@@ -311,12 +311,13 @@ fn insert_action(store: &Store, act: &Action) -> Result<()> {
         }
     }
 
-    if let Some(parent_id) = act.parent {
+    if let Some(parent_id) = act.parent_id {
         let parent_uri = NamedNode::new(format!("urn:uuid:{}", parent_id)).unwrap();
         add(bfo_pred(BFO_PART_OF), Term::NamedNode(parent_uri))?;
     }
 
-    if let Some(depends_on) = &act.depends_on {
+    let depends_on = act.depends_on();
+    if !depends_on.is_empty() {
         for dep_id in depends_on {
             let dep_uri = NamedNode::new(format!("urn:uuid:{}", dep_id)).unwrap();
             add(cco_node(CCO_IS_SUCCESSOR_OF), Term::NamedNode(dep_uri))?;
@@ -359,7 +360,7 @@ fn insert_action(store: &Store, act: &Action) -> Result<()> {
     // cco:is_measured_by_nominal (ont00001868) — status as nominal ICE
     add(
         cco_node(CCO_STATUS_PROP),
-        Term::NamedNode(phase_node(&act.phase)),
+        Term::NamedNode(phase_node(&act.state)),
     )?;
 
     if let Some(dt) = &act.scheduled_at {
@@ -480,7 +481,7 @@ fn inject_context_hierarchy(store: &Store, config: &WorkspaceConfig) -> Result<(
 }
 mod tests {
     use super::*;
-    use crate::domain::{ActPhase, Action, Charter, DomainModel, Plan, Recurrence};
+    use crate::domain::{ActionState, Action, Charter, DomainModel, Plan, Recurrence};
     use crate::graph::{self, validate_actions_vocabulary};
     use chrono::TimeZone;
     use oxigraph::model::{GraphNameRef, LiteralRef, NamedNodeRef, TermRef};
@@ -522,13 +523,14 @@ mod tests {
                     priority: Some(1),
                     alias: Some("graph_tests".to_string()),
                     is_sequential: Some(true),
-                    depends_on: Some(vec![
-                        Uuid::parse_str("019d7100-4444-7444-8444-444444444444").unwrap(),
-                    ]),
+                    predecessors: Some(vec![crate::domain::PredecessorRef {
+                        raw_ref: "019d7100-4444-7444-8444-444444444444".to_string(),
+                        resolved_uuid: Some(Uuid::parse_str("019d7100-4444-7444-8444-444444444444").unwrap()),
+                    }]),
                     plan_id: Some(plan_id),
                     external_schedule_id: Some("weekly-review@example.com".to_string()),
                     external_occurrence_key: Some("2026-04-09T10:00:00-07:00".to_string()),
-                    phase: ActPhase::InProgress,
+                    state: ActionState::InProgress,
                     scheduled_at: Some(
                         chrono::Local
                             .with_ymd_and_hms(2026, 4, 9, 10, 0, 0)

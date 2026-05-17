@@ -5,7 +5,7 @@ use super::{
     CCO_PLAN, CCO_PRESCRIBED_BY, CCO_PRESCRIBES, CCO_STATUS_PROP, GraphError, RDFS_COMMENT,
     RDFS_LABEL, Result, Store, actions_pred, bfo_pred, cco_node, rdfs_pred,
 };
-use crate::domain::{ActPhase, Action, Charter, DomainModel, Plan, Recurrence};
+use crate::domain::{ActionState, Action, Charter, DomainModel, Plan, Recurrence};
 use chrono::{DateTime, Local};
 use oxigraph::model::{GraphName, NamedNode, NamedOrBlankNode, Term};
 use oxigraph::sparql::{QueryResults, SparqlEvaluator};
@@ -543,13 +543,13 @@ fn get_action_by_id(store: &Store, id: Uuid) -> Result<Action> {
 
     let phase = match node.one(cco_node(CCO_STATUS_PROP)) {
         Some(Term::NamedNode(nn)) => match nn.as_str().split('#').next_back() {
-            Some("Completed") => ActPhase::Completed,
-            Some("InProgress") => ActPhase::InProgress,
-            Some("Blocked") => ActPhase::Blocked,
-            Some("Cancelled") => ActPhase::Cancelled,
-            _ => ActPhase::NotStarted,
+            Some("Completed") => ActionState::Completed,
+            Some("InProgress") => ActionState::InProgress,
+            Some("Blocked") => ActionState::BlockedOrAwaiting,
+            Some("Cancelled") => ActionState::Cancelled,
+            _ => ActionState::NotStarted,
         },
-        _ => ActPhase::NotStarted,
+        _ => ActionState::NotStarted,
     };
 
     Ok(Action {
@@ -560,19 +560,25 @@ fn get_action_by_id(store: &Store, id: Uuid) -> Result<Action> {
         description: node.lit(rdfs_pred(RDFS_COMMENT)),
         priority: node.lit_u32(actions_pred("hasPriority")),
         contexts: (!contexts.is_empty()).then_some(contexts),
-        parent: node.uuid_node(bfo_pred(BFO_PART_OF)),
+        parent_id: node.uuid_node(bfo_pred(BFO_PART_OF)),
         alias: node.lit(actions_pred("hasAlias")),
         is_sequential: node.lit_bool(actions_pred("hasSequentialChildren")),
-        depends_on: (!depends_on.is_empty()).then_some(depends_on),
+        predecessors: (!depends_on.is_empty()).then_some(
+            depends_on.into_iter().map(|uuid| crate::domain::PredecessorRef {
+                raw_ref: uuid.to_string(),
+                resolved_uuid: Some(uuid),
+            }).collect()
+        ),
         plan_id,
         external_schedule_id: node.lit(actions_pred("hasExternalScheduleId")),
         external_occurrence_key: node.lit(actions_pred("hasExternalOccurrenceKey")),
-        phase,
+        state: phase,
         scheduled_at: node.datetime(actions_pred("hasScheduledDateTime")),
         due_date: node.datetime(actions_pred("hasDueDateTime")),
         duration: node.lit_u32(actions_pred("hasDurationMinutes")),
         completed_at: node.datetime(actions_pred("hasCompletedDateTime")),
         created_at: node.datetime(actions_pred("hasCreatedDateTime")),
+        ..Default::default()
     })
 }
 
@@ -626,13 +632,14 @@ mod tests {
                     contexts: Some(vec!["dev".to_string()]),
                     alias: Some("graph_tests".to_string()),
                     is_sequential: Some(true),
-                    depends_on: Some(vec![
-                        Uuid::parse_str("019d7100-4444-7444-8444-444444444444").unwrap(),
-                    ]),
+                    predecessors: Some(vec![crate::domain::PredecessorRef {
+                        raw_ref: "019d7100-4444-7444-8444-444444444444".to_string(),
+                        resolved_uuid: Some(Uuid::parse_str("019d7100-4444-7444-8444-444444444444").unwrap()),
+                    }]),
                     plan_id: Some(plan_id),
                     external_schedule_id: Some("weekly-review@example.com".to_string()),
                     external_occurrence_key: Some("2026-04-09T10:00:00-07:00".to_string()),
-                    phase: ActPhase::InProgress,
+                    state: ActionState::InProgress,
                     scheduled_at: Some(chrono::Local::now()),
                     duration: Some(45),
                     created_at: Some(chrono::Local::now()),
@@ -855,7 +862,7 @@ mod tests {
 
         let model = load_domain_model_from_store(&store).expect("load model");
         let plan = model.all_plans()[0];
-        let act = model.all_acts()[0];
+        let act = model.all_actions()[0];
         assert_eq!(
             plan.due_recurrence.as_ref().map(|r| r.frequency.as_str()),
             Some("daily")
@@ -904,7 +911,7 @@ mod tests {
                 actions: vec![Action {
                     id: action_id,
                     name: "Loose task".to_string(),
-                    phase: ActPhase::NotStarted,
+                    state: ActionState::NotStarted,
                     ..Default::default()
                 }],
                 ..Default::default()

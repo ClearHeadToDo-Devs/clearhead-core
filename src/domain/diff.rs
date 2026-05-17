@@ -4,7 +4,7 @@
 //! plan-level changes, which contain act-level changes. This preserves
 //! charter context throughout — no post-hoc lookups needed.
 
-use super::{ActPhase, Action, Charter, DomainModel, Plan, Recurrence};
+use super::{ActionState, Action, Charter, DomainModel, Plan, Recurrence};
 use chrono::{DateTime, Local};
 use std::collections::HashMap;
 use uuid::Uuid;
@@ -74,8 +74,8 @@ pub enum PlanFieldChange {
 #[derive(Debug, Clone, PartialEq)]
 pub enum ActFieldChange {
     Phase {
-        old: ActPhase,
-        new: ActPhase,
+        old: ActionState,
+        new: ActionState,
     },
     ScheduledAt {
         old: Option<DateTime<Local>>,
@@ -439,10 +439,10 @@ fn compare_plans(old: &Plan, new: &Plan) -> Vec<PlanFieldChange> {
 
 fn compare_acts(old: &Action, new: &Action) -> Vec<ActFieldChange> {
     let mut changes = Vec::new();
-    if old.phase != new.phase {
+    if old.state != new.state {
         changes.push(ActFieldChange::Phase {
-            old: old.phase,
-            new: new.phase,
+            old: old.state,
+            new: new.state,
         });
     }
     if !dates_equal(&old.scheduled_at, &new.scheduled_at) {
@@ -498,7 +498,7 @@ fn dates_equal(a: &Option<DateTime<Local>>, b: &Option<DateTime<Local>>) -> bool
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::{ActPhase, Action, Charter};
+    use crate::domain::{ActionState, Action, Charter};
 
     fn make_model(id: &str, name: &str) -> DomainModel {
         let plan_id = Uuid::parse_str(id).unwrap();
@@ -581,7 +581,7 @@ mod tests {
         let id = "019baaec-00b6-7991-be34-94b68212619a";
         let old = make_model(id, "Task");
         let mut new = old.clone();
-        new.charters[0].actions[0].phase = ActPhase::Completed;
+        new.charters[0].actions[0].state = ActionState::Completed;
 
         let diff = diff_domain_models(&old, &new);
 

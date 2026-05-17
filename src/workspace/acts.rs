@@ -129,6 +129,26 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_upcoming_acts_path() {
+        assert_eq!(
+            upcoming_acts_path(Path::new("/data/health.actions")),
+            PathBuf::from("/data/health.upcoming.actions")
+        );
+        assert_eq!(
+            upcoming_acts_path(Path::new("inbox.actions")),
+            PathBuf::from("inbox.upcoming.actions")
+        );
+        assert_eq!(
+            upcoming_acts_path(Path::new("build_clearhead/next.actions")),
+            PathBuf::from("build_clearhead/build_clearhead.upcoming.actions")
+        );
+        assert_eq!(
+            upcoming_acts_path(Path::new("build_clearhead/obs.actions")),
+            PathBuf::from("build_clearhead/obs.upcoming.actions")
+        );
+    }
+
     // ========================================================================
     // Round-trip I/O
     // ========================================================================
@@ -171,7 +191,7 @@ mod tests {
         let action = Action {
             name: "Finished task".to_string(),
             state: ActionState::Completed,
-            completed_date_time: Some(Local::now()),
+            completed_at: Some(Local::now()),
             ..Default::default()
         };
 

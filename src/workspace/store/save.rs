@@ -2,7 +2,7 @@ use super::WorkspaceLayout;
 use super::discovery::discover_action_files;
 use super::{WorkspaceError, resolve_workspace_layout};
 use crate::domain::{Charter, DomainModel};
-use crate::workspace::{Action, ActionList, OutputFormat, format};
+use crate::workspace::{ActionList, OutputFormat, format};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
@@ -181,8 +181,7 @@ fn actions_for_charter(charter: &Charter, charter_name: &str) -> ActionList {
 
     actions
         .into_iter()
-        .map(|action| {
-            let mut action = Action::from(&action);
+        .map(|mut action| {
             action.charter = Some(charter_name.to_string());
             action
         })
