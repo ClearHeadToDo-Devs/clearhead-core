@@ -23,6 +23,9 @@
 
 pub mod workspace;
 pub use workspace::store::{ManifestSourceType, WorkspaceManifestEntry};
+
+pub mod config;
+pub use config::WorkspaceConfig;
 #[doc(inline)]
 pub use workspace::{
     Action, ActionList, ActionState, Diff, MarkdownCharter, OutputFormat, ParseFailure, ParseMode,

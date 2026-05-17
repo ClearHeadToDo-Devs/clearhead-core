@@ -385,6 +385,13 @@ struct NodeView<'a> {
 }
 
 impl<'a> NodeView<'a> {
+    fn new_from_node(store: &'a Store, node: NamedNode) -> Self {
+        Self {
+            store,
+            subject: NamedOrBlankNode::NamedNode(node),
+        }
+    }
+
     fn new(store: &'a Store, id: Uuid) -> Self {
         Self {
             store,
@@ -469,11 +476,15 @@ fn get_plan_by_id(store: &Store, id: Uuid) -> Result<Plan> {
         .lit(rdfs_pred(RDFS_LABEL))
         .ok_or_else(|| GraphError::Domain(format!("Plan {} missing name", id)))?;
 
+    // Follow requiresContext → Context node → hasContextIdentifier to get
+    // the string tags back. Idiomatic inverse of insert_context_node.
     let contexts: Vec<String> = node
-        .many(actions_pred("hasContext"))
+        .many(actions_pred("requiresContext"))
         .into_iter()
         .filter_map(|term| match term {
-            Term::Literal(lit) => Some(lit.value().to_string()),
+            Term::NamedNode(nn) => {
+                NodeView::new_from_node(store, nn).lit(actions_pred("hasContextIdentifier"))
+            }
             _ => None,
         })
         .collect();
@@ -515,10 +526,12 @@ fn get_action_by_id(store: &Store, id: Uuid) -> Result<Action> {
     let plan_id = node.uuid_node(cco_node(CCO_PRESCRIBED_BY));
 
     let contexts: Vec<String> = node
-        .many(actions_pred("hasContext"))
+        .many(actions_pred("requiresContext"))
         .into_iter()
         .filter_map(|term| match term {
-            Term::Literal(lit) => Some(lit.value().to_string()),
+            Term::NamedNode(nn) => {
+                NodeView::new_from_node(store, nn).lit(actions_pred("hasContextIdentifier"))
+            }
             _ => None,
         })
         .collect();
@@ -628,7 +641,7 @@ mod tests {
             }],
         };
 
-        load_domain_model(&store, &model).expect("load domain model");
+        load_domain_model(&store, &model, None).expect("load domain model");
         let rebuilt = load_domain_model_from_store(&store).expect("rebuild from store");
 
         assert_eq!(rebuilt.charters.len(), 1);
@@ -897,7 +910,7 @@ mod tests {
             }],
         };
 
-        load_domain_model(&store, &model).expect("load domain model");
+        load_domain_model(&store, &model, None).expect("load domain model");
         let rebuilt = load_domain_model_from_store(&store).expect("rebuild from store");
 
         assert_eq!(rebuilt.charters.len(), 1);

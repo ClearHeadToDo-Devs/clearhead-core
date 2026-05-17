@@ -20,7 +20,7 @@ fn fixture(name: &str) -> std::path::PathBuf {
 fn user_flat_store() -> (clearhead_core::DomainModel, oxigraph::store::Store) {
     let model = load_domain_model(&fixture("user-flat")).expect("load domain model");
     let store = create_store().expect("create store");
-    load_into_store(&store, &model).expect("load into store");
+    load_into_store(&store, &model, None).expect("load into store");
     (model, store)
 }
 

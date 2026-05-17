@@ -7,6 +7,7 @@ use super::{
     CCO_PRESCRIBES, CCO_STATUS_PROP, GraphError, RDFS_COMMENT, RDFS_LABEL, Result, Store, XSD_NS,
     actions_pred, bfo_pred, cco_node, ns, phase_node, rdf_type, rdfs_pred,
 };
+use crate::WorkspaceConfig;
 use crate::domain::{Action, Charter, DomainModel, Plan};
 use crate::workspace::actions::convert::INBOX_CHARTER_NS;
 use oxigraph::io::RdfFormat;
@@ -18,7 +19,15 @@ use uuid::Uuid;
 ///
 /// Inserts Charters, Plans, and Actions with v4-aligned types and
 /// relationships, including Charter → Plan containment via `bfo:has_part`.
-pub fn load_domain_model(store: &Store, model: &DomainModel) -> Result<()> {
+///
+/// If `config` is supplied, `tag_hierarchies` are materialised as
+/// `actions:contextBroader` / `actions:contextNarrower` triples so the graph
+/// is fully queryable for context hierarchy without runtime expansion.
+pub fn load_domain_model(
+    store: &Store,
+    model: &DomainModel,
+    config: Option<&WorkspaceConfig>,
+) -> Result<()> {
     // Build title → UUID map so hasSubCharter triples use the actual charter UUID
     // rather than re-deriving it (which breaks when explicit .md charters have
     // their own UUID that differs from the INBOX_CHARTER_NS-derived one).
@@ -33,6 +42,9 @@ pub fn load_domain_model(store: &Store, model: &DomainModel) -> Result<()> {
     }
     for action in model.all_actions() {
         insert_action(store, action)?;
+    }
+    if let Some(cfg) = config {
+        inject_context_hierarchy(store, cfg)?;
     }
     Ok(())
 }
@@ -175,20 +187,14 @@ fn insert_plan(store: &Store, plan: &Plan, charter_actions: &[Action]) -> Result
         )?;
     }
 
-    // NOTE: contexts are stored as actions:hasContext plain string literals in the
-    // internal graph. The OWL defines actions:requiresContext as an object property
-    // (range: actions:Context), but promoting to full Context nodes requires a
-    // Context type in the domain model. The JSON-LD export layer (graph/jsonld.rs)
-    // performs this promotion at the semantic waist. Queries that use the ontology's
-    // requiresContext / contextIdentifier path will not match against this internal
-    // representation — use the JSON-LD export or the dedicated context SPARQL queries
-    // against exported graphs instead.
+    // contexts: emit requiresContext → actions:Context node triples.
+    // Context nodes carry a hasContextIdentifier literal for reconstruction.
+    // The hasContext literal shorthand is retired; the graph is now fully
+    // conformant with the OWL requiresContext object property.
     if let Some(contexts) = &plan.contexts {
         for context in contexts {
-            add(
-                actions_pred("hasContext"),
-                Term::Literal(Literal::new_simple_literal(context)),
-            )?;
+            let ctx_node = insert_context_node(store, context)?;
+            add(actions_pred("requiresContext"), Term::NamedNode(ctx_node))?;
         }
     }
 
@@ -300,10 +306,8 @@ fn insert_action(store: &Store, act: &Action) -> Result<()> {
 
     if let Some(contexts) = &act.contexts {
         for context in contexts {
-            add(
-                actions_pred("hasContext"),
-                Term::Literal(Literal::new_simple_literal(context)),
-            )?;
+            let ctx_node = insert_context_node(store, context)?;
+            add(actions_pred("requiresContext"), Term::NamedNode(ctx_node))?;
         }
     }
 
@@ -411,7 +415,69 @@ fn insert_action(store: &Store, act: &Action) -> Result<()> {
     Ok(())
 }
 
-#[cfg(test)]
+/// Ensure an `actions:Context` node exists for `tag` and return its URI.
+///
+/// Emits `a actions:Context` and `hasContextIdentifier` triples. Idempotent —
+/// inserting the same quad twice is a no-op in Oxigraph.
+fn insert_context_node(store: &Store, tag: &str) -> Result<NamedNode> {
+    let clean = tag.trim_start_matches('+');
+    let uri = NamedNode::new(format!("urn:context:{}", clean)).unwrap();
+    let subject = NamedOrBlankNode::NamedNode(uri.clone());
+    let graph = GraphName::DefaultGraph;
+
+    store
+        .insert(&Quad::new(
+            subject.clone(),
+            rdf_type(),
+            Term::NamedNode(ns(super::ACTIONS_NS, "Context")),
+            graph.clone(),
+        ))
+        .map_err(|e| GraphError::Store(e.to_string()))?;
+    store
+        .insert(&Quad::new(
+            subject,
+            actions_pred("hasContextIdentifier"),
+            Term::Literal(Literal::new_typed_literal(clean, ns(XSD_NS, "string"))),
+            graph,
+        ))
+        .map_err(|e| GraphError::Store(e.to_string()))?;
+
+    Ok(uri)
+}
+
+/// Materialise `tag_hierarchies` as `contextBroader`/`contextNarrower` triples.
+///
+/// Creates Context nodes for every tag mentioned in the hierarchy (whether or
+/// not any action currently uses them) and links them with
+/// `actions:contextBroader` (child → parent) and `actions:contextNarrower`
+/// (parent → child). This makes the full hierarchy SPARQL-queryable.
+fn inject_context_hierarchy(store: &Store, config: &WorkspaceConfig) -> Result<()> {
+    for (parent_tag, children) in &config.tag_hierarchies {
+        let parent_uri = insert_context_node(store, parent_tag)?;
+        for child_tag in children {
+            let child_uri = insert_context_node(store, child_tag)?;
+            // contextBroader: child → parent
+            store
+                .insert(&Quad::new(
+                    NamedOrBlankNode::NamedNode(child_uri.clone()),
+                    actions_pred("contextBroader"),
+                    Term::NamedNode(parent_uri.clone()),
+                    GraphName::DefaultGraph,
+                ))
+                .map_err(|e| GraphError::Store(e.to_string()))?;
+            // contextNarrower: parent → child
+            store
+                .insert(&Quad::new(
+                    NamedOrBlankNode::NamedNode(parent_uri.clone()),
+                    actions_pred("contextNarrower"),
+                    Term::NamedNode(child_uri),
+                    GraphName::DefaultGraph,
+                ))
+                .map_err(|e| GraphError::Store(e.to_string()))?;
+        }
+    }
+    Ok(())
+}
 mod tests {
     use super::*;
     use crate::domain::{ActPhase, Action, Charter, DomainModel, Plan, Recurrence};
@@ -515,7 +581,7 @@ mod tests {
         let store = graph::create_store().expect("store");
         let model = sample_model();
 
-        load_domain_model(&store, &model).expect("load model into graph");
+        load_domain_model(&store, &model, None).expect("load model into graph");
 
         let plan = NamedNodeRef::new("urn:uuid:019d7100-1111-7111-8111-111111111111").unwrap();
         let act = NamedNodeRef::new("urn:uuid:019d7100-2222-7222-8222-222222222222").unwrap();
@@ -638,7 +704,7 @@ mod tests {
         let store = graph::create_store().expect("store");
         let model = sample_model();
 
-        load_domain_model(&store, &model).expect("load model into graph");
+        load_domain_model(&store, &model, None).expect("load model into graph");
         let violations = validate_actions_vocabulary(&store).expect("validate graph");
 
         assert!(violations.is_empty(), "violations: {violations:?}");

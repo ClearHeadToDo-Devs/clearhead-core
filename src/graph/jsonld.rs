@@ -64,7 +64,7 @@ const ACTIONS_CONTEXT_V4: &str = include_str!("../resources/actions.context.v4.j
 /// };
 ///
 /// let store = create_store().unwrap();
-/// load_domain_model(&store, &model).unwrap();
+/// load_domain_model(&store, &model, None).unwrap();
 /// let jsonld = serialize_store_to_jsonld(&store).unwrap();
 /// assert!(jsonld.contains("\"@context\""));
 /// assert!(jsonld.contains("\"@graph\""));
@@ -80,7 +80,7 @@ pub fn serialize_store_to_jsonld(store: &Store) -> Result<String> {
 /// This helper is equivalent to `DomainModel -> Store -> JSON-LD`.
 pub fn serialize_domain_to_jsonld(model: &DomainModel) -> Result<String> {
     let store = create_store()?;
-    load_domain_model(&store, model)?;
+    load_domain_model(&store, model, None)?;
     serialize_store_to_jsonld(&store)
 }
 
@@ -452,7 +452,7 @@ mod tests {
     fn serialize_store_to_jsonld_contains_context_and_graph() {
         let store = create_store().expect("store");
         let model = sample_model();
-        load_domain_model(&store, &model).expect("load model");
+        load_domain_model(&store, &model, None).expect("load model");
 
         let json = serialize_store_to_jsonld(&store).expect("serialize jsonld");
         let doc: Value = serde_json::from_str(&json).expect("valid json");
@@ -480,7 +480,7 @@ mod tests {
     fn jsonld_nodes_are_deterministically_sorted() {
         let store = create_store().expect("store");
         let model = sample_model();
-        load_domain_model(&store, &model).expect("load model");
+        load_domain_model(&store, &model, None).expect("load model");
 
         let json = serialize_store_to_jsonld(&store).expect("serialize jsonld");
         let doc: Value = serde_json::from_str(&json).expect("valid json");
@@ -509,7 +509,7 @@ mod tests {
     fn plan_and_act_fields_follow_contract_names() {
         let store = create_store().expect("store");
         let model = sample_model();
-        load_domain_model(&store, &model).expect("load model");
+        load_domain_model(&store, &model, None).expect("load model");
 
         let json = serialize_store_to_jsonld(&store).expect("serialize jsonld");
         let doc: Value = serde_json::from_str(&json).expect("valid json");
@@ -546,7 +546,7 @@ mod tests {
     fn exported_jsonld_validates_against_vendored_schema() {
         let store = create_store().expect("store");
         let model = sample_model();
-        load_domain_model(&store, &model).expect("load model");
+        load_domain_model(&store, &model, None).expect("load model");
 
         let output: Value =
             serde_json::from_str(&serialize_store_to_jsonld(&store).expect("serialize jsonld"))
