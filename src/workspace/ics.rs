@@ -74,23 +74,9 @@ pub fn parse_ics_file(path: &Path) -> Result<Vec<Plan>, WorkspaceError> {
             id: plan_id,
             name: summary.to_string(),
             description,
-            priority: event
-                .property_value("PRIORITY")
-                .and_then(|value| value.parse().ok()),
-            contexts: event.property_value("CATEGORIES").map(|value| {
-                value
-                    .split(',')
-                    .map(str::trim)
-                    .filter(|value| !value.is_empty())
-                    .map(ToString::to_string)
-                    .collect()
-            }),
             recurrence,
             dtstart,
             external_id: Some(uid.to_string()),
-            alias: event
-                .property_value("X-CLEARHEAD-ALIAS")
-                .map(ToString::to_string),
             template_name,
             primary_instances,
             ..Default::default()

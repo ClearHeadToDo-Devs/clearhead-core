@@ -446,7 +446,7 @@ fn resolve_path(model: &DomainModel, segments: &[&str]) -> Result<ReferenceTarge
                 let child_plans: Vec<&Plan> = charter
                     .plans
                     .iter()
-                    .filter(|p| p.parent.is_none() && plan_matches_segment(p, segment))
+                    .filter(|p| plan_matches_segment(p, segment))
                     .collect();
 
                 match (child_charters.len(), child_plans.len()) {
@@ -467,12 +467,6 @@ fn resolve_path(model: &DomainModel, segments: &[&str]) -> Result<ReferenceTarge
                 }
             }
             Scope::Plan(charter, plan) => {
-                let child_plans: Vec<&Plan> = charter
-                    .plans
-                    .iter()
-                    .filter(|p| p.parent == Some(plan.id) && plan_matches_segment(p, segment))
-                    .collect();
-
                 let child_acts: Vec<&Action> = charter
                     .actions
                     .iter()
@@ -480,18 +474,17 @@ fn resolve_path(model: &DomainModel, segments: &[&str]) -> Result<ReferenceTarge
                     .filter(|a| act_matches_segment(a, segment))
                     .collect();
 
-                match (child_plans.len(), child_acts.len()) {
-                    (0, 0) => {
+                match child_acts.len() {
+                    0 => {
                         return Err(ReferenceError::new(format!(
                             "No match for '{}' under plan '{}'",
                             segment, plan.name
                         )));
                     }
-                    (1, 0) => Scope::Plan(charter, child_plans[0]),
-                    (0, 1) => return Ok(ReferenceTarget::Act(child_acts[0].id)),
+                    1 => return Ok(ReferenceTarget::Act(child_acts[0].id)),
                     _ => {
                         return Err(ReferenceError::new(format!(
-                            "Ambiguous reference '{}' under plan '{}'; use p: or a: prefix",
+                            "Ambiguous reference '{}' under plan '{}'; use a: prefix",
                             segment, plan.name
                         )));
                     }
@@ -553,11 +546,7 @@ fn plan_matches_segment(plan: &Plan, segment: &str) -> bool {
     if matches_uuid(&plan.id, segment) {
         return true;
     }
-
-    match &plan.alias {
-        Some(alias) => alias_match(alias, segment),
-        None => false,
-    }
+    plan.name.to_lowercase() == segment.to_lowercase()
 }
 
 fn act_matches_segment(act: &Action, segment: &str) -> bool {
@@ -592,12 +581,10 @@ fn is_short_uuid(segment: &str) -> bool {
 mod tests {
     use super::*;
 
-    fn make_plan(id: Uuid, alias: &str, parent: Option<Uuid>) -> Plan {
+    fn make_plan(id: Uuid, name: &str) -> Plan {
         Plan {
             id,
-            name: alias.to_string(),
-            parent,
-            alias: Some(alias.to_string()),
+            name: name.to_string(),
             ..Default::default()
         }
     }
@@ -619,9 +606,9 @@ mod tests {
         let subplan_id = Uuid::parse_str("55667788-0000-0000-0000-000000000004").unwrap();
         let act_id = Uuid::parse_str("deadbeef-0000-0000-0000-000000000005").unwrap();
 
-        let plan = make_plan(plan_id, "core", None);
+        let plan = make_plan(plan_id, "core");
 
-        let subplan = make_plan(subplan_id, "resolver", Some(plan_id));
+        let subplan = make_plan(subplan_id, "resolver");
 
         let charter = Charter {
             id: charter_id,

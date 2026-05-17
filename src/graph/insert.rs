@@ -177,53 +177,6 @@ fn insert_plan(store: &Store, plan: &Plan, charter_actions: &[Action]) -> Result
         )?;
     }
 
-    if let Some(priority) = plan.priority {
-        add(
-            actions_pred("hasPriority"),
-            Term::Literal(Literal::new_typed_literal(
-                priority.to_string(),
-                ns(XSD_NS, "integer"),
-            )),
-        )?;
-    }
-
-    // contexts: emit requiresContext → actions:Context node triples.
-    // Context nodes carry a hasContextIdentifier literal for reconstruction.
-    // The hasContext literal shorthand is retired; the graph is now fully
-    // conformant with the OWL requiresContext object property.
-    if let Some(contexts) = &plan.contexts {
-        for context in contexts {
-            let ctx_node = insert_context_node(store, context)?;
-            add(actions_pred("requiresContext"), Term::NamedNode(ctx_node))?;
-        }
-    }
-
-    if let Some(parent_id) = plan.parent {
-        let parent_uri = NamedNode::new(format!("urn:uuid:{}", parent_id)).unwrap();
-        add(bfo_pred(BFO_PART_OF), Term::NamedNode(parent_uri))?;
-    }
-
-    if let Some(deps) = &plan.depends_on {
-        for dep_id in deps {
-            let dep_uri = NamedNode::new(format!("urn:uuid:{}", dep_id)).unwrap();
-            add(cco_node(CCO_IS_SUCCESSOR_OF), Term::NamedNode(dep_uri))?;
-        }
-    }
-
-    if let Some(alias) = &plan.alias {
-        add(
-            actions_pred("hasAlias"),
-            Term::Literal(Literal::new_simple_literal(alias)),
-        )?;
-    }
-
-    if let Some(true) = plan.is_sequential {
-        add(
-            actions_pred("hasSequentialChildren"),
-            Term::Literal(Literal::new_typed_literal("true", ns(XSD_NS, "boolean"))),
-        )?;
-    }
-
     if let Some(recurrence) = &plan.recurrence {
         let recurrence_str = recurrence.to_string();
         let clean_recurrence = recurrence_str.strip_prefix("R:").unwrap_or(&recurrence_str);
@@ -502,18 +455,12 @@ mod tests {
                     id: plan_id,
                     name: "Write graph tests".to_string(),
                     description: Some("Lock down graph semantics".to_string()),
-                    priority: Some(1),
                     recurrence: Some(Recurrence {
                         frequency: "weekly".to_string(),
                         interval: Some(2),
                         by_day: Some(vec!["MO".to_string(), "WE".to_string()]),
                         ..Default::default()
                     }),
-                    alias: Some("graph_tests".to_string()),
-                    is_sequential: Some(true),
-                    depends_on: Some(vec![
-                        Uuid::parse_str("019d7100-4444-7444-8444-444444444444").unwrap(),
-                    ]),
                     ..Default::default()
                 }],
                 actions: vec![Action {
@@ -605,26 +552,6 @@ mod tests {
             plan,
             actions_pred("hasUUID").as_ref(),
             LiteralRef::new_simple_literal("019d7100-1111-7111-8111-111111111111").into(),
-        ));
-        assert!(has_term(
-            &store,
-            plan,
-            actions_pred("hasAlias").as_ref(),
-            LiteralRef::new_simple_literal("graph_tests").into(),
-        ));
-        assert!(has_term(
-            &store,
-            plan,
-            cco_node(CCO_IS_SUCCESSOR_OF).as_ref(),
-            NamedNodeRef::new("urn:uuid:019d7100-4444-7444-8444-444444444444")
-                .unwrap()
-                .into(),
-        ));
-        assert!(has_term(
-            &store,
-            plan,
-            actions_pred("hasSequentialChildren").as_ref(),
-            LiteralRef::new_typed_literal("true", ns(XSD_NS, "boolean").as_ref()).into(),
         ));
         assert!(has_term(
             &store,

@@ -84,14 +84,8 @@ pub struct SyncPlan {
     pub id: Uuid,
     pub name: String,
     pub description: Option<String>,
-    pub priority: Option<u32>,
-    pub contexts: Option<Vec<String>>,
     pub recurrence: Option<SyncRecurrence>,
     pub due_recurrence: Option<SyncRecurrence>,
-    pub parent: Option<Uuid>,
-    pub alias: Option<String>,
-    pub is_sequential: Option<bool>,
-    pub depends_on: Option<Vec<Uuid>>,
 }
 
 /// CRDT mirror of `domain::PlannedAct`.

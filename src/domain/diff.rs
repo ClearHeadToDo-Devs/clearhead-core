@@ -24,26 +24,6 @@ pub enum PlanFieldChange {
         old: Option<String>,
         new: Option<String>,
     },
-    Priority {
-        old: Option<u32>,
-        new: Option<u32>,
-    },
-    Contexts {
-        old: Option<Vec<String>>,
-        new: Option<Vec<String>>,
-    },
-    Parent {
-        old: Option<Uuid>,
-        new: Option<Uuid>,
-    },
-    Alias {
-        old: Option<String>,
-        new: Option<String>,
-    },
-    IsSequential {
-        old: Option<bool>,
-        new: Option<bool>,
-    },
     Recurrence {
         old: Option<Recurrence>,
         new: Option<Recurrence>,
@@ -51,10 +31,6 @@ pub enum PlanFieldChange {
     DueRecurrence {
         old: Option<Recurrence>,
         new: Option<Recurrence>,
-    },
-    DependsOn {
-        old: Option<Vec<Uuid>>,
-        new: Option<Vec<Uuid>>,
     },
     ExternalId {
         old: Option<String>,
@@ -368,36 +344,6 @@ fn compare_plans(old: &Plan, new: &Plan) -> Vec<PlanFieldChange> {
             new: new.description.clone(),
         });
     }
-    if old.priority != new.priority {
-        changes.push(PlanFieldChange::Priority {
-            old: old.priority,
-            new: new.priority,
-        });
-    }
-    if old.contexts != new.contexts {
-        changes.push(PlanFieldChange::Contexts {
-            old: old.contexts.clone(),
-            new: new.contexts.clone(),
-        });
-    }
-    if old.parent != new.parent {
-        changes.push(PlanFieldChange::Parent {
-            old: old.parent,
-            new: new.parent,
-        });
-    }
-    if old.alias != new.alias {
-        changes.push(PlanFieldChange::Alias {
-            old: old.alias.clone(),
-            new: new.alias.clone(),
-        });
-    }
-    if old.is_sequential != new.is_sequential {
-        changes.push(PlanFieldChange::IsSequential {
-            old: old.is_sequential,
-            new: new.is_sequential,
-        });
-    }
     if old.recurrence != new.recurrence {
         changes.push(PlanFieldChange::Recurrence {
             old: old.recurrence.clone(),
@@ -408,12 +354,6 @@ fn compare_plans(old: &Plan, new: &Plan) -> Vec<PlanFieldChange> {
         changes.push(PlanFieldChange::DueRecurrence {
             old: old.due_recurrence.clone(),
             new: new.due_recurrence.clone(),
-        });
-    }
-    if old.depends_on != new.depends_on {
-        changes.push(PlanFieldChange::DependsOn {
-            old: old.depends_on.clone(),
-            new: new.depends_on.clone(),
         });
     }
     if old.external_id != new.external_id {

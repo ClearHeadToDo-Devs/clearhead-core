@@ -3,7 +3,7 @@
 //! Provides table rendering that operates directly on `DomainModel`,
 //! preserving the charter hierarchy instead of losing it through ActionList conversion.
 
-use crate::domain::{ActionState, DomainModel, Plan};
+use crate::domain::{ActionState, DomainModel};
 use crate::workspace::actions::format::{
     COLUMN_NAMES, DEFAULT_COLUMNS, TableFormatOptions, columns_to_show, columns_without,
 };
@@ -63,15 +63,8 @@ pub fn format_domain_as_table(
             .map(|&i| Cell::new(COLUMN_NAMES[i]).fg(Color::Cyan)),
     );
 
-    // Collect all plans for depth calculation
-    let all_plans: Vec<&Plan> = model.all_plans();
-
     for charter in &model.charters {
         for plan in &charter.plans {
-            // Depth: walk the parent chain through all plans in the model
-            let depth = plan_depth(plan, &all_plans);
-            let indent = "  ".repeat(depth);
-
             // State from first act, or synthesized NotStarted
             let first_act = charter.actions.iter().find(|a| a.plan_id == Some(plan.id));
             let phase = first_act.map(|a| a.state).unwrap_or(ActionState::NotStarted);
@@ -86,11 +79,9 @@ pub fn format_domain_as_table(
 
             let all_strings: Vec<String> = vec![
                 String::new(), // placeholder — state rendered as colored Cell
-                format!("{}{}", indent, plan.name),
+                plan.name.clone(),
                 charter.title.clone(),
-                plan.priority
-                    .map(|p| p.to_string())
-                    .unwrap_or_else(|| "-".to_string()),
+                "-".to_string(), // priority lives on Action, not Plan
                 first_act
                     .and_then(|a| a.scheduled_at)
                     .map(|dt| dt.format("%Y-%m-%d %H:%M").to_string())
@@ -103,10 +94,7 @@ pub fn format_domain_as_table(
                     .as_ref()
                     .map(|r| r.frequency.to_uppercase())
                     .unwrap_or_else(|| "-".to_string()),
-                plan.contexts
-                    .as_ref()
-                    .map(|c| c.join(", "))
-                    .unwrap_or_else(|| "-".to_string()),
+                "-".to_string(), // contexts live on Action, not Plan
                 plan.description
                     .as_ref()
                     .map(|d| d.to_string())
@@ -133,19 +121,3 @@ pub fn format_domain_as_table(
     Ok(table.to_string())
 }
 
-/// Walk the parent chain to determine nesting depth.
-fn plan_depth(plan: &Plan, all_plans: &[&Plan]) -> usize {
-    let mut depth = 0;
-    let mut current_parent = plan.parent;
-    while let Some(parent_id) = current_parent {
-        depth += 1;
-        current_parent = all_plans
-            .iter()
-            .find(|p| p.id == parent_id)
-            .and_then(|p| p.parent);
-        if depth > 100 {
-            break; // cycle guard
-        }
-    }
-    depth
-}

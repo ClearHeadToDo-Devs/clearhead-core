@@ -367,19 +367,9 @@ pub struct Plan {
     pub id: Uuid,
     pub name: String,
     pub description: Option<String>,
-    pub priority: Option<u32>,
-    pub contexts: Option<Vec<String>>,
     pub recurrence: Option<Recurrence>,
     /// Independent due-date recurrence rule (R: following :-syntax)
     pub due_recurrence: Option<Recurrence>,
-    /// Parent plan (partOf relationship for hierarchy)
-    pub parent: Option<Uuid>,
-    /// Stable alias for references
-    pub alias: Option<String>,
-    /// Whether children execute sequentially
-    pub is_sequential: Option<bool>,
-    /// Plans this plan depends on (predecessor relationships)
-    pub depends_on: Option<Vec<Uuid>>,
     /// Raw VEVENT UID when this plan was loaded from an ICS file (null for .actions-sourced plans)
     pub external_id: Option<String>,
     /// Template name extracted from VEVENT DESCRIPTION (null for .actions-sourced plans)
@@ -414,7 +404,7 @@ impl Plan {
     ///     id: Uuid::new_v4(),
     ///     name: "Daily".to_string(),
     ///     recurrence: Some(Recurrence { frequency: "daily".to_string(), count: Some(2), ..Default::default() }),
-    ///     description: None, priority: None, contexts: None, due_recurrence: None, parent: None, alias: None, is_sequential: None, depends_on: None, external_id: None, template_name: None, primary_instances: None, dtstart: None,
+    ///     description: None, due_recurrence: None, external_id: None, template_name: None, primary_instances: None, dtstart: None,
     /// };
     ///
     /// let occurrences = plan.expand_occurrences(dt_start, 10);
@@ -455,14 +445,8 @@ impl Default for Plan {
             id: Uuid::nil(),
             name: String::new(),
             description: None,
-            priority: None,
-            contexts: None,
             recurrence: None,
             due_recurrence: None,
-            parent: None,
-            alias: None,
-            is_sequential: None,
-            depends_on: None,
             external_id: None,
             template_name: None,
             primary_instances: None,

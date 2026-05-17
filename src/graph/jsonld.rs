@@ -176,39 +176,15 @@ fn plan_to_jsonld(
         insert_str(&mut node, "description", description);
     }
 
-    if let Some(parent_plan_id) = plan.parent {
-        insert_id(&mut node, "partOf", uuid_urn(parent_plan_id.to_string()));
-    } else if let Some(charter_id) = plan_charter_id.get(&plan_id) {
+    if let Some(charter_id) = plan_charter_id.get(&plan_id) {
         insert_id(&mut node, "partOf", charter_id.clone());
     }
 
     let actions: Vec<String> = acts_by_plan.get(&plan_id).cloned().unwrap_or_default();
     insert_id_or_many(&mut node, "actions", actions);
 
-    if let Some(depends_on) = &plan.depends_on {
-        let deps: Vec<String> = depends_on
-            .iter()
-            .map(|id| uuid_urn(id.to_string()))
-            .collect();
-        insert_id_or_many(&mut node, "isSuccessorOf", deps);
-    }
-
-    if let Some(contexts) = &plan.contexts {
-        let ids: Vec<String> = contexts.iter().map(|c| context_id(c)).collect();
-        insert_id_or_many(&mut node, "requiresContext", ids);
-    }
-
     insert_str(&mut node, "uuid", &plan.id.to_string());
 
-    if let Some(alias) = &plan.alias {
-        insert_str(&mut node, "alias", alias);
-    }
-    if let Some(priority) = plan.priority {
-        node.insert("priority".to_string(), json!(priority));
-    }
-    if let Some(is_seq) = plan.is_sequential {
-        node.insert("sequentialChildren".to_string(), json!(is_seq));
-    }
     if let Some(recurrence) = &plan.recurrence {
         insert_str(&mut node, "recurrence", &recurrence.to_string());
     }
@@ -270,16 +246,6 @@ fn action_to_jsonld(act: &Action) -> Value {
 
 fn collect_contexts(model: &DomainModel) -> Vec<String> {
     let mut contexts = BTreeMap::new();
-    for plan in model.all_plans() {
-        if let Some(values) = &plan.contexts {
-            for value in values {
-                let id = context_id(value);
-                contexts.insert(id, value.clone());
-            }
-        }
-    }
-    // Also collect from Actions — an action may reference a context that no
-    // plan uses, and the Context entity node must still appear in the graph.
     for action in model.all_actions() {
         if let Some(values) = &action.contexts {
             for value in values {
@@ -398,16 +364,12 @@ mod tests {
                     id: plan_id,
                     name: "Write graph tests".to_string(),
                     description: Some("Lock down graph semantics".to_string()),
-                    priority: Some(1),
-                    contexts: Some(vec!["@dev".to_string()]),
                     recurrence: Some(Recurrence {
                         frequency: "weekly".to_string(),
                         interval: Some(2),
                         by_day: Some(vec!["MO".to_string(), "WE".to_string()]),
                         ..Default::default()
                     }),
-                    alias: Some("graph_tests".to_string()),
-                    is_sequential: Some(true),
                     ..Default::default()
                 }],
                 actions: vec![Action {
@@ -513,9 +475,7 @@ mod tests {
         assert!(plan.get("actions").is_some());
         assert!(plan.get("partOf").is_some());
         assert!(plan.get("uuid").is_some());
-        assert!(plan.get("sequentialChildren").is_some());
         assert!(plan.get("recurrence").is_some());
-        assert!(plan.get("requiresContext").is_some());
 
         let act = graph
             .iter()

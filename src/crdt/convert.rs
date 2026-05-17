@@ -85,14 +85,8 @@ impl From<&Plan> for SyncPlan {
             id: p.id,
             name: p.name.clone(),
             description: p.description.clone(),
-            priority: p.priority,
-            contexts: p.contexts.clone(),
             recurrence: p.recurrence.as_ref().map(SyncRecurrence::from),
             due_recurrence: p.due_recurrence.as_ref().map(SyncRecurrence::from),
-            parent: p.parent,
-            alias: p.alias.clone(),
-            is_sequential: p.is_sequential,
-            depends_on: p.depends_on.clone(),
         }
     }
 }
@@ -219,14 +213,8 @@ impl From<&SyncPlan> for Plan {
             id: p.id,
             name: p.name.clone(),
             description: p.description.clone(),
-            priority: p.priority,
-            contexts: p.contexts.clone(),
             recurrence: p.recurrence.as_ref().map(Recurrence::from),
             due_recurrence: p.due_recurrence.as_ref().map(Recurrence::from),
-            parent: p.parent,
-            alias: p.alias.clone(),
-            is_sequential: p.is_sequential,
-            depends_on: p.depends_on.clone(),
             ..Default::default()
         }
     }

@@ -13,8 +13,6 @@
                     id: "535f3d86-f6b3-592e-9893-165e507e6ee4",
                     name: "Go for a run",
                     description: None,
-                    priority: None,
-                    contexts: None,
                     recurrence: Some((
                         frequency: "weekly",
                         by_day: Some([
@@ -24,10 +22,6 @@
                         ]),
                     )),
                     due_recurrence: None,
-                    parent: None,
-                    alias: None,
-                    is_sequential: None,
-                    depends_on: None,
                     external_id: Some("health-workout-1"),
                     template_name: Some("workout"),
                     primary_instances: None,

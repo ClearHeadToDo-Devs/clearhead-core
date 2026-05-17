@@ -476,29 +476,10 @@ fn get_plan_by_id(store: &Store, id: Uuid) -> Result<Plan> {
         .lit(rdfs_pred(RDFS_LABEL))
         .ok_or_else(|| GraphError::Domain(format!("Plan {} missing name", id)))?;
 
-    // Follow requiresContext → Context node → hasContextIdentifier to get
-    // the string tags back. Idiomatic inverse of insert_context_node.
-    let contexts: Vec<String> = node
-        .many(actions_pred("requiresContext"))
-        .into_iter()
-        .filter_map(|term| match term {
-            Term::NamedNode(nn) => {
-                NodeView::new_from_node(store, nn).lit(actions_pred("hasContextIdentifier"))
-            }
-            _ => None,
-        })
-        .collect();
-
-    let mut depends_on = node.uuid_nodes(cco_node(CCO_IS_SUCCESSOR_OF));
-    depends_on.sort_unstable();
-    depends_on.dedup();
-
     Ok(Plan {
         id,
         name,
         description: node.lit(rdfs_pred(RDFS_COMMENT)),
-        priority: node.lit_u32(actions_pred("hasPriority")),
-        contexts: (!contexts.is_empty()).then_some(contexts),
         recurrence: node
             .lit(actions_pred("hasRecurrenceRule"))
             .as_deref()
@@ -507,10 +488,6 @@ fn get_plan_by_id(store: &Store, id: Uuid) -> Result<Plan> {
             .lit(actions_pred("hasDueRecurrenceRule"))
             .as_deref()
             .and_then(parse_recurrence_rule),
-        parent: node.uuid_node(bfo_pred(BFO_PART_OF)),
-        alias: node.lit(actions_pred("hasAlias")),
-        is_sequential: node.lit_bool(actions_pred("hasSequentialChildren")),
-        depends_on: (!depends_on.is_empty()).then_some(depends_on),
         external_id: node.lit(actions_pred("hasExternalScheduleId")),
         template_name: node.lit(actions_pred("hasTemplateName")),
         primary_instances: None,
@@ -606,19 +583,12 @@ mod tests {
                     id: plan_id,
                     name: "Write graph tests".to_string(),
                     description: Some("Lock down graph semantics".to_string()),
-                    priority: Some(1),
-                    contexts: Some(vec!["dev".to_string()]),
                     recurrence: Some(Recurrence {
                         frequency: "weekly".to_string(),
                         interval: Some(2),
                         by_day: Some(vec!["MO".to_string(), "WE".to_string()]),
                         ..Default::default()
                     }),
-                    alias: Some("graph_tests".to_string()),
-                    is_sequential: Some(true),
-                    depends_on: Some(vec![
-                        Uuid::parse_str("019d7100-4444-7444-8444-444444444444").unwrap(),
-                    ]),
                     external_id: Some("health-workout-1".to_string()),
                     template_name: Some("workout".to_string()),
                     dtstart: Some(chrono::Local::now()),
@@ -764,42 +734,6 @@ mod tests {
         assert_eq!(child.parent.as_deref(), Some("parent"));
     }
 
-    #[test]
-    fn graph_roundtrip_keeps_single_copy_of_dependency_links() {
-        let store = create_store().expect("store");
-        let plan_id = Uuid::parse_str("019d7100-1111-7111-8111-111111111111").unwrap();
-        let dep_id = Uuid::parse_str("019d7100-4444-7444-8444-444444444444").unwrap();
-
-        let ttl = format!(
-            "@prefix actions: <{actions}> .\n\
-             @prefix cco: <{cco}> .\n\
-             @prefix bfo: <{bfo}> .\n\
-             @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .\n\
-            <urn:uuid:019d7100-3333-7333-8333-333333333333> a actions:Charter ;\n\
-              actions:hasUUID \"019d7100-3333-7333-8333-333333333333\" ;\n\
-              rdfs:label \"Root\" ;\n\
-              bfo:{has_part} <urn:uuid:{plan}> .\n\
-             <urn:uuid:{plan}> a cco:{plan_class} ;\n\
-               actions:hasUUID \"{plan}\" ;\n\
-               rdfs:label \"Plan\" ;\n\
-               cco:{succ} <urn:uuid:{dep}> ;\n\
-               cco:{succ} <urn:uuid:{dep}> .\n",
-            actions = ACTIONS_NS,
-            cco = CCO_NS,
-            bfo = BFO_NS,
-            has_part = BFO_HAS_PART,
-            plan = plan_id,
-            dep = dep_id,
-            plan_class = CCO_PLAN,
-            succ = CCO_IS_SUCCESSOR_OF,
-        );
-        crate::graph::load_turtle(&store, &ttl).expect("load turtle");
-
-        let model = load_domain_model_from_store(&store).expect("load model");
-        let plan = model.all_plans()[0];
-        let deps = plan.depends_on.clone().expect("depends_on");
-        assert_eq!(deps, vec![dep_id]);
-    }
 
     #[test]
     fn ignores_orphan_plans_not_linked_to_charter() {
