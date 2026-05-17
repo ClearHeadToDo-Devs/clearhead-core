@@ -368,6 +368,10 @@ pub struct Plan {
     pub external_id: Option<String>,
     /// Template name extracted from VEVENT DESCRIPTION (null for .actions-sourced plans)
     pub template_name: Option<String>,
+    /// Per-schedule override for how many instances land in the primary `.actions` file.
+    /// Sourced from the `upcoming:` directive in VEVENT DESCRIPTION.
+    /// When absent, the workspace `expansion_primary_instances` config value applies.
+    pub primary_instances: Option<u32>,
     /// Recurrence anchor (DTSTART from VEVENT); None for .actions-sourced plans
     pub dtstart: Option<DateTime<Local>>,
 }
@@ -445,6 +449,7 @@ impl Default for Plan {
             depends_on: None,
             external_id: None,
             template_name: None,
+            primary_instances: None,
             dtstart: None,
         }
     }

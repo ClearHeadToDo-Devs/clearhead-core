@@ -65,10 +65,10 @@ pub fn parse_ics_file(path: &Path) -> Result<Vec<Plan>, WorkspaceError> {
             .property_value("RRULE")
             .and_then(Recurrence::from_rrule_str);
 
-        let (template_name, description) = event
+        let (template_name, primary_instances, description) = event
             .get_description()
-            .map(parse_template_from_description)
-            .unwrap_or((None, None));
+            .map(parse_description_directives)
+            .unwrap_or((None, None, None));
 
         plans.push(Plan {
             id: plan_id,
@@ -92,6 +92,7 @@ pub fn parse_ics_file(path: &Path) -> Result<Vec<Plan>, WorkspaceError> {
                 .property_value("X-CLEARHEAD-ALIAS")
                 .map(ToString::to_string),
             template_name,
+            primary_instances,
             ..Default::default()
         });
     }
@@ -99,26 +100,52 @@ pub fn parse_ics_file(path: &Path) -> Result<Vec<Plan>, WorkspaceError> {
     Ok(plans)
 }
 
-/// Extract template name from a VEVENT DESCRIPTION.
+/// Parse directives and description body from a VEVENT DESCRIPTION.
 ///
-/// If the description starts with `template: <name>` (case-sensitive, single space),
-/// the first line is consumed as the template binding. The remainder becomes the
-/// description. Works with standard calendar apps — users put `template: weekly-review`
-/// as the first line of the event notes.
-fn parse_template_from_description(desc: &str) -> (Option<String>, Option<String>) {
-    let first_line = desc.lines().next().unwrap_or("");
-    if let Some(name) = first_line.strip_prefix("template: ") {
-        let name = name.trim();
-        if name.is_empty() {
-            return (None, Some(desc.to_string()));
+/// Leading `key: value` lines are consumed as directives until a blank line
+/// or a non-matching line is encountered. The remainder is the description body.
+///
+/// Supported directives:
+/// - `template: <name>` — binds a template for structural instantiation
+/// - `upcoming: <n>`   — per-schedule override for how many instances land in
+///                       the primary `.actions` file
+///
+/// Returns `(template_name, primary_instances, description)`.
+fn parse_description_directives(desc: &str) -> (Option<String>, Option<u32>, Option<String>) {
+    let mut template: Option<String> = None;
+    let mut primary_instances: Option<u32> = None;
+    let mut body_start = 0usize;
+
+    for line in desc.lines() {
+        if line.trim().is_empty() {
+            body_start += line.len() + 1;
+            break;
         }
-        let rest: String = desc.lines().skip(1).collect::<Vec<_>>().join("\n");
-        let rest = rest.trim().to_string();
-        let description = if rest.is_empty() { None } else { Some(rest) };
-        (Some(name.to_string()), description)
-    } else {
-        (None, Some(desc.to_string()))
+        if let Some(val) = line.strip_prefix("template: ") {
+            let val = val.trim();
+            if !val.is_empty() {
+                template = Some(val.to_string());
+            }
+            body_start += line.len() + 1;
+        } else if let Some(val) = line.strip_prefix("upcoming: ") {
+            if let Ok(n) = val.trim().parse::<u32>() {
+                primary_instances = Some(n);
+            }
+            body_start += line.len() + 1;
+        } else {
+            // Non-directive line — everything from here is description body
+            break;
+        }
     }
+
+    let rest = if body_start < desc.len() {
+        let s = desc[body_start..].trim();
+        if s.is_empty() { None } else { Some(s.to_string()) }
+    } else {
+        None
+    };
+
+    (template, primary_instances, rest)
 }
 
 fn parse_dtstart(event: &icalendar::Event) -> Option<DateTime<Local>> {
@@ -223,6 +250,48 @@ mod tests {
             Some("Reflect on the past week")
         );
         assert!(plans[0].recurrence.is_some());
+        assert!(plans[0].primary_instances.is_none());
+    }
+
+    #[test]
+    fn parse_vevent_with_upcoming_directive() {
+        let f = write_ics(
+            "BEGIN:VCALENDAR\r\n\
+             BEGIN:VEVENT\r\n\
+             UID:quarterly-review@example.com\r\n\
+             SUMMARY:Quarterly Review\r\n\
+             DTSTART:20260427T100000\r\n\
+             RRULE:FREQ=MONTHLY;INTERVAL=3\r\n\
+             DESCRIPTION:upcoming: 2\r\n\
+             END:VEVENT\r\n\
+             END:VCALENDAR\r\n",
+        );
+
+        let plans = parse_ics_file(f.path()).unwrap();
+        assert_eq!(plans.len(), 1);
+        assert_eq!(plans[0].primary_instances, Some(2));
+        assert!(plans[0].template_name.is_none());
+    }
+
+    #[test]
+    fn parse_vevent_with_template_and_upcoming_directives() {
+        let f = write_ics(
+            "BEGIN:VCALENDAR\r\n\
+             BEGIN:VEVENT\r\n\
+             UID:weekly-review-2@example.com\r\n\
+             SUMMARY:Weekly Review\r\n\
+             DTSTART:20260427T100000\r\n\
+             RRULE:FREQ=WEEKLY;BYDAY=SU\r\n\
+             DESCRIPTION:template: weekly-review\\nupcoming: 3\\nSome notes\r\n\
+             END:VEVENT\r\n\
+             END:VCALENDAR\r\n",
+        );
+
+        let plans = parse_ics_file(f.path()).unwrap();
+        assert_eq!(plans.len(), 1);
+        assert_eq!(plans[0].template_name.as_deref(), Some("weekly-review"));
+        assert_eq!(plans[0].primary_instances, Some(3));
+        assert_eq!(plans[0].description.as_deref(), Some("Some notes"));
     }
 
     #[test]
@@ -304,22 +373,44 @@ mod tests {
     }
 
     #[test]
-    fn parse_template_from_description_cases() {
-        let (tpl, desc) = parse_template_from_description("template: weekly-review\nSome notes");
+    fn parse_description_directives_cases() {
+        // template only
+        let (tpl, upcoming, desc) = parse_description_directives("template: weekly-review\nSome notes");
         assert_eq!(tpl.as_deref(), Some("weekly-review"));
+        assert!(upcoming.is_none());
         assert_eq!(desc.as_deref(), Some("Some notes"));
 
-        let (tpl, desc) = parse_template_from_description("template: weekly-review");
+        // template only, no body
+        let (tpl, upcoming, desc) = parse_description_directives("template: weekly-review");
         assert_eq!(tpl.as_deref(), Some("weekly-review"));
+        assert!(upcoming.is_none());
         assert!(desc.is_none());
 
-        let (tpl, desc) = parse_template_from_description("No template here");
+        // upcoming only
+        let (tpl, upcoming, desc) = parse_description_directives("upcoming: 3");
         assert!(tpl.is_none());
+        assert_eq!(upcoming, Some(3));
+        assert!(desc.is_none());
+
+        // both directives with body
+        let (tpl, upcoming, desc) = parse_description_directives("template: weekly-review\nupcoming: 2\nSome notes");
+        assert_eq!(tpl.as_deref(), Some("weekly-review"));
+        assert_eq!(upcoming, Some(2));
+        assert_eq!(desc.as_deref(), Some("Some notes"));
+
+        // no directives — whole string is body
+        let (tpl, upcoming, desc) = parse_description_directives("No template here");
+        assert!(tpl.is_none());
+        assert!(upcoming.is_none());
         assert_eq!(desc.as_deref(), Some("No template here"));
 
-        let (tpl, desc) = parse_template_from_description("template: ");
+        // empty template value falls through to body
+        let (tpl, upcoming, desc) = parse_description_directives("template: ");
         assert!(tpl.is_none());
-        assert_eq!(desc.as_deref(), Some("template: "));
+        assert!(upcoming.is_none());
+        // "template: " line is consumed as a directive attempt but template is None;
+        // nothing left for body
+        assert!(desc.is_none());
     }
 
     #[test]

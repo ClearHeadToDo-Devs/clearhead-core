@@ -1,7 +1,8 @@
-//! Per-charter `.actions` / `.completed.actions` read/write for planned act persistence.
+//! Per-charter `.actions` / `.completed.actions` / `.upcoming.actions` read/write.
 //!
-//! Each charter's acts are stored as action DSL files alongside the `.ics` plan file:
-//! - `<charter>.actions`           — upcoming/in-progress acts
+//! Each charter's acts are stored across three DSL files:
+//! - `<charter>.actions`           — active acts (within primary instance cap)
+//! - `<charter>.upcoming.actions`  — future generated instances beyond the primary cap
 //! - `<charter>.completed.actions` — completed/cancelled acts
 //!
 //! Charter stem derivation: `next.actions` uses the parent directory name;
@@ -49,6 +50,18 @@ pub fn completed_acts_path(actions_path: &Path) -> PathBuf {
     let stem = charter_stem(actions_path);
     let dir = actions_path.parent().unwrap_or(Path::new(""));
     dir.join(format!("{}.completed.actions", stem))
+}
+
+/// Derive the upcoming acts path for a `.actions` file.
+///
+/// - `health.actions`               → `health.upcoming.actions`
+/// - `inbox.actions`                → `inbox.upcoming.actions`
+/// - `build_clearhead/next.actions` → `build_clearhead/build_clearhead.upcoming.actions`
+/// - `build_clearhead/obs.actions`  → `build_clearhead/obs.upcoming.actions`
+pub fn upcoming_acts_path(actions_path: &Path) -> PathBuf {
+    let stem = charter_stem(actions_path);
+    let dir = actions_path.parent().unwrap_or(Path::new(""));
+    dir.join(format!("{}.upcoming.actions", stem))
 }
 
 // ============================================================================

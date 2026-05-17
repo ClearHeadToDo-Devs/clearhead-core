@@ -513,6 +513,7 @@ fn get_plan_by_id(store: &Store, id: Uuid) -> Result<Plan> {
         depends_on: (!depends_on.is_empty()).then_some(depends_on),
         external_id: node.lit(actions_pred("hasExternalScheduleId")),
         template_name: node.lit(actions_pred("hasTemplateName")),
+        primary_instances: None,
         dtstart: None,
     })
 }

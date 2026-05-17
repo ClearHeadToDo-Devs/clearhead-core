@@ -25,7 +25,7 @@ pub use actions::{
     SourceRange, SourcedAction, diff_actions, format, parse_actions, parse_actions_with_mode,
     parse_document, parse_tree, patch_action_list,
 };
-pub use acts::{completed_acts_path, read_acts, write_acts};
+pub use acts::{completed_acts_path, upcoming_acts_path, read_acts, write_acts};
 pub use sidecar::{ActMeta, CharterMeta, CharterMetadata, PlanMeta, hydrate_acts, read_sidecar, sidecar_path, write_sidecar};
 pub use charter::{MarkdownCharter, format_charter, implicit_charter, parse_charter};
 pub use ics::occurrence_act_id;

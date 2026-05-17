@@ -30,6 +30,7 @@
                     depends_on: None,
                     external_id: Some("health-workout-1"),
                     template_name: Some("workout"),
+                    primary_instances: None,
                     dtstart: Some("2026-01-01T00:00:00-08:00"),
                 ),
             ],
