@@ -1,5 +1,5 @@
 use super::ActionList;
-use crate::domain::{Action, Charter, DomainModel};
+use crate::domain::{Charter, DomainModel};
 use uuid::Uuid;
 
 /// Namespace UUID for the synthetic inbox charter.
@@ -57,7 +57,7 @@ pub fn to_action_list_ordered(model: &DomainModel, plan_order: &[String]) -> Act
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::{Charter, DomainModel};
+    use crate::domain::{Action, Charter, DomainModel};
     use crate::workspace::actions::ActionState;
 
     fn make_action(name: &str) -> Action {

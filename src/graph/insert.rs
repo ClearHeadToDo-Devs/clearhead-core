@@ -432,12 +432,15 @@ fn inject_context_hierarchy(store: &Store, config: &WorkspaceConfig) -> Result<(
     }
     Ok(())
 }
+#[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::{ActionState, Action, Charter, DomainModel, Plan, Recurrence};
+    use crate::domain::{Action, ActionState, Charter, DomainModel, Plan, Recurrence};
     use crate::graph::{self, validate_actions_vocabulary};
     use chrono::TimeZone;
-    use oxigraph::model::{GraphNameRef, LiteralRef, NamedNodeRef, TermRef};
+    use oxigraph::model::{GraphNameRef, LiteralRef, NamedNodeRef};
+    #[allow(unused_imports)]
+    use oxigraph::model::TermRef;
 
     fn sample_model() -> DomainModel {
         let plan_id = Uuid::parse_str("019d7100-1111-7111-8111-111111111111").unwrap();
@@ -637,5 +640,115 @@ mod tests {
         let violations = validate_actions_vocabulary(&store).expect("validate graph");
 
         assert!(violations.is_empty(), "violations: {violations:?}");
+    }
+
+    // ============================================================================
+    // Context graph shape
+    // ============================================================================
+
+    fn action_with_contexts(contexts: Vec<&str>) -> DomainModel {
+        use crate::domain::ActionState;
+        let charter_id = Uuid::parse_str("019d7100-cccc-7ccc-8ccc-cccccccccccc").unwrap();
+        let act_id = Uuid::parse_str("019d7100-aaaa-7aaa-8aaa-aaaaaaaaaaaa").unwrap();
+        DomainModel {
+            objectives: vec![],
+            charters: vec![Charter {
+                id: charter_id,
+                title: "Test".to_string(),
+                actions: vec![Action {
+                    id: act_id,
+                    name: "Tagged action".to_string(),
+                    contexts: Some(contexts.into_iter().map(String::from).collect()),
+                    state: ActionState::NotStarted,
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }],
+        }
+    }
+
+    #[test]
+    fn context_triples_emitted_for_action_with_contexts() {
+        let store = graph::create_store().expect("store");
+        let model = action_with_contexts(vec!["neovim", "work"]);
+        load_domain_model(&store, &model, None).expect("load");
+
+        let act = NamedNodeRef::new("urn:uuid:019d7100-aaaa-7aaa-8aaa-aaaaaaaaaaaa").unwrap();
+        let neovim = NamedNodeRef::new("urn:context:neovim").unwrap();
+        let work = NamedNodeRef::new("urn:context:work").unwrap();
+
+        // Action links to context nodes via requiresContext
+        assert!(has_term(&store, act, actions_pred("requiresContext").as_ref(), neovim.into()));
+        assert!(has_term(&store, act, actions_pred("requiresContext").as_ref(), work.into()));
+
+        // Each context node has the right type and identifier
+        assert!(has_term(
+            &store, neovim,
+            rdf_type().as_ref(),
+            NamedNodeRef::new("https://clearhead.us/vocab/actions/v4#Context").unwrap().into(),
+        ));
+        assert!(has_term(
+            &store, neovim,
+            actions_pred("hasContextIdentifier").as_ref(),
+            LiteralRef::new_typed_literal("neovim", ns(XSD_NS, "string").as_ref()).into(),
+        ));
+    }
+
+    #[test]
+    fn inject_context_hierarchy_emits_broader_narrower_triples() {
+        use std::collections::HashMap;
+        let store = graph::create_store().expect("store");
+
+        let mut tag_hierarchies = HashMap::new();
+        tag_hierarchies.insert("computer".to_string(), vec!["terminal".to_string()]);
+        tag_hierarchies.insert("terminal".to_string(), vec!["neovim".to_string()]);
+        let config = WorkspaceConfig { tag_hierarchies, ..Default::default() };
+
+        inject_context_hierarchy(&store, &config).expect("inject");
+
+        let computer = NamedNodeRef::new("urn:context:computer").unwrap();
+        let terminal = NamedNodeRef::new("urn:context:terminal").unwrap();
+        let neovim = NamedNodeRef::new("urn:context:neovim").unwrap();
+
+        // contextBroader: child → parent
+        assert!(has_term(&store, terminal, actions_pred("contextBroader").as_ref(), computer.into()));
+        assert!(has_term(&store, neovim, actions_pred("contextBroader").as_ref(), terminal.into()));
+        // contextNarrower: parent → child
+        assert!(has_term(&store, computer, actions_pred("contextNarrower").as_ref(), terminal.into()));
+        assert!(has_term(&store, terminal, actions_pred("contextNarrower").as_ref(), neovim.into()));
+    }
+
+    #[test]
+    fn sparql_property_path_traverses_context_hierarchy() {
+        // An action tagged +neovim should be found by a SPARQL query for +computer
+        // when the hierarchy computer → terminal → neovim is injected.
+        use std::collections::HashMap;
+        let store = graph::create_store().expect("store");
+        let model = action_with_contexts(vec!["neovim"]);
+
+        let mut tag_hierarchies = HashMap::new();
+        tag_hierarchies.insert("computer".to_string(), vec!["terminal".to_string()]);
+        tag_hierarchies.insert("terminal".to_string(), vec!["neovim".to_string()]);
+        let config = WorkspaceConfig { tag_hierarchies, ..Default::default() };
+
+        load_domain_model(&store, &model, Some(&config)).expect("load");
+
+        // Property-path query: action → requiresContext → ctx →(contextBroader)*→ computer
+        // query_action_ids expects the ?id binding to be the hasUUID literal.
+        let sparql = "
+            PREFIX actions: <https://clearhead.us/vocab/actions/v4#>
+            SELECT ?id WHERE {
+                ?action actions:hasUUID ?id .
+                ?action actions:requiresContext ?ctx .
+                ?ctx (actions:contextBroader)* <urn:context:computer> .
+            }
+        ";
+
+        let ids = graph::query_action_ids(&store, sparql).expect("query");
+        assert!(
+            ids.contains(&"019d7100-aaaa-7aaa-8aaa-aaaaaaaaaaaa".to_string()),
+            "neovim-tagged action not found under computer hierarchy; got: {:?}",
+            ids
+        );
     }
 }
