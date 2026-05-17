@@ -11,9 +11,9 @@
 [x] retire hasExternalId ghost property from graph insert  $ Plan.external_id now emits actions:hasExternalScheduleId matching the OWL-declared property; no undefined predicate in the internal graph $ %2026-05-16T00:00 #019df000-0011-7000-0000-000000000001
 [ ] write rustdoc for workspace/ module  $ workspace/ is the largest and most complex module — load_workspace, save_domain_model, expand_plans_into_acts, and the actions/charter/ics/sidecar submodules have almost no doc comments; a contributor is on their own trying to understand the public API $ +docs  #019e37e9-c8ae-fb46-bf64-5938dcb11711
 [ ] add rustdoc to public API  $ lib.rs has zero doc comments; all pub types and functions in domain/, config.rs, workspace/ need /// doc comments so cargo doc and docs.rs are useful to library consumers $ +docs  #019e37ca-514a-7e5a-b168-b05404c5fbe8
-[ ] add Config type to clearhead-core  $ tag_hierarchies and core path settings currently only live in clearhead-cli/environment_reader.rs; core has no concept of config; the graph layer needs config to inject Context hierarchy triples and for future workspace-level configuration $ #019df000-0012-7000-0000-000000000001
-    >[ ] move or mirror Config struct (data_dir, config_dir, default_file, tag_hierarchies) from CLI into core  #019df000-0013-7000-0000-000000000001
-    >[ ] update CLI to use core Config type rather than owning its own  #019df000-0014-7000-0000-000000000001
+[_] add Config type to clearhead-core  $ WorkspaceConfig in core already covers the semantic boundary; each tool (CLI, nvim) owns its own loading machinery — no need to centralise $ %2026-05-17T00:00 #019df000-0012-7000-0000-000000000001
+    >[_] move or mirror Config struct (data_dir, config_dir, default_file, tag_hierarchies) from CLI into core  %2026-05-17T00:00 #019df000-0013-7000-0000-000000000001
+    >[_] update CLI to use core Config type rather than owning its own  %2026-05-17T00:00 #019df000-0014-7000-0000-000000000001
 [x] wire Context hierarchy into the RDF graph  %2026-05-17T00:00 #019df000-0015-7000-0000-000000000001
     >[x] change insert_plan / insert_action to emit requiresContext → Context node triples instead of hasContext literals  %2026-05-17T00:00 #019df000-0016-7000-0000-000000000001
     >[x] inject contextBroader / contextNarrower triples from config tag_hierarchies on graph load  %2026-05-17T00:00 #019df000-0017-7000-0000-000000000001
