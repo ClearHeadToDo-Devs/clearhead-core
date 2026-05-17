@@ -1,25 +1,38 @@
 //! ClearHead Core Library
 //!
-//! This library provides the core domain model and logic for the ClearHead framework,
-//! aligned with the Actions Vocabulary v4 ontology. It is designed to be
-//! frontend-agnostic, supporting CLI, LSP, and web services.
+//! Pure domain model and business logic for the ClearHead framework, aligned
+//! with the Actions Vocabulary v4 ontology. Designed to be environment-agnostic:
+//! no filesystem access, no network, no configuration loading. Every tool (CLI,
+//! LSP, nvim plugin) constructs this layer and passes context in.
 //!
-//! # Core Concepts
+//! # Domain Model
 //!
-//! - **Ontology Aligned**: Follows BFO/CCO principles, distinguishing between
-//!   Information Content ([`Plan`][domain::Plan]) and Occurrences ([`PlannedAct`][domain::PlannedAct]).
-//! - **DSL Driven**: Primary interaction via the `.actions` DSL, parsed and
-//!   managed by the [`workspace`] module.
-//! - **Semantic**: Integrated RDF/SPARQL support in the [`graph`] module for
-//!   complex queries and linked-data exports.
+//! The hierarchy is: [`Objective`] → [`Charter`] → [`Plan`] / [`Action`]
+//!
+//! - [`Objective`] — high-level goal that organises charters.
+//! - [`Charter`] — domain of concern; owns a list of [`Plan`]s and [`Action`]s.
+//! - [`Plan`] — recurring schedule definition (RRULE + DTSTART). Produces [`Action`]s
+//!   via the expansion workflow. Does not carry execution state.
+//! - [`Action`] — atomic executable work item. The primary unit users interact with.
+//!   May be created directly (ad-hoc) or generated from a [`Plan`].
+//! - [`ActionState`] — lifecycle state that inheres in an [`Action`]:
+//!   `NotStarted` → `InProgress` → `Completed` (or `Cancelled` / `BlockedOrAwaiting`).
 //!
 //! # Module Hierarchy
 //!
-//! - [`workspace`]: DSL projection — `.actions` parsing/formatting, charters, store.
-//! - [`domain`]: Higher-level domain models (Objectives, Charters, Plans, Acts).
-//! - [`sync`]: Semantic comparison and sync decision logic.
-//! - [`graph`]: RDF/SPARQL integration for semantic queries.
-//! - [`crdt`]: CRDT operations (Deferred for future implementation).
+//! - [`workspace`]: DSL projection — `.actions` parsing/formatting, charter discovery,
+//!   ICS plan loading, expansion, and workspace store.
+//! - [`domain`]: Core structs ([`Action`], [`Plan`], [`Charter`], [`Objective`], etc.)
+//!   and the [`DomainModel`] aggregate.
+//! - [`reference`]: String-based reference resolution across the domain model
+//!   (UUID, short-prefix, alias, and path-style `charter/plan`).
+//! - [`config`]: [`WorkspaceConfig`] — semantic settings (tag hierarchies, expansion
+//!   counts) passed in by tools; core never reads disk config itself.
+//! - [`sync`]: [`DomainSyncDecision`] for CRDT merge/save orchestration.
+//! - [`graph`]: RDF/SPARQL integration (Oxigraph) for semantic queries and
+//!   linked-data exports.
+//! - [`telemetry`]: Structured event emission for action lifecycle observability.
+//! - [`crdt`]: CRDT operations (in progress).
 
 pub mod workspace;
 pub use workspace::store::{ManifestSourceType, WorkspaceManifestEntry};

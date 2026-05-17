@@ -1,22 +1,55 @@
+//! Cross-domain reference resolution.
+//!
+//! Resolves human-readable reference strings — aliases, short UUID prefixes, full
+//! UUIDs, and path-style `charter/plan` notation — to typed [`ReferenceTarget`]s.
+//!
+//! # Reference Syntax
+//!
+//! | Form | Example | Resolves to |
+//! |------|---------|-------------|
+//! | Full UUID | `019de698-0eb4-7ed1-b763-999f7a22282a` | Any target type |
+//! | Short prefix (8 hex chars) | `019de698` | Any target type |
+//! | Alias | `staging-deploy` | Charter or Plan |
+//! | Path | `work/feature` | Charter → Plan |
+//! | Prefixed | `c:work`, `p:weekly`, `a:019de698` | Scoped to type |
+//!
+//! Resolution order for unscoped single-segment references:
+//! 1. Charter (UUID, short prefix, alias)
+//! 2. Plan (UUID, short prefix, alias)
+//! 3. Action (UUID, short prefix only)
+
 use crate::domain::{Action, Charter, DomainModel, Plan};
 use std::fmt;
 use uuid::Uuid;
 
+/// The resolved target of a reference lookup.
+///
+/// Carries the UUID of the matched entity and its type, so callers can
+/// dispatch to the appropriate domain object without a second search.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ReferenceTarget {
+    /// A resolved [`Charter`] UUID.
     Charter(Uuid),
+    /// A resolved [`Plan`] UUID.
     Plan(Uuid),
+    /// A resolved [`Action`] UUID.
     Act(Uuid),
 }
 
+/// Controls how alias segments are matched during resolution.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MatchMode {
+    /// Case-insensitive exact string match against alias or name.
     Exact,
 }
 
+/// Options controlling reference resolution behaviour.
 #[derive(Debug, Clone, Copy)]
 pub struct ReferenceOptions {
+    /// When `true`, recognise `c:`, `p:`, and `a:` type prefixes.
+    /// Disable if the input is known to be a plain alias or UUID.
     pub allow_prefixes: bool,
+    /// How alias segments are compared. Currently only [`MatchMode::Exact`].
     pub match_mode: MatchMode,
 }
 
@@ -63,6 +96,27 @@ enum Scope<'a> {
     Plan(&'a Charter, &'a Plan),
 }
 
+/// Resolve a reference string to a typed [`ReferenceTarget`] within `model`.
+///
+/// Accepts full UUIDs, 8-char short prefixes, aliases, and path-style
+/// `charter/plan` strings. Use `options` to control prefix handling and
+/// match mode.
+///
+/// # Errors
+///
+/// Returns [`ReferenceError`] when the reference is empty, matches nothing,
+/// matches ambiguously, or when a prefixed reference resolves to the wrong
+/// target type.
+///
+/// # Examples
+///
+/// ```
+/// use clearhead_core::{resolve_reference, ReferenceOptions, ReferenceTarget, DomainModel};
+///
+/// let model = DomainModel::new(); // empty model
+/// let result = resolve_reference(&model, "nonexistent", &ReferenceOptions::default());
+/// assert!(result.is_err());
+/// ```
 pub fn resolve_reference(
     model: &DomainModel,
     input: &str,
@@ -119,6 +173,10 @@ pub fn resolve_reference(
     }
 }
 
+/// Return a [`DomainModel`] containing only the specified charter and,
+/// when `recursive` is `true`, all of its descendants.
+///
+/// Objectives are not included in the filtered result.
 pub fn filter_model_for_charter(
     model: &DomainModel,
     charter_id: Uuid,
@@ -170,6 +228,11 @@ pub fn filter_model_for_charter(
     }
 }
 
+/// Return a [`DomainModel`] scoped to a single plan and its owning charter.
+///
+/// The returned charter contains only the matched plan; all other plans and
+/// actions in that charter are excluded. Returns an empty model if the plan
+/// is not found.
 pub fn filter_model_for_plan(model: &DomainModel, plan_id: Uuid) -> DomainModel {
     for charter in &model.charters {
         if let Some(plan) = charter.plans.iter().find(|p| p.id == plan_id) {
@@ -188,6 +251,11 @@ pub fn filter_model_for_plan(model: &DomainModel, plan_id: Uuid) -> DomainModel 
     }
 }
 
+/// Return a [`DomainModel`] scoped to a single action and its owning charter.
+///
+/// The returned charter contains only the matched action. If the action has
+/// an associated plan, that plan is also included; other plans are excluded.
+/// Returns an empty model if the action is not found.
 pub fn filter_model_for_act(model: &DomainModel, act_id: Uuid) -> DomainModel {
     for charter in &model.charters {
         if let Some(act) = charter.actions.iter().find(|a| a.id == act_id) {
