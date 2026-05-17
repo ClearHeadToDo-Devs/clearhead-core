@@ -14,8 +14,8 @@
 [ ] add Config type to clearhead-core  $ tag_hierarchies and core path settings currently only live in clearhead-cli/environment_reader.rs; core has no concept of config; the graph layer needs config to inject Context hierarchy triples and for future workspace-level configuration $ #019df000-0012-7000-0000-000000000001
     >[ ] move or mirror Config struct (data_dir, config_dir, default_file, tag_hierarchies) from CLI into core  #019df000-0013-7000-0000-000000000001
     >[ ] update CLI to use core Config type rather than owning its own  #019df000-0014-7000-0000-000000000001
-[ ] wire Context hierarchy into the RDF graph  $ contexts are currently stored as actions:hasContext string literals in the internal graph — a ghost predicate not in the OWL; requires Config type in core first $ #019df000-0015-7000-0000-000000000001
-    >[ ] change insert_plan / insert_action to emit requiresContext → Context node triples instead of hasContext literals  $ mint urn:context:{tag} IRIs deterministically; emit a actions:Context type triple and actions:hasContextIdentifier for each node $ #019df000-0016-7000-0000-000000000001
-    >[ ] inject contextBroader / contextNarrower triples from config tag_hierarchies on graph load  $ graph becomes fully SPARQL-queryable for context hierarchy; unblocks plans-with-contexts.sparql and next-actions dependency filtering $ #019df000-0017-7000-0000-000000000001
-    >[ ] update query reconstruction to follow requiresContext → hasContextIdentifier instead of reading hasContext literals  #019df000-0018-7000-0000-000000000001
-    >[ ] update tests for new context graph shape  #019df000-0019-7000-0000-000000000001
+[x] wire Context hierarchy into the RDF graph  %2026-05-17T00:00 #019df000-0015-7000-0000-000000000001
+    >[x] change insert_plan / insert_action to emit requiresContext → Context node triples instead of hasContext literals  %2026-05-17T00:00 #019df000-0016-7000-0000-000000000001
+    >[x] inject contextBroader / contextNarrower triples from config tag_hierarchies on graph load  %2026-05-17T00:00 #019df000-0017-7000-0000-000000000001
+    >[x] update query reconstruction to follow requiresContext → hasContextIdentifier instead of reading hasContext literals  %2026-05-17T00:00 #019df000-0018-7000-0000-000000000001
+    >[x] update tests for new context graph shape  %2026-05-17T00:00 #019df000-0019-7000-0000-000000000001
