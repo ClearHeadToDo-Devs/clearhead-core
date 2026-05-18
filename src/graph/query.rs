@@ -286,6 +286,7 @@ fn get_charter_by_id(store: &Store, id: Uuid) -> Result<Charter> {
         alias,
         parent: query_charter_parent_alias_or_title(store, id)?,
         objectives: None,
+        state: None,
         plans: vec![],
         actions: vec![],
     })

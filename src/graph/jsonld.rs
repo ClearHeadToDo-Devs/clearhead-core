@@ -35,6 +35,7 @@ const ACTIONS_CONTEXT_V4: &str = include_str!("../resources/actions.context.v4.j
 ///         alias: None,
 ///         parent: None,
 ///         objectives: None,
+///         state: None,
 ///         plans: vec![Plan {
 ///             id: plan_id,
 ///             name: "Write docs".to_string(),

@@ -320,6 +320,34 @@ impl Recurrence {
     }
 }
 
+/// Lifecycle state of a [`Charter`].
+///
+/// Charters move through a simple workflow. `Closed` is the precondition
+/// for archival — the charter and all its artifacts are swept into
+/// `archive.ttl` only when this state is set.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CharterState {
+    /// Newly created, not yet active.
+    New,
+    /// Actively being worked on.
+    Active,
+    /// Blocked on an external dependency.
+    Blocked,
+    /// All work is done; ready to be archived.
+    Closed,
+}
+
+impl std::fmt::Display for CharterState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CharterState::New => write!(f, "New"),
+            CharterState::Active => write!(f, "Active"),
+            CharterState::Blocked => write!(f, "Blocked"),
+            CharterState::Closed => write!(f, "Closed"),
+        }
+    }
+}
+
 /// Lifecycle state of an [`Action`].
 ///
 /// Maps to `actions:ActionState`. The state inheres in the [`Action`].
@@ -480,6 +508,10 @@ pub struct Charter {
     pub parent: Option<String>,
     /// References to [`Objective`]s, resolved at workspace layer
     pub objectives: Option<Vec<String>>,
+    /// Lifecycle state of this charter. `None` is treated as [`CharterState::New`].
+    /// Set to [`CharterState::Closed`] before archiving.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub state: Option<CharterState>,
     /// [`Plan`]s organized under this charter (nested hierarchy)
     pub plans: Vec<Plan>,
     /// [`Action`]s scoped to this charter; each may optionally reference a plan.
@@ -494,6 +526,7 @@ pub fn charter_from_plans_and_name(name: String, plans: Vec<Plan>) -> Charter {
         alias: Some(name.clone()),
         parent: None,
         objectives: None,
+        state: None,
         plans,
         actions: vec![],
     }

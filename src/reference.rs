@@ -617,6 +617,7 @@ mod tests {
             alias: Some("build".to_string()),
             parent: None,
             objectives: None,
+            state: None,
             plans: vec![plan, subplan],
             actions: vec![make_act(act_id, plan_id)],
         };
@@ -628,6 +629,7 @@ mod tests {
             alias: Some("obs".to_string()),
             parent: Some("build".to_string()),
             objectives: None,
+            state: None,
             plans: vec![],
             actions: vec![],
         };
@@ -639,6 +641,7 @@ mod tests {
             alias: Some("implicit".to_string()),
             parent: None,
             objectives: None,
+            state: None,
             plans: vec![],
             actions: vec![],
         };

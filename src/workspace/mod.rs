@@ -9,6 +9,7 @@
 
 pub mod actions;
 pub mod acts;
+pub mod archive_charter;
 pub mod charter;
 pub mod detection;
 pub mod expand;
@@ -28,6 +29,10 @@ pub use actions::{
 pub use acts::{completed_acts_path, upcoming_acts_path, read_acts, write_acts};
 pub use sidecar::{ActMeta, CharterMeta, CharterMetadata, PlanMeta, hydrate_acts, read_sidecar, sidecar_path, write_sidecar};
 pub use charter::{MarkdownCharter, format_charter, implicit_charter, parse_charter};
+pub use archive_charter::{
+    ArchiveCharterError, ArchiveCharterOptions, ArchiveCharterResult,
+    archive_charter, archive_closed_charters, find_charter as find_markdown_charter,
+};
 pub use ics::occurrence_act_id;
 pub use plans::{
     PlanFileEntry, collect_plan_files, infer_plan_charter_name,

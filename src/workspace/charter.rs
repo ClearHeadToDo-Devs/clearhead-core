@@ -21,7 +21,7 @@ use serde::Deserialize;
 use std::path::PathBuf;
 use uuid::Uuid;
 
-use crate::domain::{Action, Charter, Plan};
+use crate::domain::{Action, Charter, CharterState, Plan};
 
 /// A charter as it exists in the workspace — carries file paths alongside domain data.
 ///
@@ -34,6 +34,9 @@ pub struct MarkdownCharter {
     pub alias: Option<String>,
     pub parent: Option<String>,
     pub objectives: Option<Vec<String>>,
+    /// Lifecycle state parsed from the charter `.md` frontmatter.
+    /// `None` means the state has not been explicitly set (treated as `New`).
+    pub state: Option<CharterState>,
     pub plans: Vec<Plan>,
     pub actions: Vec<Action>,
 
@@ -51,6 +54,7 @@ impl From<MarkdownCharter> for Charter {
             alias: mc.alias,
             parent: mc.parent,
             objectives: mc.objectives,
+            state: mc.state,
             plans: mc.plans,
             actions: mc.actions,
         }
@@ -66,6 +70,7 @@ impl From<Charter> for MarkdownCharter {
             alias: c.alias,
             parent: c.parent,
             objectives: c.objectives,
+            state: c.state,
             plans: c.plans,
             actions: c.actions,
             md_file: None,
@@ -88,6 +93,7 @@ struct CharterFrontmatter {
     alias: Option<String>,
     parent: Option<String>,
     objectives: Option<Vec<String>>,
+    state: Option<CharterState>,
 }
 
 /// Parse a [`Charter`] from markdown content with optional YAML frontmatter.
@@ -127,6 +133,7 @@ pub fn parse_charter(content: &str) -> Result<Charter, String> {
         alias: fm.alias,
         parent: fm.parent,
         objectives: fm.objectives,
+        state: fm.state,
         plans: vec![],
         actions: vec![],
     })
@@ -143,6 +150,7 @@ pub fn implicit_charter(name: &str) -> Charter {
         alias: Some(name.to_string()),
         parent: None,
         objectives: None,
+        state: None,
         plans: vec![],
         actions: vec![],
     }
@@ -166,6 +174,9 @@ pub fn format_charter(charter: &Charter) -> String {
         for obj in objectives {
             out.push_str(&format!("  - {}\n", obj));
         }
+    }
+    if let Some(ref state) = charter.state {
+        out.push_str(&format!("state: {}\n", state));
     }
     out.push_str("---\n");
 
@@ -348,6 +359,7 @@ Stay healthy and fit through regular exercise and diet.
             alias: Some("test".to_string()),
             parent: None,
             objectives: Some(vec!["obj1".to_string()]),
+            state: None,
             plans: vec![],
             actions: vec![],
         };

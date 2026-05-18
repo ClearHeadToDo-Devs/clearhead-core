@@ -118,6 +118,9 @@ pub fn load_workspace(root: &Path) -> Result<Vec<MarkdownCharter>, WorkspaceErro
                 if explicit.objectives.is_some() {
                     implicit.objectives = explicit.objectives.clone();
                 }
+                if explicit.state.is_some() {
+                    implicit.state = explicit.state;
+                }
                 implicit.md_file = Some(md_relative.clone());
             })
             .or_insert_with(|| {

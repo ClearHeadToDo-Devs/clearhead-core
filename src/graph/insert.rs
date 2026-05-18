@@ -8,7 +8,7 @@ use super::{
     actions_pred, bfo_pred, cco_node, ns, phase_node, rdf_type, rdfs_pred,
 };
 use crate::WorkspaceConfig;
-use crate::domain::{Action, Charter, DomainModel, Plan};
+use crate::domain::{Action, Charter, CharterState, DomainModel, Plan};
 use crate::workspace::actions::convert::INBOX_CHARTER_NS;
 use oxigraph::io::RdfFormat;
 use oxigraph::model::{GraphName, Literal, NamedNode, NamedOrBlankNode, Quad, Term};
@@ -114,6 +114,19 @@ fn insert_charter(
         add(
             actions_pred("hasAlias"),
             Term::Literal(Literal::new_simple_literal(alias)),
+        )?;
+    }
+
+    if let Some(ref state) = charter.state {
+        let state_str = match state {
+            CharterState::New => "New",
+            CharterState::Active => "Active",
+            CharterState::Blocked => "Blocked",
+            CharterState::Closed => "Closed",
+        };
+        add(
+            actions_pred("hasCharterState"),
+            Term::Literal(Literal::new_simple_literal(state_str)),
         )?;
     }
 

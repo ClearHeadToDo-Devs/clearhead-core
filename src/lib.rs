@@ -51,6 +51,8 @@ pub use workspace::{
     occurrence_act_id, parse_actions,
     parse_actions_with_mode, parse_charter, parse_document, parse_tree, patch_action_list,
     charter_root, plans_root, read_acts, save_domain_model, workspace_data_root, write_acts,
+    ArchiveCharterError, ArchiveCharterOptions, ArchiveCharterResult,
+    archive_charter, archive_closed_charters, find_markdown_charter,
 };
 pub use workspace::expand::{ExpandResult, ExpansionConfig};
 
@@ -61,7 +63,7 @@ pub use domain::diff::{
     PlanFieldChange, diff_domain_models,
 };
 #[doc(inline)]
-pub use domain::{ActionState, PredecessorRef, Charter, DomainModel, Metric, Objective, Plan, Recurrence};
+pub use domain::{ActionState, PredecessorRef, Charter, CharterState, DomainModel, Metric, Objective, Plan, Recurrence};
 
 pub mod crdt;
 

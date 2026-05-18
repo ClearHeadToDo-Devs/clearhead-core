@@ -1,4 +1,5 @@
-[ ] Add state concept in charters  $ right now the library doesnt encode state even if people do write it so we want to atleast capture it when necessary $ #019d573f-95fd-7e93-a1ac-78dbec9be4b8
+[x] Add state concept in charters  $ CharterState enum (New/Active/Blocked/Closed) added to domain, parsed from frontmatter, serialized back, emitted as hasCharterState triple in RDF graph $ %2026-05-17T00:00 #019d573f-95fd-7e93-a1ac-78dbec9be4b8
+[ ] add graph query reconstruction for CharterState  $ get_charter_by_id in query.rs reconstructs a Charter from the store but does not yet read the hasCharterState triple back into Charter.state — needed for full round-trip via the graph layer $ #a5a27d56-3c3d-4dd2-a863-2f14390a6145
 [x] replace PlannedAct with Action in domain model  %2026-05-17T00:00 #019de698-0eb4-7ed1-b763-999f7a22282a
     >[x] enrich Action struct with name, description, priority, contexts, alias, parent, is_sequential, depends_on  %2026-05-09T00:00 #019de698-49a4-7193-9db6-5f577c799ecf
     >[x] update Charter struct - rename acts to actions, typed as Action list  %2026-05-09T00:00 #019de698-49b5-7be0-bc39-2fa157008b00

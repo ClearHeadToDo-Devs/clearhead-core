@@ -201,6 +201,7 @@ impl From<&SyncCharter> for Charter {
             alias: c.alias.clone(),
             parent: c.parent.clone(),
             objectives: c.objectives.clone(),
+            state: None,
             plans: c.plans.iter().map(Plan::from).collect(),
             actions: c.acts.iter().map(Action::from).collect(),
         }
