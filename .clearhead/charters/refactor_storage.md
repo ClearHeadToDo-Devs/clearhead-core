@@ -1,7 +1,7 @@
 ---
 id: 019d236f-189b-7aef-94f0-daaeb7cfab8c
 alias: refactor_storage
-state: completed
+state: Closed
 ---
 # Refactor Storage Trait
 Currently, we are relying on the workspace trait to do the work of turning domain objects into the actual storage backend we wanted.
