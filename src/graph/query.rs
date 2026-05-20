@@ -682,7 +682,8 @@ mod tests {
             cco = CCO_NS,
             plan = CCO_PLAN,
         );
-        crate::graph::load_turtle(&store, &ttl).expect("load turtle");
+        // Use a named graph — production never loads into DefaultGraph for queries.
+        load_turtle_into_graph(&store, &ttl, transient_graph()).expect("load turtle");
 
         let sparql = format!(
             "SELECT ?id WHERE {{ ?s a <{cco}{plan}> ; <{actions}hasUUID> ?id . }}",
