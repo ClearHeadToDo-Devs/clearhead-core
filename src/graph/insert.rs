@@ -27,6 +27,7 @@ pub fn load_domain_model(
     store: &Store,
     model: &DomainModel,
     config: Option<&WorkspaceConfig>,
+    graph_name: GraphName,
 ) -> Result<()> {
     // Build title → UUID map so hasSubCharter triples use the actual charter UUID
     // rather than re-deriving it (which breaks when explicit .md charters have
@@ -38,13 +39,13 @@ pub fn load_domain_model(
         .collect();
 
     for charter in &model.charters {
-        insert_charter(store, charter, &charter_id_by_title)?;
+        insert_charter(store, charter, &charter_id_by_title, &graph_name)?;
     }
     for action in model.all_actions() {
-        insert_action(store, action)?;
+        insert_action(store, action, &graph_name)?;
     }
     if let Some(cfg) = config {
-        inject_context_hierarchy(store, cfg)?;
+        inject_context_hierarchy(store, cfg, &graph_name)?;
     }
     Ok(())
 }
@@ -55,8 +56,11 @@ pub fn load_domain_model(
 /// `archive.ttl`.  Quad idempotence means calling this with already-present
 /// acts is safe.
 pub fn load_acts_into_store(store: &Store, acts: &[Action]) -> Result<()> {
+    // Archive serialization stores always use the default graph — they are
+    // transient single-use stores written to TTL, not persistent query stores.
+    let graph = GraphName::DefaultGraph;
     for act in acts {
-        insert_action(store, act)?;
+        insert_action(store, act, &graph)?;
     }
     Ok(())
 }
@@ -71,6 +75,29 @@ pub fn load_turtle(store: &Store, content: &str) -> Result<()> {
         .map_err(|e| GraphError::Syntax(e.to_string()))
 }
 
+/// Load RDF Turtle content into a specific named graph.
+///
+/// Parses via a temporary store (DefaultGraph), then re-inserts quads into
+/// `graph_name`. Used in tests to seed named-graph stores with hand-crafted TTL.
+pub fn load_turtle_into_graph(store: &Store, content: &str, graph_name: GraphName) -> Result<()> {
+    use oxigraph::model::GraphNameRef;
+    let temp = Store::new().map_err(|e| GraphError::Store(e.to_string()))?;
+    temp.load_from_reader(RdfFormat::Turtle, content.as_bytes())
+        .map_err(|e| GraphError::Syntax(e.to_string()))?;
+    for quad in temp.quads_for_pattern(None, None, None, Some(GraphNameRef::DefaultGraph)) {
+        let quad = quad.map_err(|e| GraphError::Store(e.to_string()))?;
+        store
+            .insert(&oxigraph::model::Quad::new(
+                quad.subject,
+                quad.predicate,
+                quad.object,
+                graph_name.clone(),
+            ))
+            .map_err(|e| GraphError::Store(e.to_string()))?;
+    }
+    Ok(())
+}
+
 // ============================================================================
 // Private insertion helpers
 // ============================================================================
@@ -79,10 +106,11 @@ fn insert_charter(
     store: &Store,
     charter: &Charter,
     charter_id_by_title: &HashMap<String, Uuid>,
+    graph_name: &GraphName,
 ) -> Result<()> {
     let subject =
         NamedOrBlankNode::NamedNode(NamedNode::new(format!("urn:uuid:{}", charter.id)).unwrap());
-    let graph = GraphName::DefaultGraph;
+    let graph = graph_name.clone();
 
     let add = |pred: NamedNode, term: Term| {
         store
@@ -143,7 +171,7 @@ fn insert_charter(
                 parent_uri,
                 actions_pred("hasSubCharter"),
                 Term::NamedNode(NamedNode::new(format!("urn:uuid:{}", charter.id)).unwrap()),
-                GraphName::DefaultGraph,
+                graph_name.clone(),
             ))
             .map_err(|e| GraphError::Store(e.to_string()))?;
     }
@@ -151,7 +179,7 @@ fn insert_charter(
     for plan in &charter.plans {
         let plan_uri = NamedNode::new(format!("urn:uuid:{}", plan.id)).unwrap();
         add(bfo_pred(BFO_HAS_PART), Term::NamedNode(plan_uri))?;
-        insert_plan(store, plan, &charter.actions)?;
+        insert_plan(store, plan, &charter.actions, graph_name)?;
     }
 
     for action in charter.actions.iter().filter(|a| a.plan_id.is_none()) {
@@ -162,10 +190,10 @@ fn insert_charter(
     Ok(())
 }
 
-fn insert_plan(store: &Store, plan: &Plan, charter_actions: &[Action]) -> Result<()> {
+fn insert_plan(store: &Store, plan: &Plan, charter_actions: &[Action], graph_name: &GraphName) -> Result<()> {
     let subject =
         NamedOrBlankNode::NamedNode(NamedNode::new(format!("urn:uuid:{}", plan.id)).unwrap());
-    let graph = GraphName::DefaultGraph;
+    let graph = graph_name.clone();
 
     let add = |pred: NamedNode, term: Term| {
         store
@@ -231,10 +259,10 @@ fn insert_plan(store: &Store, plan: &Plan, charter_actions: &[Action]) -> Result
     Ok(())
 }
 
-fn insert_action(store: &Store, act: &Action) -> Result<()> {
+fn insert_action(store: &Store, act: &Action, graph_name: &GraphName) -> Result<()> {
     let subject =
         NamedOrBlankNode::NamedNode(NamedNode::new(format!("urn:uuid:{}", act.id)).unwrap());
-    let graph = GraphName::DefaultGraph;
+    let graph = graph_name.clone();
 
     let add = |pred: NamedNode, term: Term| {
         store
@@ -272,7 +300,7 @@ fn insert_action(store: &Store, act: &Action) -> Result<()> {
 
     if let Some(contexts) = &act.contexts {
         for context in contexts {
-            let ctx_node = insert_context_node(store, context)?;
+            let ctx_node = insert_context_node(store, context, graph_name)?;
             add(actions_pred("requiresContext"), Term::NamedNode(ctx_node))?;
         }
     }
@@ -386,11 +414,11 @@ fn insert_action(store: &Store, act: &Action) -> Result<()> {
 ///
 /// Emits `a actions:Context` and `hasContextIdentifier` triples. Idempotent —
 /// inserting the same quad twice is a no-op in Oxigraph.
-fn insert_context_node(store: &Store, tag: &str) -> Result<NamedNode> {
+fn insert_context_node(store: &Store, tag: &str, graph_name: &GraphName) -> Result<NamedNode> {
     let clean = tag.trim_start_matches('+');
     let uri = NamedNode::new(format!("urn:context:{}", clean)).unwrap();
     let subject = NamedOrBlankNode::NamedNode(uri.clone());
-    let graph = GraphName::DefaultGraph;
+    let graph = graph_name.clone();
 
     store
         .insert(&Quad::new(
@@ -418,18 +446,19 @@ fn insert_context_node(store: &Store, tag: &str) -> Result<NamedNode> {
 /// not any action currently uses them) and links them with
 /// `actions:contextBroader` (child → parent) and `actions:contextNarrower`
 /// (parent → child). This makes the full hierarchy SPARQL-queryable.
-fn inject_context_hierarchy(store: &Store, config: &WorkspaceConfig) -> Result<()> {
+fn inject_context_hierarchy(store: &Store, config: &WorkspaceConfig, graph_name: &GraphName) -> Result<()> {
+    let graph = graph_name.clone();
     for (parent_tag, children) in &config.tag_hierarchies {
-        let parent_uri = insert_context_node(store, parent_tag)?;
+        let parent_uri = insert_context_node(store, parent_tag, &graph)?;
         for child_tag in children {
-            let child_uri = insert_context_node(store, child_tag)?;
+            let child_uri = insert_context_node(store, child_tag, &graph)?;
             // contextBroader: child → parent
             store
                 .insert(&Quad::new(
                     NamedOrBlankNode::NamedNode(child_uri.clone()),
                     actions_pred("contextBroader"),
                     Term::NamedNode(parent_uri.clone()),
-                    GraphName::DefaultGraph,
+                    graph.clone(),
                 ))
                 .map_err(|e| GraphError::Store(e.to_string()))?;
             // contextNarrower: parent → child
@@ -438,7 +467,7 @@ fn inject_context_hierarchy(store: &Store, config: &WorkspaceConfig) -> Result<(
                     NamedOrBlankNode::NamedNode(parent_uri.clone()),
                     actions_pred("contextNarrower"),
                     Term::NamedNode(child_uri),
-                    GraphName::DefaultGraph,
+                    graph.clone(),
                 ))
                 .map_err(|e| GraphError::Store(e.to_string()))?;
         }
@@ -546,7 +575,7 @@ mod tests {
         let store = graph::create_store().expect("store");
         let model = sample_model();
 
-        load_domain_model(&store, &model, None).expect("load model into graph");
+        load_domain_model(&store, &model, None, GraphName::DefaultGraph).expect("load model into graph");
 
         let plan = NamedNodeRef::new("urn:uuid:019d7100-1111-7111-8111-111111111111").unwrap();
         let act = NamedNodeRef::new("urn:uuid:019d7100-2222-7222-8222-222222222222").unwrap();
@@ -648,8 +677,11 @@ mod tests {
     fn canonical_graph_passes_validation_subset() {
         let store = graph::create_store().expect("store");
         let model = sample_model();
+        let g = GraphName::NamedNode(
+            oxigraph::model::NamedNode::new(super::super::TRANSIENT_GRAPH_URI).unwrap(),
+        );
 
-        load_domain_model(&store, &model, None).expect("load model into graph");
+        load_domain_model(&store, &model, None, g).expect("load model into graph");
         let violations = validate_actions_vocabulary(&store).expect("validate graph");
 
         assert!(violations.is_empty(), "violations: {violations:?}");
@@ -684,7 +716,7 @@ mod tests {
     fn context_triples_emitted_for_action_with_contexts() {
         let store = graph::create_store().expect("store");
         let model = action_with_contexts(vec!["neovim", "work"]);
-        load_domain_model(&store, &model, None).expect("load");
+        load_domain_model(&store, &model, None, GraphName::DefaultGraph).expect("load");
 
         let act = NamedNodeRef::new("urn:uuid:019d7100-aaaa-7aaa-8aaa-aaaaaaaaaaaa").unwrap();
         let neovim = NamedNodeRef::new("urn:context:neovim").unwrap();
@@ -710,25 +742,35 @@ mod tests {
     #[test]
     fn inject_context_hierarchy_emits_broader_narrower_triples() {
         use std::collections::HashMap;
+        use oxigraph::model::GraphNameRef;
         let store = graph::create_store().expect("store");
 
         let mut tag_hierarchies = HashMap::new();
         tag_hierarchies.insert("computer".to_string(), vec!["terminal".to_string()]);
         tag_hierarchies.insert("terminal".to_string(), vec!["neovim".to_string()]);
         let config = WorkspaceConfig { tag_hierarchies, ..Default::default() };
+        let g = GraphName::NamedNode(
+            oxigraph::model::NamedNode::new(super::super::TRANSIENT_GRAPH_URI).unwrap(),
+        );
 
-        inject_context_hierarchy(&store, &config).expect("inject");
+        inject_context_hierarchy(&store, &config, &g).expect("inject");
 
         let computer = NamedNodeRef::new("urn:context:computer").unwrap();
         let terminal = NamedNodeRef::new("urn:context:terminal").unwrap();
         let neovim = NamedNodeRef::new("urn:context:neovim").unwrap();
 
+        // Check presence across any graph (None = any graph)
+        let has = |s: NamedNodeRef, p: NamedNodeRef<'_>, o: NamedNodeRef| {
+            store.quads_for_pattern(Some(s.into()), Some(p.into()), Some(o.into()), None::<GraphNameRef>)
+                .next().is_some()
+        };
+
         // contextBroader: child → parent
-        assert!(has_term(&store, terminal, actions_pred("contextBroader").as_ref(), computer.into()));
-        assert!(has_term(&store, neovim, actions_pred("contextBroader").as_ref(), terminal.into()));
+        assert!(has(terminal, actions_pred("contextBroader").as_ref(), computer));
+        assert!(has(neovim, actions_pred("contextBroader").as_ref(), terminal));
         // contextNarrower: parent → child
-        assert!(has_term(&store, computer, actions_pred("contextNarrower").as_ref(), terminal.into()));
-        assert!(has_term(&store, terminal, actions_pred("contextNarrower").as_ref(), neovim.into()));
+        assert!(has(computer, actions_pred("contextNarrower").as_ref(), terminal));
+        assert!(has(terminal, actions_pred("contextNarrower").as_ref(), neovim));
     }
 
     #[test]
@@ -743,17 +785,21 @@ mod tests {
         tag_hierarchies.insert("computer".to_string(), vec!["terminal".to_string()]);
         tag_hierarchies.insert("terminal".to_string(), vec!["neovim".to_string()]);
         let config = WorkspaceConfig { tag_hierarchies, ..Default::default() };
+        let g = GraphName::NamedNode(
+            oxigraph::model::NamedNode::new(super::super::TRANSIENT_GRAPH_URI).unwrap(),
+        );
 
-        load_domain_model(&store, &model, Some(&config)).expect("load");
+        load_domain_model(&store, &model, Some(&config), g).expect("load");
 
-        // Property-path query: action → requiresContext → ctx →(contextBroader)*→ computer
-        // query_action_ids expects the ?id binding to be the hasUUID literal.
+        // Property-path query within the named graph: action → requiresContext → ctx →(contextBroader)*→ computer
         let sparql = "
             PREFIX actions: <https://clearhead.us/vocab/actions/v4#>
             SELECT ?id WHERE {
-                ?action actions:hasUUID ?id .
-                ?action actions:requiresContext ?ctx .
-                ?ctx (actions:contextBroader)* <urn:context:computer> .
+                GRAPH ?g {
+                    ?action actions:hasUUID ?id .
+                    ?action actions:requiresContext ?ctx .
+                    ?ctx (actions:contextBroader)* <urn:context:computer> .
+                }
             }
         ";
 

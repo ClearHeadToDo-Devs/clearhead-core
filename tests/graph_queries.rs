@@ -1,5 +1,5 @@
 use clearhead_core::{
-    graph::{create_store, load_domain_model as load_into_store, query_raw},
+    graph::{create_store, load_domain_model as load_into_store, query_raw, GraphName},
     workspace::store::load_domain_model,
 };
 use std::path::Path;
@@ -19,7 +19,7 @@ fn fixture(name: &str) -> std::path::PathBuf {
 fn user_flat_store() -> (clearhead_core::DomainModel, oxigraph::store::Store) {
     let model = load_domain_model(&fixture("user-flat")).expect("load domain model");
     let store = create_store().expect("create store");
-    load_into_store(&store, &model, None).expect("load into store");
+    load_into_store(&store, &model, None, GraphName::DefaultGraph).expect("load into store");
     (model, store)
 }
 

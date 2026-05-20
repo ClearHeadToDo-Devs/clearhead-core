@@ -13,7 +13,7 @@ use oxigraph::model::GraphNameRef;
 /// then serializes the default graph to Turtle.
 pub fn serialize_acts_to_turtle(model: &DomainModel) -> Result<String> {
     let store = create_store()?;
-    super::load_domain_model(&store, model, None)?;
+    super::load_domain_model(&store, model, None, oxigraph::model::GraphName::DefaultGraph)?;
     store_to_turtle(&store)
 }
 
@@ -25,7 +25,7 @@ pub fn serialize_closed_acts_to_turtle(model: &DomainModel) -> Result<String> {
         matches!(phase, ActionState::Completed | ActionState::Cancelled)
     });
     let store = create_store()?;
-    super::load_domain_model(&store, &filtered, None)?;
+    super::load_domain_model(&store, &filtered, None, oxigraph::model::GraphName::DefaultGraph)?;
     store_to_turtle(&store)
 }
 
@@ -37,7 +37,7 @@ pub fn serialize_open_acts_to_turtle(model: &DomainModel) -> Result<String> {
         !matches!(phase, ActionState::Completed | ActionState::Cancelled)
     });
     let store = create_store()?;
-    super::load_domain_model(&store, &filtered, None)?;
+    super::load_domain_model(&store, &filtered, None, oxigraph::model::GraphName::DefaultGraph)?;
     store_to_turtle(&store)
 }
 

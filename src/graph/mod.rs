@@ -15,7 +15,8 @@ pub mod jsonld;
 pub mod query;
 pub mod serialize;
 
-pub use insert::{load_acts_into_store, load_domain_model, load_turtle};
+pub use insert::{load_acts_into_store, load_domain_model, load_turtle, load_turtle_into_graph};
+pub use oxigraph::model::GraphName;
 pub use jsonld::{serialize_domain_to_jsonld, serialize_store_to_jsonld};
 pub use oxigraph::store::Store;
 pub use query::{
@@ -119,6 +120,22 @@ pub(crate) fn phase_node(phase: &crate::domain::ActionState) -> NamedNode {
 // ============================================================================
 // Store creation
 // ============================================================================
+
+/// URI prefix for all workspace named graphs.
+pub const WORKSPACE_GRAPH_PREFIX: &str = "urn:clearhead:workspace:";
+
+/// Derive the named graph URI for a workspace from its UUID string.
+///
+/// The resulting URI is `urn:clearhead:workspace:<uuid>`.  Every workspace
+/// must have a stable UUID (written to `.clearhead/config.json` by
+/// `clearhead init`) so that its named graph identity is durable.
+pub fn workspace_graph_uri(uuid: &str) -> NamedNode {
+    NamedNode::new(format!("{}{}", WORKSPACE_GRAPH_PREFIX, uuid)).unwrap()
+}
+
+/// Named graph used by transient in-memory stores (ad-hoc queries, tests).
+/// Not persisted; exists only so GRAPH ?g queries find data in single-use stores.
+pub const TRANSIENT_GRAPH_URI: &str = "urn:clearhead:workspace:transient";
 
 /// Create an in-memory Oxigraph store.
 pub fn create_store() -> Result<Store> {

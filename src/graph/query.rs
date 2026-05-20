@@ -7,7 +7,7 @@ use super::{
 };
 use crate::domain::{ActionState, Action, Charter, DomainModel, Plan, Recurrence};
 use chrono::{DateTime, Local};
-use oxigraph::model::{GraphName, NamedNode, NamedOrBlankNode, Term};
+use oxigraph::model::{NamedNode, NamedOrBlankNode, Term};
 use oxigraph::sparql::{QueryResults, SparqlEvaluator};
 use std::collections::HashMap;
 use uuid::Uuid;
@@ -27,7 +27,7 @@ pub fn build_raw_where_query(where_clause: &str) -> String {
         "PREFIX actions: <{ACTIONS_NS}>\nPREFIX cco: <{CCO_NS}>\n\
          PREFIX bfo: <{bfo}>\nPREFIX rdfs: <{rdfs}>\nPREFIX rdf: <{rdf}>\n\
          PREFIX xsd: <{xsd}>\nPREFIX skos: <{skos}>\n\
-         SELECT * WHERE {{ {where_clause} }}",
+         SELECT * WHERE {{ GRAPH ?g {{ {where_clause} }} }}",
         bfo = BFO_NS,
         rdfs = "http://www.w3.org/2000/01/rdf-schema#",
         rdf = super::RDF_NS,
@@ -45,7 +45,7 @@ pub fn build_where_query(where_clause: &str, _select: Option<&str>, _from: Optio
          PREFIX rdf: <{rdf_ns}>\n\
          PREFIX xsd: <{xsd_ns}>\n\
          PREFIX skos: <{skos_ns}>\n\
-         SELECT ?id WHERE {{ ?s <{actions_ns}hasUUID> ?id . {{ {where_clause} }} }}",
+         SELECT ?id WHERE {{ GRAPH ?g {{ ?s <{actions_ns}hasUUID> ?id . {{ {where_clause} }} }} }}",
         actions_ns = ACTIONS_NS,
         cco_ns = CCO_NS,
         bfo_ns = BFO_NS,
@@ -119,10 +119,10 @@ pub fn validate_actions_vocabulary(store: &Store) -> Result<Vec<String>> {
     let mut violations = Vec::new();
 
     let q_missing_status = format!(
-        "SELECT ?act WHERE {{ \
+        "SELECT ?act WHERE {{ GRAPH ?g {{ \
             ?act a <{actions}{action}> . \
             FILTER NOT EXISTS {{ ?act <{cco}{status_prop}> ?s }} \
-        }}",
+        }} }}",
         actions = ACTIONS_NS,
         action = ACTIONS_ACTION,
         cco = CCO_NS,
@@ -136,7 +136,7 @@ pub fn validate_actions_vocabulary(store: &Store) -> Result<Vec<String>> {
     }
 
     let q_invalid_status = format!(
-        "SELECT ?act WHERE {{ \
+        "SELECT ?act WHERE {{ GRAPH ?g {{ \
             ?act <{cco}{status_prop}> ?s . \
             FILTER (?s NOT IN ( \
                 <{ns}NotStarted>, \
@@ -145,7 +145,7 @@ pub fn validate_actions_vocabulary(store: &Store) -> Result<Vec<String>> {
                 <{ns}Blocked>, \
                 <{ns}Cancelled> \
             )) \
-        }}",
+        }} }}",
         cco = CCO_NS,
         status_prop = CCO_STATUS_PROP,
         ns = ACTIONS_NS,
@@ -157,11 +157,11 @@ pub fn validate_actions_vocabulary(store: &Store) -> Result<Vec<String>> {
     }
 
     let q_prescribes_wrong_target = format!(
-        "SELECT ?plan WHERE {{ \
+        "SELECT ?plan WHERE {{ GRAPH ?g {{ \
             ?plan a <{cco}{plan_cls}> . \
             ?plan <{cco}{prescribes}> ?target . \
             FILTER NOT EXISTS {{ ?target a <{actions}{action}> }} \
-        }}",
+        }} }}",
         actions = ACTIONS_NS,
         action = ACTIONS_ACTION,
         cco = CCO_NS,
@@ -179,7 +179,7 @@ pub fn validate_actions_vocabulary(store: &Store) -> Result<Vec<String>> {
 
 fn query_charters(store: &Store) -> Result<Vec<Charter>> {
     let sparql = format!(
-        "SELECT ?id WHERE {{ ?s a <{actions}Charter> . ?s <{actions}hasUUID> ?id . }}",
+        "SELECT ?id WHERE {{ GRAPH ?g {{ ?s a <{actions}Charter> . ?s <{actions}hasUUID> ?id . }} }}",
         actions = ACTIONS_NS,
     );
     let ids = query_uuids(store, &sparql, "id", "charter")?;
@@ -190,7 +190,7 @@ fn query_charters(store: &Store) -> Result<Vec<Charter>> {
 
 fn query_plans(store: &Store) -> Result<Vec<Plan>> {
     let sparql = format!(
-        "SELECT ?id WHERE {{ ?s a <{cco}{plan}> . ?s <{actions}hasUUID> ?id . }}",
+        "SELECT ?id WHERE {{ GRAPH ?g {{ ?s a <{cco}{plan}> . ?s <{actions}hasUUID> ?id . }} }}",
         cco = CCO_NS,
         plan = CCO_PLAN,
         actions = ACTIONS_NS,
@@ -203,7 +203,7 @@ fn query_plans(store: &Store) -> Result<Vec<Plan>> {
 
 fn query_actions(store: &Store) -> Result<Vec<Action>> {
     let sparql = format!(
-        "SELECT ?id WHERE {{ ?s a <{actions}{action}> . ?s <{actions}hasUUID> ?id . }}",
+        "SELECT ?id WHERE {{ GRAPH ?g {{ ?s a <{actions}{action}> . ?s <{actions}hasUUID> ?id . }} }}",
         actions = ACTIONS_NS,
         action = ACTIONS_ACTION,
     );
@@ -215,10 +215,10 @@ fn query_actions(store: &Store) -> Result<Vec<Action>> {
 
 fn query_charter_plan_edges(store: &Store) -> Result<Vec<(Uuid, Uuid)>> {
     let sparql = format!(
-        "SELECT ?charterId ?planId WHERE {{ \
+        "SELECT ?charterId ?planId WHERE {{ GRAPH ?g {{ \
             ?charter a <{actions}Charter> ; <{actions}hasUUID> ?charterId ; <{bfo}{has_part}> ?plan . \
             ?plan a <{cco}{plan}> ; <{actions}hasUUID> ?planId . \
-        }}",
+        }} }}",
         actions = ACTIONS_NS,
         bfo = BFO_NS,
         has_part = BFO_HAS_PART,
@@ -245,10 +245,10 @@ fn query_charter_plan_edges(store: &Store) -> Result<Vec<(Uuid, Uuid)>> {
 
 fn query_charter_action_edges(store: &Store) -> Result<Vec<(Uuid, Uuid)>> {
     let sparql = format!(
-        "SELECT ?charterId ?actionId WHERE {{ \
+        "SELECT ?charterId ?actionId WHERE {{ GRAPH ?g {{ \
             ?charter a <{actions}Charter> ; <{actions}hasUUID> ?charterId ; <{bfo}{has_part}> ?action . \
             ?action a <{actions}{action}> ; <{actions}hasUUID> ?actionId . \
-        }}",
+        }} }}",
         actions = ACTIONS_NS,
         bfo = BFO_NS,
         has_part = BFO_HAS_PART,
@@ -294,9 +294,9 @@ fn get_charter_by_id(store: &Store, id: Uuid) -> Result<Charter> {
 
 fn query_charter_parent_alias_or_title(store: &Store, child_id: Uuid) -> Result<Option<String>> {
     let q = format!(
-        "SELECT ?pid WHERE {{ \
+        "SELECT ?pid WHERE {{ GRAPH ?g {{ \
             ?parent a <{actions}Charter> ; <{actions}hasSubCharter> <urn:uuid:{child}> ; <{actions}hasUUID> ?pid . \
-        }}",
+        }} }}",
         actions = ACTIONS_NS,
         child = child_id,
     );
@@ -408,7 +408,7 @@ impl<'a> NodeView<'a> {
                 Some(self.subject.as_ref()),
                 Some(pred.as_ref()),
                 None,
-                Some(GraphName::DefaultGraph.as_ref()),
+                None, // search all graphs
             )
             .next()
             .and_then(|r| r.ok())
@@ -421,7 +421,7 @@ impl<'a> NodeView<'a> {
                 Some(self.subject.as_ref()),
                 Some(pred.as_ref()),
                 None,
-                Some(GraphName::DefaultGraph.as_ref()),
+                None, // search all graphs
             )
             .filter_map(|r| r.ok())
             .map(|q| q.object)
@@ -563,7 +563,11 @@ fn get_action_by_id(store: &Store, id: Uuid) -> Result<Action> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::graph::{create_store, load_domain_model};
+    use crate::graph::{create_store, load_domain_model, load_turtle_into_graph, GraphName, TRANSIENT_GRAPH_URI};
+
+    fn transient_graph() -> GraphName {
+        GraphName::NamedNode(NamedNode::new(TRANSIENT_GRAPH_URI).unwrap())
+    }
 
     #[test]
     fn store_roundtrip_reconstructs_domain_model() {
@@ -620,7 +624,7 @@ mod tests {
             }],
         };
 
-        load_domain_model(&store, &model, None).expect("load domain model");
+        load_domain_model(&store, &model, None, transient_graph()).expect("load domain model");
         let rebuilt = load_domain_model_from_store(&store).expect("rebuild from store");
 
         assert_eq!(rebuilt.charters.len(), 1);
@@ -688,7 +692,7 @@ mod tests {
             action = ACTIONS_ACTION,
             prescribed_by = CCO_PRESCRIBED_BY,
         );
-        crate::graph::load_turtle(&store, &ttl).expect("load turtle");
+        load_turtle_into_graph(&store, &ttl, transient_graph()).expect("load turtle");
         let violations = validate_actions_vocabulary(&store).expect("validate");
         assert!(violations.iter().any(|v| v.contains("missing a status")));
     }
@@ -723,7 +727,7 @@ mod tests {
             actions = ACTIONS_NS,
         );
 
-        crate::graph::load_turtle(&store, &ttl).expect("load turtle");
+        load_turtle_into_graph(&store, &ttl, transient_graph()).expect("load turtle");
         let model = load_domain_model_from_store(&store).expect("load model");
 
         let child = model
@@ -750,7 +754,7 @@ mod tests {
             cco = CCO_NS,
             plan_class = CCO_PLAN,
         );
-        crate::graph::load_turtle(&store, &ttl).expect("load turtle");
+        load_turtle_into_graph(&store, &ttl, transient_graph()).expect("load turtle");
         let model = load_domain_model_from_store(&store).expect("load model");
         assert!(model.all_plans().is_empty());
     }
@@ -793,7 +797,7 @@ mod tests {
             prescribed_by = CCO_PRESCRIBED_BY,
             status = CCO_STATUS_PROP,
         );
-        crate::graph::load_turtle(&store, &ttl).expect("load turtle");
+        load_turtle_into_graph(&store, &ttl, transient_graph()).expect("load turtle");
 
         let model = load_domain_model_from_store(&store).expect("load model");
         let plan = model.all_plans()[0];
@@ -822,7 +826,7 @@ mod tests {
             action = ACTIONS_ACTION,
             status = CCO_STATUS_PROP,
         );
-        crate::graph::load_turtle(&store, &ttl).expect("load turtle");
+        load_turtle_into_graph(&store, &ttl, transient_graph()).expect("load turtle");
 
         let acts = load_planned_acts_from_store(&store).expect("load acts");
         assert_eq!(acts.len(), 1);
@@ -853,7 +857,7 @@ mod tests {
             }],
         };
 
-        load_domain_model(&store, &model, None).expect("load domain model");
+        load_domain_model(&store, &model, None, transient_graph()).expect("load domain model");
         let rebuilt = load_domain_model_from_store(&store).expect("rebuild from store");
 
         assert_eq!(rebuilt.charters.len(), 1);
@@ -885,7 +889,7 @@ mod tests {
             plan_class = CCO_PLAN,
             prescribes = CCO_PRESCRIBES,
         );
-        crate::graph::load_turtle(&store, &ttl).expect("load turtle");
+        load_turtle_into_graph(&store, &ttl, transient_graph()).expect("load turtle");
         let violations = validate_actions_vocabulary(&store).expect("validate");
         assert!(violations.iter().any(|v| v.contains("PlanPrescribesShape")));
     }
@@ -910,7 +914,7 @@ mod tests {
             cco = CCO_NS,
             plan_class = CCO_PLAN,
         );
-        crate::graph::load_turtle(&store, &ttl).expect("load turtle");
+        load_turtle_into_graph(&store, &ttl, transient_graph()).expect("load turtle");
 
         let err = query_plans(&store).expect_err("expected error");
         assert!(err.to_string().contains("missing name"));
@@ -930,7 +934,7 @@ mod tests {
             a = a,
             b = b,
         );
-        crate::graph::load_turtle(&store, &ttl).expect("load turtle");
+        load_turtle_into_graph(&store, &ttl, transient_graph()).expect("load turtle");
 
         let model = load_domain_model_from_store(&store).expect("load model");
         assert_eq!(model.charters.len(), 2);

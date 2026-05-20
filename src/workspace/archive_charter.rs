@@ -259,7 +259,7 @@ fn archive_one(
         load_turtle(&store, &existing).map_err(|e| ArchiveCharterError::Graph(e.to_string()))?;
     }
 
-    insert_model_into_store(&store, &model, None)
+    insert_model_into_store(&store, &model, None, oxigraph::model::GraphName::DefaultGraph)
         .map_err(|e| ArchiveCharterError::Graph(e.to_string()))?;
 
     let ttl = dump_store_to_turtle(&store).map_err(|e| ArchiveCharterError::Graph(e.to_string()))?;

@@ -35,6 +35,13 @@ pub struct WorkspaceConfig {
     /// directories and only loads user-scoped data from `data_dir`.
     pub default_to_user_scope: bool,
 
+    /// Stable UUID identifying this workspace's RDF named graph.
+    ///
+    /// Generated once by `clearhead init` and written to `.clearhead/config.json`.
+    /// Derived graph URI: `urn:clearhead:workspace:<uuid>`.
+    /// Must never be regenerated — it is the durable identity for this workspace.
+    pub workspace_id: Option<String>,
+
     /// Additional workspace directories to merge into the domain model.
     /// Each path should follow the `.clearhead` directory layout.
     pub additional_workspaces: Vec<String>,
@@ -56,6 +63,7 @@ impl Default for WorkspaceConfig {
         Self {
             tag_hierarchies: Default::default(),
             default_to_user_scope: false,
+            workspace_id: None,
             additional_workspaces: Vec::new(),
             expansion_total_instances: 2,
             expansion_primary_instances: 1,
