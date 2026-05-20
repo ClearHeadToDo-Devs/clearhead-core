@@ -373,9 +373,6 @@ fn scheduled_actions_on_or_before_date() {
 const NEXT_ACTIONS_SPARQL: &str = include_str!(
     "../../clearhead-cli/src/queries/next-actions.sparql"
 );
-const HIGH_PRIORITY_SPARQL: &str = include_str!(
-    "../../clearhead-cli/src/queries/high-priority.sparql"
-);
 const ACTS_BY_PHASE_SPARQL: &str = include_str!(
     "../../clearhead-cli/src/queries/acts-by-phase.sparql"
 );

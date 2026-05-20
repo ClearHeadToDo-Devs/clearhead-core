@@ -489,7 +489,7 @@ mod tests {
     use crate::domain::{Action, ActionState, Charter, DomainModel, Plan, Recurrence};
     use crate::graph::{self, validate_actions_vocabulary};
     use chrono::TimeZone;
-    use oxigraph::model::{GraphNameRef, LiteralRef, NamedNodeRef};
+    use oxigraph::model::{LiteralRef, NamedNodeRef};
     #[allow(unused_imports)]
     use oxigraph::model::TermRef;
 

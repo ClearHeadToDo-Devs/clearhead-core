@@ -1,80 +1,20 @@
-//! Canonical graph-derived JSON-LD export.
-//!
-//! This module intentionally sits at the semantic waist:
-//! - input: canonical RDF graph semantics
-//! - output: canonical compact JSON-LD document (`@context` + `@graph`)
+//! Canonical JSON-LD export for the clearhead domain model.
 //!
 //! The vendored `actions.context.v4.json` and `actions.schema.v4.json` artifacts
 //! in `src/resources/` are used so export behavior and tests remain stable
 //! without network dependencies.
 
-use super::{GraphError, Result, Store, create_store};
+use super::{GraphError, Result};
 use crate::domain::{ActionState, Action, Charter, DomainModel, Plan};
-use crate::graph::{load_domain_model, load_domain_model_from_store};
 use serde_json::{Map, Value, json};
 use std::collections::BTreeMap;
 
 const ACTIONS_CONTEXT_V4: &str = include_str!("../resources/actions.context.v4.json");
 
-/// Serialize a store into canonical compact JSON-LD.
-///
-/// # Example
-///
-/// ```
-/// use clearhead_core::domain::{ActionState, Action, Charter, DomainModel, Plan};
-/// use clearhead_core::graph::{create_store, load_domain_model, serialize_store_to_jsonld};
-/// use uuid::Uuid;
-///
-/// let plan_id = Uuid::new_v4();
-/// let model = DomainModel {
-///     objectives: vec![],
-///     charters: vec![Charter {
-///         id: Uuid::new_v4(),
-///         title: "Demo".to_string(),
-///         description: None,
-///         alias: None,
-///         parent: None,
-///         objectives: None,
-///         state: None,
-///         plans: vec![Plan {
-///             id: plan_id,
-///             name: "Write docs".to_string(),
-///             ..Plan::default()
-///         }],
-///         actions: vec![Action {
-///             id: Uuid::new_v4(),
-///             name: "Write docs".to_string(),
-///             plan_id: Some(plan_id),
-///             duration: Some(30),
-///             ..Default::default()
-///         }],
-///     }],
-/// };
-///
-/// use oxigraph::model::{GraphName, NamedNode};
-/// let store = create_store().unwrap();
-/// let g = GraphName::NamedNode(NamedNode::new("urn:clearhead:workspace:transient").unwrap());
-/// load_domain_model(&store, &model, None, g).unwrap();
-/// let jsonld = serialize_store_to_jsonld(&store).unwrap();
-/// assert!(jsonld.contains("\"@context\""));
-/// assert!(jsonld.contains("\"@graph\""));
-/// ```
-pub fn serialize_store_to_jsonld(store: &Store) -> Result<String> {
-    let model = load_domain_model_from_store(store)?;
-    let document = build_jsonld_document(&model)?;
-    serde_json::to_string_pretty(&document).map_err(|e| GraphError::Syntax(e.to_string()))
-}
-
 /// Serialize a `DomainModel` into canonical compact JSON-LD.
-///
-/// This helper is equivalent to `DomainModel -> Store -> JSON-LD`.
 pub fn serialize_domain_to_jsonld(model: &DomainModel) -> Result<String> {
-    use crate::graph::TRANSIENT_GRAPH_URI;
-    use oxigraph::model::{GraphName, NamedNode};
-    let store = create_store()?;
-    let g = GraphName::NamedNode(NamedNode::new(TRANSIENT_GRAPH_URI).unwrap());
-    load_domain_model(&store, model, None, g)?;
-    serialize_store_to_jsonld(&store)
+    let document = build_jsonld_document(model)?;
+    serde_json::to_string_pretty(&document).map_err(|e| GraphError::Syntax(e.to_string()))
 }
 
 fn build_jsonld_document(model: &DomainModel) -> Result<Value> {
@@ -345,7 +285,6 @@ fn node_sort_key(node: &Value) -> (u8, String) {
 mod tests {
     use super::*;
     use crate::domain::{Action, Charter, DomainModel, Plan, Recurrence};
-    use crate::graph::create_store;
     use chrono::TimeZone;
     use jsonschema::JSONSchema;
     use serde_json::json;
@@ -405,15 +344,9 @@ mod tests {
     }
 
     #[test]
-    fn serialize_store_to_jsonld_contains_context_and_graph() {
-        let store = create_store().expect("store");
+    fn serialize_domain_to_jsonld_contains_context_and_graph() {
         let model = sample_model();
-        load_domain_model(&store, &model, None, {
-    use oxigraph::model::{GraphName, NamedNode};
-    GraphName::NamedNode(NamedNode::new(crate::graph::TRANSIENT_GRAPH_URI).unwrap())
-}).expect("load model");
-
-        let json = serialize_store_to_jsonld(&store).expect("serialize jsonld");
+        let json = serialize_domain_to_jsonld(&model).expect("serialize jsonld");
         let doc: Value = serde_json::from_str(&json).expect("valid json");
 
         assert!(doc.get("@context").is_some());
@@ -437,14 +370,8 @@ mod tests {
 
     #[test]
     fn jsonld_nodes_are_deterministically_sorted() {
-        let store = create_store().expect("store");
         let model = sample_model();
-        load_domain_model(&store, &model, None, {
-    use oxigraph::model::{GraphName, NamedNode};
-    GraphName::NamedNode(NamedNode::new(crate::graph::TRANSIENT_GRAPH_URI).unwrap())
-}).expect("load model");
-
-        let json = serialize_store_to_jsonld(&store).expect("serialize jsonld");
+        let json = serialize_domain_to_jsonld(&model).expect("serialize jsonld");
         let doc: Value = serde_json::from_str(&json).expect("valid json");
         let graph = doc
             .get("@graph")
@@ -469,14 +396,8 @@ mod tests {
 
     #[test]
     fn plan_and_act_fields_follow_contract_names() {
-        let store = create_store().expect("store");
         let model = sample_model();
-        load_domain_model(&store, &model, None, {
-    use oxigraph::model::{GraphName, NamedNode};
-    GraphName::NamedNode(NamedNode::new(crate::graph::TRANSIENT_GRAPH_URI).unwrap())
-}).expect("load model");
-
-        let json = serialize_store_to_jsonld(&store).expect("serialize jsonld");
+        let json = serialize_domain_to_jsonld(&model).expect("serialize jsonld");
         let doc: Value = serde_json::from_str(&json).expect("valid json");
         let graph = doc
             .get("@graph")
@@ -507,15 +428,9 @@ mod tests {
 
     #[test]
     fn exported_jsonld_validates_against_vendored_schema() {
-        let store = create_store().expect("store");
         let model = sample_model();
-        load_domain_model(&store, &model, None, {
-    use oxigraph::model::{GraphName, NamedNode};
-    GraphName::NamedNode(NamedNode::new(crate::graph::TRANSIENT_GRAPH_URI).unwrap())
-}).expect("load model");
-
         let output: Value =
-            serde_json::from_str(&serialize_store_to_jsonld(&store).expect("serialize jsonld"))
+            serde_json::from_str(&serialize_domain_to_jsonld(&model).expect("serialize jsonld"))
                 .expect("json parse");
         let schema: Value = serde_json::from_str(ACTIONS_SCHEMA_V4).expect("schema parse");
 

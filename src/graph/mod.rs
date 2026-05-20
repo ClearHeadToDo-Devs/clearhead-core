@@ -108,7 +108,7 @@
 //! # Submodules
 //!
 //! - [`insert`]    — domain model → RDF triples; loads into named graph
-//! - [`query`]     — SPARQL queries and domain model reconstruction
+//! - [`query`]     — SPARQL query execution and result extraction
 //! - [`jsonld`]    — canonical compact JSON-LD export
 //! - [`serialize`] — Turtle serialization for archival (uses DefaultGraph internally)
 
@@ -119,11 +119,11 @@ pub mod serialize;
 
 pub use insert::{load_acts_into_store, load_domain_model, load_turtle, load_turtle_into_graph};
 pub use oxigraph::model::GraphName;
-pub use jsonld::{serialize_domain_to_jsonld, serialize_store_to_jsonld};
+pub use jsonld::serialize_domain_to_jsonld;
 pub use oxigraph::store::Store;
 pub use query::{
-    build_raw_where_query, build_where_query, load_domain_model_from_store,
-    load_planned_acts_from_store, query_action_ids, query_raw, validate_actions_vocabulary,
+    build_raw_where_query, build_where_query, query_action_ids, query_raw,
+    validate_actions_vocabulary,
 };
 pub use serialize::{
     dump_store_to_turtle, serialize_acts_to_turtle, serialize_closed_acts_to_turtle,
@@ -244,7 +244,3 @@ pub fn create_store() -> Result<Store> {
     Store::new().map_err(|e| GraphError::Store(e.to_string()))
 }
 
-/// Legacy alias for `create_store`.
-pub fn create_database() -> Result<Store> {
-    create_store()
-}

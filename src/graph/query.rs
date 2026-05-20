@@ -1,16 +1,12 @@
-//! SPARQL query and graph reconstruction utilities.
+//! SPARQL query execution against an Oxigraph store.
 
 use super::{
-    ACTIONS_ACTION, ACTIONS_NS, BFO_HAS_PART, BFO_NS, BFO_PART_OF, CCO_IS_SUCCESSOR_OF, CCO_NS,
-    CCO_PLAN, CCO_PRESCRIBED_BY, CCO_PRESCRIBES, CCO_STATUS_PROP, GraphError, RDFS_COMMENT,
-    RDFS_LABEL, Result, Store, actions_pred, bfo_pred, cco_node, rdfs_pred,
+    ACTIONS_ACTION, ACTIONS_NS, BFO_NS, CCO_NS, CCO_PLAN, CCO_PRESCRIBES, CCO_STATUS_PROP,
+    GraphError, Result, Store,
 };
-use crate::domain::{ActionState, Action, Charter, DomainModel, Plan, Recurrence};
-use chrono::{DateTime, Local};
-use oxigraph::model::{NamedNode, NamedOrBlankNode, Term};
+use oxigraph::model::Term;
 use oxigraph::sparql::{QueryResults, SparqlEvaluator};
 use std::collections::HashMap;
-use uuid::Uuid;
 
 type Row = HashMap<String, String>;
 
@@ -54,65 +50,6 @@ pub fn build_where_query(where_clause: &str, _select: Option<&str>, _from: Optio
         xsd_ns = super::XSD_NS,
         skos_ns = super::SKOS_NS,
     )
-}
-
-pub fn load_domain_model_from_store(store: &Store) -> Result<DomainModel> {
-    let charters = query_charters(store)?;
-    let plans = query_plans(store)?;
-    let actions = query_actions(store)?;
-
-    let mut plans_by_id: HashMap<Uuid, Plan> =
-        plans.into_iter().map(|plan| (plan.id, plan)).collect();
-
-    let mut plans_by_charter: HashMap<Uuid, Vec<Plan>> = HashMap::new();
-    let mut plan_to_charter: HashMap<Uuid, Uuid> = HashMap::new();
-    for (plan_id, charter_id) in query_charter_plan_edges(store)? {
-        if let Some(plan) = plans_by_id.remove(&plan_id) {
-            plan_to_charter.insert(plan_id, charter_id);
-            plans_by_charter.entry(charter_id).or_default().push(plan);
-        }
-    }
-
-    let mut actions_by_id: HashMap<Uuid, Action> =
-        actions.into_iter().map(|action| (action.id, action)).collect();
-    let mut actions_by_charter: HashMap<Uuid, Vec<Action>> = HashMap::new();
-
-    for (action_id, charter_id) in query_charter_action_edges(store)? {
-        if let Some(action) = actions_by_id.remove(&action_id) {
-            actions_by_charter.entry(charter_id).or_default().push(action);
-        }
-    }
-
-    for (_, action) in actions_by_id {
-        if let Some(plan_id) = action.plan_id {
-            if let Some(charter_id) = plan_to_charter.get(&plan_id) {
-                actions_by_charter.entry(*charter_id).or_default().push(action);
-            }
-        }
-    }
-
-    let mut final_charters: Vec<Charter> = charters
-        .into_iter()
-        .map(|mut charter| {
-            let mut charter_plans = plans_by_charter.remove(&charter.id).unwrap_or_default();
-            charter_plans.sort_by_key(|p| p.id);
-            charter.plans = charter_plans;
-            let mut charter_actions = actions_by_charter.remove(&charter.id).unwrap_or_default();
-            charter_actions.sort_by_key(|a| a.id);
-            charter.actions = charter_actions;
-            charter
-        })
-        .collect();
-    final_charters.sort_by_key(|c| c.id);
-
-    Ok(DomainModel {
-        objectives: vec![],
-        charters: final_charters,
-    })
-}
-
-pub fn load_planned_acts_from_store(store: &Store) -> Result<Vec<Action>> {
-    query_actions(store)
 }
 
 pub fn validate_actions_vocabulary(store: &Store) -> Result<Vec<String>> {
@@ -177,151 +114,6 @@ pub fn validate_actions_vocabulary(store: &Store) -> Result<Vec<String>> {
     Ok(violations)
 }
 
-fn query_charters(store: &Store) -> Result<Vec<Charter>> {
-    let sparql = format!(
-        "SELECT ?id WHERE {{ GRAPH ?g {{ ?s a <{actions}Charter> . ?s <{actions}hasUUID> ?id . }} }}",
-        actions = ACTIONS_NS,
-    );
-    let ids = query_uuids(store, &sparql, "id", "charter")?;
-    ids.into_iter()
-        .map(|id| get_charter_by_id(store, id))
-        .collect()
-}
-
-fn query_plans(store: &Store) -> Result<Vec<Plan>> {
-    let sparql = format!(
-        "SELECT ?id WHERE {{ GRAPH ?g {{ ?s a <{cco}{plan}> . ?s <{actions}hasUUID> ?id . }} }}",
-        cco = CCO_NS,
-        plan = CCO_PLAN,
-        actions = ACTIONS_NS,
-    );
-    let ids = query_uuids(store, &sparql, "id", "plan")?;
-    ids.into_iter()
-        .map(|id| get_plan_by_id(store, id))
-        .collect()
-}
-
-fn query_actions(store: &Store) -> Result<Vec<Action>> {
-    let sparql = format!(
-        "SELECT ?id WHERE {{ GRAPH ?g {{ ?s a <{actions}{action}> . ?s <{actions}hasUUID> ?id . }} }}",
-        actions = ACTIONS_NS,
-        action = ACTIONS_ACTION,
-    );
-    let ids = query_uuids(store, &sparql, "id", "act")?;
-    ids.into_iter()
-        .map(|id| get_action_by_id(store, id))
-        .collect()
-}
-
-fn query_charter_plan_edges(store: &Store) -> Result<Vec<(Uuid, Uuid)>> {
-    let sparql = format!(
-        "SELECT ?charterId ?planId WHERE {{ GRAPH ?g {{ \
-            ?charter a <{actions}Charter> ; <{actions}hasUUID> ?charterId ; <{bfo}{has_part}> ?plan . \
-            ?plan a <{cco}{plan}> ; <{actions}hasUUID> ?planId . \
-        }} }}",
-        actions = ACTIONS_NS,
-        bfo = BFO_NS,
-        has_part = BFO_HAS_PART,
-        cco = CCO_NS,
-        plan = CCO_PLAN,
-    );
-
-    let rows = execute_select_rows(store, &sparql)?;
-    rows.into_iter()
-        .map(|row| {
-            let charter_id = row
-                .get("charterId")
-                .ok_or_else(|| GraphError::Domain("Missing charterId in edge row".to_string()))?;
-            let plan_id = row
-                .get("planId")
-                .ok_or_else(|| GraphError::Domain("Missing planId in edge row".to_string()))?;
-            Ok((
-                parse_uuid(plan_id, "plan")?,
-                parse_uuid(charter_id, "charter")?,
-            ))
-        })
-        .collect()
-}
-
-fn query_charter_action_edges(store: &Store) -> Result<Vec<(Uuid, Uuid)>> {
-    let sparql = format!(
-        "SELECT ?charterId ?actionId WHERE {{ GRAPH ?g {{ \
-            ?charter a <{actions}Charter> ; <{actions}hasUUID> ?charterId ; <{bfo}{has_part}> ?action . \
-            ?action a <{actions}{action}> ; <{actions}hasUUID> ?actionId . \
-        }} }}",
-        actions = ACTIONS_NS,
-        bfo = BFO_NS,
-        has_part = BFO_HAS_PART,
-        action = ACTIONS_ACTION,
-    );
-
-    let rows = execute_select_rows(store, &sparql)?;
-    rows.into_iter()
-        .map(|row| {
-            let charter_id = row
-                .get("charterId")
-                .ok_or_else(|| GraphError::Domain("Missing charterId in edge row".to_string()))?;
-            let action_id = row
-                .get("actionId")
-                .ok_or_else(|| GraphError::Domain("Missing actionId in edge row".to_string()))?;
-            Ok((
-                parse_uuid(action_id, "action")?,
-                parse_uuid(charter_id, "charter")?,
-            ))
-        })
-        .collect()
-}
-
-fn get_charter_by_id(store: &Store, id: Uuid) -> Result<Charter> {
-    let node = NodeView::new(store, id);
-    let title = node
-        .lit(rdfs_pred(RDFS_LABEL))
-        .ok_or_else(|| GraphError::Domain(format!("Charter {} missing title", id)))?;
-    let alias = node.lit(actions_pred("hasAlias"));
-
-    let state = node
-        .lit(actions_pred("hasCharterState"))
-        .and_then(|s| match s.as_str() {
-            "New"     => Some(crate::domain::CharterState::New),
-            "Active"  => Some(crate::domain::CharterState::Active),
-            "Blocked" => Some(crate::domain::CharterState::Blocked),
-            "Closed"  => Some(crate::domain::CharterState::Closed),
-            _         => None,
-        });
-
-    Ok(Charter {
-        id,
-        title,
-        description: node.lit(rdfs_pred(RDFS_COMMENT)),
-        alias,
-        parent: query_charter_parent_alias_or_title(store, id)?,
-        objectives: None,
-        state,
-        plans: vec![],
-        actions: vec![],
-    })
-}
-
-fn query_charter_parent_alias_or_title(store: &Store, child_id: Uuid) -> Result<Option<String>> {
-    let q = format!(
-        "SELECT ?pid WHERE {{ GRAPH ?g {{ \
-            ?parent a <{actions}Charter> ; <{actions}hasSubCharter> <urn:uuid:{child}> ; <{actions}hasUUID> ?pid . \
-        }} }}",
-        actions = ACTIONS_NS,
-        child = child_id,
-    );
-    let parent_ids = query_uuids(store, &q, "pid", "parent charter")?;
-    let Some(parent_id) = parent_ids.first().copied() else {
-        return Ok(None);
-    };
-
-    let parent = NodeView::new(store, parent_id);
-    let parent_title = parent
-        .lit(rdfs_pred(RDFS_LABEL))
-        .ok_or_else(|| GraphError::Domain(format!("Charter {} missing title", parent_id)))?;
-    Ok(parent.lit(actions_pred("hasAlias")).or(Some(parent_title)))
-}
-
 fn query_ids(store: &Store, sparql: &str, var_name: &str) -> Result<Vec<String>> {
     Ok(execute_select_rows(store, sparql)?
         .into_iter()
@@ -329,29 +121,16 @@ fn query_ids(store: &Store, sparql: &str, var_name: &str) -> Result<Vec<String>>
         .collect())
 }
 
-fn query_uuids(store: &Store, sparql: &str, var_name: &str, kind: &str) -> Result<Vec<Uuid>> {
-    query_ids(store, sparql, var_name)?
-        .into_iter()
-        .map(|id| parse_uuid(&id, kind))
-        .collect()
-}
-
 fn query_term_values(store: &Store, sparql: &str, var_name: &str) -> Result<Vec<String>> {
     query_ids(store, sparql, var_name)
 }
 
 fn execute_select_rows(store: &Store, sparql: &str) -> Result<Vec<Row>> {
-    // Parse the query into a `PreparedSparqlQuery` so we can configure the
-    // dataset *before* binding it to the store.  When the query has no FROM /
-    // FROM NAMED clauses (`is_default_dataset()` → true), we enable the union
-    // default graph so that triple patterns without an explicit GRAPH clause
-    // match across *all* named graphs in the store.  This means:
-    //
-    //   • Named queries (next-actions, high-priority, …) written without GRAPH
-    //     work transparently against every loaded workspace graph.
-    //   • `GRAPH ?g { … }` still enumerates named graphs, so workspace-scoped
-    //     patterns and cross-workspace identity queries continue to work.
-    //   • Queries that declare their own FROM / FROM NAMED are left untouched.
+    // When the query has no FROM / FROM NAMED clauses, enable the union default
+    // graph so triple patterns without an explicit GRAPH clause match across all
+    // named graphs.  Named queries (next-actions, high-priority, …) written
+    // without GRAPH work transparently; `GRAPH ?g { … }` still enumerates named
+    // graphs for workspace-scoped and cross-workspace identity queries.
     let mut prepared = SparqlEvaluator::new()
         .parse_query(sparql)
         .map_err(|e| GraphError::Query(e.to_string()))?;
@@ -402,299 +181,14 @@ fn stringify_term(term: &Term) -> String {
     }
 }
 
-fn parse_uuid(value: &str, kind: &str) -> Result<Uuid> {
-    Uuid::parse_str(value)
-        .map_err(|e| GraphError::Domain(format!("Invalid {kind} UUID '{}': {}", value, e)))
-}
-
-struct NodeView<'a> {
-    store: &'a Store,
-    subject: NamedOrBlankNode,
-}
-
-impl<'a> NodeView<'a> {
-    fn new_from_node(store: &'a Store, node: NamedNode) -> Self {
-        Self {
-            store,
-            subject: NamedOrBlankNode::NamedNode(node),
-        }
-    }
-
-    fn new(store: &'a Store, id: Uuid) -> Self {
-        Self {
-            store,
-            subject: NamedOrBlankNode::NamedNode(
-                NamedNode::new(format!("urn:uuid:{}", id)).unwrap(),
-            ),
-        }
-    }
-
-    fn one(&self, pred: NamedNode) -> Option<Term> {
-        self.store
-            .quads_for_pattern(
-                Some(self.subject.as_ref()),
-                Some(pred.as_ref()),
-                None,
-                None, // search all graphs
-            )
-            .next()
-            .and_then(|r| r.ok())
-            .map(|q| q.object)
-    }
-
-    fn many(&self, pred: NamedNode) -> Vec<Term> {
-        self.store
-            .quads_for_pattern(
-                Some(self.subject.as_ref()),
-                Some(pred.as_ref()),
-                None,
-                None, // search all graphs
-            )
-            .filter_map(|r| r.ok())
-            .map(|q| q.object)
-            .collect()
-    }
-
-    fn lit(&self, pred: NamedNode) -> Option<String> {
-        match self.one(pred) {
-            Some(Term::Literal(lit)) => Some(lit.value().to_string()),
-            _ => None,
-        }
-    }
-
-    fn lit_u32(&self, pred: NamedNode) -> Option<u32> {
-        self.lit(pred).and_then(|s| s.parse::<u32>().ok())
-    }
-
-    fn lit_bool(&self, pred: NamedNode) -> Option<bool> {
-        self.lit(pred).and_then(|s| s.parse::<bool>().ok())
-    }
-
-    fn datetime(&self, pred: NamedNode) -> Option<DateTime<Local>> {
-        self.lit(pred)
-            .and_then(|value| DateTime::parse_from_rfc3339(&value).ok())
-            .map(|dt| dt.with_timezone(&Local))
-    }
-
-    fn uuid_node(&self, pred: NamedNode) -> Option<Uuid> {
-        self.one(pred).and_then(term_uuid_urn)
-    }
-
-    fn uuid_nodes(&self, pred: NamedNode) -> Vec<Uuid> {
-        self.many(pred)
-            .into_iter()
-            .filter_map(term_uuid_urn)
-            .collect()
-    }
-}
-
-fn term_uuid_urn(term: Term) -> Option<Uuid> {
-    match term {
-        Term::NamedNode(nn) => nn
-            .as_str()
-            .strip_prefix("urn:uuid:")
-            .and_then(|value| Uuid::parse_str(value).ok()),
-        _ => None,
-    }
-}
-
-fn get_plan_by_id(store: &Store, id: Uuid) -> Result<Plan> {
-    let node = NodeView::new(store, id);
-    let name = node
-        .lit(rdfs_pred(RDFS_LABEL))
-        .ok_or_else(|| GraphError::Domain(format!("Plan {} missing name", id)))?;
-
-    Ok(Plan {
-        id,
-        name,
-        description: node.lit(rdfs_pred(RDFS_COMMENT)),
-        recurrence: node
-            .lit(actions_pred("hasRecurrenceRule"))
-            .as_deref()
-            .and_then(parse_recurrence_rule),
-        due_recurrence: node
-            .lit(actions_pred("hasDueRecurrenceRule"))
-            .as_deref()
-            .and_then(parse_recurrence_rule),
-        external_id: node.lit(actions_pred("hasExternalScheduleId")),
-        template_name: node.lit(actions_pred("hasTemplateName")),
-        primary_instances: None,
-        dtstart: None,
-    })
-}
-
-fn parse_recurrence_rule(rrule: &str) -> Option<Recurrence> {
-    Recurrence::from_rrule_str(rrule)
-}
-
-fn get_action_by_id(store: &Store, id: Uuid) -> Result<Action> {
-    let node = NodeView::new(store, id);
-    let plan_id = node.uuid_node(cco_node(CCO_PRESCRIBED_BY));
-
-    let contexts: Vec<String> = node
-        .many(actions_pred("requiresContext"))
-        .into_iter()
-        .filter_map(|term| match term {
-            Term::NamedNode(nn) => {
-                NodeView::new_from_node(store, nn).lit(actions_pred("hasContextIdentifier"))
-            }
-            _ => None,
-        })
-        .collect();
-
-    let mut depends_on = node.uuid_nodes(cco_node(CCO_IS_SUCCESSOR_OF));
-    depends_on.sort_unstable();
-    depends_on.dedup();
-
-    let phase = match node.one(cco_node(CCO_STATUS_PROP)) {
-        Some(Term::NamedNode(nn)) => match nn.as_str().split('#').next_back() {
-            Some("Completed") => ActionState::Completed,
-            Some("InProgress") => ActionState::InProgress,
-            Some("Blocked") => ActionState::BlockedOrAwaiting,
-            Some("Cancelled") => ActionState::Cancelled,
-            _ => ActionState::NotStarted,
-        },
-        _ => ActionState::NotStarted,
-    };
-
-    Ok(Action {
-        id,
-        name: node
-            .lit(rdfs_pred(RDFS_LABEL))
-            .unwrap_or_else(|| "".to_string()),
-        description: node.lit(rdfs_pred(RDFS_COMMENT)),
-        priority: node.lit_u32(actions_pred("hasPriority")),
-        contexts: (!contexts.is_empty()).then_some(contexts),
-        parent_id: node.uuid_node(bfo_pred(BFO_PART_OF)),
-        alias: node.lit(actions_pred("hasAlias")),
-        is_sequential: node.lit_bool(actions_pred("hasSequentialChildren")),
-        predecessors: (!depends_on.is_empty()).then_some(
-            depends_on.into_iter().map(|uuid| crate::domain::PredecessorRef {
-                raw_ref: uuid.to_string(),
-                resolved_uuid: Some(uuid),
-            }).collect()
-        ),
-        plan_id,
-        external_schedule_id: node.lit(actions_pred("hasExternalScheduleId")),
-        external_occurrence_key: node.lit(actions_pred("hasExternalOccurrenceKey")),
-        state: phase,
-        scheduled_at: node.datetime(actions_pred("hasScheduledDateTime")),
-        due_date: node.datetime(actions_pred("hasDueDateTime")),
-        duration: node.lit_u32(actions_pred("hasDurationMinutes")),
-        completed_at: node.datetime(actions_pred("hasCompletedDateTime")),
-        created_at: node.datetime(actions_pred("hasCreatedDateTime")),
-        ..Default::default()
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::graph::{create_store, load_domain_model, load_turtle_into_graph, GraphName, TRANSIENT_GRAPH_URI};
+    use crate::graph::{create_store, load_turtle_into_graph, GraphName, TRANSIENT_GRAPH_URI};
+    use oxigraph::model::NamedNode;
 
     fn transient_graph() -> GraphName {
         GraphName::NamedNode(NamedNode::new(TRANSIENT_GRAPH_URI).unwrap())
-    }
-
-    #[test]
-    fn store_roundtrip_reconstructs_domain_model() {
-        let store = create_store().expect("store");
-
-        let charter_id = Uuid::parse_str("019d7100-3333-7333-8333-333333333333").unwrap();
-        let plan_id = Uuid::parse_str("019d7100-1111-7111-8111-111111111111").unwrap();
-        let act_id = Uuid::parse_str("019d7100-2222-7222-8222-222222222222").unwrap();
-
-        let model = DomainModel {
-            objectives: vec![],
-            charters: vec![Charter {
-                id: charter_id,
-                title: "Platform".to_string(),
-                description: Some("Platform charter".to_string()),
-                alias: Some("platform".to_string()),
-                plans: vec![Plan {
-                    id: plan_id,
-                    name: "Write graph tests".to_string(),
-                    description: Some("Lock down graph semantics".to_string()),
-                    recurrence: Some(Recurrence {
-                        frequency: "weekly".to_string(),
-                        interval: Some(2),
-                        by_day: Some(vec!["MO".to_string(), "WE".to_string()]),
-                        ..Default::default()
-                    }),
-                    external_id: Some("health-workout-1".to_string()),
-                    template_name: Some("workout".to_string()),
-                    dtstart: Some(chrono::Local::now()),
-                    ..Default::default()
-                }],
-                actions: vec![Action {
-                    id: act_id,
-                    name: "Write graph tests".to_string(),
-                    description: Some("Lock down graph semantics".to_string()),
-                    priority: Some(1),
-                    contexts: Some(vec!["dev".to_string()]),
-                    alias: Some("graph_tests".to_string()),
-                    is_sequential: Some(true),
-                    predecessors: Some(vec![crate::domain::PredecessorRef {
-                        raw_ref: "019d7100-4444-7444-8444-444444444444".to_string(),
-                        resolved_uuid: Some(Uuid::parse_str("019d7100-4444-7444-8444-444444444444").unwrap()),
-                    }]),
-                    plan_id: Some(plan_id),
-                    external_schedule_id: Some("weekly-review@example.com".to_string()),
-                    external_occurrence_key: Some("2026-04-09T10:00:00-07:00".to_string()),
-                    state: ActionState::InProgress,
-                    scheduled_at: Some(chrono::Local::now()),
-                    duration: Some(45),
-                    created_at: Some(chrono::Local::now()),
-                    ..Default::default()
-                }],
-                ..Default::default()
-            }],
-        };
-
-        load_domain_model(&store, &model, None, transient_graph()).expect("load domain model");
-        let rebuilt = load_domain_model_from_store(&store).expect("rebuild from store");
-
-        assert_eq!(rebuilt.charters.len(), 1);
-        assert_eq!(rebuilt.charters[0].title, "Platform");
-        assert_eq!(rebuilt.charters[0].plans.len(), 1);
-        assert_eq!(rebuilt.charters[0].plans[0].name, "Write graph tests");
-        assert_eq!(rebuilt.charters[0].actions.len(), 1);
-        assert_eq!(rebuilt.charters[0].actions[0].id, act_id);
-        assert_eq!(
-            rebuilt.charters[0].actions[0].external_schedule_id.as_deref(),
-            Some("weekly-review@example.com")
-        );
-        assert_eq!(
-            rebuilt.charters[0].actions[0]
-                .external_occurrence_key
-                .as_deref(),
-            Some("2026-04-09T10:00:00-07:00")
-        );
-    }
-
-    #[test]
-    fn charter_state_survives_graph_roundtrip() {
-        use crate::domain::CharterState;
-
-        let store = create_store().expect("store");
-        let charter_id = Uuid::parse_str("019d7100-cccc-7ccc-8ccc-000000000001").unwrap();
-
-        let model = DomainModel {
-            objectives: vec![],
-            charters: vec![Charter {
-                id: charter_id,
-                title: "Closed Charter".to_string(),
-                state: Some(CharterState::Closed),
-                ..Default::default()
-            }],
-        };
-
-        load_domain_model(&store, &model, None, transient_graph()).expect("load");
-        let rebuilt = load_domain_model_from_store(&store).expect("rebuild");
-
-        let c = rebuilt.charters.iter().find(|c| c.id == charter_id).expect("charter");
-        assert_eq!(c.state, Some(CharterState::Closed),
-            "CharterState::Closed must survive the insert → query roundtrip");
     }
 
     #[test]
@@ -717,7 +211,6 @@ mod tests {
             cco = CCO_NS,
             plan = CCO_PLAN,
         );
-        // Use a named graph — production never loads into DefaultGraph for queries.
         load_turtle_into_graph(&store, &ttl, transient_graph()).expect("load turtle");
 
         let sparql = format!(
@@ -743,180 +236,11 @@ mod tests {
             actions = ACTIONS_NS,
             cco = CCO_NS,
             action = ACTIONS_ACTION,
-            prescribed_by = CCO_PRESCRIBED_BY,
+            prescribed_by = super::super::CCO_PRESCRIBED_BY,
         );
         load_turtle_into_graph(&store, &ttl, transient_graph()).expect("load turtle");
         let violations = validate_actions_vocabulary(&store).expect("validate");
         assert!(violations.iter().any(|v| v.contains("missing a status")));
-    }
-
-    #[test]
-    fn recurrence_parser_handles_weekly_byday() {
-        let parsed =
-            parse_recurrence_rule("FREQ=WEEKLY;INTERVAL=2;BYDAY=MO,WE").expect("parse recurrence");
-        assert_eq!(parsed.frequency, "weekly");
-        assert_eq!(parsed.interval, Some(2));
-        assert_eq!(
-            parsed.by_day,
-            Some(vec!["MO".to_string(), "WE".to_string()])
-        );
-    }
-
-    #[test]
-    fn charter_parent_uses_parent_alias_or_title() {
-        let store = create_store().expect("store");
-
-        let ttl = format!(
-            "@prefix actions: <{actions}> .\n\
-             @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .\n\
-             <urn:uuid:019d7100-aaaa-7aaa-8aaa-aaaaaaaaaaaa> a actions:Charter ;\n\
-               actions:hasUUID \"019d7100-aaaa-7aaa-8aaa-aaaaaaaaaaaa\" ;\n\
-               rdfs:label \"Parent Charter\" ;\n\
-               actions:hasAlias \"parent\" ;\n\
-               actions:hasSubCharter <urn:uuid:019d7100-bbbb-7bbb-8bbb-bbbbbbbbbbbb> .\n\
-             <urn:uuid:019d7100-bbbb-7bbb-8bbb-bbbbbbbbbbbb> a actions:Charter ;\n\
-               actions:hasUUID \"019d7100-bbbb-7bbb-8bbb-bbbbbbbbbbbb\" ;\n\
-               rdfs:label \"Child Charter\" .\n",
-            actions = ACTIONS_NS,
-        );
-
-        load_turtle_into_graph(&store, &ttl, transient_graph()).expect("load turtle");
-        let model = load_domain_model_from_store(&store).expect("load model");
-
-        let child = model
-            .charters
-            .iter()
-            .find(|c| c.title == "Child Charter")
-            .expect("child charter");
-
-        assert_eq!(child.parent.as_deref(), Some("parent"));
-    }
-
-
-    #[test]
-    fn ignores_orphan_plans_not_linked_to_charter() {
-        let store = create_store().expect("store");
-        let ttl = format!(
-            "@prefix actions: <{actions}> .\n\
-             @prefix cco: <{cco}> .\n\
-             @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .\n\
-             <urn:uuid:019d7100-1111-7111-8111-111111111111> a cco:{plan_class} ;\n\
-               actions:hasUUID \"019d7100-1111-7111-8111-111111111111\" ;\n\
-               rdfs:label \"Orphan plan\" .\n",
-            actions = ACTIONS_NS,
-            cco = CCO_NS,
-            plan_class = CCO_PLAN,
-        );
-        load_turtle_into_graph(&store, &ttl, transient_graph()).expect("load turtle");
-        let model = load_domain_model_from_store(&store).expect("load model");
-        assert!(model.all_plans().is_empty());
-    }
-
-    #[test]
-    fn reads_due_date_and_due_recurrence() {
-        let store = create_store().expect("store");
-        let plan_id = Uuid::parse_str("019d7100-1111-7111-8111-111111111111").unwrap();
-        let act_id = Uuid::parse_str("019d7100-2222-7222-8222-222222222222").unwrap();
-
-        let ttl = format!(
-            "@prefix actions: <{actions}> .\n\
-             @prefix cco: <{cco}> .\n\
-             @prefix bfo: <{bfo}> .\n\
-             @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .\n\
-             @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .\n\
-             <urn:uuid:019d7100-3333-7333-8333-333333333333> a actions:Charter ;\n\
-               actions:hasUUID \"019d7100-3333-7333-8333-333333333333\" ;\n\
-               rdfs:label \"Root\" ;\n\
-               bfo:{has_part} <urn:uuid:{plan}> .\n\
-             <urn:uuid:{plan}> a cco:{plan_class} ;\n\
-               actions:hasUUID \"{plan}\" ;\n\
-               rdfs:label \"Plan\" ;\n\
-               actions:hasDueRecurrenceRule \"FREQ=DAILY\" ;\n\
-               cco:{prescribes} <urn:uuid:{act}> .\n\
-              <urn:uuid:{act}> a actions:{action} ;\n\
-                actions:hasUUID \"{act}\" ;\n\
-                cco:{prescribed_by} <urn:uuid:{plan}> ;\n\
-                cco:{status} actions:NotStarted ;\n\
-                actions:hasDueDateTime \"2026-04-12T09:00:00+00:00\"^^xsd:dateTime .\n",
-            actions = ACTIONS_NS,
-            cco = CCO_NS,
-            bfo = BFO_NS,
-            has_part = BFO_HAS_PART,
-            plan = plan_id,
-            act = act_id,
-            plan_class = CCO_PLAN,
-            prescribes = CCO_PRESCRIBES,
-            action = ACTIONS_ACTION,
-            prescribed_by = CCO_PRESCRIBED_BY,
-            status = CCO_STATUS_PROP,
-        );
-        load_turtle_into_graph(&store, &ttl, transient_graph()).expect("load turtle");
-
-        let model = load_domain_model_from_store(&store).expect("load model");
-        let plan = model.all_plans()[0];
-        let act = model.all_actions()[0];
-        assert_eq!(
-            plan.due_recurrence.as_ref().map(|r| r.frequency.as_str()),
-            Some("daily")
-        );
-        assert!(act.due_date.is_some());
-    }
-
-    #[test]
-    fn reads_planless_act_from_graph_store() {
-        let store = create_store().expect("store");
-        let act_id = Uuid::parse_str("019d7100-5555-7555-8555-555555555555").unwrap();
-
-        let ttl = format!(
-            "@prefix actions: <{actions}> .\n\
-             @prefix cco: <{cco}> .\n\
-              <urn:uuid:{act}> a actions:{action} ;\n\
-                actions:hasUUID \"{act}\" ;\n\
-                cco:{status} actions:NotStarted .\n",
-            actions = ACTIONS_NS,
-            cco = CCO_NS,
-            act = act_id,
-            action = ACTIONS_ACTION,
-            status = CCO_STATUS_PROP,
-        );
-        load_turtle_into_graph(&store, &ttl, transient_graph()).expect("load turtle");
-
-        let acts = load_planned_acts_from_store(&store).expect("load acts");
-        assert_eq!(acts.len(), 1);
-        assert_eq!(acts[0].id, act_id);
-        assert_eq!(acts[0].plan_id, None);
-    }
-
-    #[test]
-    fn roundtrip_keeps_planless_charter_action() {
-        let store = create_store().expect("store");
-
-        let charter_id = Uuid::parse_str("019d7100-3333-7333-8333-333333333333").unwrap();
-        let action_id = Uuid::parse_str("019d7100-5555-7555-8555-555555555555").unwrap();
-
-        let model = DomainModel {
-            objectives: vec![],
-            charters: vec![Charter {
-                id: charter_id,
-                title: "Inbox".to_string(),
-                alias: Some("inbox".to_string()),
-                actions: vec![Action {
-                    id: action_id,
-                    name: "Loose task".to_string(),
-                    state: ActionState::NotStarted,
-                    ..Default::default()
-                }],
-                ..Default::default()
-            }],
-        };
-
-        load_domain_model(&store, &model, None, transient_graph()).expect("load domain model");
-        let rebuilt = load_domain_model_from_store(&store).expect("rebuild from store");
-
-        assert_eq!(rebuilt.charters.len(), 1);
-        assert_eq!(rebuilt.charters[0].actions.len(), 1);
-        assert_eq!(rebuilt.charters[0].actions[0].id, action_id);
-        assert_eq!(rebuilt.charters[0].actions[0].plan_id, None);
     }
 
     #[test]
@@ -946,56 +270,6 @@ mod tests {
         let violations = validate_actions_vocabulary(&store).expect("validate");
         assert!(violations.iter().any(|v| v.contains("PlanPrescribesShape")));
     }
-
-    #[test]
-    fn empty_store_roundtrips_to_empty_domain_model() {
-        let store = create_store().expect("store");
-        let model = load_domain_model_from_store(&store).expect("load model");
-        assert!(model.charters.is_empty());
-        assert!(model.objectives.is_empty());
-    }
-
-    #[test]
-    fn plan_without_name_returns_error() {
-        let store = create_store().expect("store");
-        let ttl = format!(
-            "@prefix actions: <{actions}> .\n\
-             @prefix cco: <{cco}> .\n\
-             <urn:uuid:019d7100-1111-7111-8111-111111111111> a cco:{plan_class} ;\n\
-               actions:hasUUID \"019d7100-1111-7111-8111-111111111111\" .\n",
-            actions = ACTIONS_NS,
-            cco = CCO_NS,
-            plan_class = CCO_PLAN,
-        );
-        load_turtle_into_graph(&store, &ttl, transient_graph()).expect("load turtle");
-
-        let err = query_plans(&store).expect_err("expected error");
-        assert!(err.to_string().contains("missing name"));
-    }
-
-    #[test]
-    fn recursive_parent_lookup_does_not_loop() {
-        let store = create_store().expect("store");
-        let a = Uuid::parse_str("019d7100-aaaa-7aaa-8aaa-aaaaaaaaaaaa").unwrap();
-        let b = Uuid::parse_str("019d7100-bbbb-7bbb-8bbb-bbbbbbbbbbbb").unwrap();
-        let ttl = format!(
-            "@prefix actions: <{actions}> .\n\
-             @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .\n\
-             <urn:uuid:{a}> a actions:Charter ; actions:hasUUID \"{a}\" ; rdfs:label \"A\" ; actions:hasSubCharter <urn:uuid:{b}> .\n\
-             <urn:uuid:{b}> a actions:Charter ; actions:hasUUID \"{b}\" ; rdfs:label \"B\" ; actions:hasSubCharter <urn:uuid:{a}> .\n",
-            actions = ACTIONS_NS,
-            a = a,
-            b = b,
-        );
-        load_turtle_into_graph(&store, &ttl, transient_graph()).expect("load turtle");
-
-        let model = load_domain_model_from_store(&store).expect("load model");
-        assert_eq!(model.charters.len(), 2);
-        let titles: std::collections::HashSet<String> =
-            model.charters.iter().map(|c| c.title.clone()).collect();
-        assert!(titles.contains("A"));
-        assert!(titles.contains("B"));
-    }
 }
 
 #[cfg(test)]
@@ -1013,11 +287,9 @@ mod oxigraph_graph_var_probe {
 "#;
         load_turtle_into_graph(&store, ttl, gn).unwrap();
 
-        // Without GRAPH clause — union default graph makes this match named graphs too.
         let r1 = query_raw(&store, "PREFIX actions: <https://clearhead.us/vocab/actions/v4#> SELECT ?s WHERE { ?s a actions:Action }").unwrap();
         assert_eq!(r1.len(), 1, "union default graph: no-GRAPH clause should find action in named graph; got {:?}", r1);
 
-        // With GRAPH ?g — should also work.
         let r2 = query_raw(&store, "PREFIX actions: <https://clearhead.us/vocab/actions/v4#> SELECT ?g ?s WHERE { GRAPH ?g { ?s a actions:Action } }").unwrap();
         assert_eq!(r2.len(), 1, "GRAPH ?g should find action in named graph; got {:?}", r2);
         assert_eq!(r2[0]["g"], "urn:clearhead:workspace:probe-uuid");
