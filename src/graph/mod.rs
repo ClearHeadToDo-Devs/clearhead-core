@@ -1,14 +1,116 @@
-//! RDF graph module for storing and querying actions using Oxigraph.
+//! RDF graph module — the bridge between the domain model and Oxigraph.
 //!
-//! Implements the RDF schema from the Actions Vocabulary v4 ontology.
-//! The domain model (Plan, Action, Charter) maps to CCO-aligned classes.
+//! This module owns the "put it in / take it out / ask it questions" layer:
+//! [`insert`] loads domain objects as RDF triples, [`query`] runs SPARQL and
+//! reconstructs domain objects, [`serialize`] writes Turtle for archival, and
+//! [`jsonld`] produces canonical JSON-LD interchange.
+//!
+//! # Named Graph Architecture
+//!
+//! **All workspace data lives in a named graph, never in `DefaultGraph`.**
+//!
+//! Every workspace is assigned a stable UUID by `clearhead init`, stored in
+//! `.clearhead/config.json`.  That UUID is the workspace's durable identity;
+//! the corresponding RDF named graph URI is:
+//!
+//! ```text
+//! urn:clearhead:workspace:<uuid>
+//! ```
+//!
+//! Use [`workspace_graph_uri`] to derive this node and pass it as the
+//! `graph_name` argument to [`load_domain_model`].  For ad-hoc or test stores
+//! that have no real workspace UUID, use [`TRANSIENT_GRAPH_URI`] — it is a
+//! valid named graph URI so `GRAPH ?g` patterns still find data.
+//!
+//! `GraphName::DefaultGraph` is **only** legitimate in two places:
+//!
+//! | Call site | Why DefaultGraph is correct |
+//! |-----------|-----------------------------|
+//! | [`load_acts_into_store`] | Single-use store written directly to Turtle (archival).  Never queried via SPARQL. |
+//! | [`serialize`] module internals | Same — transient TTL-output stores. |
+//!
+//! Everywhere else — CLI query paths, tests, multi-workspace loading — use a
+//! named graph.  Tests that load into `DefaultGraph` and query via SPARQL are
+//! testing a configuration that never occurs in production and will give false
+//! greens for the class of bug fixed in commit `bab5769`.
+//!
+//! # SPARQL Evaluator Behaviour
+//!
+//! Oxigraph's `SparqlEvaluator::new()` defaults to querying only
+//! `GraphName::DefaultGraph`, which is always empty in workspace stores.
+//! [`query_raw`] and friends call
+//! `prepared.dataset_mut().set_default_graph_as_union()` before binding to
+//! the store, so **triple patterns without an explicit `GRAPH` clause match
+//! across all named graphs** (the union default graph).
+//!
+//! This has two practical consequences for query authors:
+//!
+//! ## Omitting `GRAPH ?g`
+//!
+//! ```sparql
+//! SELECT ?name WHERE {
+//!     ?act a actions:Action ; rdfs:label ?name .
+//! }
+//! ```
+//!
+//! This works and is the recommended style for single-workspace queries.  All
+//! named queries in `clearhead-cli/src/queries/*.sparql` are written this way.
+//!
+//! ## Using `GRAPH ?g` explicitly
+//!
+//! ```sparql
+//! SELECT ?g ?name WHERE {
+//!     GRAPH ?g {
+//!         ?act a actions:Action ; rdfs:label ?name .
+//!     }
+//! }
+//! ```
+//!
+//! Use this when you need the graph URI in results (e.g. to identify which
+//! workspace an action came from in a multi-workspace query) or when you want
+//! to scope a query to one specific workspace by binding `?g` to a known URI.
+//!
+//! ## `FROM` / `FROM NAMED`
+//!
+//! When a query declares its own dataset (`FROM <uri>` or `FROM NAMED <uri>`),
+//! the evaluator honours those clauses and does **not** apply the union default
+//! graph override — `is_default_dataset()` returns false and the explicit
+//! declaration is used as-is.
+//!
+//! # Multi-Workspace Stores
+//!
+//! When `WorkspaceConfig::additional_workspaces` is non-empty, the CLI loads
+//! each additional workspace into the **same store** under its own named graph.
+//! Because each workspace occupies a separate `urn:clearhead:workspace:<uuid>`
+//! named graph, queries without `GRAPH` automatically span all workspaces
+//! (union default graph), and queries that bind `?g` can distinguish sources.
+//!
+//! # Writing Tests
+//!
+//! Tests that exercise SPARQL queries must use a named graph — they should
+//! mirror the production code path:
+//!
+//! ```rust
+//! # use clearhead_core::graph::{create_store, load_domain_model, GraphName, TRANSIENT_GRAPH_URI};
+//! # fn make_model() -> clearhead_core::DomainModel { clearhead_core::DomainModel { objectives: vec![], charters: vec![] } }
+//! let store = create_store().unwrap();
+//! let graph = GraphName::NamedNode(
+//!     oxigraph::model::NamedNode::new(TRANSIENT_GRAPH_URI).unwrap()
+//! );
+//! let model = make_model();
+//! load_domain_model(&store, &model, None, graph).unwrap();
+//! // now query with query_raw / query_action_ids — they use union default graph
+//! ```
+//!
+//! Using `GraphName::DefaultGraph` in tests is only correct when testing the
+//! archive/serialization path (`load_acts_into_store` / `serialize` module).
 //!
 //! # Submodules
 //!
-//! - [`insert`] — load domain objects into a store
-//! - [`jsonld`] — export canonical compact JSON-LD
-//! - [`query`]  — SPARQL queries + reconstruction from the store
-//! - [`serialize`] — serialize a store or model to Turtle output
+//! - [`insert`]    — domain model → RDF triples; loads into named graph
+//! - [`query`]     — SPARQL queries and domain model reconstruction
+//! - [`jsonld`]    — canonical compact JSON-LD export
+//! - [`serialize`] — Turtle serialization for archival (uses DefaultGraph internally)
 
 pub mod insert;
 pub mod jsonld;
