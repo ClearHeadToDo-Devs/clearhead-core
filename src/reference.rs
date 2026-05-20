@@ -620,7 +620,6 @@ mod tests {
             state: None,
             plans: vec![plan, subplan],
             actions: vec![make_act(act_id, plan_id)],
-            workspace: None,
         };
 
         let child_charter = Charter {
@@ -633,7 +632,6 @@ mod tests {
             state: None,
             plans: vec![],
             actions: vec![],
-            workspace: None,
         };
 
         let implicit_charter = Charter {
@@ -646,7 +644,6 @@ mod tests {
             state: None,
             plans: vec![],
             actions: vec![],
-            workspace: None,
         };
 
         DomainModel {

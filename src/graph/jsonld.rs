@@ -48,7 +48,6 @@ const ACTIONS_CONTEXT_V4: &str = include_str!("../resources/actions.context.v4.j
 ///             duration: Some(30),
 ///             ..Default::default()
 ///         }],
-///         workspace: None,
 ///     }],
 /// };
 ///

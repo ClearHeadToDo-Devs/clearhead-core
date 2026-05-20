@@ -57,7 +57,6 @@ impl From<MarkdownCharter> for Charter {
             state: mc.state,
             plans: mc.plans,
             actions: mc.actions,
-            workspace: None,
         }
     }
 }
@@ -137,7 +136,6 @@ pub fn parse_charter(content: &str) -> Result<Charter, String> {
         state: fm.state,
         plans: vec![],
         actions: vec![],
-        workspace: None,
     })
 }
 
@@ -155,7 +153,6 @@ pub fn implicit_charter(name: &str) -> Charter {
         state: None,
         plans: vec![],
         actions: vec![],
-        workspace: None,
     }
 }
 
@@ -365,7 +362,6 @@ Stay healthy and fit through regular exercise and diet.
             state: None,
             plans: vec![],
             actions: vec![],
-            workspace: None,
         };
 
         let formatted = format_charter(&charter);

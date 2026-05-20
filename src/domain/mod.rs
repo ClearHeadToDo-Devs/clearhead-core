@@ -516,9 +516,16 @@ pub struct Charter {
     pub plans: Vec<Plan>,
     /// [`Action`]s scoped to this charter; each may optionally reference a plan.
     pub actions: Vec<Action>,
-    /// Workspace name this charter belongs to — populated during multi-workspace
-    /// queries; `None` in single-workspace contexts.
-    #[serde(skip)]
+}
+
+/// A [`Charter`] annotated with its source workspace.
+///
+/// Used only at the query/display layer when multiple workspaces are loaded
+/// together. `DomainModel` stays with plain `Charter`; this type is constructed
+/// by the caller once it has provenance context.
+#[derive(Debug, Clone, PartialEq)]
+pub struct WorkspaceCharter {
+    pub inner: Charter,
     pub workspace: Option<String>,
 }
 
@@ -533,7 +540,6 @@ pub fn charter_from_plans_and_name(name: String, plans: Vec<Plan>) -> Charter {
         state: None,
         plans,
         actions: vec![],
-        workspace: None,
     }
 }
 

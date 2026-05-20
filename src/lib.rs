@@ -63,7 +63,7 @@ pub use domain::diff::{
     PlanFieldChange, diff_domain_models,
 };
 #[doc(inline)]
-pub use domain::{ActionState, PredecessorRef, Charter, CharterState, DomainModel, Metric, Objective, Plan, Recurrence};
+pub use domain::{ActionState, PredecessorRef, Charter, CharterState, DomainModel, Metric, Objective, Plan, Recurrence, WorkspaceCharter};
 
 pub mod crdt;
 
