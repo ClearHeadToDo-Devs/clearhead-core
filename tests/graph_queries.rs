@@ -1,5 +1,5 @@
 use clearhead_core::{
-    graph::{create_store, load_domain_model as load_into_store, query_raw, GraphName},
+    graph::{create_store, load_domain_model as load_into_store, query_raw, GraphName, TRANSIENT_GRAPH_URI},
     workspace::store::load_domain_model,
 };
 use std::path::Path;
@@ -16,10 +16,22 @@ fn fixture(name: &str) -> std::path::PathBuf {
         .join(name)
 }
 
+/// Build a store that mirrors the production named-graph layout.
+///
+/// Production always loads workspace data into `urn:clearhead:workspace:<uuid>`,
+/// not into `DefaultGraph`.  Using a named graph here ensures the tests cover
+/// the actual code path and would have caught the union-default-graph bug.
+fn transient_graph() -> GraphName {
+    GraphName::NamedNode(
+        oxigraph::model::NamedNode::new(TRANSIENT_GRAPH_URI).unwrap(),
+    )
+}
+
 fn user_flat_store() -> (clearhead_core::DomainModel, oxigraph::store::Store) {
     let model = load_domain_model(&fixture("user-flat")).expect("load domain model");
     let store = create_store().expect("create store");
-    load_into_store(&store, &model, None, GraphName::DefaultGraph).expect("load into store");
+    // Use a named graph — the same code path as production.
+    load_into_store(&store, &model, None, transient_graph()).expect("load into store");
     (model, store)
 }
 
@@ -340,4 +352,91 @@ fn scheduled_actions_on_or_before_date() {
         "only scheduled-today action should appear; got: {:?}",
         names
     );
+}
+
+// ============================================================================
+// Named query smoke tests
+//
+// These tests run the actual .sparql files (compiled into the CLI binary via
+// include_str!) against a real fixture workspace loaded in a named graph.
+// They exist specifically to catch the class of bug where:
+//   (a) a named query is written without GRAPH clause and silently returns
+//       nothing because the evaluator only searched the default graph, or
+//   (b) a named query uses a predicate or class name that drifted from the
+//       ontology (e.g. old ont00001868 constant changed).
+//
+// If a named query legitimately returns nothing against the fixture (e.g. it
+// filters by a future date or a status that doesn't exist in the fixture) the
+// test should explain why in a comment rather than silently passing.
+// ============================================================================
+
+const NEXT_ACTIONS_SPARQL: &str = include_str!(
+    "../../clearhead-cli/src/queries/next-actions.sparql"
+);
+const HIGH_PRIORITY_SPARQL: &str = include_str!(
+    "../../clearhead-cli/src/queries/high-priority.sparql"
+);
+const ACTS_BY_PHASE_SPARQL: &str = include_str!(
+    "../../clearhead-cli/src/queries/acts-by-phase.sparql"
+);
+const OPEN_PLANS_SPARQL: &str = include_str!(
+    "../../clearhead-cli/src/queries/open-plans.sparql"
+);
+
+fn inject_status(sparql: &str, status_iri: &str) -> String {
+    sparql.replace("?STATUS_FILTER", status_iri)
+}
+
+#[test]
+fn named_query_next_actions_returns_results_against_fixture() {
+    let (_, store) = user_flat_store();
+    // The fixture has open actions with no unresolved deps — at least one must appear.
+    let rows = query_raw(&store, NEXT_ACTIONS_SPARQL).expect("next-actions query");
+    assert!(
+        !rows.is_empty(),
+        "next-actions named query returned nothing — \
+         likely a GRAPH-clause / evaluator configuration regression; \
+         fixture has open, unblocked actions that should appear here"
+    );
+}
+
+#[test]
+fn named_query_acts_by_phase_returns_not_started_actions() {
+    let (_, store) = user_flat_store();
+    let sparql = inject_status(
+        ACTS_BY_PHASE_SPARQL,
+        &format!("<{ACTIONS}NotStarted>"),
+    );
+    let rows = query_raw(&store, &sparql).expect("acts-by-phase query");
+    assert!(
+        !rows.is_empty(),
+        "acts-by-phase (NotStarted) returned nothing against fixture; \
+         fixture has NotStarted actions — check predicate / class drift"
+    );
+}
+
+#[test]
+fn named_query_acts_by_phase_returns_in_progress_actions() {
+    let (_, store) = user_flat_store();
+    let sparql = inject_status(
+        ACTS_BY_PHASE_SPARQL,
+        &format!("<{ACTIONS}InProgress>"),
+    );
+    let rows = query_raw(&store, &sparql).expect("acts-by-phase query");
+    // Fixture has 2 InProgress actions.
+    assert!(
+        !rows.is_empty(),
+        "acts-by-phase (InProgress) returned nothing; fixture has InProgress actions"
+    );
+}
+
+#[test]
+fn named_query_open_plans_returns_results_when_ics_plans_present() {
+    // The user-flat fixture has no .ics plans, so open-plans is legitimately empty.
+    // This test documents that expectation and ensures the query is at least
+    // syntactically valid and runs without error against a named-graph store.
+    let (_, store) = user_flat_store();
+    let result = query_raw(&store, OPEN_PLANS_SPARQL);
+    assert!(result.is_ok(), "open-plans query failed to execute: {:?}", result.err());
+    // Zero rows is expected here — the fixture has no plans.
 }

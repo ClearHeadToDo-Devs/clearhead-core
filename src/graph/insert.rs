@@ -557,7 +557,7 @@ mod tests {
                 Some(subject.into()),
                 Some(predicate.into()),
                 Some(object),
-                Some(GraphNameRef::DefaultGraph),
+                None, // search all graphs — data lives in a named graph in production
             )
             .next()
             .is_some()
@@ -573,7 +573,7 @@ mod tests {
                 Some(subject.into()),
                 Some(predicate.into()),
                 None,
-                Some(GraphNameRef::DefaultGraph),
+                None, // search all graphs
             )
             .next()
             .is_some()
@@ -584,7 +584,9 @@ mod tests {
         let store = graph::create_store().expect("store");
         let model = sample_model();
 
-        load_domain_model(&store, &model, None, GraphName::DefaultGraph).expect("load model into graph");
+        load_domain_model(&store, &model, None, GraphName::NamedNode(
+            oxigraph::model::NamedNode::new(super::super::TRANSIENT_GRAPH_URI).unwrap()
+        )).expect("load model into graph");
 
         let plan = NamedNodeRef::new("urn:uuid:019d7100-1111-7111-8111-111111111111").unwrap();
         let act = NamedNodeRef::new("urn:uuid:019d7100-2222-7222-8222-222222222222").unwrap();
@@ -725,7 +727,10 @@ mod tests {
     fn context_triples_emitted_for_action_with_contexts() {
         let store = graph::create_store().expect("store");
         let model = action_with_contexts(vec!["neovim", "work"]);
-        load_domain_model(&store, &model, None, GraphName::DefaultGraph).expect("load");
+        let g = GraphName::NamedNode(
+            oxigraph::model::NamedNode::new(super::super::TRANSIENT_GRAPH_URI).unwrap()
+        );
+        load_domain_model(&store, &model, None, g).expect("load");
 
         let act = NamedNodeRef::new("urn:uuid:019d7100-aaaa-7aaa-8aaa-aaaaaaaaaaaa").unwrap();
         let neovim = NamedNodeRef::new("urn:context:neovim").unwrap();
