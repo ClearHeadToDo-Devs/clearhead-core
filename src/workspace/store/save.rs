@@ -311,6 +311,7 @@ mod tests {
                     state: None,
                     plans: vec![test_plan("Quarter plan")],
                     actions: vec![],
+                    workspace: None,
                 },
                 Charter {
                     id: Uuid::new_v4(),
@@ -322,6 +323,7 @@ mod tests {
                     state: None,
                     plans: vec![test_plan("Backups")],
                     actions: vec![],
+                    workspace: None,
                 },
             ],
         };
@@ -353,6 +355,7 @@ mod tests {
                     state: None,
                     plans: vec![test_plan("Quarter plan")],
                     actions: vec![],
+                    workspace: None,
                 },
                 Charter {
                     id: ops_id,
@@ -364,6 +367,7 @@ mod tests {
                     state: None,
                     plans: vec![test_plan("Backups")],
                     actions: vec![],
+                    workspace: None,
                 },
             ],
         };
@@ -418,6 +422,7 @@ mod tests {
                     state: None,
                     plans: vec![test_plan("Quarter plan")],
                     actions: vec![],
+                    workspace: None,
                 },
                 Charter {
                     id: ops_id,
@@ -429,6 +434,7 @@ mod tests {
                     state: None,
                     plans: vec![test_plan("Backups")],
                     actions: vec![],
+                    workspace: None,
                 },
             ],
         };

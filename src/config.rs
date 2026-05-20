@@ -42,6 +42,14 @@ pub struct WorkspaceConfig {
     /// Must never be regenerated — it is the durable identity for this workspace.
     pub workspace_id: Option<String>,
 
+    /// Human-readable name for this workspace.
+    ///
+    /// Set by `clearhead init` from the project directory name. Used as the
+    /// outermost scope in multi-workspace reference syntax (`name:charter/action`)
+    /// and as a display annotation when querying across workspaces.
+    /// Elided in single-workspace contexts.
+    pub workspace_name: Option<String>,
+
     /// Additional workspace directories to merge into the domain model.
     /// Each path should follow the `.clearhead` directory layout.
     pub additional_workspaces: Vec<String>,
@@ -64,6 +72,7 @@ impl Default for WorkspaceConfig {
             tag_hierarchies: Default::default(),
             default_to_user_scope: false,
             workspace_id: None,
+            workspace_name: None,
             additional_workspaces: Vec::new(),
             expansion_total_instances: 2,
             expansion_primary_instances: 1,

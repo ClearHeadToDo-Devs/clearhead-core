@@ -289,6 +289,7 @@ fn get_charter_by_id(store: &Store, id: Uuid) -> Result<Charter> {
         state: None,
         plans: vec![],
         actions: vec![],
+        workspace: node.lit(actions_pred("hasWorkspaceName")),
     })
 }
 

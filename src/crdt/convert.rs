@@ -204,6 +204,7 @@ impl From<&SyncCharter> for Charter {
             state: None,
             plans: c.plans.iter().map(Plan::from).collect(),
             actions: c.acts.iter().map(Action::from).collect(),
+            workspace: None,
         }
     }
 }

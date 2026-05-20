@@ -516,6 +516,10 @@ pub struct Charter {
     pub plans: Vec<Plan>,
     /// [`Action`]s scoped to this charter; each may optionally reference a plan.
     pub actions: Vec<Action>,
+    /// Workspace name this charter belongs to — populated during multi-workspace
+    /// queries; `None` in single-workspace contexts.
+    #[serde(skip)]
+    pub workspace: Option<String>,
 }
 
 pub fn charter_from_plans_and_name(name: String, plans: Vec<Plan>) -> Charter {
@@ -529,6 +533,7 @@ pub fn charter_from_plans_and_name(name: String, plans: Vec<Plan>) -> Charter {
         state: None,
         plans,
         actions: vec![],
+        workspace: None,
     }
 }
 
