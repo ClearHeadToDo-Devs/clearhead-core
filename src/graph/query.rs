@@ -279,6 +279,16 @@ fn get_charter_by_id(store: &Store, id: Uuid) -> Result<Charter> {
         .ok_or_else(|| GraphError::Domain(format!("Charter {} missing title", id)))?;
     let alias = node.lit(actions_pred("hasAlias"));
 
+    let state = node
+        .lit(actions_pred("hasCharterState"))
+        .and_then(|s| match s.as_str() {
+            "New"     => Some(crate::domain::CharterState::New),
+            "Active"  => Some(crate::domain::CharterState::Active),
+            "Blocked" => Some(crate::domain::CharterState::Blocked),
+            "Closed"  => Some(crate::domain::CharterState::Closed),
+            _         => None,
+        });
+
     Ok(Charter {
         id,
         title,
@@ -286,7 +296,7 @@ fn get_charter_by_id(store: &Store, id: Uuid) -> Result<Charter> {
         alias,
         parent: query_charter_parent_alias_or_title(store, id)?,
         objectives: None,
-        state: None,
+        state,
         plans: vec![],
         actions: vec![],
     })
@@ -660,6 +670,31 @@ mod tests {
                 .as_deref(),
             Some("2026-04-09T10:00:00-07:00")
         );
+    }
+
+    #[test]
+    fn charter_state_survives_graph_roundtrip() {
+        use crate::domain::CharterState;
+
+        let store = create_store().expect("store");
+        let charter_id = Uuid::parse_str("019d7100-cccc-7ccc-8ccc-000000000001").unwrap();
+
+        let model = DomainModel {
+            objectives: vec![],
+            charters: vec![Charter {
+                id: charter_id,
+                title: "Closed Charter".to_string(),
+                state: Some(CharterState::Closed),
+                ..Default::default()
+            }],
+        };
+
+        load_domain_model(&store, &model, None, transient_graph()).expect("load");
+        let rebuilt = load_domain_model_from_store(&store).expect("rebuild");
+
+        let c = rebuilt.charters.iter().find(|c| c.id == charter_id).expect("charter");
+        assert_eq!(c.state, Some(CharterState::Closed),
+            "CharterState::Closed must survive the insert → query roundtrip");
     }
 
     #[test]
