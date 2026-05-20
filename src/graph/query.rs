@@ -331,9 +331,26 @@ fn query_term_values(store: &Store, sparql: &str, var_name: &str) -> Result<Vec<
 }
 
 fn execute_select_rows(store: &Store, sparql: &str) -> Result<Vec<Row>> {
-    let results = SparqlEvaluator::new()
+    // Parse the query into a `PreparedSparqlQuery` so we can configure the
+    // dataset *before* binding it to the store.  When the query has no FROM /
+    // FROM NAMED clauses (`is_default_dataset()` → true), we enable the union
+    // default graph so that triple patterns without an explicit GRAPH clause
+    // match across *all* named graphs in the store.  This means:
+    //
+    //   • Named queries (next-actions, high-priority, …) written without GRAPH
+    //     work transparently against every loaded workspace graph.
+    //   • `GRAPH ?g { … }` still enumerates named graphs, so workspace-scoped
+    //     patterns and cross-workspace identity queries continue to work.
+    //   • Queries that declare their own FROM / FROM NAMED are left untouched.
+    let mut prepared = SparqlEvaluator::new()
         .parse_query(sparql)
-        .map_err(|e| GraphError::Query(e.to_string()))?
+        .map_err(|e| GraphError::Query(e.to_string()))?;
+
+    if prepared.dataset().is_default_dataset() {
+        prepared.dataset_mut().set_default_graph_as_union();
+    }
+
+    let results = prepared
         .on_store(store)
         .execute()
         .map_err(|e| GraphError::Query(e.to_string()))?;
@@ -942,5 +959,31 @@ mod tests {
             model.charters.iter().map(|c| c.title.clone()).collect();
         assert!(titles.contains("A"));
         assert!(titles.contains("B"));
+    }
+}
+
+#[cfg(test)]
+mod oxigraph_graph_var_probe {
+    use crate::graph::{create_store, load_turtle_into_graph, workspace_graph_uri, GraphName, query_raw};
+
+    #[test]
+    fn union_default_graph_means_no_graph_clause_matches_named_graphs() {
+        let store = create_store().unwrap();
+        let gn = GraphName::NamedNode(workspace_graph_uri("probe-uuid"));
+        let ttl = r#"
+@prefix actions: <https://clearhead.us/vocab/actions/v4#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+<urn:uuid:bbbbbbbb-0000-7000-8000-000000000001> a actions:Action ; rdfs:label "Probe" .
+"#;
+        load_turtle_into_graph(&store, ttl, gn).unwrap();
+
+        // Without GRAPH clause — union default graph makes this match named graphs too.
+        let r1 = query_raw(&store, "PREFIX actions: <https://clearhead.us/vocab/actions/v4#> SELECT ?s WHERE { ?s a actions:Action }").unwrap();
+        assert_eq!(r1.len(), 1, "union default graph: no-GRAPH clause should find action in named graph; got {:?}", r1);
+
+        // With GRAPH ?g — should also work.
+        let r2 = query_raw(&store, "PREFIX actions: <https://clearhead.us/vocab/actions/v4#> SELECT ?g ?s WHERE { GRAPH ?g { ?s a actions:Action } }").unwrap();
+        assert_eq!(r2.len(), 1, "GRAPH ?g should find action in named graph; got {:?}", r2);
+        assert_eq!(r2[0]["g"], "urn:clearhead:workspace:probe-uuid");
     }
 }
