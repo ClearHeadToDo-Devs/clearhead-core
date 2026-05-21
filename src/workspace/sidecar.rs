@@ -11,32 +11,43 @@ use std::path::{Path, PathBuf};
 
 use super::store::WorkspaceError;
 
+/// Root of the per-charter sidecar JSON (`.<charter>.json`).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct CharterMetadata {
+    /// Charter-level metadata (creation timestamp).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub charter: Option<CharterMeta>,
+    /// Per-action metadata keyed by UUID string.
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub acts: HashMap<String, ActMeta>,
+    /// Per-plan metadata keyed by UUID string.
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub plans: HashMap<String, PlanMeta>,
 }
 
+/// Charter-level sidecar metadata.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct CharterMeta {
+    /// When this charter was first created by tooling.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub created: Option<DateTime<Local>>,
 }
 
+/// Per-action sidecar metadata.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ActMeta {
+    /// When this action was first created by tooling.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub created: Option<DateTime<Local>>,
+    /// VEVENT UID this action was generated from (links back to the ICS source).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_vevent: Option<String>,
 }
 
+/// Per-plan sidecar metadata.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct PlanMeta {
+    /// When `expand acts` last ran for this plan.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_expanded: Option<DateTime<Local>>,
 }

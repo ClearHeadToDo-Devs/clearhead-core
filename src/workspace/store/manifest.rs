@@ -30,12 +30,19 @@ pub struct WorkspaceManifestEntry {
 /// The file types that contributed to a charter's manifest entry.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ManifestSourceType {
+    /// Only a `.actions` file was found.
     Actions,
+    /// Only a `.md` charter file was found.
     Markdown,
+    /// Only an `.ics` plan file was found.
     Ics,
+    /// Both a `.actions` and a `.md` file were found for the same charter stem.
     ActionsPlusMarkdown,
+    /// Both a `.actions` and an `.ics` file were found for the same charter stem.
     ActionsPlusIcs,
+    /// Both a `.md` and an `.ics` file were found for the same charter stem.
     MarkdownPlusIcs,
+    /// All three file types were found for the same charter stem.
     ActionsPlusMarkdownPlusIcs,
 }
 

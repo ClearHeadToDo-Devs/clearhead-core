@@ -1,2 +1,3 @@
 [ ] write rustdoc for workspace/ module  $ workspace/ is the largest and most complex module — load_workspace, save_domain_model, expand_plans_into_acts, and the actions/charter/ics/sidecar submodules have almost no doc comments; a contributor is on their own trying to understand the public API $ +docs  #019e37e9-c8ae-fb46-bf64-5938dcb11711
 [ ] add rustdoc to public API  $ lib.rs has zero doc comments; all pub types and functions in domain/, config.rs, workspace/ need /// doc comments so cargo doc and docs.rs are useful to library consumers $ +docs  #019e37ca-514a-7e5a-b168-b05404c5fbe8
+[ ] complete the transition from the acts to actions core data type  $ we have some leftover functions that still use the act nomenclature $ #019e48ba-fd76-7db3-85d7-ec4bc52af0e6

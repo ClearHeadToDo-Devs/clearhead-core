@@ -1,17 +1,13 @@
 //! Domain model aligned with the Actions Vocabulary v4 ontology.
 //!
-//! This module provides structs that map to the ClearHead domain model:
-//! - [`Plan`] - schedule definition for recurring work
-//! - [`Action`] - actionable work item, optionally prescribed by a plan
-//! - [`ActPhase`] - lifecycle state for actions
+//! The hierarchy is: [`Objective`] → [`Charter`] → [`Plan`] / [`Action`]
 //!
-//! The key distinction is schedule vs actionable work.
-//! - A [`Plan`] holds recurrence/schedule semantics
-//! - An [`Action`] holds the task/execution-facing data users manipulate directly
+//! - [`Plan`] — schedule definition (RRULE + DTSTART). Produces [`Action`]s via expansion.
+//! - [`Action`] — atomic executable work item. Carries all execution state.
+//! - [`ActionState`] — lifecycle enum that inheres in an [`Action`].
+//! - [`CharterState`] — lifecycle enum for the archival workflow on [`Charter`]s.
 //!
-//! # Example
-//!
-//! "Do laundry weekly" is one [`Plan`]. Each week's laundry can become a separate [`Action`].
+//! "Do laundry weekly" is one [`Plan`]; each week's laundry becomes a separate [`Action`].
 //! Non-recurring work can exist directly as an [`Action`] without any [`Plan`].
 
 pub mod diff;
@@ -21,11 +17,19 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 use uuid::Uuid;
 
+/// String-based reference to an action, charter, or plan.
+///
+/// Resolution order: [`UUID`](Reference::UUID) → [`Prefix`](Reference::Prefix)
+/// (short UUID) → [`Alias`](Reference::Alias) → [`Name`](Reference::Name).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Reference {
+    /// Full UUID.
     UUID(Uuid),
+    /// Short UUID prefix (first 8 hex chars).
     Prefix(String),
+    /// Human-readable name (case-insensitive substring match).
     Name(String),
+    /// Exact alias match.
     Alias(String),
 }
 
@@ -500,13 +504,16 @@ impl Plan {
 /// Charters are the highest-level organizational unit for [`Plan`]s.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct Charter {
+    /// Stable identifier. Deterministic v5 UUID for implicit charters; v7 for created ones.
     pub id: Uuid,
+    /// Human-readable name. Used in headings, CLI output, and SPARQL `rdfs:label`.
     pub title: String,
     pub description: Option<String>,
+    /// Short identifier for CLI queries and DSL references (`*alias`).
     pub alias: Option<String>,
-    /// Reference string for parent charter, resolved at workspace layer
+    /// Title of the parent charter. Resolved at workspace load time.
     pub parent: Option<String>,
-    /// References to [`Objective`]s, resolved at workspace layer
+    /// Titles of associated [`Objective`]s. Resolved at workspace load time.
     pub objectives: Option<Vec<String>>,
     /// Lifecycle state of this charter. `None` is treated as [`CharterState::New`].
     /// Set to [`CharterState::Closed`] before archiving.
@@ -525,7 +532,9 @@ pub struct Charter {
 /// by the caller once it has provenance context.
 #[derive(Debug, Clone, PartialEq)]
 pub struct WorkspaceCharter {
+    /// The underlying charter.
     pub inner: Charter,
+    /// Name of the workspace this charter was loaded from (`None` for the primary workspace).
     pub workspace: Option<String>,
 }
 
@@ -619,6 +628,7 @@ impl Default for Action {
 }
 
 impl Action {
+    /// Construct a new action with a generated UUIDv7, `NotStarted` state, and all optional fields unset.
     pub fn new(name: impl Into<String>) -> Self {
         Self { name: name.into(), ..Default::default() }
     }
@@ -640,11 +650,14 @@ impl Action {
 /// need for separate flat HashMaps.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct DomainModel {
+    /// Top-level objectives (rarely populated; most workspaces use charters directly).
     pub objectives: Vec<Objective>,
+    /// All charters in the loaded workspace, each containing its plans and actions.
     pub charters: Vec<Charter>,
 }
 
 impl DomainModel {
+    /// Construct an empty model.
     pub fn new() -> Self {
         Self::default()
     }
