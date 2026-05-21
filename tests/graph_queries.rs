@@ -1,6 +1,7 @@
 use clearhead_core::{
     graph::{create_store, load_domain_model as load_into_store, query_raw, GraphName, TRANSIENT_GRAPH_URI},
     workspace::store::load_domain_model,
+    CharterState,
 };
 use std::path::Path;
 
@@ -108,7 +109,7 @@ fn flat_actions_do_not_create_synthetic_plans() {
 fn action_state_from_actions_file_is_reflected_in_graph() {
     let (model, store) = user_flat_store();
 
-    let work = model.charters.iter().find(|c| c.title == "work").unwrap();
+    let work = model.charters.iter().find(|c| c.title == "Work").unwrap();
     let report_actions: Vec<_> = work
         .actions
         .iter()
@@ -193,7 +194,7 @@ fn actions_scoped_to_charter_by_label() {
         PREFIX bfo: <{BFO}>
         PREFIX rdfs: <{RDFS}>
         SELECT ?name WHERE {{
-            ?charter a actions:Charter ; rdfs:label \"work\" ;
+            ?charter a actions:Charter ; rdfs:label \"Work\" ;
                      bfo:BFO_0000051 ?action .
             ?action a actions:Action ; rdfs:label ?name .
         }} ORDER BY ?name
@@ -436,4 +437,70 @@ fn named_query_open_plans_returns_results_when_ics_plans_present() {
     let result = query_raw(&store, OPEN_PLANS_SPARQL);
     assert!(result.is_ok(), "open-plans query failed to execute: {:?}", result.err());
     // Zero rows is expected here — the fixture has no plans.
+}
+
+// ============================================================================
+// CharterState round-trip through graph
+// ============================================================================
+
+#[test]
+fn charter_state_from_md_frontmatter_is_reflected_in_domain_model() {
+    // work.md in the fixture declares `state: Active`
+    let (model, _) = user_flat_store();
+    let work = model.charters.iter().find(|c| c.title == "Work").unwrap();
+    assert_eq!(
+        work.state,
+        Some(CharterState::Active),
+        "work charter should carry Active state from work.md frontmatter"
+    );
+}
+
+#[test]
+fn charter_state_is_queryable_from_graph() {
+    let (_, store) = user_flat_store();
+
+    let sparql = format!(
+        "
+        PREFIX actions: <{ACTIONS}>
+        PREFIX rdfs: <{RDFS}>
+        SELECT ?charter_name ?state WHERE {{
+            ?charter a actions:Charter ;
+                     rdfs:label ?charter_name ;
+                     actions:hasCharterState ?state .
+        }} ORDER BY ?charter_name
+    "
+    );
+
+    let rows = query_raw(&store, &sparql).expect("query");
+    assert_eq!(rows.len(), 1, "expected exactly one charter with explicit state; got {:?}", rows);
+    assert_eq!(rows[0].get("charter_name").map(String::as_str), Some("Work"));
+    assert_eq!(rows[0].get("state").map(String::as_str), Some("Active"));
+}
+
+#[test]
+fn charter_without_state_has_no_hascharterstate_triple() {
+    // personal.actions has no .md companion → state is None → no triple emitted
+    let (model, store) = user_flat_store();
+
+    let personal = model.charters.iter().find(|c| c.title == "personal").unwrap();
+    assert_eq!(personal.state, None, "personal charter should have no state");
+
+    let sparql = format!(
+        "
+        PREFIX actions: <{ACTIONS}>
+        PREFIX rdfs: <{RDFS}>
+        SELECT ?charter WHERE {{
+            ?charter a actions:Charter ;
+                     rdfs:label \"personal\" ;
+                     actions:hasCharterState ?state .
+        }}
+    "
+    );
+
+    let rows = query_raw(&store, &sparql).expect("query");
+    assert!(
+        rows.is_empty(),
+        "charter with no state should not emit hasCharterState triple; got {:?}",
+        rows
+    );
 }

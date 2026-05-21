@@ -501,9 +501,9 @@ fn fixture_user_flat_charter_names_and_action_counts() {
 
     let mut names: Vec<String> = model.charters.iter().map(|c| c.title.clone()).collect();
     names.sort();
-    assert_eq!(names, vec!["personal", "work"]);
+    assert_eq!(names, vec!["Work", "personal"]);
 
-    let work = model.charters.iter().find(|c| c.title == "work").unwrap();
+    let work = model.charters.iter().find(|c| c.title == "Work").unwrap();
     assert_eq!(work.actions.len(), 3, "work: 2 top-level + 1 subtask");
 
     let personal = model
@@ -609,7 +609,7 @@ fn fixture_user_flat_manifest() {
     assert!(personal.inferred_parent.is_none());
 
     let work = manifest.iter().find(|e| e.charter_name == "work").unwrap();
-    assert_eq!(work.source_type, ManifestSourceType::Actions);
+    assert_eq!(work.source_type, ManifestSourceType::ActionsPlusMarkdown);
     assert!(work.inferred_parent.is_none());
 
     let ron = manifest_to_ron(&manifest);

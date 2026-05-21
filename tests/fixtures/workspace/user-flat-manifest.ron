@@ -9,6 +9,6 @@
         path: "work.actions",
         charter_name: "work",
         inferred_parent: None,
-        source_type: Actions,
+        source_type: ActionsPlusMarkdown,
     ),
 ]
