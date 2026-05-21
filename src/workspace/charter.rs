@@ -224,6 +224,22 @@ fn split_frontmatter(content: &str) -> (Option<&str>, &str) {
     }
 }
 
+/// Return true if the markdown frontmatter contains an explicit `parent:` key.
+///
+/// Parses the YAML block into a raw map to distinguish a present `parent: ~`
+/// (explicit null → no parent) from an absent `parent:` key (implicit parenting
+/// still applies). Called by the workspace loader to decide whether path-inferred
+/// parent hints should be suppressed for this charter.
+pub(crate) fn frontmatter_has_parent_key(content: &str) -> bool {
+    let (frontmatter, _) = split_frontmatter(content);
+    frontmatter
+        .and_then(|yaml| {
+            serde_yml::from_str::<std::collections::HashMap<String, serde_yml::Value>>(yaml).ok()
+        })
+        .map(|map| map.contains_key("parent"))
+        .unwrap_or(false)
+}
+
 /// Extract the first H1 title and remaining description from markdown body.
 fn extract_title_and_description(body: &str) -> (Option<String>, Option<String>) {
     let mut title = None;

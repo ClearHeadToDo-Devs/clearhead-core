@@ -3,7 +3,7 @@ use super::pathing::{infer_charter_name_for_workspace, infer_parent_charter_name
 use super::{WorkspaceError, resolve_workspace_layout};
 use crate::domain::{Charter, DomainModel};
 use crate::workspace::actions::convert::from_actions_with_charter;
-use crate::workspace::charter::{MarkdownCharter, implicit_charter, parse_charter};
+use crate::workspace::charter::{MarkdownCharter, frontmatter_has_parent_key, implicit_charter, parse_charter};
 use crate::workspace::ics::parse_ics_file;
 use crate::workspace::plans::collect_plan_files;
 use crate::workspace::sidecar::{hydrate_acts, read_sidecar, sidecar_path};
@@ -90,6 +90,11 @@ pub fn load_workspace(root: &Path) -> Result<Vec<MarkdownCharter>, WorkspaceErro
         path_for_name.entry(name).or_insert(relative);
     }
 
+    // Charters whose .md file contains an explicit `parent:` key (even null).
+    // These are exempt from implicit path-inferred parent hints.
+    let mut explicit_parent_charters: std::collections::HashSet<String> =
+        std::collections::HashSet::new();
+
     for file_path in discover_charter_files(&layout.charter_root)? {
         let relative = file_path
             .strip_prefix(&layout.charter_root)
@@ -99,7 +104,11 @@ pub fn load_workspace(root: &Path) -> Result<Vec<MarkdownCharter>, WorkspaceErro
             infer_charter_name_for_workspace(&relative, layout.project_root_charter.as_deref())
                 .ok_or_else(|| WorkspaceError::Parse("Failed to infer charter name".to_string()))?;
 
-        let explicit = parse_charter(&std::fs::read_to_string(&file_path)?)
+        let content = std::fs::read_to_string(&file_path)?;
+        if frontmatter_has_parent_key(&content) {
+            explicit_parent_charters.insert(name.clone());
+        }
+        let explicit = parse_charter(&content)
             .map_err(|e| WorkspaceError::Parse(format!("{}: {}", file_path.display(), e)))?;
 
         let md_relative = relative.clone();
@@ -151,6 +160,10 @@ pub fn load_workspace(root: &Path) -> Result<Vec<MarkdownCharter>, WorkspaceErro
             .collect();
 
     for (name, parent_alias) in resolved_hints {
+        // Skip charters whose .md file had an explicit `parent:` key — they own their parent.
+        if explicit_parent_charters.contains(&name) {
+            continue;
+        }
         if let Some(charter) = charters.get_mut(&name)
             && charter.parent.is_none()
         {

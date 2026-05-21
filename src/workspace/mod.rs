@@ -33,7 +33,7 @@ pub use archive_charter::{
     ArchiveCharterError, ArchiveCharterOptions, ArchiveCharterResult,
     archive_charter, archive_closed_charters, find_charter as find_markdown_charter,
 };
-pub use ics::occurrence_act_id;
+pub use ics::{action_to_vevent, actions_to_icalendar, occurrence_act_id};
 pub use plans::{
     PlanFileEntry, collect_plan_files, infer_plan_charter_name,
     infer_plan_charter_name_for_workspace, infer_plan_parent, infer_plan_parent_for_workspace,

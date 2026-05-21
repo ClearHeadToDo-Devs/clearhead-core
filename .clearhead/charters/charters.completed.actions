@@ -1,1 +1,1 @@
->[x] thin Plan struct to scheduling only - recurrence, dtstart, template_name  $ Plan still carries priority, contexts, alias, is_sequential, depends_on — these are action-level concerns per Decision 25; removing them from Plan requires updating parser, convert.rs, graph insert/query, and CLI $ %2026-05-17T15:20 #019de698-49ac-7b92-becf-6fa707e512af
+[x] implement Actions to ICS export to restore format_as_icalendar  %2026-05-20T19:53 #019e4839-53b4-73e3-9454-6254f8d75f87

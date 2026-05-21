@@ -1,14 +1,20 @@
-//! ICS schedule file parser.
+//! ICS schedule file parser and exporter.
 //!
-//! Reads `.ics` (iCalendar) files and converts each VEVENT into a [`Plan`],
-//! populating `recurrence`, `dtstart`, `external_id`, and `template_name` from
-//! the VEVENT properties. These Plans are loaded into `Charter.plans` alongside
-//! Plans sourced from `.actions` files.
+//! **Parse direction** (`ics → domain`): reads `.ics` files and converts each
+//! VEVENT into a [`Plan`], populating `recurrence`, `dtstart`, `external_id`,
+//! and `template_name`.
+//!
+//! **Export direction** (`domain → ics`): converts a slice of [`Action`]s into
+//! an iCalendar string. Each action with `scheduled_at` becomes one VEVENT —
+//! no RRULE master events; every occurrence is its own discrete event.
 
-use crate::domain::{Plan, Recurrence};
+use crate::domain::{Action, ActionState, Plan, Recurrence};
 use crate::workspace::store::WorkspaceError;
-use chrono::{DateTime, Local, TimeZone};
-use icalendar::{Calendar, CalendarComponent, CalendarDateTime, Component, DatePerhapsTime};
+use chrono::{DateTime, Local, TimeZone, Utc};
+use icalendar::{
+    Calendar, CalendarComponent, CalendarDateTime, Component, DatePerhapsTime, Event, EventLike,
+    EventStatus,
+};
 use std::fs;
 use std::path::Path;
 use uuid::{Uuid, uuid};
@@ -149,6 +155,96 @@ fn parse_dtstart(event: &icalendar::Event) -> Option<DateTime<Local>> {
             Local.from_local_datetime(&naive).earliest()
         }
     }
+}
+
+// ============================================================================
+// Export direction: Action slice → iCalendar string
+// ============================================================================
+
+/// Map [`ActionState`] to iCalendar [`EventStatus`].
+fn action_state_to_event_status(state: ActionState) -> EventStatus {
+    match state {
+        ActionState::NotStarted => EventStatus::Tentative,
+        ActionState::InProgress => EventStatus::Confirmed,
+        ActionState::Completed => EventStatus::Confirmed,
+        ActionState::BlockedOrAwaiting => EventStatus::Tentative,
+        ActionState::Cancelled => EventStatus::Cancelled,
+    }
+}
+
+/// Map ClearHead priority (1–5) to iCalendar PRIORITY (1–9).
+fn map_priority(p: u32) -> u32 {
+    match p {
+        1 => 1,
+        2 => 3,
+        3 => 5,
+        4 => 7,
+        _ => 5,
+    }
+}
+
+/// Convert one [`Action`] to a VEVENT. Returns `None` if `scheduled_at` is absent.
+///
+/// Each occurrence is emitted as a discrete event — no RRULE.
+pub fn action_to_vevent(action: &Action) -> Option<Event> {
+    let scheduled_at = action.scheduled_at?;
+    let start = scheduled_at.with_timezone(&Utc);
+    let duration_mins = action.duration.unwrap_or(15) as i64;
+    let end = start + chrono::Duration::minutes(duration_mins);
+
+    let mut event = Event::new();
+    event.uid(&action.id.to_string());
+    event.summary(&action.name);
+    event.starts(start);
+    event.ends(end);
+    event.status(action_state_to_event_status(action.state));
+
+    if let Some(desc) = &action.description {
+        event.description(desc);
+    }
+    if action.state == ActionState::Completed {
+        if let Some(completed_at) = action.completed_at {
+            event.timestamp(completed_at.with_timezone(&Utc));
+        }
+    }
+    if let Some(p) = action.priority {
+        event.priority(map_priority(p));
+    }
+    if let Some(contexts) = &action.contexts {
+        event.add_property("CATEGORIES", &contexts.join(","));
+    }
+
+    Some(event.done())
+}
+
+/// Convert a slice of [`Action`]s to an iCalendar string.
+///
+/// Only actions with `scheduled_at` produce VEVENTs. Pass `open_only = true` to
+/// exclude `Completed` and `Cancelled` actions.
+pub fn actions_to_icalendar(actions: &[Action], open_only: bool) -> String {
+    let mut calendar = Calendar::new()
+        .name("ClearHead Actions")
+        .description("Actions exported from ClearHead")
+        .done();
+
+    for action in actions {
+        if action.scheduled_at.is_none() {
+            continue;
+        }
+        if open_only
+            && matches!(
+                action.state,
+                ActionState::Completed | ActionState::Cancelled
+            )
+        {
+            continue;
+        }
+        if let Some(event) = action_to_vevent(action) {
+            calendar.push(event);
+        }
+    }
+
+    calendar.to_string()
 }
 
 #[cfg(test)]
@@ -409,5 +505,96 @@ mod tests {
 
         let other = occurrence_act_id(uid, "2026-05-04T10:00:00+00:00");
         assert_ne!(id1, other, "different occurrence must yield different UUID");
+    }
+
+    // -------------------------------------------------------------------------
+    // Export direction
+    // -------------------------------------------------------------------------
+
+    use crate::domain::{Action, ActionState};
+
+    fn scheduled_action(name: &str, state: ActionState) -> Action {
+        Action {
+            id: Uuid::new_v4(),
+            name: name.to_string(),
+            state,
+            scheduled_at: Some(Local.with_ymd_and_hms(2026, 6, 1, 9, 0, 0).unwrap()),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn action_to_vevent_requires_scheduled_at() {
+        let action = Action {
+            id: Uuid::new_v4(),
+            name: "Unscheduled".to_string(),
+            ..Default::default()
+        };
+        assert!(action_to_vevent(&action).is_none());
+    }
+
+    #[test]
+    fn action_to_vevent_uses_action_name_as_summary() {
+        let action = scheduled_action("Write spec", ActionState::NotStarted);
+        let event = action_to_vevent(&action).unwrap();
+        assert!(event.to_string().contains("Write spec"));
+    }
+
+    #[test]
+    fn action_to_vevent_emits_no_rrule() {
+        let action = scheduled_action("Daily task", ActionState::NotStarted);
+        let event = action_to_vevent(&action).unwrap();
+        assert!(!event.to_string().contains("RRULE"));
+    }
+
+    #[test]
+    fn action_to_vevent_uses_action_id_as_uid() {
+        let action = scheduled_action("Task", ActionState::NotStarted);
+        let event_str = action_to_vevent(&action).unwrap().to_string();
+        assert!(event_str.contains(&action.id.to_string()));
+    }
+
+    #[test]
+    fn action_to_vevent_default_duration_is_15_min() {
+        let action = scheduled_action("Quick task", ActionState::NotStarted);
+        let event_str = action_to_vevent(&action).unwrap().to_string();
+        // DTEND should be 15 minutes after DTSTART
+        assert!(event_str.contains("DTEND"));
+    }
+
+    #[test]
+    fn actions_to_icalendar_empty_slice_produces_valid_vcalendar() {
+        let ics = actions_to_icalendar(&[], false);
+        assert!(ics.contains("BEGIN:VCALENDAR"));
+        assert!(!ics.contains("BEGIN:VEVENT"));
+    }
+
+    #[test]
+    fn actions_to_icalendar_skips_unscheduled_actions() {
+        let unscheduled = Action {
+            id: Uuid::new_v4(),
+            name: "No date".to_string(),
+            ..Default::default()
+        };
+        let ics = actions_to_icalendar(&[unscheduled], false);
+        assert!(!ics.contains("BEGIN:VEVENT"));
+    }
+
+    #[test]
+    fn actions_to_icalendar_includes_each_scheduled_action() {
+        let a = scheduled_action("First", ActionState::NotStarted);
+        let b = scheduled_action("Second", ActionState::InProgress);
+        let ics = actions_to_icalendar(&[a, b], false);
+        assert_eq!(ics.matches("BEGIN:VEVENT").count(), 2);
+    }
+
+    #[test]
+    fn actions_to_icalendar_open_only_excludes_terminal_states() {
+        let open = scheduled_action("Open task", ActionState::NotStarted);
+        let completed = scheduled_action("Done", ActionState::Completed);
+        let cancelled = scheduled_action("Dropped", ActionState::Cancelled);
+        let ics = actions_to_icalendar(&[open, completed, cancelled], true);
+        assert_eq!(ics.matches("BEGIN:VEVENT").count(), 1);
+        assert!(ics.contains("Open task"));
     }
 }
