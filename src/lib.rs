@@ -73,9 +73,7 @@ pub use sync::DomainSyncDecision;
 
 pub mod graph;
 
-pub mod display;
 #[doc(inline)]
-pub use display::format_domain_as_table;
 
 pub mod reference;
 #[doc(inline)]

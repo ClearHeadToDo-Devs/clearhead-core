@@ -5,111 +5,92 @@ alias: semantic_export_plan
 
 # Semantic Export Plan
 
-## Why This Exists
+## What This Is Actually About
 
-We have spent the recent core and ontology work moving the internal graph closer to the actual v4 ontology contract.
+The graph is now close enough to the v4 ontology contract that we can define a stable
+data output format. This charter is about hardening that contract — validation, canonical
+JSON-LD shape, and making JSON-LD the default data output when clearhead is used in a
+pipeline.
 
-That work matters because the next layer should not be built on top of Rust struct dumps or ad hoc formatter assumptions. It should be built on top of a semantic seam that is already close to ontology truth.
+It is not about routing the visual display layer through JSON-LD. The visual layer
+(trees, tables) consumes `DomainModel` directly and lives in `clearhead-cli`, not here.
 
-The immediate purpose of this note is to capture the next phase clearly:
+## The Output Architecture
 
-1. harden the graph-backed semantic seam
-2. define the canonical JSON-LD export contract
-3. build display on top of that export instead of directly on `DomainModel`
+There are two distinct output modes and they serve different consumers:
 
-## What Is True Now
+**Data output** — when stdout is a pipe or redirect:
+- Format: canonical JSON-LD
+- Consumers: shell pipelines, external tools, web UI, semantic tooling, scripts
+- This is where JSON-LD earns its place — rich semantic shape, ontology-aligned,
+  useful to anything that can consume JSON
 
-The following semantic cleanups are already in place:
+**Visual output** — when stdout is a TTY:
+- Format: tree (hierarchy view) or table (list view) depending on command
+- Consumers: humans at a terminal
+- Comes straight from `DomainModel` — no intermediate format
+- Lives entirely in `clearhead-cli`, not in core
 
-1. plan-level objective holdover removed
-2. duration moved from `Plan` to `PlannedAct`
-3. dependency semantics moved to `cco:is_successor_of`
-4. recurrence semantics moved to `actions:hasRecurrenceRule`
-5. sequential-children semantics moved to `actions:hasSequentialChildren`
-6. graph writes use canonical UUID / alias / label / containment predicates
+The switch between them is TTY detection via `std::io::IsTerminal`. No flags required
+for the common case. `--output json` exists as an explicit override.
 
-This means the graph is finally becoming a real candidate for the stable semantic seam.
-
-## The Next Phase
+## The Remaining Core Work
 
 ### 1. Expand Validation
 
-Before export becomes public contract, validation needs to cover the semantics we now claim to support.
+The validation that runs before export needs to cover what the graph actually claims.
+Minimum useful expansion:
 
-The minimum useful expansion is:
+1. Successor-cycle detection
+2. Recurrence requires a scheduled act anchor
+3. Completed acts require completion dates
+4. Context deferral is explicit — contexts are not modeled as proper nodes yet and the
+   export should say so rather than silently emitting partial data
 
-1. successor-cycle detection
-2. recurrence requires a scheduled act anchor
-3. completed acts require completion dates
-4. UUID and alias shape checks
-5. sequential-children boolean checks
+The goal is not a generic SHACL engine. The goal is enough coverage that exported data
+is trustworthy against the contract we actually claim.
 
-The goal is not full generic SHACL execution inside core. The goal is enough parity that exported semantics are trustworthy.
+### 2. Declare the JSON-LD Shape as Stable
 
-### 2. Define Canonical JSON-LD
+The export is implemented but not declared. This means:
 
-We want one semantic JSON, not competing JSON formats.
+1. Write down the canonical field names, cardinality rules, and ordering rules as a
+   spec, not just tests
+2. Snapshot representative example payloads for each major entity type
+3. Make the vendored schema the normative reference, not an afterthought
 
-The export should be:
+### 3. Context Deferral
 
-1. graph-derived
-2. compacted through the ontology context
-3. deterministic in ordering
-4. pleasant enough for both tests and downstream code
+Contexts exist in the DSL (`+tag`) and flow through to the graph, but they are not
+yet modeled as proper ontology nodes with real identity. Until they are:
 
-That means we should not just dump triples or arbitrary JSON-LD serializer output and call it done.
+- The export contract explicitly defers full context semantics
+- `urn:context:<name>` identifiers are provisional
+- Do not emit context nodes as if the ontology support is complete
 
-We need to settle:
+## What Lives in the CLI, Not Here
 
-1. graph ordering rules
-2. field cardinality rules
-3. reference shape conventions
-4. what subset is canonical now versus deferred
+These are related but belong in `clearhead-cli`:
 
-### 3. Make Context Deferral Explicit
+- TTY detection and output dispatch
+- Moving `comfy-table` out of `clearhead-core` (it has no business being in a library)
+- Tree renderer for `DomainModel` hierarchy (charter → plan → action → child actions)
+- Table renderer for list views
+- Wiring JSON-LD as the default pipe output
 
-Contexts are clearly real domain concepts, but they are not yet first-class in core.
+## Non-Goals
 
-Until they are modeled properly, the export contract should say so plainly.
-
-The key rule is:
-
-Do not fake ontology support just because the DSL has `+context` shorthand.
-
-We either model contexts as proper nodes and references, or we defer them from the canonical export surface.
-
-### 4. Build Display On Top Of Export
-
-Once JSON-LD is stable, display work should consume that exported semantic shape.
-
-That gives us:
-
-1. one semantic contract
-2. display decoupled from Rust internals
-3. more meaningful e2e tests
-4. less formatter-specific drift over time
-
-## Proposed Delivery Order
-
-1. expand validation in core
-2. write the canonical JSON-LD contract down with sample payloads
-3. implement graph -> JSON-LD export in core
-4. snapshot semantic examples
-5. build `outline` and `table` over the export shape
-
-## Non-Goals For This Slice
-
-1. full context modeling
-2. generic SHACL engine in core
-3. final display polish
-4. solving every legacy path at once
+1. Full context modeling in this slice
+2. Generic SHACL engine in core
+3. Display polish
+4. Solving every legacy path at once
 
 ## Standard For Success
 
-We should consider this phase successful when:
+This phase is done when:
 
-1. core can export one canonical JSON-LD view of the semantic graph
-2. that export validates against the ontology contract we actually claim to support
-3. display can start consuming that export without needing Rust-specific knowledge
-
-At that point, the system will finally have a clean semantic waist between storage/runtime code and human-facing CLI display.
+1. Core can export canonical JSON-LD and the shape is a declared contract, not just
+   passing tests
+2. Validation covers what the contract claims — incomplete data fails loudly
+3. The CLI emits JSON-LD by default when piped and the visual layer never leaks into
+   the data path

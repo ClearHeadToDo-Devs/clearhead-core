@@ -1,5 +1,4 @@
 use super::{Action, ActionList};
-use comfy_table::{Cell, Color, ContentArrangement, Table, presets::UTF8_FULL};
 use serde::{Deserialize, Serialize};
 use std::io::Cursor;
 use topiary_core::{Language, Operation, TopiaryQuery, formatter};
@@ -22,8 +21,6 @@ pub enum OutputFormat {
     Json,
     /// XML format
     Xml,
-    /// Human-readable table format
-    Table,
 }
 
 /// Formatting style for .actions files
@@ -86,13 +83,12 @@ pub fn format(
     list: &ActionList,
     format: OutputFormat,
     config: Option<FormatConfig>,
-    table_columns: Option<&TableFormatOptions>,
+    _table_columns: Option<&TableFormatOptions>,
 ) -> Result<String, String> {
     match format {
         OutputFormat::Actions => format_as_actions(list, config),
         OutputFormat::Json => format_as_json(list),
         OutputFormat::Xml => format_as_xml(list),
-        OutputFormat::Table => format_as_table(list, table_columns),
     }
 }
 
@@ -223,118 +219,6 @@ fn format_as_xml(list: &ActionList) -> Result<String, String> {
     quick_xml::se::to_string(&wrapper).map_err(|e| format!("XML formatting failed: {}", e))
 }
 
-/// Format ActionList as a human-readable table using comfy-table
-fn format_as_table(
-    list: &ActionList,
-    filters: Option<&TableFormatOptions>,
-) -> Result<String, String> {
-    // Handle --list-columns flag
-    if let Some(opts) = filters
-        && opts.list_columns
-    {
-        println!("Available columns for --columns and --hide-columns:");
-        println!("  state       - Action state (Not Started, In Progress, Done, etc.)");
-        println!("  name        - Action name with indentation");
-        println!("  charter     - Charter/project this plan belongs to");
-        println!("  priority    - Numerical priority (1-9, higher = more important)");
-        println!("  due         - Due date/time");
-        println!("  dur         - Estimated duration in minutes");
-        println!("  context     - Context tags");
-        println!("  description - Task description");
-        println!("  id          - First 8 chars of UUID");
-        return Ok(String::new());
-    }
-
-    // Build column index list based on filters
-    let default_idx: Vec<usize> = DEFAULT_COLUMNS.to_vec();
-    let columns_idx: Vec<usize> = if let Some(opts) = filters {
-        match (&opts.columns, &opts.hide_columns) {
-            (Some(cols), None) => columns_to_show(cols),
-            (None, Some(hide)) => columns_without(hide, &default_idx),
-            (Some(cols), Some(hide)) => {
-                let shown = columns_to_show(cols);
-                columns_without(hide, &shown)
-            }
-            (None, None) => default_idx,
-        }
-    } else {
-        default_idx
-    };
-
-    let mut table = Table::new();
-    table
-        .load_preset(UTF8_FULL)
-        .set_content_arrangement(ContentArrangement::Dynamic);
-
-    // Add header with selected columns
-    table.set_header(
-        columns_idx
-            .iter()
-            .map(|&i| Cell::new(COLUMN_NAMES[i]).fg(Color::Cyan)),
-    );
-
-    // Add rows for each action
-    for action in list {
-        let depth = action.depth(list);
-        let indent = "  ".repeat(depth.try_into().unwrap());
-
-        // State cell with color
-        let state_cell = match action.state {
-            super::ActionState::NotStarted => Cell::new("Not Started"),
-            super::ActionState::Completed => Cell::new("Done").fg(Color::Green),
-            super::ActionState::InProgress => Cell::new("In Progress").fg(Color::Yellow),
-            super::ActionState::BlockedOrAwaiting => Cell::new("Blocked").fg(Color::Red),
-            super::ActionState::Cancelled => Cell::new("Cancelled").fg(Color::DarkGrey),
-        };
-
-        // Build all cell values in order (matching COLUMN_NAMES)
-        let all_strings: Vec<String> = vec![
-            String::new(), // placeholder for state (rendered as Cell below)
-            format!("{}{}", indent, action.name),
-            action.charter.as_deref().unwrap_or("-").to_string(),
-            action
-                .priority
-                .map(|p| p.to_string())
-                .unwrap_or_else(|| "-".to_string()),
-            action
-                .scheduled_at
-                .map(|dt| dt.format("%Y-%m-%d %H:%M").to_string())
-                .unwrap_or_else(|| "-".to_string()),
-            action
-                .duration
-                .map(|d| format!("{}m", d))
-                .unwrap_or_else(|| "-".to_string()),
-            action
-                .contexts
-                .as_ref()
-                .map(|c| c.join(", "))
-                .unwrap_or_else(|| "-".to_string()),
-            action
-                .description
-                .as_ref()
-                .map(|d| d.to_string())
-                .unwrap_or_else(|| "-".to_string()),
-            action.id.to_string()[..8].to_string(), // ID (index 8)
-            action.charter.as_deref().unwrap_or("-").to_string(), // Story (index 9) — alias for Charter
-        ];
-
-        // Select only requested columns, using colored state cell for index 0
-        let row: Vec<Cell> = columns_idx
-            .iter()
-            .map(|&i| {
-                if i == 0 {
-                    state_cell.clone()
-                } else {
-                    Cell::new(&all_strings[i])
-                }
-            })
-            .collect();
-
-        table.add_row(row);
-    }
-
-    Ok(table.to_string())
-}
 
 pub const COLUMN_NAMES: [&str; 10] = [
     "State",       // 0
@@ -441,22 +325,6 @@ mod tests {
 
         assert!(formatted.contains("<name>Test</name>"));
         assert!(formatted.contains("<state>not_started</state>"));
-    }
-
-    #[test]
-    fn test_format_as_table() {
-        let actions = vec![
-            create_test_action("Task 1", ActionState::Completed, None),
-            create_test_action("Task 2", ActionState::NotStarted, None),
-        ];
-
-        let formatted = format_as_table(&actions, None).unwrap();
-
-        // Should contain header and task names
-        assert!(formatted.contains("State"));
-        assert!(formatted.contains("Name"));
-        assert!(formatted.contains("Task 1"));
-        assert!(formatted.contains("Task 2"));
     }
 
     #[test]
