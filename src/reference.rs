@@ -8,15 +8,15 @@
 //! | Form | Example | Resolves to |
 //! |------|---------|-------------|
 //! | Full UUID | `019de698-0eb4-7ed1-b763-999f7a22282a` | Any target type |
-//! | Short prefix (8 hex chars) | `019de698` | Any target type |
-//! | Alias | `staging-deploy` | Charter or Plan |
+//! | Short prefix (≥8 hex chars) | `019de698` | Any target type |
+//! | Alias | `staging-deploy` | Charter only |
 //! | Path | `work/feature` | Charter → Plan |
-//! | Prefixed | `c:work`, `p:weekly`, `a:019de698` | Scoped to type |
+//! | Prefixed | `c:work`, `p:11223344`, `a:019de698` | Scoped to type |
 //!
 //! Resolution order for unscoped single-segment references:
 //! 1. Charter (UUID, short prefix, alias)
-//! 2. Plan (UUID, short prefix, alias)
-//! 3. Action (UUID, short prefix only)
+//! 2. Plan (UUID or short prefix only — no alias matching)
+//! 3. Action (UUID or short prefix only)
 
 use crate::domain::{Action, Charter, DomainModel, Plan};
 use std::fmt;
@@ -33,7 +33,7 @@ pub enum ReferenceTarget {
     /// A resolved [`Plan`] UUID.
     Plan(Uuid),
     /// A resolved [`Action`] UUID.
-    Act(Uuid),
+    Action(Uuid),
 }
 
 /// Controls how alias segments are matched during resolution.
@@ -87,7 +87,7 @@ impl std::error::Error for ReferenceError {}
 enum Prefix {
     Charter,
     Plan,
-    Act,
+    Action,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -152,15 +152,15 @@ pub fn resolve_reference(
                 )),
             }
         }
-        Some(Prefix::Act) => {
+        Some(Prefix::Action) => {
             if segments.len() == 1 {
-                return resolve_act_global(model, segments[0]);
+                return resolve_action_global(model, segments[0]);
             }
             let target = resolve_path(model, &segments)?;
             match target {
-                ReferenceTarget::Act(_) => Ok(target),
+                ReferenceTarget::Action(_) => Ok(target),
                 _ => Err(ReferenceError::new(
-                    "Reference resolved to a non-act target; use an act UUID",
+                    "Reference resolved to a non-action target; use an action UUID",
                 )),
             }
         }
@@ -254,9 +254,9 @@ pub fn filter_model_for_plan(model: &DomainModel, plan_id: Uuid) -> DomainModel 
 /// Return a [`DomainModel`] scoped to a single action and its owning charter.
 ///
 /// The returned charter contains only the matched action. If the action has
-/// an associated plan, that plan is also included; other plans are excluded.
+/// an associated plan that plan is also included; other plans are excluded.
 /// Returns an empty model if the action is not found.
-pub fn filter_model_for_act(model: &DomainModel, act_id: Uuid) -> DomainModel {
+pub fn filter_model_for_action(model: &DomainModel, act_id: Uuid) -> DomainModel {
     for charter in &model.charters {
         if let Some(act) = charter.actions.iter().find(|a| a.id == act_id) {
             let mut charter_copy = charter.clone();
@@ -294,7 +294,7 @@ fn parse_prefix(
     let prefix = match &input[..2].to_ascii_lowercase()[..] {
         "c:" => Some(Prefix::Charter),
         "p:" => Some(Prefix::Plan),
-        "a:" => Some(Prefix::Act),
+        "a:" => Some(Prefix::Action),
         _ => None,
     };
 
@@ -329,7 +329,7 @@ fn resolve_unscoped_single(
     if let Ok(target) = resolve_plan_global(model, segment) {
         return Ok(target);
     }
-    resolve_act_global(model, segment)
+    resolve_action_global(model, segment)
 }
 
 fn resolve_charter_global(
@@ -381,14 +381,14 @@ fn resolve_plan_global(
     }
 }
 
-fn resolve_act_global(
+fn resolve_action_global(
     model: &DomainModel,
     segment: &str,
 ) -> Result<ReferenceTarget, ReferenceError> {
     let mut matches: Vec<&Action> = Vec::new();
     for charter in &model.charters {
         for act in &charter.actions {
-            if act_matches_segment(act, segment) {
+            if action_matches_segment(act, segment) {
                 matches.push(act);
             }
         }
@@ -396,12 +396,12 @@ fn resolve_act_global(
 
     match matches.len() {
         0 => Err(ReferenceError::new(format!(
-            "No planned act matches reference '{}'",
+            "No action matches reference '{}'",
             segment
         ))),
-        1 => Ok(ReferenceTarget::Act(matches[0].id)),
+        1 => Ok(ReferenceTarget::Action(matches[0].id)),
         _ => Err(ReferenceError::new(format!(
-            "Ambiguous act reference '{}'; use a full UUID",
+            "Ambiguous action reference '{}'; use a full UUID",
             segment
         ))),
     }
@@ -471,7 +471,7 @@ fn resolve_path(model: &DomainModel, segments: &[&str]) -> Result<ReferenceTarge
                     .actions
                     .iter()
                     .filter(|a| a.plan_id == Some(plan.id))
-                    .filter(|a| act_matches_segment(a, segment))
+                    .filter(|a| action_matches_segment(a, segment))
                     .collect();
 
                 match child_acts.len() {
@@ -481,7 +481,7 @@ fn resolve_path(model: &DomainModel, segments: &[&str]) -> Result<ReferenceTarge
                             segment, plan.name
                         )));
                     }
-                    1 => return Ok(ReferenceTarget::Act(child_acts[0].id)),
+                    1 => return Ok(ReferenceTarget::Action(child_acts[0].id)),
                     _ => {
                         return Err(ReferenceError::new(format!(
                             "Ambiguous reference '{}' under plan '{}'; use a: prefix",
@@ -546,7 +546,7 @@ fn plan_matches_segment(plan: &Plan, segment: &str) -> bool {
     matches_uuid(&plan.id, segment)
 }
 
-fn act_matches_segment(act: &Action, segment: &str) -> bool {
+fn action_matches_segment(act: &Action, segment: &str) -> bool {
     matches_uuid(&act.id, segment)
 }
 
@@ -697,7 +697,7 @@ mod tests {
         let act_short = &act_id.to_string()[..8];
         let path = format!("build/{}/{}", plan_short, act_short);
         let target = resolve_reference(&model, &path, &ReferenceOptions::default()).unwrap();
-        assert_eq!(target, ReferenceTarget::Act(act_id));
+        assert_eq!(target, ReferenceTarget::Action(act_id));
     }
 
     #[test]
@@ -762,6 +762,6 @@ mod tests {
         let act_id = Uuid::parse_str("deadbeef-0000-0000-0000-000000000005").unwrap();
         let long_prefix = &act_id.to_string().replace('-', "")[..12];
         let target = resolve_reference(&model, &format!("a:{}", long_prefix), &ReferenceOptions::default()).unwrap();
-        assert_eq!(target, ReferenceTarget::Act(act_id));
+        assert_eq!(target, ReferenceTarget::Action(act_id));
     }
 }

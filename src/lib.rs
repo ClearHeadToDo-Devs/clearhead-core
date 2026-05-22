@@ -73,12 +73,10 @@ pub use sync::DomainSyncDecision;
 
 pub mod graph;
 
-#[doc(inline)]
-
 pub mod reference;
 #[doc(inline)]
 pub use reference::{
-    MatchMode, ReferenceError, ReferenceOptions, ReferenceTarget, filter_model_for_act,
+    MatchMode, ReferenceError, ReferenceOptions, ReferenceTarget, filter_model_for_action,
     filter_model_for_charter, filter_model_for_plan, resolve_reference,
     resolve_reference_in_workspaces,
 };
