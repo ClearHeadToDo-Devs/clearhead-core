@@ -12,6 +12,9 @@ use super::{Action, ActionState, DomainModel};
 pub struct ActionFilter {
     /// Exclude [`ActionState::Completed`] and [`ActionState::Cancelled`] actions.
     pub open_only: bool,
+    /// Restrict to actions whose state is in this set. Empty means no state filter.
+    /// Takes precedence over `open_only` when non-empty.
+    pub states: Vec<ActionState>,
     /// Require at least one of these tags to appear in `action.contexts`.
     /// Empty means no context filter.
     pub context_tags: Vec<String>,
@@ -21,7 +24,11 @@ pub struct ActionFilter {
 
 impl ActionFilter {
     pub fn matches(&self, action: &Action) -> bool {
-        if self.open_only
+        if !self.states.is_empty() {
+            if !self.states.contains(&action.state) {
+                return false;
+            }
+        } else if self.open_only
             && matches!(action.state, ActionState::Completed | ActionState::Cancelled)
         {
             return false;

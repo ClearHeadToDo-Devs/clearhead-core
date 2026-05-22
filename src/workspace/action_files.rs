@@ -5,8 +5,7 @@
 //! - `<charter>.upcoming.actions`  — future generated instances beyond the primary cap
 //! - `<charter>.completed.actions` — completed/cancelled actions
 //!
-//! Charter stem derivation: `next.actions` uses the parent directory name;
-//! all other `.actions` files use the file stem. Unlike charter name inference,
+//! Charter stem derivation: always uses the file stem. Unlike charter name inference,
 //! `inbox` is NOT skipped — `inbox.actions` is valid.
 
 use std::path::{Path, PathBuf};
@@ -39,19 +38,6 @@ impl ActionsFile {
 // ============================================================================
 
 pub(crate) fn charter_stem(actions_path: &Path) -> String {
-    let filename = actions_path
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("");
-
-    if filename == "next.actions" {
-        if let Some(parent) = actions_path.parent() {
-            if let Some(dir_name) = parent.file_name().and_then(|n| n.to_str()) {
-                return dir_name.to_string();
-            }
-        }
-    }
-
     actions_path
         .file_stem()
         .and_then(|s| s.to_str())
@@ -62,8 +48,7 @@ pub(crate) fn charter_stem(actions_path: &Path) -> String {
 /// Derive the completed actions path for a `.actions` file.
 ///
 /// - `health.actions`               → `health.completed.actions`
-/// - `inbox.actions`                → `inbox.completed.actions`
-/// - `build_clearhead/next.actions` → `build_clearhead/build_clearhead.completed.actions`
+/// - `next.actions`                 → `next.completed.actions`
 /// - `build_clearhead/obs.actions`  → `build_clearhead/obs.completed.actions`
 pub fn completed_actions_path(actions_path: &Path) -> PathBuf {
     let stem = charter_stem(actions_path);
@@ -74,8 +59,7 @@ pub fn completed_actions_path(actions_path: &Path) -> PathBuf {
 /// Derive the upcoming actions path for a `.actions` file.
 ///
 /// - `health.actions`               → `health.upcoming.actions`
-/// - `inbox.actions`                → `inbox.upcoming.actions`
-/// - `build_clearhead/next.actions` → `build_clearhead/build_clearhead.upcoming.actions`
+/// - `next.actions`                 → `next.upcoming.actions`
 /// - `build_clearhead/obs.actions`  → `build_clearhead/obs.upcoming.actions`
 pub fn upcoming_actions_path(actions_path: &Path) -> PathBuf {
     let stem = charter_stem(actions_path);
