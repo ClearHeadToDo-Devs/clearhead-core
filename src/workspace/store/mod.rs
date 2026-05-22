@@ -28,12 +28,9 @@ mod save;
 
 use std::path::{Path, PathBuf};
 
-pub use load::{load_domain_model, load_workspace};
+pub use load::{FileSystemWorkspace, load_domain_model, load_workspace, load_workspaces};
 pub use manifest::{ManifestSourceType, WorkspaceManifestEntry, collect_workspace_manifest};
-pub use pathing::{
-    infer_charter_name, infer_charter_name_for_workspace, infer_parent_charter_name,
-    infer_parent_charter_name_for_workspace,
-};
+pub use pathing::{infer_charter_name, infer_parent_charter_name};
 pub use save::save_domain_model;
 
 /// Returns the workspace root directory (`.clearhead/` for project layout).

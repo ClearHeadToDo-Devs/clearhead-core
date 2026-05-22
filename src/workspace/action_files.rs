@@ -12,8 +12,27 @@
 use std::path::{Path, PathBuf};
 
 use crate::workspace::actions::format::{OutputFormat, format};
+use crate::workspace::actions::repository::{ActionSource, SourcedAction};
 use crate::workspace::actions::{Action, ActionList, parse_actions};
-use crate::workspace::store::WorkspaceError;
+use crate::workspace::store::{WorkspaceError, infer_charter_name};
+
+/// A parsed `.actions` file — the workspace-layer representation of a charter's actions.
+///
+/// Carries the file path and a [`SourcedAction`] per action, each with its file
+/// origin and (when parsed from a live document) LSP source positions.
+/// Convert to domain [`Action`]s via `.into_actions()` at the workspace boundary.
+#[derive(Debug, Clone)]
+pub struct ActionsFile {
+    pub path: PathBuf,
+    pub actions: Vec<SourcedAction>,
+}
+
+impl ActionsFile {
+    /// Strip file-layer metadata, yielding plain domain [`Action`]s.
+    pub fn into_actions(self) -> ActionList {
+        self.actions.into_iter().map(|sa| sa.action).collect()
+    }
+}
 
 // ============================================================================
 // Path derivation
@@ -79,6 +98,28 @@ pub fn read_actions(path: &Path) -> Result<ActionList, WorkspaceError> {
 
     let content = std::fs::read_to_string(path).map_err(WorkspaceError::Io)?;
     parse_actions(&content).map_err(|e| WorkspaceError::Acts(e))
+}
+
+/// Read a `.actions` file into an [`ActionsFile`], preserving file origin on each action.
+///
+/// `workspace_root` is used to infer the charter name from the relative path.
+/// Returns `Ok(ActionsFile { path, actions: [] })` if the file is absent.
+pub fn read_action_file(path: &Path, workspace_root: &Path) -> Result<ActionsFile, WorkspaceError> {
+    let actions = read_actions(path)?;
+    let relative = path.strip_prefix(workspace_root).unwrap_or(path);
+    let project = infer_charter_name(relative);
+    let sourced = actions
+        .into_iter()
+        .map(|action| SourcedAction {
+            action,
+            source: ActionSource {
+                file_path: relative.to_path_buf(),
+                project: project.clone(),
+            },
+            source_metadata: None,
+        })
+        .collect();
+    Ok(ActionsFile { path: path.to_path_buf(), actions: sourced })
 }
 
 /// Write [`Action`]s to a `.actions` or `.completed.actions` file.

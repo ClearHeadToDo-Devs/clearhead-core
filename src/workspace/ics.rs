@@ -16,8 +16,18 @@ use icalendar::{
     EventStatus,
 };
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use uuid::{Uuid, uuid};
+
+/// A parsed `.ics` file entry — the workspace-layer representation of a scheduled plan.
+///
+/// Carries the source file path alongside the domain [`Plan`].
+/// Convert to a plain [`Plan`] via `.plan` at the workspace boundary.
+#[derive(Debug, Clone)]
+pub struct ICSPlan {
+    pub path: PathBuf,
+    pub plan: Plan,
+}
 
 /// Namespace UUID for deriving deterministic Plan IDs from VEVENT UIDs.
 const ICS_NAMESPACE: Uuid = uuid!("6ba7b810-9dad-11d1-80b4-00c04fd430c8");
@@ -45,7 +55,7 @@ pub fn occurrence_act_id(vevent_uid: &str, occurrence_rfc3339: &str) -> uuid::Uu
 /// - `Plan.dtstart` — DTSTART as local time (recurrence expansion anchor)
 /// - `Plan.external_id` — raw VEVENT UID string
 /// - `Plan.template_name` — extracted from DESCRIPTION if it starts with `template: <name>`
-pub fn parse_ics_file(path: &Path) -> Result<Vec<Plan>, WorkspaceError> {
+pub fn parse_ics_file(path: &Path) -> Result<Vec<ICSPlan>, WorkspaceError> {
     let content = fs::read_to_string(path).map_err(WorkspaceError::Io)?;
 
     let calendar: Calendar = content
@@ -76,16 +86,19 @@ pub fn parse_ics_file(path: &Path) -> Result<Vec<Plan>, WorkspaceError> {
             .map(parse_description_directives)
             .unwrap_or((None, None, None));
 
-        plans.push(Plan {
-            id: plan_id,
-            name: summary.to_string(),
-            description,
-            recurrence,
-            dtstart,
-            external_id: Some(uid.to_string()),
-            template_name,
-            primary_instances,
-            ..Default::default()
+        plans.push(ICSPlan {
+            path: path.to_path_buf(),
+            plan: Plan {
+                id: plan_id,
+                name: summary.to_string(),
+                description,
+                recurrence,
+                dtstart,
+                external_id: Some(uid.to_string()),
+                template_name,
+                primary_instances,
+                ..Default::default()
+            },
         });
     }
 
@@ -273,17 +286,17 @@ mod tests {
 
         let plans = parse_ics_file(f.path()).unwrap();
         assert_eq!(plans.len(), 1);
-        assert_eq!(plans[0].name, "Weekly Review");
+        assert_eq!(plans[0].plan.name, "Weekly Review");
         assert_eq!(
-            plans[0].external_id.as_deref(),
+            plans[0].plan.external_id.as_deref(),
             Some("test-uid-001@example.com")
         );
-        assert!(plans[0].dtstart.is_some());
-        assert!(plans[0].recurrence.is_none());
-        assert!(plans[0].template_name.is_none());
+        assert!(plans[0].plan.dtstart.is_some());
+        assert!(plans[0].plan.recurrence.is_none());
+        assert!(plans[0].plan.template_name.is_none());
         // ID is deterministic
         let expected_id = Uuid::new_v5(&ICS_NAMESPACE, b"test-uid-001@example.com");
-        assert_eq!(plans[0].id, expected_id);
+        assert_eq!(plans[0].plan.id, expected_id);
     }
 
     #[test]
@@ -301,7 +314,7 @@ mod tests {
 
         let plans = parse_ics_file(f.path()).unwrap();
         assert_eq!(plans.len(), 1);
-        let r = plans[0].recurrence.as_ref().unwrap();
+        let r = plans[0].plan.recurrence.as_ref().unwrap();
         assert_eq!(r.frequency, "daily");
         let expected: Vec<String> = ["MO", "TU", "WE", "TH", "FR"]
             .iter()
@@ -326,13 +339,13 @@ mod tests {
 
         let plans = parse_ics_file(f.path()).unwrap();
         assert_eq!(plans.len(), 1);
-        assert_eq!(plans[0].template_name.as_deref(), Some("weekly-review"));
+        assert_eq!(plans[0].plan.template_name.as_deref(), Some("weekly-review"));
         assert_eq!(
-            plans[0].description.as_deref(),
+            plans[0].plan.description.as_deref(),
             Some("Reflect on the past week")
         );
-        assert!(plans[0].recurrence.is_some());
-        assert!(plans[0].primary_instances.is_none());
+        assert!(plans[0].plan.recurrence.is_some());
+        assert!(plans[0].plan.primary_instances.is_none());
     }
 
     #[test]
@@ -351,8 +364,8 @@ mod tests {
 
         let plans = parse_ics_file(f.path()).unwrap();
         assert_eq!(plans.len(), 1);
-        assert_eq!(plans[0].primary_instances, Some(2));
-        assert!(plans[0].template_name.is_none());
+        assert_eq!(plans[0].plan.primary_instances, Some(2));
+        assert!(plans[0].plan.template_name.is_none());
     }
 
     #[test]
@@ -371,9 +384,9 @@ mod tests {
 
         let plans = parse_ics_file(f.path()).unwrap();
         assert_eq!(plans.len(), 1);
-        assert_eq!(plans[0].template_name.as_deref(), Some("weekly-review"));
-        assert_eq!(plans[0].primary_instances, Some(3));
-        assert_eq!(plans[0].description.as_deref(), Some("Some notes"));
+        assert_eq!(plans[0].plan.template_name.as_deref(), Some("weekly-review"));
+        assert_eq!(plans[0].plan.primary_instances, Some(3));
+        assert_eq!(plans[0].plan.description.as_deref(), Some("Some notes"));
     }
 
     #[test]
@@ -390,8 +403,8 @@ mod tests {
         );
 
         let plans = parse_ics_file(f.path()).unwrap();
-        assert_eq!(plans[0].template_name.as_deref(), Some("release-checklist"));
-        assert!(plans[0].description.is_none());
+        assert_eq!(plans[0].plan.template_name.as_deref(), Some("release-checklist"));
+        assert!(plans[0].plan.description.is_none());
     }
 
     #[test]
@@ -408,9 +421,9 @@ mod tests {
         );
 
         let plans = parse_ics_file(f.path()).unwrap();
-        assert!(plans[0].template_name.is_none());
+        assert!(plans[0].plan.template_name.is_none());
         assert_eq!(
-            plans[0].description.as_deref(),
+            plans[0].plan.description.as_deref(),
             Some("Just a regular event description")
         );
     }
@@ -434,7 +447,7 @@ mod tests {
 
         let plans = parse_ics_file(f.path()).unwrap();
         assert_eq!(plans.len(), 2);
-        let names: Vec<&str> = plans.iter().map(|p| p.name.as_str()).collect();
+        let names: Vec<&str> = plans.iter().map(|p| p.plan.name.as_str()).collect();
         assert!(names.contains(&"Event One"));
         assert!(names.contains(&"Event Two"));
     }

@@ -1,9 +1,10 @@
 use crate::domain::Action;
 use super::parser::ActionList;
+use super::source::SourceMetadata;
 use crate::workspace::store::infer_charter_name;
 use std::path::{Path, PathBuf};
 
-/// Metadata about an action's source file
+/// Metadata about an action's source file.
 #[derive(Debug, Clone)]
 pub struct ActionSource {
     /// Path to the source file (relative to workspace root)
@@ -12,11 +13,16 @@ pub struct ActionSource {
     pub project: Option<String>,
 }
 
-/// An action with its source metadata
+/// An action paired with its file-layer metadata.
+///
+/// `source` carries the file origin (path + inferred charter).
+/// `source_metadata` carries line/column positions for LSP diagnostics;
+/// absent when loaded from disk rather than from a live parse.
 #[derive(Debug, Clone)]
 pub struct SourcedAction {
     pub action: Action,
     pub source: ActionSource,
+    pub source_metadata: Option<SourceMetadata>,
 }
 
 /// Collection of actions from multiple files with source tracking.
@@ -59,6 +65,7 @@ impl ActionRepository {
                     file_path: relative_path.clone(),
                     project: project.clone(),
                 },
+                source_metadata: None,
             });
         }
     }

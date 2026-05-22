@@ -21,7 +21,9 @@ use serde::Deserialize;
 use std::path::PathBuf;
 use uuid::Uuid;
 
-use crate::domain::{Action, Charter, CharterState, Plan};
+use crate::domain::{Charter, CharterState, Plan};
+use crate::workspace::actions::repository::{ActionSource, SourcedAction};
+use crate::workspace::ics::ICSPlan;
 
 /// A charter as it exists in the workspace — carries file paths alongside domain data.
 ///
@@ -37,8 +39,8 @@ pub struct MarkdownCharter {
     /// Lifecycle state parsed from the charter `.md` frontmatter.
     /// `None` means the state has not been explicitly set (treated as `New`).
     pub state: Option<CharterState>,
-    pub plans: Vec<Plan>,
-    pub actions: Vec<Action>,
+    pub plans: Vec<ICSPlan>,
+    pub actions: Vec<SourcedAction>,
 
     pub md_file: Option<PathBuf>,
     pub acts_file: Option<PathBuf>,
@@ -55,8 +57,8 @@ impl From<MarkdownCharter> for Charter {
             parent: mc.parent,
             objectives: mc.objectives,
             state: mc.state,
-            plans: mc.plans,
-            actions: mc.actions,
+            plans: mc.plans.into_iter().map(|ip| ip.plan).collect(),
+            actions: mc.actions.into_iter().map(|sa| sa.action).collect(),
         }
     }
 }
@@ -71,8 +73,12 @@ impl From<Charter> for MarkdownCharter {
             parent: c.parent,
             objectives: c.objectives,
             state: c.state,
-            plans: c.plans,
-            actions: c.actions,
+            plans: c.plans.into_iter().map(|plan| ICSPlan { path: PathBuf::new(), plan }).collect(),
+            actions: c.actions.into_iter().map(|action| SourcedAction {
+                action,
+                source: ActionSource { file_path: PathBuf::new(), project: None },
+                source_metadata: None,
+            }).collect(),
             md_file: None,
             acts_file: None,
             plans_dir: None,

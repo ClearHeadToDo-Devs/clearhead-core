@@ -3,26 +3,75 @@ use super::pathing::{infer_charter_name_for_workspace, infer_parent_charter_name
 use super::{WorkspaceError, resolve_workspace_layout};
 use crate::domain::{Charter, DomainModel};
 use crate::workspace::actions::convert::from_actions_with_charter;
+use crate::workspace::actions::repository::{ActionSource, SourcedAction};
 use crate::workspace::charter::{MarkdownCharter, frontmatter_has_parent_key, implicit_charter, parse_charter};
 use crate::workspace::ics::parse_ics_file;
 use crate::workspace::plans::collect_plan_files;
 use crate::workspace::sidecar::{hydrate_acts, read_sidecar, sidecar_path};
+use crate::workspace::store::infer_charter_name;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-/// Load a `DomainModel` from a workspace root directory.
+/// The complete filesystem representation of a workspace.
 ///
-/// Delegates to `load_workspace` and strips file-path metadata.
-pub fn load_domain_model(root: &Path) -> Result<DomainModel, WorkspaceError> {
-    let charters = load_workspace(root)?;
-    Ok(DomainModel {
-        objectives: vec![],
-        charters: charters.into_iter().map(Charter::from).collect(),
-    })
+/// Holds all file-layer types ([`MarkdownCharter`] → [`ICSPlan`] / [`SourcedAction`]).
+/// Convert to a pure [`DomainModel`] via `From` at the workspace boundary —
+/// all file paths and source metadata are stripped in that conversion.
+///
+/// [`ICSPlan`]: crate::workspace::ics::ICSPlan
+pub struct FileSystemWorkspace {
+    pub root: PathBuf,
+    /// Display name for this workspace — used to scope output in multi-workspace contexts.
+    /// `None` in single-workspace use or when the config has no `workspace_name` set.
+    pub name: Option<String>,
+    pub charters: Vec<MarkdownCharter>,
 }
 
-/// Load the workspace as a `Vec<MarkdownCharter>`, preserving the file paths
-/// each charter's plans and acts came from.
+impl FileSystemWorkspace {
+    pub fn load(root: &Path) -> Result<Self, WorkspaceError> {
+        let charters = load_workspace(root)?;
+        Ok(Self { root: root.to_path_buf(), name: None, charters })
+    }
+}
+
+/// Load the primary workspace and all additional workspaces listed in `config`.
+///
+/// The primary workspace gets its `name` from `config.workspace_name`.
+/// Additional workspaces have `name: None` — each has its own config that
+/// only the calling tool knows how to load.
+///
+/// Returns `Err` on the first workspace that fails to load.
+pub fn load_workspaces(
+    primary_root: &Path,
+    config: &crate::config::WorkspaceConfig,
+) -> Result<Vec<FileSystemWorkspace>, WorkspaceError> {
+    let mut primary = FileSystemWorkspace::load(primary_root)?;
+    primary.name = config.workspace_name.clone();
+    let mut workspaces = vec![primary];
+    for path_str in &config.additional_workspaces {
+        workspaces.push(FileSystemWorkspace::load(Path::new(path_str))?);
+    }
+    Ok(workspaces)
+}
+
+impl From<FileSystemWorkspace> for DomainModel {
+    fn from(ws: FileSystemWorkspace) -> DomainModel {
+        DomainModel {
+            objectives: vec![],
+            charters: ws.charters.into_iter().map(Charter::from).collect(),
+        }
+    }
+}
+
+/// Load a [`DomainModel`] from a workspace root directory.
+pub fn load_domain_model(root: &Path) -> Result<DomainModel, WorkspaceError> {
+    Ok(FileSystemWorkspace::load(root)?.into())
+}
+
+/// Load the workspace as a [`FileSystemWorkspace`], preserving file-layer metadata.
+///
+/// Prefer [`FileSystemWorkspace::load`] directly. This free function exists for
+/// callers that need only the charter list without the root path.
 pub fn load_workspace(root: &Path) -> Result<Vec<MarkdownCharter>, WorkspaceError> {
     if !root.is_dir() {
         return Err(WorkspaceError::InvalidPath(root.to_path_buf()));
@@ -44,14 +93,13 @@ pub fn load_workspace(root: &Path) -> Result<Vec<MarkdownCharter>, WorkspaceErro
         let action_source = std::fs::read_to_string(&file_path)?;
         let parsed_doc = super::super::parse_document(&action_source)
             .map_err(|e| WorkspaceError::Parse(format!("{}: {}", file_path.display(), e)))?;
-        let mut actions = parsed_doc.actions;
 
         if !parsed_doc.syntax_errors.is_empty() {
             eprintln!(
                 "warning: [{}] parsed with {} issue(s); loaded {} recoverable action(s)",
                 file_path.display(),
                 parsed_doc.syntax_errors.len(),
-                actions.len()
+                parsed_doc.actions.len()
             );
 
             for diagnostic in parsed_doc.syntax_errors.iter().take(5) {
@@ -69,19 +117,33 @@ pub fn load_workspace(root: &Path) -> Result<Vec<MarkdownCharter>, WorkspaceErro
             }
         }
 
-        for action in &mut actions {
-            if action.charter.is_none() {
-                action.charter = Some(name.clone());
-            }
-        }
+        let project = infer_charter_name(&relative);
+        let mut sourced: Vec<SourcedAction> = parsed_doc.actions
+            .into_iter()
+            .map(|mut action| {
+                if action.charter.is_none() {
+                    action.charter = Some(name.clone());
+                }
+                SourcedAction {
+                    action,
+                    source: ActionSource { file_path: relative.clone(), project: project.clone() },
+                    source_metadata: None,
+                }
+            })
+            .collect();
 
-        let base: Charter = from_actions_with_charter(&actions, name.clone());
+        let base: Charter = from_actions_with_charter(
+            &sourced.iter().map(|sa| sa.action.clone()).collect::<Vec<_>>(),
+            name.clone(),
+        );
         let mut mc = MarkdownCharter::from(base);
         mc.acts_file = Some(relative.clone());
+        mc.actions = sourced.clone();
 
         let sc_path = layout.charter_root.join(sidecar_path(&relative));
         let sidecar = read_sidecar(&sc_path)?;
-        hydrate_acts(&mut mc.actions, &sidecar);
+        hydrate_acts(&mut sourced, &sidecar);
+        mc.actions = sourced;
 
         charters
             .entry(name.clone())

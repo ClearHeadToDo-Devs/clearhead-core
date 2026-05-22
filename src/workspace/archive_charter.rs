@@ -244,7 +244,7 @@ fn archive_one(
 
     let mut charter_domain = Charter::from(mc.clone());
     charter_domain.actions = all_actions;
-    charter_domain.plans = mc.plans.clone();
+    charter_domain.plans = mc.plans.iter().map(|ip| ip.plan.clone()).collect();
 
     let model = DomainModel {
         objectives: vec![],

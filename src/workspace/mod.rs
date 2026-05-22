@@ -26,25 +26,22 @@ pub use actions::{
     SourceRange, SourcedAction, diff_actions, format, parse_actions, parse_actions_with_mode,
     parse_document, parse_tree, patch_action_list,
 };
-pub use action_files::{completed_actions_path, upcoming_actions_path, read_actions, write_actions};
+pub use action_files::{ActionsFile, completed_actions_path, upcoming_actions_path, read_action_file, read_actions, write_actions};
 pub use sidecar::{ActMeta, CharterMeta, CharterMetadata, PlanMeta, hydrate_acts, read_sidecar, sidecar_path, write_sidecar};
 pub use charter::{MarkdownCharter, format_charter, implicit_charter, parse_charter};
 pub use archive_charter::{
     ArchiveCharterError, ArchiveCharterOptions, ArchiveCharterResult,
     archive_charter, archive_closed_charters, find_charter as find_markdown_charter,
 };
-pub use ics::{action_to_vevent, actions_to_icalendar, occurrence_act_id};
-pub use plans::{
-    PlanFileEntry, collect_plan_files, infer_plan_charter_name,
-    infer_plan_charter_name_for_workspace, infer_plan_parent, infer_plan_parent_for_workspace,
-};
+pub use ics::{ICSPlan, action_to_vevent, actions_to_icalendar, occurrence_act_id};
+pub use plans::{PlanFileEntry, collect_plan_files, infer_plan_charter_name, infer_plan_parent};
 
 pub use detection::check_for_workspace;
 pub use expand::expand_plans_into_acts;
 pub use store::{
-    ManifestSourceType, WorkspaceError, WorkspaceManifestEntry, collect_workspace_manifest,
-    infer_charter_name, infer_charter_name_for_workspace, infer_parent_charter_name,
-    infer_parent_charter_name_for_workspace, list_action_files, load_domain_model,
-    charter_root, plans_root, load_workspace, save_domain_model, workspace_data_root,
+    FileSystemWorkspace, ManifestSourceType, WorkspaceError, WorkspaceManifestEntry,
+    collect_workspace_manifest, infer_charter_name, infer_parent_charter_name,
+    list_action_files, load_domain_model, load_workspaces, charter_root, plans_root, load_workspace,
+    save_domain_model, workspace_data_root,
 };
 pub use templates::{instantiate_template, resolve_template};

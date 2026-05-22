@@ -81,10 +81,9 @@ pub fn read_sidecar(path: &Path) -> Result<CharterMetadata, WorkspaceError> {
 /// For each act, if the sidecar has a matching entry (by UUID string key),
 /// fills in `created_at` and `external_schedule_id` where the act doesn't
 /// already have them (DSL values are authoritative).
-pub fn hydrate_acts(acts: &mut [crate::domain::Action], metadata: &CharterMetadata) {
-    for act in acts.iter_mut() {
-        // Sidecar keys are the action UUID from the DSL.
-        // Fall back to act.id for acts constructed without a plan_id (e.g. unit tests).
+pub fn hydrate_acts(acts: &mut [crate::workspace::actions::repository::SourcedAction], metadata: &CharterMetadata) {
+    for sa in acts.iter_mut() {
+        let act = &mut sa.action;
         let key = act
             .plan_id
             .map(|id| id.to_string())
@@ -220,6 +219,16 @@ mod tests {
 
     // ===== Hydration =====
 
+    fn make_sourced(action: crate::domain::Action) -> crate::workspace::actions::repository::SourcedAction {
+        use crate::workspace::actions::repository::{ActionSource, SourcedAction};
+        use std::path::PathBuf;
+        SourcedAction {
+            action,
+            source: ActionSource { file_path: PathBuf::new(), project: None },
+            source_metadata: None,
+        }
+    }
+
     #[test]
     fn hydrate_fills_created_at_from_sidecar() {
         use crate::domain::Action;
@@ -227,21 +236,12 @@ mod tests {
 
         let id = Uuid::now_v7();
         let created = Local::now();
-        let mut acts = vec![Action {
-            id,
-            ..Default::default()
-        }];
+        let mut acts = vec![make_sourced(Action { id, ..Default::default() })];
         let mut meta = CharterMetadata::default();
-        meta.acts.insert(
-            id.to_string(),
-            ActMeta {
-                created: Some(created),
-                source_vevent: None,
-            },
-        );
+        meta.acts.insert(id.to_string(), ActMeta { created: Some(created), source_vevent: None });
 
         hydrate_acts(&mut acts, &meta);
-        assert_eq!(acts[0].created_at, Some(created));
+        assert_eq!(acts[0].action.created_at, Some(created));
     }
 
     #[test]
@@ -252,22 +252,12 @@ mod tests {
         let id = Uuid::now_v7();
         let dsl_created = Local::now();
         let sidecar_created = dsl_created - chrono::Duration::hours(1);
-        let mut acts = vec![Action {
-            id,
-            created_at: Some(dsl_created),
-            ..Default::default()
-        }];
+        let mut acts = vec![make_sourced(Action { id, created_at: Some(dsl_created), ..Default::default() })];
         let mut meta = CharterMetadata::default();
-        meta.acts.insert(
-            id.to_string(),
-            ActMeta {
-                created: Some(sidecar_created),
-                source_vevent: None,
-            },
-        );
+        meta.acts.insert(id.to_string(), ActMeta { created: Some(sidecar_created), source_vevent: None });
 
         hydrate_acts(&mut acts, &meta);
-        assert_eq!(acts[0].created_at, Some(dsl_created));
+        assert_eq!(acts[0].action.created_at, Some(dsl_created));
     }
 
     #[test]
@@ -276,24 +266,15 @@ mod tests {
         use uuid::Uuid;
 
         let id = Uuid::now_v7();
-        let mut acts = vec![Action {
-            id,
-            ..Default::default()
-        }];
+        let mut acts = vec![make_sourced(Action { id, ..Default::default() })];
         let mut meta = CharterMetadata::default();
         meta.acts.insert(
             id.to_string(),
-            ActMeta {
-                created: None,
-                source_vevent: Some("weekly-review@clearhead.us".to_string()),
-            },
+            ActMeta { created: None, source_vevent: Some("weekly-review@clearhead.us".to_string()) },
         );
 
         hydrate_acts(&mut acts, &meta);
-        assert_eq!(
-            acts[0].external_schedule_id.as_deref(),
-            Some("weekly-review@clearhead.us")
-        );
+        assert_eq!(acts[0].action.external_schedule_id.as_deref(), Some("weekly-review@clearhead.us"));
     }
 
     #[test]
@@ -301,14 +282,11 @@ mod tests {
         use crate::domain::Action;
         use uuid::Uuid;
 
-        let mut acts = vec![Action {
-            id: Uuid::now_v7(),
-            ..Default::default()
-        }];
+        let mut acts = vec![make_sourced(Action { id: Uuid::now_v7(), ..Default::default() })];
         let meta = CharterMetadata::default();
 
         hydrate_acts(&mut acts, &meta);
-        assert!(acts[0].created_at.is_none());
+        assert!(acts[0].action.created_at.is_none());
     }
 
     // ===== Filesystem read/write =====

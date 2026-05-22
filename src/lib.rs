@@ -41,16 +41,16 @@ pub mod config;
 pub use config::WorkspaceConfig;
 #[doc(inline)]
 pub use workspace::{
-    Action, ActionList, Diff, MarkdownCharter, OutputFormat, ParseFailure, ParseMode,
+    Action, ActionList, Diff, FileSystemWorkspace, ICSPlan, MarkdownCharter, OutputFormat, ParseFailure, ParseMode,
     ParseOutcome, ParsedDocument, RecoveryReport, SourceMetadata, SourceRange, collect_plan_files,
     collect_workspace_manifest, completed_actions_path, diff_actions, format, format_charter,
-    implicit_charter, infer_charter_name, infer_charter_name_for_workspace,
-    infer_parent_charter_name, infer_parent_charter_name_for_workspace, infer_plan_charter_name,
-    infer_plan_charter_name_for_workspace, infer_plan_parent, infer_plan_parent_for_workspace,
-    expand_plans_into_acts, upcoming_actions_path, list_action_files, load_domain_model, load_workspace,
+    implicit_charter, infer_charter_name, infer_parent_charter_name,
+    infer_plan_charter_name, infer_plan_parent,
+    expand_plans_into_acts, upcoming_actions_path, list_action_files, load_domain_model, load_workspace, load_workspaces,
     action_to_vevent, actions_to_icalendar, occurrence_act_id, parse_actions,
     parse_actions_with_mode, parse_charter, parse_document, parse_tree, patch_action_list,
-    charter_root, plans_root, read_actions, save_domain_model, workspace_data_root, write_actions,
+    charter_root, plans_root, read_action_file, read_actions, save_domain_model,
+    workspace_data_root, write_actions,
     ArchiveCharterError, ArchiveCharterOptions, ArchiveCharterResult,
     archive_charter, archive_closed_charters, find_markdown_charter,
 };
