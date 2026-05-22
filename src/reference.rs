@@ -543,10 +543,7 @@ fn charter_matches_segment(charter: &Charter, segment: &str) -> bool {
 }
 
 fn plan_matches_segment(plan: &Plan, segment: &str) -> bool {
-    if matches_uuid(&plan.id, segment) {
-        return true;
-    }
-    plan.name.to_lowercase() == segment.to_lowercase()
+    matches_uuid(&plan.id, segment)
 }
 
 fn act_matches_segment(act: &Action, segment: &str) -> bool {
@@ -559,8 +556,8 @@ fn matches_uuid(id: &Uuid, segment: &str) -> bool {
     }
 
     if is_short_uuid(segment) {
-        let id_str = id.to_string();
-        return id_str.starts_with(&segment.to_lowercase());
+        let id_hex = id.to_string().replace('-', "");
+        return id_hex.starts_with(&segment.to_lowercase());
     }
 
     false
@@ -571,10 +568,27 @@ fn alias_match(alias: &str, segment: &str) -> bool {
 }
 
 fn is_short_uuid(segment: &str) -> bool {
-    if segment.len() != 8 {
-        return false;
+    segment.len() >= 4 && segment.chars().all(|c| c.is_ascii_hexdigit())
+}
+
+/// Resolve a reference across multiple workspaces, returning the first match.
+///
+/// `workspaces` should be ordered primary-first; the caller controls
+/// precedence. Returns the matching workspace name alongside the target.
+pub fn resolve_reference_in_workspaces(
+    workspaces: &[(&str, &DomainModel)],
+    input: &str,
+    options: &ReferenceOptions,
+) -> Result<(String, ReferenceTarget), ReferenceError> {
+    for (name, model) in workspaces {
+        if let Ok(target) = resolve_reference(model, input, options) {
+            return Ok((name.to_string(), target));
+        }
     }
-    segment.chars().all(|c| c.is_ascii_hexdigit())
+    Err(ReferenceError::new(format!(
+        "No match for '{}' in any workspace",
+        input
+    )))
 }
 
 #[cfg(test)]
@@ -665,33 +679,35 @@ mod tests {
     }
 
     #[test]
-    fn resolves_plan_path() {
+    fn resolves_plan_path_by_uuid() {
         let model = sample_model();
-        let target = resolve_reference(&model, "build/core", &ReferenceOptions::default()).unwrap();
-        assert_eq!(
-            target,
-            ReferenceTarget::Plan(Uuid::parse_str("11223344-0000-0000-0000-000000000003").unwrap())
-        );
+        let plan_id = Uuid::parse_str("11223344-0000-0000-0000-000000000003").unwrap();
+        let short = &plan_id.to_string()[..8];
+        let path = format!("build/{}", short);
+        let target = resolve_reference(&model, &path, &ReferenceOptions::default()).unwrap();
+        assert_eq!(target, ReferenceTarget::Plan(plan_id));
     }
 
     #[test]
     fn resolves_act_in_plan_path() {
         let model = sample_model();
+        let plan_id = Uuid::parse_str("11223344-0000-0000-0000-000000000003").unwrap();
         let act_id = Uuid::parse_str("deadbeef-0000-0000-0000-000000000005").unwrap();
-        let short = &act_id.to_string()[..8];
-        let path = format!("build/core/{}", short);
+        let plan_short = &plan_id.to_string()[..8];
+        let act_short = &act_id.to_string()[..8];
+        let path = format!("build/{}/{}", plan_short, act_short);
         let target = resolve_reference(&model, &path, &ReferenceOptions::default()).unwrap();
         assert_eq!(target, ReferenceTarget::Act(act_id));
     }
 
     #[test]
-    fn resolves_plan_prefix_globally() {
+    fn resolves_plan_prefix_globally_by_uuid() {
         let model = sample_model();
-        let target = resolve_reference(&model, "p:core", &ReferenceOptions::default()).unwrap();
-        assert_eq!(
-            target,
-            ReferenceTarget::Plan(Uuid::parse_str("11223344-0000-0000-0000-000000000003").unwrap())
-        );
+        let plan_id = Uuid::parse_str("11223344-0000-0000-0000-000000000003").unwrap();
+        let short = &plan_id.to_string()[..8];
+        let input = format!("p:{}", short);
+        let target = resolve_reference(&model, &input, &ReferenceOptions::default()).unwrap();
+        assert_eq!(target, ReferenceTarget::Plan(plan_id));
     }
 
     #[test]
@@ -711,5 +727,41 @@ mod tests {
                 Uuid::parse_str("abcdef12-0000-0000-0000-000000000099").unwrap()
             )
         );
+    }
+
+    #[test]
+    fn multi_workspace_returns_first_match() {
+        let model = sample_model();
+        let empty = DomainModel { objectives: vec![], charters: vec![] };
+        let workspaces = [("secondary", &empty), ("primary", &model)];
+        let (ws, target) =
+            resolve_reference_in_workspaces(&workspaces, "build", &ReferenceOptions::default())
+                .unwrap();
+        assert_eq!(ws, "primary");
+        assert_eq!(
+            target,
+            ReferenceTarget::Charter(
+                Uuid::parse_str("12345678-0000-0000-0000-000000000001").unwrap()
+            )
+        );
+    }
+
+    #[test]
+    fn multi_workspace_error_when_none_match() {
+        let empty = DomainModel { objectives: vec![], charters: vec![] };
+        let workspaces = [("a", &empty), ("b", &empty)];
+        let err =
+            resolve_reference_in_workspaces(&workspaces, "missing", &ReferenceOptions::default())
+                .unwrap_err();
+        assert!(err.to_string().contains("missing"));
+    }
+
+    #[test]
+    fn short_uuid_prefix_longer_than_eight_resolves() {
+        let model = sample_model();
+        let act_id = Uuid::parse_str("deadbeef-0000-0000-0000-000000000005").unwrap();
+        let long_prefix = &act_id.to_string().replace('-', "")[..12];
+        let target = resolve_reference(&model, &format!("a:{}", long_prefix), &ReferenceOptions::default()).unwrap();
+        assert_eq!(target, ReferenceTarget::Act(act_id));
     }
 }

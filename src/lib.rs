@@ -80,6 +80,7 @@ pub mod reference;
 pub use reference::{
     MatchMode, ReferenceError, ReferenceOptions, ReferenceTarget, filter_model_for_act,
     filter_model_for_charter, filter_model_for_plan, resolve_reference,
+    resolve_reference_in_workspaces,
 };
 
 pub mod telemetry;
