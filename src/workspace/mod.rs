@@ -8,7 +8,7 @@
 //! domain IR, and the workspace module handles the DSL details.
 
 pub mod actions;
-pub mod acts;
+pub mod action_files;
 pub mod archive_charter;
 pub mod charter;
 pub mod detection;
@@ -26,7 +26,7 @@ pub use actions::{
     SourceRange, SourcedAction, diff_actions, format, parse_actions, parse_actions_with_mode,
     parse_document, parse_tree, patch_action_list,
 };
-pub use acts::{completed_acts_path, upcoming_acts_path, read_acts, write_acts};
+pub use action_files::{completed_actions_path, upcoming_actions_path, read_actions, write_actions};
 pub use sidecar::{ActMeta, CharterMeta, CharterMetadata, PlanMeta, hydrate_acts, read_sidecar, sidecar_path, write_sidecar};
 pub use charter::{MarkdownCharter, format_charter, implicit_charter, parse_charter};
 pub use archive_charter::{

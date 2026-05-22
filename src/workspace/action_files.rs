@@ -1,9 +1,9 @@
 //! Per-charter `.actions` / `.completed.actions` / `.upcoming.actions` read/write.
 //!
-//! Each charter's acts are stored across three DSL files:
-//! - `<charter>.actions`           — active acts (within primary instance cap)
+//! Each charter's actions are stored across three DSL files:
+//! - `<charter>.actions`           — active actions (within primary instance cap)
 //! - `<charter>.upcoming.actions`  — future generated instances beyond the primary cap
-//! - `<charter>.completed.actions` — completed/cancelled acts
+//! - `<charter>.completed.actions` — completed/cancelled actions
 //!
 //! Charter stem derivation: `next.actions` uses the parent directory name;
 //! all other `.actions` files use the file stem. Unlike charter name inference,
@@ -40,25 +40,25 @@ pub(crate) fn charter_stem(actions_path: &Path) -> String {
         .to_string()
 }
 
-/// Derive the completed acts path for a `.actions` file.
+/// Derive the completed actions path for a `.actions` file.
 ///
 /// - `health.actions`               → `health.completed.actions`
 /// - `inbox.actions`                → `inbox.completed.actions`
 /// - `build_clearhead/next.actions` → `build_clearhead/build_clearhead.completed.actions`
 /// - `build_clearhead/obs.actions`  → `build_clearhead/obs.completed.actions`
-pub fn completed_acts_path(actions_path: &Path) -> PathBuf {
+pub fn completed_actions_path(actions_path: &Path) -> PathBuf {
     let stem = charter_stem(actions_path);
     let dir = actions_path.parent().unwrap_or(Path::new(""));
     dir.join(format!("{}.completed.actions", stem))
 }
 
-/// Derive the upcoming acts path for a `.actions` file.
+/// Derive the upcoming actions path for a `.actions` file.
 ///
 /// - `health.actions`               → `health.upcoming.actions`
 /// - `inbox.actions`                → `inbox.upcoming.actions`
 /// - `build_clearhead/next.actions` → `build_clearhead/build_clearhead.upcoming.actions`
 /// - `build_clearhead/obs.actions`  → `build_clearhead/obs.upcoming.actions`
-pub fn upcoming_acts_path(actions_path: &Path) -> PathBuf {
+pub fn upcoming_actions_path(actions_path: &Path) -> PathBuf {
     let stem = charter_stem(actions_path);
     let dir = actions_path.parent().unwrap_or(Path::new(""));
     dir.join(format!("{}.upcoming.actions", stem))
@@ -72,7 +72,7 @@ pub fn upcoming_acts_path(actions_path: &Path) -> PathBuf {
 ///
 /// Returns `Ok(vec![])` if the file is absent. Syntax errors are returned as
 /// an error per the parse boundary contract.
-pub fn read_acts(path: &Path) -> Result<ActionList, WorkspaceError> {
+pub fn read_actions(path: &Path) -> Result<ActionList, WorkspaceError> {
     if !path.exists() {
         return Ok(ActionList::new());
     }
@@ -84,14 +84,14 @@ pub fn read_acts(path: &Path) -> Result<ActionList, WorkspaceError> {
 /// Write [`Action`]s to a `.actions` or `.completed.actions` file.
 ///
 /// Creates parent directories as needed. Overwrites any existing file.
-pub fn write_acts(acts: &[Action], path: &Path) -> Result<(), WorkspaceError> {
+pub fn write_actions(actions: &[Action], path: &Path) -> Result<(), WorkspaceError> {
     if let Some(parent) = path.parent() {
         if !parent.as_os_str().is_empty() {
             std::fs::create_dir_all(parent).map_err(WorkspaceError::Io)?;
         }
     }
 
-    let list: ActionList = acts.to_vec();
+    let list: ActionList = actions.to_vec();
     let content =
         format(&list, OutputFormat::Actions, None, None).map_err(|e| WorkspaceError::Acts(e))?;
     std::fs::write(path, content).map_err(WorkspaceError::Io)
@@ -110,41 +110,41 @@ mod tests {
     // ========================================================================
 
     #[test]
-    fn test_completed_acts_path() {
+    fn test_completed_actions_path() {
         assert_eq!(
-            completed_acts_path(Path::new("/data/health.actions")),
+            completed_actions_path(Path::new("/data/health.actions")),
             PathBuf::from("/data/health.completed.actions")
         );
         assert_eq!(
-            completed_acts_path(Path::new("inbox.actions")),
+            completed_actions_path(Path::new("inbox.actions")),
             PathBuf::from("inbox.completed.actions")
         );
         assert_eq!(
-            completed_acts_path(Path::new("build_clearhead/next.actions")),
+            completed_actions_path(Path::new("build_clearhead/next.actions")),
             PathBuf::from("build_clearhead/build_clearhead.completed.actions")
         );
         assert_eq!(
-            completed_acts_path(Path::new("build_clearhead/obs.actions")),
+            completed_actions_path(Path::new("build_clearhead/obs.actions")),
             PathBuf::from("build_clearhead/obs.completed.actions")
         );
     }
 
     #[test]
-    fn test_upcoming_acts_path() {
+    fn test_upcoming_actions_path() {
         assert_eq!(
-            upcoming_acts_path(Path::new("/data/health.actions")),
+            upcoming_actions_path(Path::new("/data/health.actions")),
             PathBuf::from("/data/health.upcoming.actions")
         );
         assert_eq!(
-            upcoming_acts_path(Path::new("inbox.actions")),
+            upcoming_actions_path(Path::new("inbox.actions")),
             PathBuf::from("inbox.upcoming.actions")
         );
         assert_eq!(
-            upcoming_acts_path(Path::new("build_clearhead/next.actions")),
+            upcoming_actions_path(Path::new("build_clearhead/next.actions")),
             PathBuf::from("build_clearhead/build_clearhead.upcoming.actions")
         );
         assert_eq!(
-            upcoming_acts_path(Path::new("build_clearhead/obs.actions")),
+            upcoming_actions_path(Path::new("build_clearhead/obs.actions")),
             PathBuf::from("build_clearhead/obs.upcoming.actions")
         );
     }
@@ -155,7 +155,7 @@ mod tests {
 
     #[test]
     fn test_missing_file_returns_empty() {
-        let result = read_acts(Path::new("/nonexistent/path.actions"));
+        let result = read_actions(Path::new("/nonexistent/path.actions"));
         assert!(result.is_ok());
         assert!(result.unwrap().is_empty());
     }
@@ -174,8 +174,8 @@ mod tests {
         let tmp = tempfile::tempdir().expect("tempdir");
         let path = tmp.path().join("health.actions");
 
-        write_acts(&acts, &path).expect("write");
-        let loaded = read_acts(&path).expect("read");
+        write_actions(&acts, &path).expect("write");
+        let loaded = read_actions(&path).expect("read");
 
         assert_eq!(loaded.len(), 1);
         assert_eq!(loaded[0].id, action.id);
@@ -198,8 +198,8 @@ mod tests {
         let tmp = tempfile::tempdir().expect("tempdir");
         let path = tmp.path().join("health.completed.actions");
 
-        write_acts(&[action.clone()], &path).expect("write");
-        let loaded = read_acts(&path).expect("read");
+        write_actions(&[action.clone()], &path).expect("write");
+        let loaded = read_actions(&path).expect("read");
 
         assert_eq!(loaded.len(), 1);
         assert_eq!(loaded[0].state, ActionState::Completed);

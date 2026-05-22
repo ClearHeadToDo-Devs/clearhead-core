@@ -29,7 +29,7 @@ use crate::graph::{
     create_store, dump_store_to_turtle, insert::load_domain_model as insert_model_into_store,
     insert::load_turtle,
 };
-use crate::workspace::acts::{completed_acts_path, read_acts, upcoming_acts_path};
+use crate::workspace::action_files::{completed_actions_path, read_actions, upcoming_actions_path};
 use crate::workspace::store::{WorkspaceError, resolve_workspace_layout};
 use crate::workspace::store::load_workspace;
 use crate::workspace::MarkdownCharter;
@@ -176,8 +176,8 @@ fn archive_one(
         .map(|rel| layout.charter_root.join(rel));
 
     // Completed / upcoming paths derived from the primary path
-    let completed_abs: Option<PathBuf> = acts_abs.as_ref().map(|p| completed_acts_path(p));
-    let upcoming_abs: Option<PathBuf> = acts_abs.as_ref().map(|p| upcoming_acts_path(p));
+    let completed_abs: Option<PathBuf> = acts_abs.as_ref().map(|p| completed_actions_path(p));
+    let upcoming_abs: Option<PathBuf> = acts_abs.as_ref().map(|p| upcoming_actions_path(p));
 
     // Charter .md path
     let md_abs: Option<PathBuf> = mc
@@ -203,7 +203,7 @@ fn archive_one(
 
     // ── 3. Read primary actions ─────────────────────────────────────────────
     let primary_actions: Vec<Action> = match &acts_abs {
-        Some(p) => read_acts(p)?,
+        Some(p) => read_actions(p)?,
         None => vec![],
     };
 
@@ -218,7 +218,7 @@ fn archive_one(
 
     // ── 4. Read completed actions ───────────────────────────────────────────
     let completed_actions: Vec<Action> = match &completed_abs {
-        Some(p) => read_acts(p)?,
+        Some(p) => read_actions(p)?,
         None => vec![],
     };
 
