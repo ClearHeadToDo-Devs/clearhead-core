@@ -37,7 +37,32 @@ impl ActionsFile {
 // Path derivation
 // ============================================================================
 
+/// Derive the charter stem from an actions file path.
+///
+/// When the filename is a primary file (`next.actions`) inside a subdirectory,
+/// uses the directory name as the stem — matching how charter names are inferred.
+///
+/// - `health.actions`               → `health`
+/// - `next.actions`                 → `next`
+/// - `build_clearhead/next.actions` → `build_clearhead`
+/// - `build_clearhead/obs.actions`  → `obs`
 pub(crate) fn charter_stem(actions_path: &Path) -> String {
+    let filename = actions_path
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("");
+
+    // Primary file (next.actions) inside a subdirectory → use parent dir name
+    if filename == "next.actions" {
+        if let Some(parent) = actions_path.parent() {
+            if let Some(dir_name) = parent.file_name().and_then(|s| s.to_str()) {
+                if !dir_name.is_empty() {
+                    return dir_name.to_string();
+                }
+            }
+        }
+    }
+
     actions_path
         .file_stem()
         .and_then(|s| s.to_str())
@@ -49,6 +74,7 @@ pub(crate) fn charter_stem(actions_path: &Path) -> String {
 ///
 /// - `health.actions`               → `health.completed.actions`
 /// - `next.actions`                 → `next.completed.actions`
+/// - `build_clearhead/next.actions` → `build_clearhead/build_clearhead.completed.actions`
 /// - `build_clearhead/obs.actions`  → `build_clearhead/obs.completed.actions`
 pub fn completed_actions_path(actions_path: &Path) -> PathBuf {
     let stem = charter_stem(actions_path);
@@ -60,6 +86,7 @@ pub fn completed_actions_path(actions_path: &Path) -> PathBuf {
 ///
 /// - `health.actions`               → `health.upcoming.actions`
 /// - `next.actions`                 → `next.upcoming.actions`
+/// - `build_clearhead/next.actions` → `build_clearhead/build_clearhead.upcoming.actions`
 /// - `build_clearhead/obs.actions`  → `build_clearhead/obs.upcoming.actions`
 pub fn upcoming_actions_path(actions_path: &Path) -> PathBuf {
     let stem = charter_stem(actions_path);

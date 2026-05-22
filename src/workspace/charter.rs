@@ -21,7 +21,7 @@ use serde::Deserialize;
 use std::path::PathBuf;
 use uuid::Uuid;
 
-use crate::domain::{Charter, CharterState, Plan};
+use crate::domain::{Charter, CharterState};
 use crate::workspace::actions::repository::{ActionSource, SourcedAction};
 use crate::workspace::ics::ICSPlan;
 
