@@ -133,6 +133,27 @@ impl WorkspaceConfig {
         expanded
     }
 
+    /// Return `tag` plus all of its descendants (the subtree rooted at `tag`).
+    ///
+    /// Use this to pre-expand a filter tag so that `ActionFilter::matches` can
+    /// do simple set-membership checks: filtering by "computer" should also
+    /// match actions tagged "terminal" or "neovim".
+    pub fn descendants_and_self(&self, tag: &str) -> Vec<String> {
+        let tag_lower = tag.to_lowercase();
+        let mut result = vec![tag_lower.clone()];
+        let mut queue = vec![tag_lower];
+        while let Some(current) = queue.pop() {
+            if let Some(children) = self.tag_hierarchies.get(&current) {
+                for child in children {
+                    let child_lower = child.to_lowercase();
+                    result.push(child_lower.clone());
+                    queue.push(child_lower);
+                }
+            }
+        }
+        result
+    }
+
     /// Expand a slice of tags to include all ancestor tags.
     /// Returns a deduplicated, unsorted list.
     pub fn expand_tags(&self, tags: &[String]) -> Vec<String> {
@@ -203,6 +224,28 @@ mod tests {
         let mut got = cfg.expand_tags(&["neovim".to_string(), "grocery_store".to_string()]);
         got.sort();
         assert_eq!(got, vec!["computer", "driving", "grocery_store", "neovim", "terminal"]);
+    }
+
+    #[test]
+    fn descendants_includes_self() {
+        let cfg = hierarchy();
+        let mut got = cfg.descendants_and_self("computer");
+        got.sort();
+        assert_eq!(got, vec!["browser", "computer", "neovim", "terminal", "tmux"]);
+    }
+
+    #[test]
+    fn descendants_leaf_is_just_self() {
+        let cfg = hierarchy();
+        assert_eq!(cfg.descendants_and_self("neovim"), vec!["neovim"]);
+    }
+
+    #[test]
+    fn descendants_mid_level() {
+        let cfg = hierarchy();
+        let mut got = cfg.descendants_and_self("terminal");
+        got.sort();
+        assert_eq!(got, vec!["neovim", "terminal", "tmux"]);
     }
 
     #[test]

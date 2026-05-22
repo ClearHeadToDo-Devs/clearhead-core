@@ -64,6 +64,8 @@ pub use domain::diff::{
 };
 #[doc(inline)]
 pub use domain::{ActionState, PredecessorRef, Charter, CharterState, DomainModel, Metric, Objective, Plan, Recurrence, WorkspaceCharter};
+#[doc(inline)]
+pub use domain::filter::{ActionFilter, apply_filter};
 
 pub mod crdt;
 

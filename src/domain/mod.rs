@@ -11,6 +11,7 @@
 //! Non-recurring work can exist directly as an [`Action`] without any [`Plan`].
 
 pub mod diff;
+pub mod filter;
 
 use chrono::{DateTime, Local};
 use serde::{Deserialize, Serialize};
