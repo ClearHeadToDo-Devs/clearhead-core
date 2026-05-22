@@ -434,8 +434,14 @@ fn insert_action(store: &Store, act: &Action, graph_name: &GraphName) -> Result<
 /// Emits `a actions:Context` and `hasContextIdentifier` triples. Idempotent —
 /// inserting the same quad twice is a no-op in Oxigraph.
 fn insert_context_node(store: &Store, tag: &str, graph_name: &GraphName) -> Result<NamedNode> {
-    let clean = tag.trim_start_matches('+');
-    let uri = NamedNode::new(format!("urn:context:{}", clean)).unwrap();
+    let clean = tag
+        .trim_start_matches('+')
+        .trim()
+        .to_lowercase()
+        .replace(' ', "-");
+    let uri = NamedNode::new(format!("urn:context:{}", clean))
+        .map_err(|e| GraphError::Syntax(format!("Invalid context IRI for tag '{tag}': {e}")))?
+    ;
     let subject = NamedOrBlankNode::NamedNode(uri.clone());
     let graph = graph_name.clone();
 
