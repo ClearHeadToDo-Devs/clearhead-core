@@ -265,6 +265,16 @@ fn insert_plan(store: &Store, plan: &Plan, charter_actions: &[Action], graph_nam
         add(cco_node(CCO_PRESCRIBES), Term::NamedNode(action_uri))?;
     }
 
+    if let Some(dtstart) = plan.dtstart {
+        add(
+            actions_pred("hasScheduledDateTime"),
+            Term::Literal(Literal::new_typed_literal(
+                dtstart.to_rfc3339(),
+                NamedNode::new(format!("{}dateTime", XSD_NS)).unwrap(),
+            )),
+        )?;
+    }
+
     Ok(())
 }
 
@@ -515,6 +525,11 @@ mod tests {
                         by_day: Some(vec!["MO".to_string(), "WE".to_string()]),
                         ..Default::default()
                     }),
+                    dtstart: Some(
+                        chrono::Local
+                            .with_ymd_and_hms(2026, 4, 7, 10, 0, 0)
+                            .unwrap(),
+                    ),
                     ..Default::default()
                 }],
                 actions: vec![Action {

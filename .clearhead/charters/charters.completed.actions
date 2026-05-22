@@ -1,1 +1,4 @@
 [x] complete the transition from the acts to actions core data type  $ we have some leftover functions that still use the act nomenclature $ %2026-05-22T12:30 #019e48ba-fd76-7db3-85d7-ec4bc52af0e6
+[x] expand graph validation to cover declared contract  %2026-05-22T16:12 #019e48f1-7072-73e2-8912-419435eb6401
+[x] declare canonical JSON-LD shape as stable contract with spec and snapshots  %2026-05-22T16:12 #019e48f1-707f-7f43-aff5-a61fae428b31
+[x] make context deferral explicit in export — provisional URNs, no fake ontology support  %2026-05-22T16:12 #019e48f1-7083-70c1-95d9-835ffa0d7315

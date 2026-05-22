@@ -1,8 +1,8 @@
 //! SPARQL query execution against an Oxigraph store.
 
 use super::{
-    ACTIONS_ACTION, ACTIONS_NS, BFO_NS, CCO_NS, CCO_PLAN, CCO_PRESCRIBES, CCO_STATUS_PROP,
-    GraphError, Result, Store,
+    ACTIONS_ACTION, ACTIONS_NS, BFO_NS, CCO_IS_SUCCESSOR_OF, CCO_NS, CCO_PLAN,
+    CCO_PRESCRIBES, CCO_STATUS_PROP, GraphError, Result, Store,
 };
 use oxigraph::model::Term;
 use oxigraph::sparql::{QueryResults, SparqlEvaluator};
@@ -55,6 +55,8 @@ pub fn build_where_query(where_clause: &str, _select: Option<&str>, _from: Optio
 pub fn validate_actions_vocabulary(store: &Store) -> Result<Vec<String>> {
     let mut violations = Vec::new();
 
+    // ── Status checks ──────────────────────────────────────────────────────
+
     let q_missing_status = format!(
         "SELECT ?act WHERE {{ GRAPH ?g {{ \
             ?act a <{actions}{action}> . \
@@ -93,6 +95,8 @@ pub fn validate_actions_vocabulary(store: &Store) -> Result<Vec<String>> {
         ));
     }
 
+    // ── Plan → Action prescribes target type ───────────────────────────────
+
     let q_prescribes_wrong_target = format!(
         "SELECT ?plan WHERE {{ GRAPH ?g {{ \
             ?plan a <{cco}{plan_cls}> . \
@@ -108,6 +112,97 @@ pub fn validate_actions_vocabulary(store: &Store) -> Result<Vec<String>> {
     for uri in query_term_values(store, &q_prescribes_wrong_target, "plan")? {
         violations.push(format!(
             "PlanPrescribesShape: <{uri}> has a prescribes target that is not an Action",
+        ));
+    }
+
+    // ── UUID shape ─────────────────────────────────────────────────────────
+    // Every Action and Plan must carry an actions:hasUUID literal whose value
+    // matches the UUID in its subject IRI (urn:uuid:<uuid>).
+
+    let q_missing_uuid = format!(
+        "SELECT ?node WHERE {{ GRAPH ?g {{ \
+            {{ ?node a <{actions}{action}> }} UNION {{ ?node a <{cco}{plan_cls}> }} \
+            FILTER NOT EXISTS {{ ?node <{actions}hasUUID> ?u }} \
+        }} }}",
+        actions = ACTIONS_NS,
+        action = ACTIONS_ACTION,
+        cco = CCO_NS,
+        plan_cls = CCO_PLAN,
+    );
+    for uri in query_term_values(store, &q_missing_uuid, "node")? {
+        violations.push(format!("UUIDShape: <{uri}> is missing an actions:hasUUID literal"));
+    }
+
+    // ── Completed actions must have a completion date ──────────────────────
+
+    let q_completed_no_date = format!(
+        "SELECT ?act WHERE {{ GRAPH ?g {{ \
+            ?act a <{actions}{action}> ; \
+                 <{cco}{status}> <{actions}Completed> . \
+            FILTER NOT EXISTS {{ ?act <{actions}hasCompletedDateTime> ?d }} \
+        }} }}",
+        actions = ACTIONS_NS,
+        action = ACTIONS_ACTION,
+        cco = CCO_NS,
+        status = CCO_STATUS_PROP,
+    );
+    for uri in query_term_values(store, &q_completed_no_date, "act")? {
+        violations.push(format!(
+            "CompletedDateShape: <{uri}> has status Completed but no hasCompletedDateTime"
+        ));
+    }
+
+    // ── Recurrence requires a scheduled anchor ────────────────────────────
+    // A Plan with hasRecurrenceRule must also have a scheduled anchor
+    // (hasScheduledDateTime) so occurrence expansion has a DTSTART.
+
+    let q_recurrence_no_anchor = format!(
+        "SELECT ?plan WHERE {{ GRAPH ?g {{ \
+            ?plan a <{cco}{plan_cls}> ; \
+                  <{actions}hasRecurrenceRule> ?rrule . \
+            FILTER NOT EXISTS {{ ?plan <{actions}hasScheduledDateTime> ?dt }} \
+        }} }}",
+        actions = ACTIONS_NS,
+        cco = CCO_NS,
+        plan_cls = CCO_PLAN,
+    );
+    for uri in query_term_values(store, &q_recurrence_no_anchor, "plan")? {
+        violations.push(format!(
+            "RecurrenceAnchorShape: <{uri}> has hasRecurrenceRule but no hasScheduledDateTime anchor"
+        ));
+    }
+
+    // ── Successor-cycle detection ─────────────────────────────────────────
+    // An Action must not be its own successor (direct self-loop).
+    // Transitive cycles are not checked here (would require recursion in SPARQL 1.1).
+
+    let q_self_successor = format!(
+        "SELECT ?act WHERE {{ GRAPH ?g {{ \
+            ?act <{cco}{successor}> ?act . \
+        }} }}",
+        cco = CCO_NS,
+        successor = CCO_IS_SUCCESSOR_OF,
+    );
+    for uri in query_term_values(store, &q_self_successor, "act")? {
+        violations.push(format!(
+            "SuccessorCycleShape: <{uri}> is its own successor (self-loop)"
+        ));
+    }
+
+    // ── Alias uniqueness within a named graph ────────────────────────────
+    // Two different actions in the same graph must not share an alias.
+
+    let q_duplicate_alias = format!(
+        "SELECT ?alias WHERE {{ GRAPH ?g {{ \
+            ?a1 <{actions}hasAlias> ?alias . \
+            ?a2 <{actions}hasAlias> ?alias . \
+            FILTER (?a1 != ?a2) \
+        }} }}",
+        actions = ACTIONS_NS,
+    );
+    for alias in query_term_values(store, &q_duplicate_alias, "alias")? {
+        violations.push(format!(
+            "AliasUniquenessShape: alias '{alias}' is shared by more than one action in the same graph"
         ));
     }
 
@@ -269,6 +364,284 @@ mod tests {
         load_turtle_into_graph(&store, &ttl, transient_graph()).expect("load turtle");
         let violations = validate_actions_vocabulary(&store).expect("validate");
         assert!(violations.iter().any(|v| v.contains("PlanPrescribesShape")));
+    }
+
+    #[test]
+    fn validates_missing_uuid_literal() {
+        let store = create_store().expect("store");
+        let ttl = format!(
+            "@prefix actions: <{actions}> .\n\
+             @prefix cco: <{cco}> .\n\
+             <urn:uuid:019d7100-3333-7333-8333-333333333333> a actions:{action} ;\n\
+               cco:{status} <{actions}NotStarted> .\n",
+            actions = ACTIONS_NS,
+            cco = CCO_NS,
+            action = ACTIONS_ACTION,
+            status = CCO_STATUS_PROP,
+        );
+        load_turtle_into_graph(&store, &ttl, transient_graph()).expect("load turtle");
+        let violations = validate_actions_vocabulary(&store).expect("validate");
+        assert!(
+            violations.iter().any(|v| v.contains("UUIDShape")),
+            "expected UUIDShape violation, got: {violations:?}"
+        );
+    }
+
+    #[test]
+    fn validates_completed_action_requires_date() {
+        let store = create_store().expect("store");
+        let ttl = format!(
+            "@prefix actions: <{actions}> .\n\
+             @prefix cco: <{cco}> .\n\
+             <urn:uuid:019d7100-4444-7444-8444-444444444444> a actions:{action} ;\n\
+               actions:hasUUID \"019d7100-4444-7444-8444-444444444444\" ;\n\
+               cco:{status} <{actions}Completed> .\n",
+            actions = ACTIONS_NS,
+            cco = CCO_NS,
+            action = ACTIONS_ACTION,
+            status = CCO_STATUS_PROP,
+        );
+        load_turtle_into_graph(&store, &ttl, transient_graph()).expect("load turtle");
+        let violations = validate_actions_vocabulary(&store).expect("validate");
+        assert!(
+            violations.iter().any(|v| v.contains("CompletedDateShape")),
+            "expected CompletedDateShape violation, got: {violations:?}"
+        );
+    }
+
+    #[test]
+    fn validates_recurrence_requires_scheduled_anchor() {
+        let store = create_store().expect("store");
+        let ttl = format!(
+            "@prefix actions: <{actions}> .\n\
+             @prefix cco: <{cco}> .\n\
+             <urn:uuid:019d7100-5555-7555-8555-555555555555> a cco:{plan_cls} ;\n\
+               actions:hasUUID \"019d7100-5555-7555-8555-555555555555\" ;\n\
+               actions:hasRecurrenceRule \"FREQ=WEEKLY\" .\n",
+            actions = ACTIONS_NS,
+            cco = CCO_NS,
+            plan_cls = CCO_PLAN,
+        );
+        load_turtle_into_graph(&store, &ttl, transient_graph()).expect("load turtle");
+        let violations = validate_actions_vocabulary(&store).expect("validate");
+        assert!(
+            violations.iter().any(|v| v.contains("RecurrenceAnchorShape")),
+            "expected RecurrenceAnchorShape violation, got: {violations:?}"
+        );
+    }
+
+    #[test]
+    fn validates_self_successor_cycle() {
+        let store = create_store().expect("store");
+        let ttl = format!(
+            "@prefix cco: <{cco}> .\n\
+             <urn:uuid:019d7100-6666-7666-8666-666666666666> cco:{successor} \
+               <urn:uuid:019d7100-6666-7666-8666-666666666666> .\n",
+            cco = CCO_NS,
+            successor = CCO_IS_SUCCESSOR_OF,
+        );
+        load_turtle_into_graph(&store, &ttl, transient_graph()).expect("load turtle");
+        let violations = validate_actions_vocabulary(&store).expect("validate");
+        assert!(
+            violations.iter().any(|v| v.contains("SuccessorCycleShape")),
+            "expected SuccessorCycleShape violation, got: {violations:?}"
+        );
+    }
+
+    #[test]
+    fn validates_duplicate_alias() {
+        let store = create_store().expect("store");
+        let ttl = format!(
+            "@prefix actions: <{actions}> .\n\
+             @prefix cco: <{cco}> .\n\
+             <urn:uuid:019d7100-7777-7777-8777-777777777771> a actions:{action} ;\n\
+               actions:hasUUID \"019d7100-7777-7777-8777-777777777771\" ;\n\
+               actions:hasAlias \"shared-alias\" ;\n\
+               cco:{status} <{actions}NotStarted> .\n\
+             <urn:uuid:019d7100-7777-7777-8777-777777777772> a actions:{action} ;\n\
+               actions:hasUUID \"019d7100-7777-7777-8777-777777777772\" ;\n\
+               actions:hasAlias \"shared-alias\" ;\n\
+               cco:{status} <{actions}NotStarted> .\n",
+            actions = ACTIONS_NS,
+            cco = CCO_NS,
+            action = ACTIONS_ACTION,
+            status = CCO_STATUS_PROP,
+        );
+        load_turtle_into_graph(&store, &ttl, transient_graph()).expect("load turtle");
+        let violations = validate_actions_vocabulary(&store).expect("validate");
+        assert!(
+            violations.iter().any(|v| v.contains("AliasUniquenessShape")),
+            "expected AliasUniquenessShape violation, got: {violations:?}"
+        );
+    }
+
+    #[test]
+    fn valid_completed_action_with_date_passes() {
+        let store = create_store().expect("store");
+        let ttl = format!(
+            "@prefix actions: <{actions}> .\n\
+             @prefix cco: <{cco}> .\n\
+             @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .\n\
+             <urn:uuid:019d7100-8888-7888-8888-888888888888> a actions:{action} ;\n\
+               actions:hasUUID \"019d7100-8888-7888-8888-888888888888\" ;\n\
+               cco:{status} <{actions}Completed> ;\n\
+               actions:hasCompletedDateTime \"2026-05-01T10:00:00Z\"^^xsd:dateTime .\n",
+            actions = ACTIONS_NS,
+            cco = CCO_NS,
+            action = ACTIONS_ACTION,
+            status = CCO_STATUS_PROP,
+        );
+        load_turtle_into_graph(&store, &ttl, transient_graph()).expect("load turtle");
+        let violations = validate_actions_vocabulary(&store).expect("validate");
+        // Only UUID shape fires (no hasUUID here — not the point of this test)
+        assert!(
+            !violations.iter().any(|v| v.contains("CompletedDateShape")),
+            "completed action with date should not fire CompletedDateShape"
+        );
+    }
+}
+
+#[cfg(test)]
+mod validation_tests {
+    use super::*;
+    use crate::graph::{create_store, load_turtle_into_graph, GraphName, TRANSIENT_GRAPH_URI};
+    use oxigraph::model::NamedNode;
+
+    fn transient_graph() -> GraphName {
+        GraphName::NamedNode(NamedNode::new(TRANSIENT_GRAPH_URI).unwrap())
+    }
+
+    #[test]
+    fn validates_missing_uuid_literal() {
+        let store = create_store().expect("store");
+        let ttl = format!(
+            "@prefix actions: <{actions}> .\n\
+             @prefix cco: <{cco}> .\n\
+             <urn:uuid:019d7100-3333-7333-8333-333333333333> a actions:{action} ;\n\
+               cco:{status} <{actions}NotStarted> .\n",
+            actions = ACTIONS_NS,
+            cco = CCO_NS,
+            action = ACTIONS_ACTION,
+            status = CCO_STATUS_PROP,
+        );
+        load_turtle_into_graph(&store, &ttl, transient_graph()).expect("load turtle");
+        let violations = validate_actions_vocabulary(&store).expect("validate");
+        assert!(
+            violations.iter().any(|v| v.contains("UUIDShape")),
+            "expected UUIDShape violation, got: {violations:?}"
+        );
+    }
+
+    #[test]
+    fn validates_completed_action_requires_date() {
+        let store = create_store().expect("store");
+        let ttl = format!(
+            "@prefix actions: <{actions}> .\n\
+             @prefix cco: <{cco}> .\n\
+             <urn:uuid:019d7100-4444-7444-8444-444444444444> a actions:{action} ;\n\
+               actions:hasUUID \"019d7100-4444-7444-8444-444444444444\" ;\n\
+               cco:{status} <{actions}Completed> .\n",
+            actions = ACTIONS_NS,
+            cco = CCO_NS,
+            action = ACTIONS_ACTION,
+            status = CCO_STATUS_PROP,
+        );
+        load_turtle_into_graph(&store, &ttl, transient_graph()).expect("load turtle");
+        let violations = validate_actions_vocabulary(&store).expect("validate");
+        assert!(
+            violations.iter().any(|v| v.contains("CompletedDateShape")),
+            "expected CompletedDateShape violation, got: {violations:?}"
+        );
+    }
+
+    #[test]
+    fn validates_recurrence_requires_scheduled_anchor() {
+        let store = create_store().expect("store");
+        let ttl = format!(
+            "@prefix actions: <{actions}> .\n\
+             @prefix cco: <{cco}> .\n\
+             <urn:uuid:019d7100-5555-7555-8555-555555555555> a cco:{plan_cls} ;\n\
+               actions:hasUUID \"019d7100-5555-7555-8555-555555555555\" ;\n\
+               actions:hasRecurrenceRule \"FREQ=WEEKLY\" .\n",
+            actions = ACTIONS_NS,
+            cco = CCO_NS,
+            plan_cls = CCO_PLAN,
+        );
+        load_turtle_into_graph(&store, &ttl, transient_graph()).expect("load turtle");
+        let violations = validate_actions_vocabulary(&store).expect("validate");
+        assert!(
+            violations.iter().any(|v| v.contains("RecurrenceAnchorShape")),
+            "expected RecurrenceAnchorShape violation, got: {violations:?}"
+        );
+    }
+
+    #[test]
+    fn validates_self_successor_cycle() {
+        let store = create_store().expect("store");
+        let ttl = format!(
+            "@prefix cco: <{cco}> .\n\
+             <urn:uuid:019d7100-6666-7666-8666-666666666666> cco:{successor} \
+               <urn:uuid:019d7100-6666-7666-8666-666666666666> .\n",
+            cco = CCO_NS,
+            successor = CCO_IS_SUCCESSOR_OF,
+        );
+        load_turtle_into_graph(&store, &ttl, transient_graph()).expect("load turtle");
+        let violations = validate_actions_vocabulary(&store).expect("validate");
+        assert!(
+            violations.iter().any(|v| v.contains("SuccessorCycleShape")),
+            "expected SuccessorCycleShape violation, got: {violations:?}"
+        );
+    }
+
+    #[test]
+    fn validates_duplicate_alias() {
+        let store = create_store().expect("store");
+        let ttl = format!(
+            "@prefix actions: <{actions}> .\n\
+             @prefix cco: <{cco}> .\n\
+             <urn:uuid:019d7100-7777-7777-8777-777777777771> a actions:{action} ;\n\
+               actions:hasUUID \"019d7100-7777-7777-8777-777777777771\" ;\n\
+               actions:hasAlias \"shared-alias\" ;\n\
+               cco:{status} <{actions}NotStarted> .\n\
+             <urn:uuid:019d7100-7777-7777-8777-777777777772> a actions:{action} ;\n\
+               actions:hasUUID \"019d7100-7777-7777-8777-777777777772\" ;\n\
+               actions:hasAlias \"shared-alias\" ;\n\
+               cco:{status} <{actions}NotStarted> .\n",
+            actions = ACTIONS_NS,
+            cco = CCO_NS,
+            action = ACTIONS_ACTION,
+            status = CCO_STATUS_PROP,
+        );
+        load_turtle_into_graph(&store, &ttl, transient_graph()).expect("load turtle");
+        let violations = validate_actions_vocabulary(&store).expect("validate");
+        assert!(
+            violations.iter().any(|v| v.contains("AliasUniquenessShape")),
+            "expected AliasUniquenessShape violation, got: {violations:?}"
+        );
+    }
+
+    #[test]
+    fn valid_completed_action_with_date_passes() {
+        let store = create_store().expect("store");
+        let ttl = format!(
+            "@prefix actions: <{actions}> .\n\
+             @prefix cco: <{cco}> .\n\
+             @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .\n\
+             <urn:uuid:019d7100-8888-7888-8888-888888888888> a actions:{action} ;\n\
+               actions:hasUUID \"019d7100-8888-7888-8888-888888888888\" ;\n\
+               cco:{status} <{actions}Completed> ;\n\
+               actions:hasCompletedDateTime \"2026-05-01T10:00:00Z\"^^xsd:dateTime .\n",
+            actions = ACTIONS_NS,
+            cco = CCO_NS,
+            action = ACTIONS_ACTION,
+            status = CCO_STATUS_PROP,
+        );
+        load_turtle_into_graph(&store, &ttl, transient_graph()).expect("load turtle");
+        let violations = validate_actions_vocabulary(&store).expect("validate");
+        assert!(
+            !violations.iter().any(|v| v.contains("CompletedDateShape")),
+            "completed action with date should not fire CompletedDateShape"
+        );
     }
 }
 

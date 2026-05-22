@@ -3,6 +3,15 @@
 //! The vendored `actions.context.v4.json` and `actions.schema.v4.json` artifacts
 //! in `src/resources/` are used so export behavior and tests remain stable
 //! without network dependencies.
+//!
+//! ## Context node deferral
+//!
+//! Context tags (`+tag` in the DSL) are represented as provisional `Context`
+//! nodes with `urn:context:<name>` identifiers. These URNs are **not** declared
+//! in the v4 ontology — full context semantics (ontology classes, SKOS concept
+//! scheme, real IRIs) are deferred until the domain model can express them
+//! properly. The `_meta.context_nodes` field in the exported document records
+//! this explicitly so consumers know not to rely on context node identity.
 
 use super::{GraphError, Result};
 use crate::domain::{ActionState, Action, Charter, DomainModel, Plan};
@@ -86,8 +95,25 @@ fn build_jsonld_document(model: &DomainModel) -> Result<Value> {
 
     nodes.sort_by_key(node_sort_key);
 
+    // Build _meta block — records deferred semantics so consumers have
+    // explicit notice rather than silently incomplete data.
+    let context_count = collect_contexts(model).len();
+    let meta = if context_count > 0 {
+        json!({
+            "context_nodes": {
+                "status": "provisional",
+                "count": context_count,
+                "note": "Context nodes use urn:context:<name> provisional URNs. \
+                          Full ontology support (SKOS scheme, real IRIs) is deferred."
+            }
+        })
+    } else {
+        json!({})
+    };
+
     Ok(json!({
         "@context": context,
+        "_meta": meta,
         "@graph": nodes,
     }))
 }

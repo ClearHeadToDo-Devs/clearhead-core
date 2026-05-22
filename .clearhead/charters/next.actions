@@ -1,3 +1,1 @@
-[ ] expand graph validation to cover declared contract  #019e48f1-7072-73e2-8912-419435eb6401
-[ ] declare canonical JSON-LD shape as stable contract with spec and snapshots  #019e48f1-707f-7f43-aff5-a61fae428b31
-[ ] make context deferral explicit in export — provisional URNs, no fake ontology support  #019e48f1-7083-70c1-95d9-835ffa0d7315
+
