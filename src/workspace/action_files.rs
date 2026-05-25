@@ -5,7 +5,10 @@
 //! - `<charter>.upcoming.actions`  — future generated instances beyond the primary cap
 //! - `<charter>.completed.actions` — completed/cancelled actions
 //!
-//! Charter stem derivation: always uses the file stem. Unlike charter name inference,
+//! Charter stem derivation mostly uses the file stem. Primary files like
+//! `subdir/next.actions` use the directory name, and project-root
+//! `.clearhead/charters/next.actions` uses the project directory name rather
+//! than the literal `charters` container. Unlike charter name inference,
 //! `inbox` is NOT skipped — `inbox.actions` is valid.
 
 use std::path::{Path, PathBuf};
@@ -41,25 +44,47 @@ impl ActionsFile {
 ///
 /// When the filename is a primary file (`next.actions`) inside a subdirectory,
 /// uses the directory name as the stem — matching how charter names are inferred.
+/// For project-root paths like `/repo/.clearhead/charters/next.actions`, the stem
+/// is the project directory name rather than the literal directory `charters`.
 ///
-/// - `health.actions`               → `health`
-/// - `next.actions`                 → `next`
-/// - `build_clearhead/next.actions` → `build_clearhead`
-/// - `build_clearhead/obs.actions`  → `obs`
+/// - `health.actions`                                → `health`
+/// - `next.actions`                                  → `next`
+/// - `build_clearhead/next.actions`                  → `build_clearhead`
+/// - `/repo/.clearhead/charters/next.actions`        → `repo`
+/// - `/data/clearhead/charters/next.actions`         → `next`
+/// - `build_clearhead/obs.actions`                   → `obs`
 pub(crate) fn charter_stem(actions_path: &Path) -> String {
     let filename = actions_path
         .file_name()
         .and_then(|s| s.to_str())
         .unwrap_or("");
 
-    // Primary file (next.actions) inside a subdirectory → use parent dir name
-    if filename == "next.actions" {
-        if let Some(parent) = actions_path.parent() {
-            if let Some(dir_name) = parent.file_name().and_then(|s| s.to_str()) {
-                if !dir_name.is_empty() {
-                    return dir_name.to_string();
-                }
-            }
+    // Primary file (next.actions) inside a subdirectory → use parent dir name,
+    // except for the root charter in project layout where the parent directory
+    // is the literal workspace container `charters/`.
+    if filename == "next.actions"
+        && let Some(parent) = actions_path.parent()
+        && let Some(dir_name) = parent.file_name().and_then(|s| s.to_str())
+    {
+        if dir_name != "charters" && !dir_name.is_empty() {
+            return dir_name.to_string();
+        }
+
+        // Project layout: <project>/.clearhead/charters/next.actions → <project>
+        let is_project_layout = parent
+            .parent()
+            .and_then(|p| p.file_name())
+            .and_then(|s| s.to_str())
+            == Some(".clearhead");
+        if is_project_layout
+            && let Some(project_name) = parent
+                .parent()
+                .and_then(|p| p.parent())
+                .and_then(|p| p.file_name())
+                .and_then(|s| s.to_str())
+            && !project_name.is_empty()
+        {
+            return project_name.to_string();
         }
     }
 
@@ -176,6 +201,14 @@ mod tests {
             PathBuf::from("build_clearhead/build_clearhead.completed.actions")
         );
         assert_eq!(
+            completed_actions_path(Path::new("/repo/.clearhead/charters/next.actions")),
+            PathBuf::from("/repo/.clearhead/charters/repo.completed.actions")
+        );
+        assert_eq!(
+            completed_actions_path(Path::new("/data/clearhead/charters/next.actions")),
+            PathBuf::from("/data/clearhead/charters/next.completed.actions")
+        );
+        assert_eq!(
             completed_actions_path(Path::new("build_clearhead/obs.actions")),
             PathBuf::from("build_clearhead/obs.completed.actions")
         );
@@ -194,6 +227,14 @@ mod tests {
         assert_eq!(
             upcoming_actions_path(Path::new("build_clearhead/next.actions")),
             PathBuf::from("build_clearhead/build_clearhead.upcoming.actions")
+        );
+        assert_eq!(
+            upcoming_actions_path(Path::new("/repo/.clearhead/charters/next.actions")),
+            PathBuf::from("/repo/.clearhead/charters/repo.upcoming.actions")
+        );
+        assert_eq!(
+            upcoming_actions_path(Path::new("/data/clearhead/charters/next.actions")),
+            PathBuf::from("/data/clearhead/charters/next.upcoming.actions")
         );
         assert_eq!(
             upcoming_actions_path(Path::new("build_clearhead/obs.actions")),
