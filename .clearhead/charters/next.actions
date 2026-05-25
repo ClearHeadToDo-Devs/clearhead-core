@@ -1,1 +1,1 @@
-
+[ ] fix the information lint to support cancelled $ right now we are getting an error when something is cancelled but this is a valid form of closed and should be kicking up issues $#019e60cb-36c3-7f13-b92e-3e0a872dc0bb
