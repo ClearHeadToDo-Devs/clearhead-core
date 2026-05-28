@@ -8,7 +8,6 @@ use chrono::{DateTime, Local};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-
 use super::store::WorkspaceError;
 
 /// Root of the per-charter sidecar JSON (`.<charter>.json`).
@@ -97,6 +96,33 @@ pub fn hydrate_acts(acts: &mut [crate::workspace::actions::repository::SourcedAc
             }
         }
     }
+}
+
+/// Stamp `created` in the sidecar for any actions that don't already have an entry.
+///
+/// Uses the UUIDv7 embedded timestamp as the creation time — more accurate than
+/// wall-clock time at save because the UUID is generated when the action is first typed.
+pub fn stamp_sidecar_entries(
+    actions_path: &Path,
+    actions: &[crate::domain::Action],
+) -> Result<(), WorkspaceError> {
+    let sc_path = sidecar_path(actions_path);
+    let mut meta = read_sidecar(&sc_path)?;
+    for action in actions {
+        let key = action.id.to_string();
+        meta.acts.entry(key).or_insert_with(|| ActMeta {
+            created: Some(created_from_uuid(action.id).unwrap_or_else(Local::now)),
+            source_vevent: None,
+        });
+    }
+    write_sidecar(&sc_path, &meta)
+}
+
+/// Extract the creation timestamp embedded in a UUIDv7.
+fn created_from_uuid(id: uuid::Uuid) -> Option<DateTime<Local>> {
+    let timestamp_ms = (id.as_u128() >> 80) as i64;
+    DateTime::from_timestamp(timestamp_ms / 1000, ((timestamp_ms % 1000) * 1_000_000) as u32)
+        .map(|dt| dt.into())
 }
 
 /// Write sidecar metadata to disk.
