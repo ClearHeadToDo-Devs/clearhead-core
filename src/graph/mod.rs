@@ -117,7 +117,7 @@ pub mod jsonld;
 pub mod query;
 pub mod serialize;
 
-pub use insert::{load_acts_into_store, load_domain_model, load_turtle, load_turtle_into_graph};
+pub use insert::{insert_workspace_metadata, load_acts_into_store, load_domain_model, load_turtle, load_turtle_into_graph};
 pub use oxigraph::model::GraphName;
 pub use jsonld::serialize_domain_to_jsonld;
 pub use oxigraph::store::Store;
@@ -157,6 +157,7 @@ use oxigraph::model::NamedNode;
 // ============================================================================
 
 pub(crate) const ACTIONS_NS: &str = "https://clearhead.us/vocab/actions/v4#";
+pub(crate) const WORKSPACE_NS: &str = "https://clearhead.us/vocab/workspace/v1#";
 pub(crate) const CCO_NS: &str = "https://www.commoncoreontologies.org/";
 pub(crate) const BFO_NS: &str = "http://purl.obolibrary.org/obo/";
 pub(crate) const RDF_NS: &str = "http://www.w3.org/1999/02/22-rdf-syntax-ns#";

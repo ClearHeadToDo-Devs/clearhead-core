@@ -50,6 +50,10 @@ pub struct WorkspaceConfig {
     /// Elided in single-workspace contexts.
     pub workspace_name: Option<String>,
 
+    /// ISO 8601 date when this workspace was initialized.
+    /// Written once by `clearhead init`. Informational only.
+    pub created_at: Option<String>,
+
     /// Additional workspace directories to merge into the domain model.
     /// Each path should follow the `.clearhead` directory layout.
     pub additional_workspaces: Vec<String>,
@@ -73,6 +77,7 @@ impl Default for WorkspaceConfig {
             default_to_user_scope: false,
             workspace_id: None,
             workspace_name: None,
+            created_at: None,
             additional_workspaces: Vec::new(),
             expansion_total_instances: 2,
             expansion_primary_instances: 1,

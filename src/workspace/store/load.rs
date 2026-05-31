@@ -19,43 +19,45 @@ use std::path::{Path, PathBuf};
 /// all file paths and source metadata are stripped in that conversion.
 ///
 /// [`ICSPlan`]: crate::workspace::ics::ICSPlan
-pub struct FileSystemWorkspace {
+pub struct Workspace {
     pub root: PathBuf,
-    /// Display name for this workspace — used to scope output in multi-workspace contexts.
-    /// `None` in single-workspace use or when the config has no `workspace_name` set.
+    /// Stable UUID for this workspace's RDF named graph. `None` for uninitialized workspaces.
+    pub id: Option<String>,
+    /// Display name — used to scope output in multi-workspace contexts.
     pub name: Option<String>,
     pub charters: Vec<MarkdownCharter>,
 }
 
-impl FileSystemWorkspace {
+impl Workspace {
     pub fn load(root: &Path) -> Result<Self, WorkspaceError> {
         let charters = load_workspace(root)?;
-        Ok(Self { root: root.to_path_buf(), name: None, charters })
+        Ok(Self { root: root.to_path_buf(), id: None, name: None, charters })
     }
 }
 
 /// Load the primary workspace and all additional workspaces listed in `config`.
 ///
-/// The primary workspace gets its `name` from `config.workspace_name`.
-/// Additional workspaces have `name: None` — each has its own config that
+/// The primary workspace gets `id` and `name` from `config`.
+/// Additional workspaces have neither — each has its own config that
 /// only the calling tool knows how to load.
 ///
 /// Returns `Err` on the first workspace that fails to load.
 pub fn load_workspaces(
     primary_root: &Path,
     config: &crate::config::WorkspaceConfig,
-) -> Result<Vec<FileSystemWorkspace>, WorkspaceError> {
-    let mut primary = FileSystemWorkspace::load(primary_root)?;
+) -> Result<Vec<Workspace>, WorkspaceError> {
+    let mut primary = Workspace::load(primary_root)?;
+    primary.id = config.workspace_id.clone();
     primary.name = config.workspace_name.clone();
     let mut workspaces = vec![primary];
     for path_str in &config.additional_workspaces {
-        workspaces.push(FileSystemWorkspace::load(Path::new(path_str))?);
+        workspaces.push(Workspace::load(Path::new(path_str))?);
     }
     Ok(workspaces)
 }
 
-impl From<FileSystemWorkspace> for DomainModel {
-    fn from(ws: FileSystemWorkspace) -> DomainModel {
+impl From<Workspace> for DomainModel {
+    fn from(ws: Workspace) -> DomainModel {
         DomainModel {
             objectives: vec![],
             charters: ws.charters.into_iter().map(Charter::from).collect(),
@@ -65,7 +67,7 @@ impl From<FileSystemWorkspace> for DomainModel {
 
 /// Load a [`DomainModel`] from a workspace root directory.
 pub fn load_domain_model(root: &Path) -> Result<DomainModel, WorkspaceError> {
-    Ok(FileSystemWorkspace::load(root)?.into())
+    Ok(Workspace::load(root)?.into())
 }
 
 /// Load the workspace as a [`FileSystemWorkspace`], preserving file-layer metadata.
@@ -118,16 +120,18 @@ pub fn load_workspace(root: &Path) -> Result<Vec<MarkdownCharter>, WorkspaceErro
         }
 
         let project = infer_charter_name(&relative);
+        let source_map = parsed_doc.source_map;
         let mut sourced: Vec<SourcedAction> = parsed_doc.actions
             .into_iter()
             .map(|mut action| {
                 if action.charter.is_none() {
                     action.charter = Some(name.clone());
                 }
+                let metadata = source_map.get(&action.id).cloned();
                 SourcedAction {
                     action,
                     source: ActionSource { file_path: relative.clone(), project: project.clone() },
-                    source_metadata: None,
+                    source_metadata: metadata,
                 }
             })
             .collect();

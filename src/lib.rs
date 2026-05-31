@@ -41,7 +41,7 @@ pub mod config;
 pub use config::WorkspaceConfig;
 #[doc(inline)]
 pub use workspace::{
-    Action, ActionList, Diff, FileSystemWorkspace, ICSPlan, MarkdownCharter, OutputFormat, ParseFailure, ParseMode,
+    Action, ActionList, Diff, Workspace, ICSPlan, MarkdownCharter, OutputFormat, ParseFailure, ParseMode,
     ParseOutcome, ParsedDocument, RecoveryReport, SourceMetadata, SourceRange, collect_plan_files,
     collect_workspace_manifest, completed_actions_path, diff_actions, format, format_charter,
     implicit_charter, infer_charter_name, infer_parent_charter_name,

@@ -4,11 +4,12 @@
 
 use super::{
     ACTIONS_ACTION, BFO_HAS_PART, BFO_PART_OF, CCO_IS_SUCCESSOR_OF, CCO_PLAN, CCO_PRESCRIBED_BY,
-    CCO_PRESCRIBES, CCO_STATUS_PROP, GraphError, RDFS_COMMENT, RDFS_LABEL, Result, Store, XSD_NS,
-    actions_pred, bfo_pred, cco_node, ns, phase_node, rdf_type, rdfs_pred,
+    CCO_PRESCRIBES, CCO_STATUS_PROP, GraphError, RDFS_COMMENT, RDFS_LABEL, Result, Store,
+    WORKSPACE_NS, XSD_NS, actions_pred, bfo_pred, cco_node, ns, phase_node, rdf_type, rdfs_pred,
 };
 use crate::WorkspaceConfig;
 use crate::domain::{Action, Charter, CharterState, DomainModel, Plan};
+use crate::workspace::store::load::Workspace;
 use crate::workspace::actions::convert::INBOX_CHARTER_NS;
 use oxigraph::io::RdfFormat;
 use oxigraph::model::{GraphName, Literal, NamedNode, NamedOrBlankNode, Quad, Term};
@@ -47,6 +48,53 @@ pub fn load_domain_model(
     }
     if let Some(cfg) = config {
         inject_context_hierarchy(store, cfg, &graph_name)?;
+    }
+    Ok(())
+}
+
+/// Insert workspace source-location triples for all actions in a workspace.
+///
+/// Emits `ws:hasSourceFile` (relative path from workspace root) and
+/// `ws:hasSourceLine` (1-based line number) for each action that has source
+/// metadata. These triples are workspace-snapshot properties — they describe
+/// where an action lives on disk right now, not anything intrinsic to the action.
+///
+/// Call this after [`load_domain_model`] for callers that need editor
+/// integration (jump-to-source, qflist).
+pub fn insert_workspace_metadata(
+    store: &Store,
+    workspace: &Workspace,
+    graph_name: GraphName,
+) -> Result<()> {
+    for charter in &workspace.charters {
+        for sourced in &charter.actions {
+            let Some(ref meta) = sourced.source_metadata else {
+                continue;
+            };
+            let subject = NamedOrBlankNode::NamedNode(
+                NamedNode::new(format!("urn:uuid:{}", sourced.action.id)).unwrap(),
+            );
+            let graph = graph_name.clone();
+            let add = |pred: NamedNode, term: Term| {
+                store
+                    .insert(&Quad::new(subject.clone(), pred, term, graph.clone()))
+                    .map_err(|e| GraphError::Store(e.to_string()))
+            };
+            add(
+                ns(WORKSPACE_NS, "hasSourceFile"),
+                Term::Literal(Literal::new_typed_literal(
+                    sourced.source.file_path.to_string_lossy().as_ref(),
+                    NamedNode::new(format!("{}string", XSD_NS)).unwrap(),
+                )),
+            )?;
+            add(
+                ns(WORKSPACE_NS, "hasSourceLine"),
+                Term::Literal(Literal::new_typed_literal(
+                    &(meta.root.start_row + 1).to_string(),
+                    NamedNode::new(format!("{}integer", XSD_NS)).unwrap(),
+                )),
+            )?;
+        }
     }
     Ok(())
 }
