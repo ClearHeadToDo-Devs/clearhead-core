@@ -119,7 +119,7 @@ pub mod serialize;
 
 pub use insert::{insert_workspace_metadata, load_acts_into_store, load_domain_model, load_turtle, load_turtle_into_graph};
 pub use oxigraph::model::GraphName;
-pub use jsonld::serialize_domain_to_jsonld;
+pub use jsonld::{serialize_domain_to_jsonld, serialize_workspace_to_jsonld};
 pub use oxigraph::store::Store;
 pub use query::{
     build_raw_where_query, build_where_query, query_action_ids, query_raw,

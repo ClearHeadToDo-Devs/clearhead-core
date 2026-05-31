@@ -15,8 +15,11 @@
 
 use super::{GraphError, Result};
 use crate::domain::{ActionState, Action, Charter, DomainModel, Plan};
+use crate::workspace::store::load::Workspace;
 use serde_json::{Map, Value, json};
 use std::collections::BTreeMap;
+use std::collections::HashMap;
+use uuid::Uuid;
 
 const ACTIONS_CONTEXT_V4: &str = include_str!("../resources/actions.context.v4.json");
 
@@ -24,6 +27,74 @@ const ACTIONS_CONTEXT_V4: &str = include_str!("../resources/actions.context.v4.j
 pub fn serialize_domain_to_jsonld(model: &DomainModel) -> Result<String> {
     let document = build_jsonld_document(model)?;
     serde_json::to_string_pretty(&document).map_err(|e| GraphError::Syntax(e.to_string()))
+}
+
+/// Serialize a `Workspace` into JSON-LD enriched with workspace vocabulary terms.
+///
+/// Produces the same structure as [`serialize_domain_to_jsonld`] but adds
+/// `sourceFile` and `sourceLine` fields to action nodes where source metadata
+/// is available, and extends `@context` with the workspace vocabulary prefix.
+///
+/// Use this when the caller has a full `Workspace` and needs editor integration
+/// (qflist, jump-to-source) in the JSON-LD output. Falls back gracefully — actions
+/// without source metadata simply omit those fields.
+pub fn serialize_workspace_to_jsonld(workspace: &Workspace) -> Result<String> {
+    let source_info: HashMap<Uuid, (String, usize)> = workspace
+        .charters
+        .iter()
+        .flat_map(|c| c.actions.iter())
+        .filter_map(|sa| {
+            sa.source_metadata.as_ref().map(|meta| {
+                (
+                    sa.action.id,
+                    (
+                        sa.source.file_path.to_string_lossy().into_owned(),
+                        meta.root.start_row + 1,
+                    ),
+                )
+            })
+        })
+        .collect();
+
+    let model = DomainModel {
+        objectives: vec![],
+        charters: workspace.charters.iter().map(|mc| Charter::from(mc.clone())).collect(),
+    };
+
+    let mut doc = build_jsonld_document(&model)?;
+
+    if let Some(context) = doc.get_mut("@context").and_then(Value::as_object_mut) {
+        context.insert(
+            "ws".to_string(),
+            Value::String("https://clearhead.us/vocab/workspace/v1#".to_string()),
+        );
+        context.insert("sourceFile".to_string(), Value::String("ws:hasSourceFile".to_string()));
+        context.insert(
+            "sourceLine".to_string(),
+            json!({"@id": "ws:hasSourceLine", "@type": "xsd:integer"}),
+        );
+    }
+
+    if let Some(graph) = doc.get_mut("@graph").and_then(Value::as_array_mut) {
+        for node in graph.iter_mut() {
+            if node.get("type").and_then(Value::as_str) != Some("Action") {
+                continue;
+            }
+            let Some(uuid_str) = node.get("uuid").and_then(Value::as_str) else {
+                continue;
+            };
+            let Ok(uuid) = Uuid::parse_str(uuid_str) else {
+                continue;
+            };
+            if let Some((file, line)) = source_info.get(&uuid) {
+                let obj = node.as_object_mut().unwrap();
+                obj.insert("sourceFile".to_string(), Value::String(file.clone()));
+                obj.insert("sourceLine".to_string(), json!(line));
+            }
+        }
+    }
+
+    serde_json::to_string_pretty(&doc).map_err(|e| GraphError::Syntax(e.to_string()))
 }
 
 fn build_jsonld_document(model: &DomainModel) -> Result<Value> {
