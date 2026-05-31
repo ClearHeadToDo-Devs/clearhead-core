@@ -10,6 +10,7 @@ use super::{
 use crate::WorkspaceConfig;
 use crate::domain::{Action, Charter, CharterState, DomainModel, Plan};
 use crate::workspace::store::load::Workspace;
+use crate::workspace::store::resolve_workspace_layout;
 use crate::workspace::actions::convert::INBOX_CHARTER_NS;
 use oxigraph::io::RdfFormat;
 use oxigraph::model::{GraphName, Literal, NamedNode, NamedOrBlankNode, Quad, Term};
@@ -81,10 +82,19 @@ pub fn insert_workspace_metadata(
         add_ws(rdf_type(), Term::NamedNode(ns(WORKSPACE_NS, "Workspace")))?;
         add_ws(rdfs_pred(RDFS_LABEL), Term::Literal(Literal::new_simple_literal(name)))?;
         add_ws(actions_pred("hasAlias"), Term::Literal(Literal::new_simple_literal(name)))?;
+        let canonical_root = workspace.root.canonicalize().unwrap_or_else(|_| workspace.root.clone());
         add_ws(
             ns(WORKSPACE_NS, "root"),
             Term::Literal(Literal::new_typed_literal(
-                workspace.root.to_string_lossy().as_ref(),
+                canonical_root.to_string_lossy().as_ref(),
+                NamedNode::new(format!("{}string", XSD_NS)).unwrap(),
+            )),
+        )?;
+        let charter_root = resolve_workspace_layout(&canonical_root).charter_root;
+        add_ws(
+            ns(WORKSPACE_NS, "charterRoot"),
+            Term::Literal(Literal::new_typed_literal(
+                charter_root.to_string_lossy().as_ref(),
                 NamedNode::new(format!("{}string", XSD_NS)).unwrap(),
             )),
         )?;
