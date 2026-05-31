@@ -81,6 +81,13 @@ pub fn insert_workspace_metadata(
         add_ws(rdf_type(), Term::NamedNode(ns(WORKSPACE_NS, "Workspace")))?;
         add_ws(rdfs_pred(RDFS_LABEL), Term::Literal(Literal::new_simple_literal(name)))?;
         add_ws(actions_pred("hasAlias"), Term::Literal(Literal::new_simple_literal(name)))?;
+        add_ws(
+            ns(WORKSPACE_NS, "root"),
+            Term::Literal(Literal::new_typed_literal(
+                workspace.root.to_string_lossy().as_ref(),
+                NamedNode::new(format!("{}string", XSD_NS)).unwrap(),
+            )),
+        )?;
     }
 
     for charter in &workspace.charters {
