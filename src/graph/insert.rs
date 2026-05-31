@@ -52,20 +52,37 @@ pub fn load_domain_model(
     Ok(())
 }
 
-/// Insert workspace source-location triples for all actions in a workspace.
+/// Insert workspace identity and source-location triples into the store.
 ///
-/// Emits `ws:hasSourceFile` (relative path from workspace root) and
-/// `ws:hasSourceLine` (1-based line number) for each action that has source
-/// metadata. These triples are workspace-snapshot properties — they describe
-/// where an action lives on disk right now, not anything intrinsic to the action.
+/// If the workspace has an `id` and `name`, emits a `ws:Workspace` resource
+/// triple with `rdfs:label` and `actions:hasAlias` — enabling reference
+/// resolution to find a workspace by alias across named graphs.
 ///
-/// Call this after [`load_domain_model`] for callers that need editor
-/// integration (jump-to-source, qflist).
+/// Also emits `ws:hasSourceFile` and `ws:hasSourceLine` for each action that
+/// has source metadata. These are workspace-snapshot properties — valid for the
+/// current filesystem state, enabling editor integration (qflist, jump-to-source).
+///
+/// Call this after [`load_domain_model`].
 pub fn insert_workspace_metadata(
     store: &Store,
     workspace: &Workspace,
     graph_name: GraphName,
 ) -> Result<()> {
+    if let (Some(id), Some(name)) = (&workspace.id, &workspace.name) {
+        let ws_subject = NamedOrBlankNode::NamedNode(
+            NamedNode::new(format!("urn:clearhead:workspace:{}", id)).unwrap(),
+        );
+        let graph = graph_name.clone();
+        let add_ws = |pred: NamedNode, term: Term| {
+            store
+                .insert(&Quad::new(ws_subject.clone(), pred, term, graph.clone()))
+                .map_err(|e| GraphError::Store(e.to_string()))
+        };
+        add_ws(rdf_type(), Term::NamedNode(ns(WORKSPACE_NS, "Workspace")))?;
+        add_ws(rdfs_pred(RDFS_LABEL), Term::Literal(Literal::new_simple_literal(name)))?;
+        add_ws(actions_pred("hasAlias"), Term::Literal(Literal::new_simple_literal(name)))?;
+    }
+
     for charter in &workspace.charters {
         for sourced in &charter.actions {
             let Some(ref meta) = sourced.source_metadata else {
