@@ -160,18 +160,12 @@ pub fn read_action_file(path: &Path, workspace_root: &Path) -> Result<ActionsFil
 
 /// Write [`Action`]s to a `.actions` or `.completed.actions` file.
 ///
-/// Creates parent directories as needed. Overwrites any existing file.
+/// Writes atomically: temp file in the same directory, fsync, rename.
 pub fn write_actions(actions: &[Action], path: &Path) -> Result<(), WorkspaceError> {
-    if let Some(parent) = path.parent() {
-        if !parent.as_os_str().is_empty() {
-            std::fs::create_dir_all(parent).map_err(WorkspaceError::Io)?;
-        }
-    }
-
     let list: ActionList = actions.to_vec();
     let content =
         format(&list, OutputFormat::Actions, None, None).map_err(|e| WorkspaceError::Acts(e))?;
-    std::fs::write(path, content).map_err(WorkspaceError::Io)
+    super::durability::atomic_write(path, content.as_bytes()).map_err(WorkspaceError::Io)
 }
 
 // ============================================================================

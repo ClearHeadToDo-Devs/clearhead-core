@@ -1,6 +1,7 @@
 use super::discovery::{discover_action_files, discover_charter_files};
 use super::pathing::{infer_charter_name_for_workspace, infer_parent_charter_name_for_workspace};
 use super::{WorkspaceError, resolve_workspace_layout};
+use crate::workspace::durability::recover_pending;
 use crate::domain::{Charter, DomainModel};
 use crate::workspace::actions::convert::from_actions_with_charter;
 use crate::workspace::actions::repository::{ActionSource, SourcedAction};
@@ -80,6 +81,12 @@ pub fn load_workspace(root: &Path) -> Result<Vec<MarkdownCharter>, WorkspaceErro
     }
 
     let layout = resolve_workspace_layout(root);
+
+    // Replay any journal left by an interrupted save before reading any files.
+    if layout.charter_root.exists() {
+        recover_pending(&layout.charter_root)?;
+    }
+
     let mut charters: HashMap<String, MarkdownCharter> = HashMap::new();
     let mut path_for_name: HashMap<String, PathBuf> = HashMap::new();
 

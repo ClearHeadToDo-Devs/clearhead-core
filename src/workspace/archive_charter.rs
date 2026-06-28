@@ -264,11 +264,8 @@ fn archive_one(
 
     let ttl = dump_store_to_turtle(&store).map_err(|e| ArchiveCharterError::Graph(e.to_string()))?;
 
-    // Ensure parent directory exists before writing archive.ttl
-    if let Some(parent) = archive_ttl.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    std::fs::write(&archive_ttl, ttl)?;
+    crate::workspace::durability::atomic_write(&archive_ttl, ttl.as_bytes())
+        .map_err(ArchiveCharterError::Io)?;
 
     // ── 7. Delete source files ──────────────────────────────────────────────
     remove_if_exists(&acts_abs)?;

@@ -2,6 +2,7 @@ use super::WorkspaceLayout;
 use super::discovery::discover_action_files;
 use super::{WorkspaceError, resolve_workspace_layout};
 use crate::domain::{Charter, DomainModel};
+use crate::workspace::durability::{PendingBatch, WorkspaceLock, recover_pending};
 use crate::workspace::{ActionList, OutputFormat, format};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -9,9 +10,10 @@ use uuid::Uuid;
 
 /// Save a `DomainModel` to a workspace root directory.
 ///
-/// Only writes files whose content has changed and removes orphaned files
-/// (those no longer represented in the model). Directories are created as
-/// needed and pruned when empty.
+/// Only stages files whose content has changed. All staged writes are committed
+/// atomically via a `.pending` journal so a crash mid-save leaves the workspace
+/// either fully at the pre-save state or fully at the post-save state. Orphaned
+/// files are removed after the batch commits.
 pub fn save_domain_model(root: &Path, model: &DomainModel) -> Result<(), WorkspaceError> {
     if !root.is_dir() {
         return Err(WorkspaceError::InvalidPath(root.to_path_buf()));
@@ -20,24 +22,31 @@ pub fn save_domain_model(root: &Path, model: &DomainModel) -> Result<(), Workspa
     let layout = resolve_workspace_layout(root);
     std::fs::create_dir_all(&layout.charter_root)?;
 
+    // Best-effort advisory lock — degrades to unprotected writes if unavailable.
+    let _lock = WorkspaceLock::try_acquire(&layout.data_root).ok();
+
+    // Replay any journal left by a previous interrupted save.
+    recover_pending(&layout.charter_root)?;
+
     let manifest = build_action_file_manifest(model, &layout)?;
 
-    // Write only files whose content differs from what's on disk.
+    let mut batch = PendingBatch::new(layout.charter_root.clone());
+
     for (relative_path, content) in &manifest {
         let absolute_path = layout.charter_root.join(relative_path);
         let needs_write = std::fs::read_to_string(&absolute_path)
             .map(|existing| existing != *content)
-            .unwrap_or(true); // file missing → write it
+            .unwrap_or(true);
 
         if needs_write {
-            if let Some(parent) = absolute_path.parent() {
-                std::fs::create_dir_all(parent)?;
-            }
-            std::fs::write(absolute_path, content)?;
+            batch.stage(absolute_path, content.as_bytes())?;
         }
     }
 
-    // Remove orphaned files (on disk but not in the new manifest).
+    batch.commit()?;
+
+    // Orphan removal runs after the batch is committed — deleting a file that
+    // should exist is worse than keeping one that shouldn't.
     let manifest_paths: HashSet<PathBuf> = manifest.keys().cloned().collect();
     for existing in discover_action_files(&layout.charter_root)? {
         let relative = existing

@@ -9,6 +9,7 @@
 
 pub mod actions;
 pub mod action_files;
+pub mod durability;
 pub mod archive_charter;
 pub mod charter;
 pub mod detection;

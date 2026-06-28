@@ -125,11 +125,11 @@ fn created_from_uuid(id: uuid::Uuid) -> Option<DateTime<Local>> {
         .map(|dt| dt.into())
 }
 
-/// Write sidecar metadata to disk.
+/// Write sidecar metadata to disk, atomically.
 pub fn write_sidecar(path: &Path, metadata: &CharterMetadata) -> Result<(), WorkspaceError> {
     let content =
         serde_json::to_string_pretty(metadata).map_err(|e| WorkspaceError::Parse(e.to_string()))?;
-    std::fs::write(path, content)?;
+    super::durability::atomic_write(path, content.as_bytes())?;
     Ok(())
 }
 
