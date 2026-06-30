@@ -16,6 +16,7 @@ pub mod detection;
 pub mod expand;
 pub mod ics;
 pub mod plans;
+pub mod reconcile;
 pub mod sidecar;
 pub mod store;
 pub mod templates;
@@ -39,6 +40,7 @@ pub use plans::{
     PlanFileEntry, collect_plan_files, collect_plan_files_with_plans, infer_plan_charter_name,
     infer_plan_parent,
 };
+pub use reconcile::{Reconcile, reconcile};
 
 pub use detection::check_for_workspace;
 pub use expand::expand_plans_into_acts;
