@@ -7,7 +7,10 @@
 //!    - If any are open and `force` is false, refuse and return
 //!      [`ArchiveCharterError::OpenActions`].
 //! 3. Read all actions (primary + completed).
-//! 4. Build a [`DomainModel`] from the charter + all its actions + its plans.
+//! 4. Build a [`DomainModel`] from the charter + all its actions. Plans
+//!    (`.ics`) are deliberately excluded: they are a calendar projection the
+//!    server owns, and the actions already carry the scheduling source of
+//!    truth (`scheduled_at` / `due_at`).
 //! 5. Load the existing `archive.ttl` (if present) into an Oxigraph store,
 //!    then load the new model on top (quad idempotence means re-runs are safe).
 //! 6. Serialize the merged store back to `archive.ttl`.
@@ -16,9 +19,14 @@
 //!    - `<charter>.completed.actions`
 //!    - `<charter>.upcoming.actions`
 //!    - `<charter>.md` (if present)
-//!    - `plans/<charter>/` directory (if present)
 //!    - The charter subdirectory itself if it is now empty (directory-form
 //!      charters only; silently skipped when non-empty so sub-charters survive).
+//!
+//! `.ics` plans are never touched. Once a plan's `.ics` exists the server owns
+//! it; archiving the actions leaves the calendar files in place (the user
+//! clears them via the calendar app). Any `.ics` that outlive their charter
+//! resurface on the next load as an implicit charter — an honest reflection
+//! that the calendar still holds those events.
 
 use std::path::{Path, PathBuf};
 
@@ -58,8 +66,6 @@ pub struct ArchiveCharterResult {
     pub primary_actions_swept: usize,
     /// Number of actions swept from `.completed.actions`.
     pub completed_actions_swept: usize,
-    /// Number of `.ics` plans swept from `plans/<charter>/`.
-    pub plans_swept: usize,
     /// Absolute path to the `archive.ttl` that was written (or would be).
     pub archive_ttl_path: PathBuf,
     /// Mirrors `ArchiveCharterOptions::dry_run`.
@@ -185,12 +191,6 @@ fn archive_one(
         .as_ref()
         .map(|rel| layout.charter_root.join(rel));
 
-    // Plans directory
-    let plans_dir_abs: Option<PathBuf> = mc
-        .plans_dir
-        .as_ref()
-        .map(|rel| layout.plans_root.join(rel));
-
     // Optional charter subdirectory (for directory-form charters like health/next.actions)
     let charter_subdir: Option<PathBuf> = acts_abs.as_ref().and_then(|p| {
         let filename = p.file_name()?.to_str()?;
@@ -222,7 +222,6 @@ fn archive_one(
         None => vec![],
     };
 
-    let plans_swept = mc.plans.len();
     let primary_swept = primary_actions.len();
     let completed_swept = completed_actions.len();
 
@@ -232,7 +231,6 @@ fn archive_one(
             charter_name,
             primary_actions_swept: primary_swept,
             completed_actions_swept: completed_swept,
-            plans_swept,
             archive_ttl_path: archive_ttl,
             was_dry_run: true,
         });
@@ -244,7 +242,8 @@ fn archive_one(
 
     let mut charter_domain = Charter::from(mc.clone());
     charter_domain.actions = all_actions;
-    charter_domain.plans = mc.plans.iter().map(|ip| ip.plan.clone()).collect();
+    // Plans are not archived: the `.ics` are server-owned and stay on disk.
+    charter_domain.plans = vec![];
 
     let model = DomainModel {
         objectives: vec![],
@@ -273,11 +272,7 @@ fn archive_one(
     remove_if_exists(&upcoming_abs)?;
     remove_if_exists(&md_abs)?;
 
-    if let Some(ref plans_dir) = plans_dir_abs {
-        if plans_dir.exists() {
-            std::fs::remove_dir_all(plans_dir)?;
-        }
-    }
+    // `.ics` plans are intentionally left untouched — the server owns them.
 
     // Try to remove the charter subdirectory; silently ignore if non-empty
     // (sub-charters still live there).
@@ -289,7 +284,6 @@ fn archive_one(
         charter_name,
         primary_actions_swept: primary_swept,
         completed_actions_swept: completed_swept,
-        plans_swept,
         archive_ttl_path: archive_ttl,
         was_dry_run: false,
     })
@@ -375,6 +369,52 @@ mod tests {
         let charters = vec![make_mc("health-and-fitness", None)];
         let found = find_charter(&charters, "fitness").unwrap();
         assert_eq!(found.alias.as_deref(), Some("health-and-fitness"));
+    }
+
+    #[test]
+    fn archive_leaves_ics_in_place() {
+        // Archiving a closed charter sweeps its `.actions`/`.md` into archive.ttl
+        // but must never touch the `.ics` plans — the server owns those files.
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path().join("ws");
+        let charters_dir = root.join(".clearhead/charters");
+        let plans_dir = root.join(".clearhead/plans/done");
+        std::fs::create_dir_all(&charters_dir).expect("create charters dir");
+        std::fs::create_dir_all(&plans_dir).expect("create plans dir");
+
+        std::fs::write(
+            charters_dir.join("done.md"),
+            "---\nalias: done\nstate: Closed\n---\n# Done\n",
+        )
+        .expect("write charter md");
+        // Empty primary actions file: no open actions, so no --force needed.
+        std::fs::write(charters_dir.join("done.actions"), "").expect("write actions");
+
+        let ics_path = plans_dir.join("evt.ics");
+        std::fs::write(
+            &ics_path,
+            "BEGIN:VCALENDAR\r\n\
+             BEGIN:VEVENT\r\n\
+             UID:evt@example.com\r\n\
+             SUMMARY:Lingering Event\r\n\
+             DTSTART:20260427T100000\r\n\
+             END:VEVENT\r\n\
+             END:VCALENDAR\r\n",
+        )
+        .expect("write ics");
+
+        let result = archive_charter(&root, "done", &ArchiveCharterOptions::default())
+            .expect("archive should succeed");
+        assert_eq!(result.charter_name, "done");
+
+        // The charter's own artifacts are swept away…
+        assert!(!charters_dir.join("done.actions").exists(), "actions removed");
+        assert!(!charters_dir.join("done.md").exists(), "charter md removed");
+        assert!(root.join(".clearhead/archive.ttl").exists(), "archive written");
+
+        // …but the server-owned `.ics` is left exactly where it was.
+        assert!(ics_path.exists(), "`.ics` must survive archival");
+        assert!(plans_dir.exists(), "plans directory must survive archival");
     }
 
     #[test]
