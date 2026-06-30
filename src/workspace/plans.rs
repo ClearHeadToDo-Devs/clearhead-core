@@ -19,27 +19,48 @@ pub struct PlanFileEntry {
 /// (e.g. `work-feature` for the `feature` charter under `work`).
 /// In project workspaces the root charter uses the reserved slug `next`.
 pub fn collect_plan_files(root: &Path) -> Result<Vec<PlanFileEntry>, WorkspaceError> {
+    collect_plan_files_with_plans(root, None)
+}
+
+/// Like [`collect_plan_files`] but reads `.ics` from `plan_override` when given
+/// (the resolved `plan_path` config value), instead of the workspace's own
+/// `plans/` directory. Charter-slug inference still comes from `root`'s layout.
+pub fn collect_plan_files_with_plans(
+    root: &Path,
+    plan_override: Option<&Path>,
+) -> Result<Vec<PlanFileEntry>, WorkspaceError> {
     let layout = resolve_workspace_layout(root);
+    let plans_root = plan_override.unwrap_or(&layout.plans_root);
+    collect_plan_files_in(plans_root, layout.project_root_charter.as_deref())
+}
+
+/// Leaf form of [`collect_plan_files`]: discover `.ics` plan files directly under
+/// `plans_root`, trusting the caller to have already resolved any `plan_path`
+/// override. `project_root_charter` maps the reserved `next` slug to the project's
+/// root charter (`None` for user workspaces).
+pub(crate) fn collect_plan_files_in(
+    plans_root: &Path,
+    project_root_charter: Option<&str>,
+) -> Result<Vec<PlanFileEntry>, WorkspaceError> {
     let mut files = Vec::new();
-    discover_plan_paths(&layout.plans_root, &mut files)?;
+    discover_plan_paths(plans_root, &mut files)?;
 
     let mut entries = Vec::new();
     for path in files {
-        let Ok(relative_path) = path.strip_prefix(&layout.plans_root) else {
+        let Ok(relative_path) = path.strip_prefix(plans_root) else {
             return Err(WorkspaceError::InvalidPath(path));
         };
 
         let relative_path = relative_path.to_path_buf();
 
-        let Some(charter_name) = infer_plan_charter_name_for_workspace(
-            &relative_path,
-            layout.project_root_charter.as_deref(),
-        ) else {
+        let Some(charter_name) =
+            infer_plan_charter_name_for_workspace(&relative_path, project_root_charter)
+        else {
             continue;
         };
 
         let inferred_parent =
-            infer_plan_parent_for_workspace(&relative_path, layout.project_root_charter.as_deref());
+            infer_plan_parent_for_workspace(&relative_path, project_root_charter);
 
         entries.push(PlanFileEntry {
             path,

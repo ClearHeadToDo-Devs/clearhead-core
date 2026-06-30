@@ -7,7 +7,7 @@ use crate::workspace::actions::convert::from_actions_with_charter;
 use crate::workspace::actions::repository::{ActionSource, SourcedAction};
 use crate::workspace::charter::{MarkdownCharter, frontmatter_has_parent_key, implicit_charter, parse_charter};
 use crate::workspace::ics::parse_ics_file;
-use crate::workspace::plans::collect_plan_files;
+use crate::workspace::plans::collect_plan_files_in;
 use crate::workspace::sidecar::{hydrate_acts, read_sidecar, sidecar_path};
 use crate::workspace::store::infer_charter_name;
 use std::collections::HashMap;
@@ -31,7 +31,16 @@ pub struct Workspace {
 
 impl Workspace {
     pub fn load(root: &Path) -> Result<Self, WorkspaceError> {
-        let charters = load_workspace(root)?;
+        Self::load_with_plans(root, None)
+    }
+
+    /// Like [`Workspace::load`] but reads plan `.ics` from `plan_override` when
+    /// given, instead of the workspace's own `plans/` directory.
+    pub fn load_with_plans(
+        root: &Path,
+        plan_override: Option<&Path>,
+    ) -> Result<Self, WorkspaceError> {
+        let charters = load_workspace_with_plans(root, plan_override)?;
         Ok(Self { root: root.to_path_buf(), id: None, name: None, charters })
     }
 }
@@ -47,7 +56,11 @@ pub fn load_workspaces(
     primary_root: &Path,
     config: &crate::config::WorkspaceConfig,
 ) -> Result<Vec<Workspace>, WorkspaceError> {
-    let mut primary = Workspace::load(primary_root)?;
+    // The primary workspace honors a configured plan_path; additional workspaces
+    // own their own config (which only the calling tool knows how to load) and so
+    // fall back to their default plans/ directory.
+    let plan_override = config.plan_path.as_deref().map(Path::new);
+    let mut primary = Workspace::load_with_plans(primary_root, plan_override)?;
     primary.id = config.workspace_id.clone();
     primary.name = config.workspace_name.clone();
     let mut workspaces = vec![primary];
@@ -71,11 +84,30 @@ pub fn load_domain_model(root: &Path) -> Result<DomainModel, WorkspaceError> {
     Ok(Workspace::load(root)?.into())
 }
 
+/// Like [`load_domain_model`] but reads plan `.ics` from `plan_override` when
+/// given (the resolved `plan_path` config value), instead of the workspace's own
+/// `plans/` directory. `None` is identical to [`load_domain_model`].
+pub fn load_domain_model_with_plans(
+    root: &Path,
+    plan_override: Option<&Path>,
+) -> Result<DomainModel, WorkspaceError> {
+    Ok(Workspace::load_with_plans(root, plan_override)?.into())
+}
+
 /// Load the workspace as a [`FileSystemWorkspace`], preserving file-layer metadata.
 ///
 /// Prefer [`FileSystemWorkspace::load`] directly. This free function exists for
 /// callers that need only the charter list without the root path.
 pub fn load_workspace(root: &Path) -> Result<Vec<MarkdownCharter>, WorkspaceError> {
+    load_workspace_with_plans(root, None)
+}
+
+/// Like [`load_workspace`] but reads plan `.ics` from `plan_override` when given,
+/// instead of the workspace's own `plans/` directory.
+pub fn load_workspace_with_plans(
+    root: &Path,
+    plan_override: Option<&Path>,
+) -> Result<Vec<MarkdownCharter>, WorkspaceError> {
     if !root.is_dir() {
         return Err(WorkspaceError::InvalidPath(root.to_path_buf()));
     }
@@ -273,7 +305,10 @@ pub fn load_workspace(root: &Path) -> Result<Vec<MarkdownCharter>, WorkspaceErro
     // entry.relative_path is relative to plans_root (e.g. "inbox/uid.ics").
     // entry.charter_name is the slug used as the directory name (e.g. "work-feature").
     // Match against charters via computed slug: parent-alias + "-" + alias.
-    for entry in collect_plan_files(root)? {
+    // A configured plan_path overrides where the .ics live; otherwise use the
+    // workspace's own plans/ directory.
+    let plans_root = plan_override.unwrap_or(&layout.plans_root);
+    for entry in collect_plan_files_in(plans_root, layout.project_root_charter.as_deref())? {
         let plans = parse_ics_file(&entry.path)?;
         if plans.is_empty() {
             continue;

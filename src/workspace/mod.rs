@@ -35,14 +35,18 @@ pub use archive_charter::{
     archive_charter, archive_closed_charters, find_charter as find_markdown_charter,
 };
 pub use ics::{ICSPlan, action_to_vevent, actions_to_icalendar, occurrence_act_id};
-pub use plans::{PlanFileEntry, collect_plan_files, infer_plan_charter_name, infer_plan_parent};
+pub use plans::{
+    PlanFileEntry, collect_plan_files, collect_plan_files_with_plans, infer_plan_charter_name,
+    infer_plan_parent,
+};
 
 pub use detection::check_for_workspace;
 pub use expand::expand_plans_into_acts;
 pub use store::{
     Workspace, ManifestSourceType, WorkspaceError, WorkspaceManifestEntry,
     collect_workspace_manifest, infer_charter_name, infer_parent_charter_name,
-    list_action_files, load_domain_model, load_workspaces, charter_root, plans_root, load_workspace,
+    list_action_files, load_domain_model, load_domain_model_with_plans, load_workspaces,
+    charter_root, plans_root, load_workspace, load_workspace_with_plans,
     save_domain_model, workspace_data_root,
 };
 pub use templates::{instantiate_template, resolve_template};
