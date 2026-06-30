@@ -6,7 +6,7 @@
 use super::discovery::{discover_action_files, discover_charter_files};
 use super::pathing::{infer_charter_name_for_workspace, infer_parent_charter_name_for_workspace};
 use super::{WorkspaceError, resolve_workspace_layout};
-use crate::workspace::plans::collect_plan_files;
+use crate::workspace::calendar::plans::collect_plan_files;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;

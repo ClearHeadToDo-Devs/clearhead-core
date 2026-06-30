@@ -56,7 +56,7 @@ pub use workspace::{
     ArchiveCharterError, ArchiveCharterOptions, ArchiveCharterResult,
     archive_charter, archive_closed_charters, find_markdown_charter,
 };
-pub use workspace::expand::{ExpandResult, ExpansionConfig};
+pub use workspace::calendar::expand::{ExpandResult, ExpansionConfig};
 
 pub mod domain;
 #[doc(inline)]

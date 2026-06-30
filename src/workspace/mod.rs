@@ -9,14 +9,11 @@
 
 pub mod actions;
 pub mod action_files;
+pub mod calendar;
 pub mod durability;
 pub mod archive_charter;
 pub mod charter;
 pub mod detection;
-pub mod expand;
-pub mod ics;
-pub mod plans;
-pub mod reconcile;
 pub mod sidecar;
 pub mod store;
 pub mod templates;
@@ -35,15 +32,15 @@ pub use archive_charter::{
     ArchiveCharterError, ArchiveCharterOptions, ArchiveCharterResult,
     archive_charter, archive_closed_charters, find_charter as find_markdown_charter,
 };
-pub use ics::{ICSPlan, action_to_vevent, actions_to_icalendar, occurrence_act_id};
-pub use plans::{
+pub use calendar::ics::{ICSPlan, action_to_vevent, actions_to_icalendar, occurrence_act_id};
+pub use calendar::plans::{
     PlanFileEntry, collect_plan_files, collect_plan_files_with_plans, infer_plan_charter_name,
     infer_plan_parent,
 };
-pub use reconcile::{Reconcile, reconcile};
+pub use calendar::reconcile::{Reconcile, reconcile};
 
 pub use detection::check_for_workspace;
-pub use expand::expand_plans_into_acts;
+pub use calendar::expand::expand_plans_into_acts;
 pub use store::{
     Workspace, ManifestSourceType, WorkspaceError, WorkspaceManifestEntry,
     collect_workspace_manifest, infer_charter_name, infer_parent_charter_name,

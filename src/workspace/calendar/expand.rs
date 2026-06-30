@@ -5,7 +5,7 @@ use uuid::Uuid;
 
 use crate::domain::Plan;
 use crate::workspace::actions::{Action, ActionState};
-use crate::workspace::ics::occurrence_act_id;
+use super::ics::occurrence_act_id;
 
 // ============================================================================
 // Public types

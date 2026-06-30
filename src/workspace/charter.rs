@@ -23,7 +23,7 @@ use uuid::Uuid;
 
 use crate::domain::{Charter, CharterState};
 use crate::workspace::actions::repository::{ActionSource, SourcedAction};
-use crate::workspace::ics::ICSPlan;
+use crate::workspace::calendar::ics::ICSPlan;
 
 /// A charter as it exists in the workspace — carries file paths alongside domain data.
 ///

@@ -6,8 +6,8 @@ use crate::domain::{Charter, DomainModel};
 use crate::workspace::actions::convert::from_actions_with_charter;
 use crate::workspace::actions::repository::{ActionSource, SourcedAction};
 use crate::workspace::charter::{MarkdownCharter, frontmatter_has_parent_key, implicit_charter, parse_charter};
-use crate::workspace::ics::parse_ics_file;
-use crate::workspace::plans::collect_plan_files_in;
+use crate::workspace::calendar::ics::parse_ics_file;
+use crate::workspace::calendar::plans::collect_plan_files_in;
 use crate::workspace::sidecar::{hydrate_acts, read_sidecar, sidecar_path};
 use crate::workspace::store::infer_charter_name;
 use std::collections::HashMap;
@@ -19,7 +19,7 @@ use std::path::{Path, PathBuf};
 /// Convert to a pure [`DomainModel`] via `From` at the workspace boundary —
 /// all file paths and source metadata are stripped in that conversion.
 ///
-/// [`ICSPlan`]: crate::workspace::ics::ICSPlan
+/// [`ICSPlan`]: crate::workspace::calendar::ics::ICSPlan
 pub struct Workspace {
     pub root: PathBuf,
     /// Stable UUID for this workspace's RDF named graph. `None` for uninitialized workspaces.
