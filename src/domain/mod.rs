@@ -600,6 +600,13 @@ pub struct Action {
     pub external_schedule_id: Option<String>,
     /// External occurrence identifier within a schedule series (from sidecar).
     pub external_occurrence_key: Option<String>,
+    /// Merge-base copy of `scheduled_at` at last reconcile — the **B** column of
+    /// the three-way sync (decision 31). Sidecar-populated, never from DSL;
+    /// `None` means "not yet synced". Only the reconcile engine may move it.
+    pub scheduled_at_sync: Option<DateTime<Local>>,
+    /// Merge-base copy of `due_date` at last reconcile — the **B** column for the
+    /// deadline. Sidecar-populated; see `scheduled_at_sync`.
+    pub due_date_sync: Option<DateTime<Local>>,
 }
 
 impl Default for Action {
@@ -624,6 +631,8 @@ impl Default for Action {
             plan_id: None,
             external_schedule_id: None,
             external_occurrence_key: None,
+            scheduled_at_sync: None,
+            due_date_sync: None,
         }
     }
 }
