@@ -22,4 +22,6 @@ pub use plans::{
     PlanFileEntry, collect_plan_files, collect_plan_files_with_plans, infer_plan_charter_name,
     infer_plan_parent,
 };
-pub use reconcile::{Reconcile, reconcile};
+pub use reconcile::{
+    Reconcile, SyncEntry, SyncReport, SyncTally, plan_sync, read_ics_dates, reconcile,
+};
