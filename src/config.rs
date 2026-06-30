@@ -68,6 +68,15 @@ pub struct WorkspaceConfig {
     /// `<charter>.upcoming.actions`. Must be less than
     /// `expansion_total_instances`. Defaults to `1`.
     pub expansion_primary_instances: u32,
+
+    /// Directory where plan `.ics` files are written, laid out flat as
+    /// `<plan_path>/<charter>/<uid>.ics`. A CalDAV server can point at the same
+    /// directory to share plans through the files themselves.
+    ///
+    /// When `None`, plans live under the workspace's own `<data_root>/plans`.
+    /// Core stores the configured value; resolving it into `plans_root` is the
+    /// CalDAV charter's slice-2 work — nothing consumes it yet.
+    pub plan_path: Option<String>,
 }
 
 impl Default for WorkspaceConfig {
@@ -81,6 +90,7 @@ impl Default for WorkspaceConfig {
             additional_workspaces: Vec::new(),
             expansion_total_instances: 2,
             expansion_primary_instances: 1,
+            plan_path: None,
         }
     }
 }
