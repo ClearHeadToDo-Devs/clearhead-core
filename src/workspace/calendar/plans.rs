@@ -1,3 +1,5 @@
+use crate::domain::{Action, Plan};
+use crate::workspace::charter::MarkdownCharter;
 use crate::workspace::store::{WorkspaceError, resolve_workspace_layout};
 use std::path::{Path, PathBuf};
 
@@ -20,6 +22,75 @@ pub struct PlanFileEntry {
 /// In project workspaces the root charter uses the reserved slug `next`.
 pub fn collect_plan_files(root: &Path) -> Result<Vec<PlanFileEntry>, WorkspaceError> {
     collect_plan_files_with_plans(root, None)
+}
+
+/// Slug a user-facing name into the directory/file form used under `plans/`.
+fn slug(value: &str) -> String {
+    value.to_lowercase().replace(' ', "-").replace('&', "and")
+}
+
+/// File name for a plan's `.ics` mirror.
+///
+/// Uses `Plan.external_id` when present (the stable VEVENT UID), otherwise the
+/// plan's own id. Matches the CLI's historical `<uid>.ics` naming.
+pub fn plan_file_name(plan: &Plan) -> String {
+    let uid = plan
+        .external_id
+        .clone()
+        .unwrap_or_else(|| plan.id.to_string());
+    format!("{}.ics", slug(&uid))
+}
+
+/// Relative plans directory for a charter under `plans_root`.
+///
+/// Resolution order:
+/// - `MarkdownCharter.plans_dir` when already known (preserve an existing path)
+/// - project-root charter (`next.actions`) → reserved `next/`
+/// - sub-charter → `<parent>-<charter>/`
+/// - top-level charter → `<charter>/`
+pub fn charter_plans_dir_relative(charter: &MarkdownCharter) -> PathBuf {
+    if let Some(path) = &charter.plans_dir {
+        return path.clone();
+    }
+
+    let key = charter.alias.as_deref().unwrap_or(&charter.title);
+    let is_root = charter
+        .acts_file
+        .as_deref()
+        .and_then(|p| p.file_name())
+        .and_then(|n| n.to_str())
+        .is_some_and(|n| n == "next.actions");
+
+    if is_root {
+        PathBuf::from("next")
+    } else {
+        let dir = match charter.parent.as_deref() {
+            Some(parent) => format!("{}-{}", slug(parent), slug(key)),
+            None => slug(key),
+        };
+        PathBuf::from(dir)
+    }
+}
+
+/// Absolute output path for a plan's `.ics` file under `plans_root`.
+pub fn plan_output_path(plans_root: &Path, charter: &MarkdownCharter, plan: &Plan) -> PathBuf {
+    plans_root
+        .join(charter_plans_dir_relative(charter))
+        .join(plan_file_name(plan))
+}
+
+/// Absolute output path for a standalone action's mirrored `.ics` file.
+///
+/// The mirror is keyed by the action's id (`UID == action.id`), one VEVENT per
+/// file, under the same per-charter directory policy as plans.
+pub fn action_mirror_path(
+    plans_root: &Path,
+    charter: &MarkdownCharter,
+    action: &Action,
+) -> PathBuf {
+    plans_root
+        .join(charter_plans_dir_relative(charter))
+        .join(format!("{}.ics", slug(&action.id.to_string())))
 }
 
 /// Like [`collect_plan_files`] but reads `.ics` from `plan_override` when given

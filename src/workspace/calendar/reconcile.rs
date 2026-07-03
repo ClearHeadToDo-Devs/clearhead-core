@@ -37,21 +37,25 @@
 //! [`Converged`]: Reconcile::Converged
 //! [`Conflict`]: Reconcile::Conflict
 //!
-//! This module is **pure** — it decides, it does not write. Applying the
-//! outcome (and stamping B in the same atomic commit as the winning payload) is
-//! the reconcile shell's job.
+//! The decision layer in this module is **pure** — [`reconcile`] and
+//! [`plan_sync`] classify without writing. The same module also hosts the file
+//! shell ([`apply_sync`]) that performs the ordered writes the charter requires.
 //!
 //! [decision 31]: ../../../DECISIONS.md
 
 use chrono::{DateTime, Local};
-use std::collections::HashMap;
-use std::path::Path;
+use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
-use super::ics::parse_ics_file;
-use super::plans::collect_plan_files_in;
+use super::ics::{actions_to_icalendar, parse_ics_file};
+use super::plans::{action_mirror_path, collect_plan_files_in};
 use crate::domain::DomainModel;
-use crate::workspace::store::WorkspaceError;
+use crate::workspace::charter::MarkdownCharter;
+use crate::workspace::durability::{PendingBatch, WorkspaceLock, atomic_write, recover_pending};
+use crate::workspace::sidecar::{CharterMetadata, read_sidecar, sidecar_path};
+use crate::workspace::store::{WorkspaceError, Workspace, resolve_workspace_layout};
+use crate::workspace::{OutputFormat, SourcedAction, format};
 
 /// A nullable scheduled time — `None` means "no scheduled time".
 type Time = Option<DateTime<Local>>;
@@ -211,6 +215,180 @@ pub fn read_ics_dates(plans_root: &Path) -> Result<HashMap<Uuid, Time>, Workspac
     }
 
     Ok(dates)
+}
+
+// ============================================================================
+// Sync application — the write shell
+// ============================================================================
+
+/// Summary of an applied sync run.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct AppliedSync {
+    pub take_action: usize,
+    pub take_calendar: usize,
+    pub converged: usize,
+    pub conflict: usize,
+}
+
+/// Apply a planned sync report to disk.
+///
+/// Ordering is load-bearing:
+/// - `TakeAction` writes the `.ics` first, then stamps B in the sidecar batch.
+/// - `TakeCalendar` stages `.actions` + sidecar together in one pending batch.
+/// - `Converged` stamps B only.
+/// - `Conflict` is surfaced by the caller and skipped here.
+pub fn apply_sync(
+    root: &Path,
+    plan_override: Option<&Path>,
+    report: &SyncReport,
+) -> Result<AppliedSync, WorkspaceError> {
+    if report.is_empty() {
+        return Ok(AppliedSync::default());
+    }
+
+    let layout = resolve_workspace_layout(root);
+    std::fs::create_dir_all(&layout.charter_root)?;
+
+    let _lock = WorkspaceLock::try_acquire(&layout.data_root).ok();
+    recover_pending(&layout.charter_root)?;
+
+    let mut workspace = Workspace::load_with_plans(root, plan_override)?;
+    let plans_root = plan_override.unwrap_or(&layout.plans_root);
+
+    let mut sidecars: HashMap<PathBuf, CharterMetadata> = HashMap::new();
+    let mut dirty_actions: HashSet<PathBuf> = HashSet::new();
+    let mut dirty_sidecars: HashSet<PathBuf> = HashSet::new();
+    let mut applied = AppliedSync::default();
+
+    for entry in &report.entries {
+        let Some((charter_idx, action_idx)) = locate_action(&workspace.charters, entry.action_id) else {
+            return Err(WorkspaceError::Parse(format!(
+                "sync action not found in workspace: {}",
+                entry.action_id
+            )));
+        };
+
+        let acts_relative = workspace.charters[charter_idx]
+            .acts_file
+            .clone()
+            .ok_or_else(|| WorkspaceError::Parse(format!(
+                "sync charter for action {} has no acts_file",
+                entry.action_id
+            )))?;
+        let sidecar_abs = layout.charter_root.join(sidecar_path(&acts_relative));
+        if !sidecars.contains_key(&sidecar_abs) {
+            sidecars.insert(sidecar_abs.clone(), read_sidecar(&sidecar_abs)?);
+        }
+        let action_key = entry.action_id.to_string();
+
+        match entry.outcome {
+            Reconcile::NoOp => {}
+            Reconcile::Conflict { .. } => {
+                applied.conflict += 1;
+            }
+            Reconcile::TakeAction(time) => {
+                let ics_path = {
+                    let charter = &workspace.charters[charter_idx];
+                    let action = &charter.actions[action_idx].action;
+                    action_mirror_path(plans_root, charter, action)
+                };
+
+                let mut action_for_ics = workspace.charters[charter_idx].actions[action_idx].action.clone();
+                action_for_ics.scheduled_at = time;
+                write_action_mirror(&ics_path, &action_for_ics)?;
+
+                workspace.charters[charter_idx].actions[action_idx].action.scheduled_at_sync = time;
+                let sidecar = sidecars.get_mut(&sidecar_abs).expect("sidecar loaded");
+                sidecar.acts.entry(action_key).or_default().scheduled_at_sync = time;
+                dirty_sidecars.insert(sidecar_abs);
+                applied.take_action += 1;
+            }
+            Reconcile::TakeCalendar(time) => {
+                workspace.charters[charter_idx].actions[action_idx].action.scheduled_at = time;
+                workspace.charters[charter_idx].actions[action_idx].action.scheduled_at_sync = time;
+
+                let sidecar = sidecars.get_mut(&sidecar_abs).expect("sidecar loaded");
+                sidecar.acts.entry(action_key).or_default().scheduled_at_sync = time;
+
+                dirty_actions.insert(layout.charter_root.join(&acts_relative));
+                dirty_sidecars.insert(sidecar_abs);
+                applied.take_calendar += 1;
+            }
+            Reconcile::Converged(time) => {
+                workspace.charters[charter_idx].actions[action_idx].action.scheduled_at_sync = time;
+                let sidecar = sidecars.get_mut(&sidecar_abs).expect("sidecar loaded");
+                sidecar.acts.entry(action_key).or_default().scheduled_at_sync = time;
+                dirty_sidecars.insert(sidecar_abs);
+                applied.converged += 1;
+            }
+        }
+    }
+
+    let mut batch = PendingBatch::new(layout.charter_root.clone());
+
+    let mut action_paths: Vec<_> = dirty_actions.into_iter().collect();
+    action_paths.sort();
+    for action_path in action_paths {
+        let relative = action_path
+            .strip_prefix(&layout.charter_root)
+            .unwrap_or(&action_path);
+        let charter = workspace
+            .charters
+            .iter()
+            .find(|charter| charter.acts_file.as_deref() == Some(relative))
+            .ok_or_else(|| WorkspaceError::Parse(format!(
+                "dirty action file missing charter: {}",
+                action_path.display()
+            )))?;
+        let content = render_actions(&charter.actions)?;
+        batch.stage(action_path, content.as_bytes())?;
+    }
+
+    let mut sidecar_paths: Vec<_> = dirty_sidecars.into_iter().collect();
+    sidecar_paths.sort();
+    for sidecar_path_abs in sidecar_paths {
+        let metadata = sidecars
+            .get(&sidecar_path_abs)
+            .ok_or_else(|| WorkspaceError::Parse(format!(
+                "dirty sidecar missing metadata: {}",
+                sidecar_path_abs.display()
+            )))?;
+        let content = serde_json::to_string_pretty(metadata)
+            .map_err(|e| WorkspaceError::Parse(e.to_string()))?;
+        batch.stage(sidecar_path_abs, content.as_bytes())?;
+    }
+
+    batch.commit()?;
+    Ok(applied)
+}
+
+fn locate_action(charters: &[MarkdownCharter], action_id: Uuid) -> Option<(usize, usize)> {
+    for (charter_idx, charter) in charters.iter().enumerate() {
+        for (action_idx, sourced) in charter.actions.iter().enumerate() {
+            if sourced.action.id == action_id {
+                return Some((charter_idx, action_idx));
+            }
+        }
+    }
+    None
+}
+
+fn render_actions(actions: &[SourcedAction]) -> Result<String, WorkspaceError> {
+    let list = actions.iter().map(|sa| sa.action.clone()).collect::<Vec<_>>();
+    format(&list, OutputFormat::Actions, None, None).map_err(WorkspaceError::Acts)
+}
+
+fn write_action_mirror(path: &Path, action: &crate::domain::Action) -> Result<(), WorkspaceError> {
+    if action.scheduled_at.is_some() {
+        let content = actions_to_icalendar(std::slice::from_ref(action), false);
+        atomic_write(path, content.as_bytes()).map_err(WorkspaceError::Io)
+    } else {
+        match std::fs::remove_file(path) {
+            Ok(()) => Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(WorkspaceError::Io(e)),
+        }
+    }
 }
 
 #[cfg(test)]

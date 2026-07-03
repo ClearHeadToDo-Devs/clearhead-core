@@ -34,11 +34,13 @@ pub use archive_charter::{
 };
 pub use calendar::ics::{ICSPlan, action_to_vevent, actions_to_icalendar, occurrence_act_id};
 pub use calendar::plans::{
-    PlanFileEntry, collect_plan_files, collect_plan_files_with_plans, infer_plan_charter_name,
-    infer_plan_parent,
+    PlanFileEntry, action_mirror_path, charter_plans_dir_relative, collect_plan_files,
+    collect_plan_files_with_plans, infer_plan_charter_name, infer_plan_parent, plan_file_name,
+    plan_output_path,
 };
 pub use calendar::reconcile::{
-    Reconcile, SyncEntry, SyncReport, SyncTally, plan_sync, read_ics_dates, reconcile,
+    AppliedSync, Reconcile, SyncEntry, SyncReport, SyncTally, apply_sync, plan_sync,
+    read_ics_dates, reconcile,
 };
 
 pub use detection::check_for_workspace;
