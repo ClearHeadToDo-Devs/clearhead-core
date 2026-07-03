@@ -117,7 +117,7 @@ pub fn parse_charter(content: &str) -> Result<Charter, String> {
 
     let fm: CharterFrontmatter = match frontmatter {
         Some(yaml) => {
-            serde_yml::from_str(yaml).map_err(|e| format!("Invalid charter frontmatter: {}", e))?
+            serde_yaml_ng::from_str(yaml).map_err(|e| format!("Invalid charter frontmatter: {}", e))?
         }
         None => CharterFrontmatter::default(),
     };
@@ -240,7 +240,7 @@ pub(crate) fn frontmatter_has_parent_key(content: &str) -> bool {
     let (frontmatter, _) = split_frontmatter(content);
     frontmatter
         .and_then(|yaml| {
-            serde_yml::from_str::<std::collections::HashMap<String, serde_yml::Value>>(yaml).ok()
+            serde_yaml_ng::from_str::<std::collections::HashMap<String, serde_yaml_ng::Value>>(yaml).ok()
         })
         .map(|map| map.contains_key("parent"))
         .unwrap_or(false)
