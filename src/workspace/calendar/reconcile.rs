@@ -54,7 +54,7 @@ use crate::domain::DomainModel;
 use crate::workspace::charter::MarkdownCharter;
 use crate::workspace::durability::{PendingBatch, WorkspaceLock, atomic_write, recover_pending};
 use crate::workspace::sidecar::{CharterMetadata, read_sidecar, sidecar_path};
-use crate::workspace::store::{WorkspaceError, Workspace, resolve_workspace_layout};
+use crate::workspace::store::{Workspace, WorkspaceError, resolve_workspace_layout};
 use crate::workspace::{OutputFormat, SourcedAction, format};
 
 /// A nullable scheduled time — `None` means "no scheduled time".
@@ -96,7 +96,10 @@ pub fn reconcile(action: Time, base: Time, ics: Time) -> Reconcile {
         (true, false) => Reconcile::TakeAction(action),
         (false, true) => Reconcile::TakeCalendar(ics),
         (true, true) if action == ics => Reconcile::Converged(action),
-        (true, true) => Reconcile::Conflict { action, calendar: ics },
+        (true, true) => Reconcile::Conflict {
+            action,
+            calendar: ics,
+        },
     }
 }
 
@@ -128,11 +131,13 @@ pub struct SyncTally {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SyncReport {
     pub entries: Vec<SyncEntry>,
+    /// Suspicious merge-base states that should be surfaced loudly to the user.
+    pub warnings: Vec<String>,
 }
 
 impl SyncReport {
     pub fn is_empty(&self) -> bool {
-        self.entries.is_empty()
+        self.entries.is_empty() && self.warnings.is_empty()
     }
 
     /// Count planned outcomes by kind.
@@ -164,11 +169,9 @@ impl SyncReport {
 ///
 /// Plan-generated actions (`external_schedule_id` set) are skipped — they are
 /// represented by their plan's recurring master, never individually mirrored.
-pub fn plan_sync(
-    model: &DomainModel,
-    ics_dates: &HashMap<Uuid, Time>,
-) -> SyncReport {
+pub fn plan_sync(model: &DomainModel, ics_dates: &HashMap<Uuid, Time>) -> SyncReport {
     let mut entries = Vec::new();
+    let mut warnings = Vec::new();
 
     for charter in &model.charters {
         for action in &charter.actions {
@@ -179,6 +182,10 @@ pub fn plan_sync(
             let a = action.scheduled_at;
             let b = action.scheduled_at_sync;
             let c = ics_dates.get(&action.id).copied().flatten();
+
+            if let Some(warning) = detect_merge_base_drift(&action.name, action.id, a, b, c) {
+                warnings.push(warning);
+            }
 
             let outcome = reconcile(a, b, c);
             if outcome != Reconcile::NoOp {
@@ -191,7 +198,31 @@ pub fn plan_sync(
         }
     }
 
-    SyncReport { entries }
+    SyncReport { entries, warnings }
+}
+
+fn detect_merge_base_drift(
+    name: &str,
+    action_id: Uuid,
+    action: Time,
+    base: Time,
+    ics: Time,
+) -> Option<String> {
+    if base.is_none() && ics.is_some() {
+        return Some(format!(
+            "warning: merge base missing for '{}' #{} while a calendar mirror exists; this may be interrupted sync recovery or sidecar drift",
+            name, action_id
+        ));
+    }
+
+    if action == ics && action != base {
+        return Some(format!(
+            "warning: merge base drift for '{}' #{} — action and calendar already agree while the stored sync copy differs; restamping B",
+            name, action_id
+        ));
+    }
+
+    None
 }
 
 /// Read the calendar side (`C`) for a sync: parse every `.ics` under
@@ -261,7 +292,8 @@ pub fn apply_sync(
     let mut applied = AppliedSync::default();
 
     for entry in &report.entries {
-        let Some((charter_idx, action_idx)) = locate_action(&workspace.charters, entry.action_id) else {
+        let Some((charter_idx, action_idx)) = locate_action(&workspace.charters, entry.action_id)
+        else {
             return Err(WorkspaceError::Parse(format!(
                 "sync action not found in workspace: {}",
                 entry.action_id
@@ -271,10 +303,12 @@ pub fn apply_sync(
         let acts_relative = workspace.charters[charter_idx]
             .acts_file
             .clone()
-            .ok_or_else(|| WorkspaceError::Parse(format!(
-                "sync charter for action {} has no acts_file",
-                entry.action_id
-            )))?;
+            .ok_or_else(|| {
+                WorkspaceError::Parse(format!(
+                    "sync charter for action {} has no acts_file",
+                    entry.action_id
+                ))
+            })?;
         let sidecar_abs = layout.charter_root.join(sidecar_path(&acts_relative));
         if !sidecars.contains_key(&sidecar_abs) {
             sidecars.insert(sidecar_abs.clone(), read_sidecar(&sidecar_abs)?);
@@ -293,31 +327,53 @@ pub fn apply_sync(
                     action_mirror_path(plans_root, charter, action)
                 };
 
-                let mut action_for_ics = workspace.charters[charter_idx].actions[action_idx].action.clone();
+                let mut action_for_ics = workspace.charters[charter_idx].actions[action_idx]
+                    .action
+                    .clone();
                 action_for_ics.scheduled_at = time;
                 write_action_mirror(&ics_path, &action_for_ics)?;
 
-                workspace.charters[charter_idx].actions[action_idx].action.scheduled_at_sync = time;
+                workspace.charters[charter_idx].actions[action_idx]
+                    .action
+                    .scheduled_at_sync = time;
                 let sidecar = sidecars.get_mut(&sidecar_abs).expect("sidecar loaded");
-                sidecar.acts.entry(action_key).or_default().scheduled_at_sync = time;
+                sidecar
+                    .acts
+                    .entry(action_key)
+                    .or_default()
+                    .scheduled_at_sync = time;
                 dirty_sidecars.insert(sidecar_abs);
                 applied.take_action += 1;
             }
             Reconcile::TakeCalendar(time) => {
-                workspace.charters[charter_idx].actions[action_idx].action.scheduled_at = time;
-                workspace.charters[charter_idx].actions[action_idx].action.scheduled_at_sync = time;
+                workspace.charters[charter_idx].actions[action_idx]
+                    .action
+                    .scheduled_at = time;
+                workspace.charters[charter_idx].actions[action_idx]
+                    .action
+                    .scheduled_at_sync = time;
 
                 let sidecar = sidecars.get_mut(&sidecar_abs).expect("sidecar loaded");
-                sidecar.acts.entry(action_key).or_default().scheduled_at_sync = time;
+                sidecar
+                    .acts
+                    .entry(action_key)
+                    .or_default()
+                    .scheduled_at_sync = time;
 
                 dirty_actions.insert(layout.charter_root.join(&acts_relative));
                 dirty_sidecars.insert(sidecar_abs);
                 applied.take_calendar += 1;
             }
             Reconcile::Converged(time) => {
-                workspace.charters[charter_idx].actions[action_idx].action.scheduled_at_sync = time;
+                workspace.charters[charter_idx].actions[action_idx]
+                    .action
+                    .scheduled_at_sync = time;
                 let sidecar = sidecars.get_mut(&sidecar_abs).expect("sidecar loaded");
-                sidecar.acts.entry(action_key).or_default().scheduled_at_sync = time;
+                sidecar
+                    .acts
+                    .entry(action_key)
+                    .or_default()
+                    .scheduled_at_sync = time;
                 dirty_sidecars.insert(sidecar_abs);
                 applied.converged += 1;
             }
@@ -336,10 +392,12 @@ pub fn apply_sync(
             .charters
             .iter()
             .find(|charter| charter.acts_file.as_deref() == Some(relative))
-            .ok_or_else(|| WorkspaceError::Parse(format!(
-                "dirty action file missing charter: {}",
-                action_path.display()
-            )))?;
+            .ok_or_else(|| {
+                WorkspaceError::Parse(format!(
+                    "dirty action file missing charter: {}",
+                    action_path.display()
+                ))
+            })?;
         let content = render_actions(&charter.actions)?;
         batch.stage(action_path, content.as_bytes())?;
     }
@@ -347,12 +405,12 @@ pub fn apply_sync(
     let mut sidecar_paths: Vec<_> = dirty_sidecars.into_iter().collect();
     sidecar_paths.sort();
     for sidecar_path_abs in sidecar_paths {
-        let metadata = sidecars
-            .get(&sidecar_path_abs)
-            .ok_or_else(|| WorkspaceError::Parse(format!(
+        let metadata = sidecars.get(&sidecar_path_abs).ok_or_else(|| {
+            WorkspaceError::Parse(format!(
                 "dirty sidecar missing metadata: {}",
                 sidecar_path_abs.display()
-            )))?;
+            ))
+        })?;
         let content = serde_json::to_string_pretty(metadata)
             .map_err(|e| WorkspaceError::Parse(e.to_string()))?;
         batch.stage(sidecar_path_abs, content.as_bytes())?;
@@ -374,7 +432,10 @@ fn locate_action(charters: &[MarkdownCharter], action_id: Uuid) -> Option<(usize
 }
 
 fn render_actions(actions: &[SourcedAction]) -> Result<String, WorkspaceError> {
-    let list = actions.iter().map(|sa| sa.action.clone()).collect::<Vec<_>>();
+    let list = actions
+        .iter()
+        .map(|sa| sa.action.clone())
+        .collect::<Vec<_>>();
     format(&list, OutputFormat::Actions, None, None).map_err(WorkspaceError::Acts)
 }
 
@@ -411,7 +472,10 @@ mod tests {
 
     #[test]
     fn all_equal_is_noop() {
-        assert_eq!(reconcile(Some(t1()), Some(t1()), Some(t1())), Reconcile::NoOp);
+        assert_eq!(
+            reconcile(Some(t1()), Some(t1()), Some(t1())),
+            Reconcile::NoOp
+        );
     }
 
     #[test]
@@ -436,7 +500,10 @@ mod tests {
     fn both_moved_differently_is_conflict() {
         assert_eq!(
             reconcile(Some(t2()), Some(t1()), Some(t3())),
-            Reconcile::Conflict { action: Some(t2()), calendar: Some(t3()) }
+            Reconcile::Conflict {
+                action: Some(t2()),
+                calendar: Some(t3())
+            }
         );
     }
 
@@ -473,7 +540,10 @@ mod tests {
     fn action_removed_calendar_moved_is_conflict() {
         assert_eq!(
             reconcile(None, Some(t1()), Some(t2())),
-            Reconcile::Conflict { action: None, calendar: Some(t2()) }
+            Reconcile::Conflict {
+                action: None,
+                calendar: Some(t2())
+            }
         );
     }
 
@@ -481,7 +551,10 @@ mod tests {
     fn action_moved_calendar_removed_is_conflict() {
         assert_eq!(
             reconcile(Some(t2()), Some(t1()), None),
-            Reconcile::Conflict { action: Some(t2()), calendar: None }
+            Reconcile::Conflict {
+                action: Some(t2()),
+                calendar: None
+            }
         );
     }
 
@@ -524,7 +597,10 @@ mod tests {
     fn never_synced_and_both_differ_is_conflict() {
         assert_eq!(
             reconcile(Some(t1()), None, Some(t2())),
-            Reconcile::Conflict { action: Some(t1()), calendar: Some(t2()) }
+            Reconcile::Conflict {
+                action: Some(t1()),
+                calendar: Some(t2())
+            }
         );
     }
 }
@@ -558,7 +634,10 @@ mod shell_tests {
     fn model(actions: Vec<Action>) -> DomainModel {
         DomainModel {
             objectives: vec![],
-            charters: vec![Charter { actions, ..Default::default() }],
+            charters: vec![Charter {
+                actions,
+                ..Default::default()
+            }],
         }
     }
 
@@ -595,7 +674,10 @@ mod shell_tests {
         let a = action("cal-edit", Some(t1()), Some(t1()));
         let ics = HashMap::from([(a.id, Some(t2()))]);
         let report = plan_sync(&model(vec![a]), &ics);
-        assert_eq!(report.entries[0].outcome, Reconcile::TakeCalendar(Some(t2())));
+        assert_eq!(
+            report.entries[0].outcome,
+            Reconcile::TakeCalendar(Some(t2()))
+        );
         assert_eq!(report.tally().take_calendar, 1);
     }
 
@@ -615,7 +697,10 @@ mod shell_tests {
         let mut a = action("recurring-occurrence", Some(t2()), Some(t1()));
         a.external_schedule_id = Some("some-plan-uid".to_string());
         let report = plan_sync(&model(vec![a]), &HashMap::new());
-        assert!(report.is_empty(), "plan-generated actions must not be mirrored");
+        assert!(
+            report.is_empty(),
+            "plan-generated actions must not be mirrored"
+        );
     }
 
     #[test]
@@ -629,6 +714,32 @@ mod shell_tests {
         assert_eq!(tally.take_action, 1);
         assert_eq!(tally.take_calendar, 1);
         assert_eq!(report.entries.len(), 2, "the no-op must be omitted");
+    }
+
+    #[test]
+    fn converged_sync_reports_merge_base_drift_warning() {
+        let a = action("recovered", Some(t2()), Some(t1()));
+        let ics = HashMap::from([(a.id, Some(t2()))]);
+        let report = plan_sync(&model(vec![a]), &ics);
+        assert_eq!(report.entries[0].outcome, Reconcile::Converged(Some(t2())));
+        assert_eq!(report.warnings.len(), 1);
+        assert!(report.warnings[0].contains("merge base drift"));
+    }
+
+    #[test]
+    fn missing_merge_base_with_existing_calendar_mirror_warns_loudly() {
+        let a = action("missing-b", Some(t1()), None);
+        let ics = HashMap::from([(a.id, Some(t2()))]);
+        let report = plan_sync(&model(vec![a]), &ics);
+        assert_eq!(
+            report.entries[0].outcome,
+            Reconcile::Conflict {
+                action: Some(t1()),
+                calendar: Some(t2())
+            }
+        );
+        assert_eq!(report.warnings.len(), 1);
+        assert!(report.warnings[0].contains("merge base missing"));
     }
 
     #[test]
