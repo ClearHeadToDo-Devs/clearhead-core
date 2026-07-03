@@ -1,10 +1,14 @@
 name: CI
 
+# Auto-triggers are paused: this crate declares tree-sitter-actions as a sibling
+# path dependency (../tree-sitter-actions) that only exists inside the platform
+# super-repo, so a standalone CI checkout cannot build. Rather than patch the
+# dependency form now, we are folding CI into a proper release pipeline that
+# publishes prebuilt binaries to GH Releases (cargo binstall), which will settle
+# how the crate resolves its deps. Until then, run manually via workflow_dispatch.
+# See platform .clearhead/charters/dependency-hygiene for context.
 on:
-  push:
-    branches: [master, main]
-  pull_request:
-    branches: [master, main]
+  workflow_dispatch:
 
 jobs:
   test:
