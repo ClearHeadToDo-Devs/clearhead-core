@@ -359,4 +359,31 @@ mod tests {
             format(&actions, OutputFormat::Actions, Some(config_tabs), None).unwrap();
         assert!(formatted_tabs.contains("\t>[ ] Child"));
     }
+
+    #[test]
+    fn test_metadata_spacing_is_single_and_idempotent() {
+        // Exercises the boundaries that used to double-space: a multi-word
+        // name (whose trailing space could get absorbed into the name
+        // token), directly followed by several metadata fields in a row.
+        let mut action = create_test_action("do something nice", ActionState::NotStarted, None);
+        action.priority = Some(2);
+        action.contexts = Some(vec!["work".to_string(), "urgent".to_string()]);
+
+        let once = format_as_actions(&vec![action], None).unwrap();
+        assert!(
+            !once.contains("  "),
+            "expected no double spaces in formatted output: {once:?}"
+        );
+        assert!(
+            once.contains("do something nice !2 +work,urgent #"),
+            "expected single-spaced metadata boundaries: {once:?}"
+        );
+
+        // Re-parsing and re-formatting already-canonical output must be a
+        // fixed point -- if a boundary can grow a second space on the next
+        // write, the bug is back.
+        let reparsed = crate::workspace::actions::source::parse_actions(&once).unwrap();
+        let twice = format_as_actions(&reparsed, None).unwrap();
+        assert_eq!(once, twice, "formatting is not idempotent");
+    }
 }
