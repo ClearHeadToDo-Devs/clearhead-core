@@ -97,6 +97,7 @@ pub const ACTION_WARNING_CHECKS: &[ActionCheck] = &[
     // W002, W003 - document-level (check_tree_consistency)
     check_future_creation_date,       // W005
     check_completion_before_creation, // W006
+    check_incomplete_uuid,            // W013
 ];
 
 /// Action-level info checks (I001-I003)
@@ -237,18 +238,71 @@ fn check_missing_id(_action: &Action, metadata: &SourceMetadata) -> Option<LintD
     }
 }
 
-/// Check if UUID format is invalid (E006)
-fn check_invalid_uuid(_action: &Action, metadata: &SourceMetadata) -> Option<LintDiagnostic> {
-    metadata.raw_id.as_ref().map(|raw_id| {
-        LintDiagnostic::error(
-            "E006",
-            format!(
-                "Invalid UUID format: '{}'. UUIDs must follow standard format (E006).",
-                raw_id
-            ),
-            metadata.root,
-        )
+/// True when `s` is a strict, well-formed prefix of a canonical hyphenated UUID
+/// (`xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`) that also carries at least one `-`.
+///
+/// This is the "half-typed uuid" shape: every character sits in its template
+/// slot (hex where the template is hex, `-` at positions 8/13/18/23), the whole
+/// string is shorter than a full uuid, and a dash proves the author is partway
+/// through the hyphenated form rather than typing junk (`abc-def`) or a bare
+/// short hash (`01950000`). It is the boundary between W013 (incomplete, a
+/// live-buffer warning) and E006 (invalid, an error).
+fn is_incomplete_uuid(s: &str) -> bool {
+    const FULL_LEN: usize = 36;
+    if s.len() >= FULL_LEN || !s.contains('-') {
+        return false;
+    }
+    s.char_indices().all(|(i, c)| match i {
+        8 | 13 | 18 | 23 => c == '-',
+        _ => c.is_ascii_hexdigit(),
     })
+}
+
+/// Check if UUID format is invalid (E006).
+///
+/// Fires only for a captured `raw_id` that is *not* a recognizable incomplete
+/// uuid — those are the author's genuine mistakes (`#abc-def`, `#123`), as
+/// opposed to a uuid still being typed (see [`check_incomplete_uuid`]).
+fn check_invalid_uuid(_action: &Action, metadata: &SourceMetadata) -> Option<LintDiagnostic> {
+    metadata
+        .raw_id
+        .as_ref()
+        .filter(|raw_id| !is_incomplete_uuid(raw_id))
+        .map(|raw_id| {
+            LintDiagnostic::error(
+                "E006",
+                format!(
+                    "Invalid UUID format: '{}'. UUIDs must follow standard format (E006).",
+                    raw_id
+                ),
+                metadata.root,
+            )
+        })
+}
+
+/// Check for a partially-typed UUID id (W013).
+///
+/// A relaxed grammar lets a half-typed `#id` parse instead of erroring the line
+/// (Decision 6, live buffer), so the id arrives here as a `raw_id` that is a
+/// clean prefix of a full uuid. That is not a mistake to error on — it's an edit
+/// in progress — so it lint-warns, never errors. Note the id is still swapped
+/// for a generated one on load, so finishing it matters.
+fn check_incomplete_uuid(_action: &Action, metadata: &SourceMetadata) -> Option<LintDiagnostic> {
+    metadata
+        .raw_id
+        .as_ref()
+        .filter(|raw_id| is_incomplete_uuid(raw_id))
+        .map(|raw_id| {
+            LintDiagnostic::warning(
+                "W013",
+                format!(
+                    "Incomplete UUID: '{}' looks like a uuid still being typed. \
+                     Finish it — an unfinished id is replaced by a generated one on load (W013).",
+                    raw_id
+                ),
+                metadata.root,
+            )
+        })
 }
 
 // ============================================================================
@@ -560,6 +614,49 @@ mod tests {
         let result = check_invalid_uuid(&action, &metadata);
         assert!(result.is_some());
         assert_eq!(result.unwrap().code, "E006");
+    }
+
+    #[test]
+    fn test_incomplete_uuid_classification() {
+        // Well-formed prefixes with a dash — a uuid mid-type (W013).
+        for s in ["12345678-1234", "01950000-0000-7000-8000", "01950000-"] {
+            assert!(is_incomplete_uuid(s), "{s} should read as incomplete");
+        }
+        // Genuine mistakes — invalid, not incomplete (E006).
+        for s in [
+            "123",                // no dash, too short to be a uuid-in-progress
+            "01950000",           // bare short hash, not valid as an *id*
+            "abc-def-abc-def",    // dash at position 3, not a template slot
+            "not-a-uuid",         // non-hex
+            "invalid-uuid-format",
+            "01950000-0000-7000-8000-000000000001", // a full, valid uuid is neither
+        ] {
+            assert!(!is_incomplete_uuid(s), "{s} should NOT read as incomplete");
+        }
+    }
+
+    #[test]
+    fn test_incomplete_and_invalid_uuid_are_mutually_exclusive() {
+        use crate::workspace::actions::Action;
+        let action = Action::default();
+        let make = |raw: &str| SourceMetadata {
+            raw_id: Some(raw.to_string()),
+            is_id_generated: true,
+            ..Default::default()
+        };
+
+        // Incomplete → W013 only, never E006.
+        let incomplete = make("01950000-0000-7000-8000");
+        assert!(check_invalid_uuid(&action, &incomplete).is_none());
+        assert_eq!(
+            check_incomplete_uuid(&action, &incomplete).unwrap().code,
+            "W013"
+        );
+
+        // Invalid → E006 only, never W013.
+        let invalid = make("abc-def-abc-def");
+        assert!(check_incomplete_uuid(&action, &invalid).is_none());
+        assert_eq!(check_invalid_uuid(&action, &invalid).unwrap().code, "E006");
     }
 
     #[test]
