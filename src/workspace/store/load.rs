@@ -1,4 +1,5 @@
 use super::discovery::{discover_action_files, discover_charter_files};
+use super::findings::Finding;
 use super::pathing::{infer_charter_name_for_workspace, infer_parent_charter_name_for_workspace};
 use super::{WorkspaceError, resolve_workspace_layout};
 use crate::workspace::durability::recover_pending;
@@ -107,16 +108,52 @@ pub fn load_workspace_with_plans(
     root: &Path,
     plan_override: Option<&Path>,
 ) -> Result<Vec<MarkdownCharter>, WorkspaceError> {
+    let layout = resolve_workspace_layout(root);
+
+    // Replay any journal left by an interrupted save before reading any files.
+    // Recovery-to-consistency is loading's obligation (Decision 34); the pure
+    // reader below never mutates.
+    if layout.charter_root.exists() {
+        recover_pending(&layout.charter_root)?;
+    }
+
+    let read = read_workspace_with_plans(root, plan_override)?;
+    for finding in &read.findings {
+        eprintln!("warning: [{}] {}", finding.path.display(), finding.message);
+    }
+    Ok(read.charters)
+}
+
+/// What a pure read of the workspace produced: everything that loaded, plus
+/// a [`Finding`] for everything that didn't (or loaded with issues).
+pub struct WorkspaceRead {
+    pub charters: Vec<MarkdownCharter>,
+    pub findings: Vec<Finding>,
+}
+
+/// Read the workspace without mutating it and without refusing it.
+///
+/// The relaxed reader (Decision 34): per-file failures — unreadable files,
+/// unparseable documents, corrupt sidecars — become [`Finding`]s alongside
+/// whatever did load. Does **not** replay `.pending` journals; callers that
+/// want crash recovery use [`load_workspace`]. `Err` is reserved for
+/// workspace-level problems (root is not a directory).
+pub fn read_workspace(root: &Path) -> Result<WorkspaceRead, WorkspaceError> {
+    read_workspace_with_plans(root, None)
+}
+
+/// Like [`read_workspace`] but reads plan `.ics` from `plan_override` when
+/// given, instead of the workspace's own `plans/` directory.
+pub fn read_workspace_with_plans(
+    root: &Path,
+    plan_override: Option<&Path>,
+) -> Result<WorkspaceRead, WorkspaceError> {
     if !root.is_dir() {
         return Err(WorkspaceError::InvalidPath(root.to_path_buf()));
     }
 
     let layout = resolve_workspace_layout(root);
-
-    // Replay any journal left by an interrupted save before reading any files.
-    if layout.charter_root.exists() {
-        recover_pending(&layout.charter_root)?;
-    }
+    let mut findings: Vec<Finding> = Vec::new();
 
     let mut charters: HashMap<String, MarkdownCharter> = HashMap::new();
     let mut path_for_name: HashMap<String, PathBuf> = HashMap::new();
@@ -126,35 +163,46 @@ pub fn load_workspace_with_plans(
             .strip_prefix(&layout.charter_root)
             .unwrap_or(&file_path)
             .to_path_buf();
-        let name =
+        let Some(name) =
             infer_charter_name_for_workspace(&relative, layout.project_root_charter.as_deref())
-                .ok_or_else(|| WorkspaceError::Parse("Failed to infer charter name".to_string()))?;
+        else {
+            findings.push(Finding::violation(
+                "charter-name-unresolved",
+                &relative,
+                "failed to infer a charter name from the file path; file skipped",
+            ));
+            continue;
+        };
 
-        let action_source = std::fs::read_to_string(&file_path)?;
-        let parsed_doc = super::super::parse_document(&action_source)
-            .map_err(|e| WorkspaceError::Parse(format!("{}: {}", file_path.display(), e)))?;
+        let action_source = match std::fs::read_to_string(&file_path) {
+            Ok(source) => source,
+            Err(e) => {
+                findings.push(Finding::violation(
+                    "unreadable-file",
+                    &relative,
+                    format!("could not read file: {e}; file skipped"),
+                ));
+                continue;
+            }
+        };
+        let parsed_doc = match super::super::parse_document(&action_source) {
+            Ok(doc) => doc,
+            Err(e) => {
+                findings.push(Finding::violation(
+                    "unparseable-file",
+                    &relative,
+                    format!("could not parse file: {e}; file skipped"),
+                ));
+                continue;
+            }
+        };
 
         if !parsed_doc.syntax_errors.is_empty() {
-            eprintln!(
-                "warning: [{}] parsed with {} issue(s); loaded {} recoverable action(s)",
-                file_path.display(),
-                parsed_doc.syntax_errors.len(),
-                parsed_doc.actions.len()
-            );
-
-            for diagnostic in parsed_doc.syntax_errors.iter().take(5) {
-                eprintln!(
-                    "  - line {}, col {}: {}",
-                    diagnostic.range.start_row + 1,
-                    diagnostic.range.start_col + 1,
-                    diagnostic.message
-                );
-            }
-
-            let remaining = parsed_doc.syntax_errors.len().saturating_sub(5);
-            if remaining > 0 {
-                eprintln!("  - ... and {} more issue(s)", remaining);
-            }
+            findings.push(Finding::warning(
+                "syntax-errors",
+                &relative,
+                syntax_error_summary(&parsed_doc),
+            ));
         }
 
         let source_map = parsed_doc.source_map;
@@ -181,7 +229,17 @@ pub fn load_workspace_with_plans(
         mc.actions = sourced.clone();
 
         let sc_path = layout.charter_root.join(sidecar_path(&relative));
-        let sidecar = read_sidecar(&sc_path)?;
+        let sidecar = match read_sidecar(&sc_path) {
+            Ok(sidecar) => sidecar,
+            Err(e) => {
+                findings.push(Finding::violation(
+                    "sidecar-corrupt",
+                    sidecar_path(&relative),
+                    format!("could not read sidecar: {e}; actions loaded without sidecar metadata"),
+                ));
+                Default::default()
+            }
+        };
         hydrate_acts(&mut sourced, &sidecar);
         mc.actions = sourced;
 
@@ -202,16 +260,42 @@ pub fn load_workspace_with_plans(
             .strip_prefix(&layout.charter_root)
             .unwrap_or(&file_path)
             .to_path_buf();
-        let name =
+        let Some(name) =
             infer_charter_name_for_workspace(&relative, layout.project_root_charter.as_deref())
-                .ok_or_else(|| WorkspaceError::Parse("Failed to infer charter name".to_string()))?;
+        else {
+            findings.push(Finding::violation(
+                "charter-name-unresolved",
+                &relative,
+                "failed to infer a charter name from the file path; file skipped",
+            ));
+            continue;
+        };
 
-        let content = std::fs::read_to_string(&file_path)?;
+        let content = match std::fs::read_to_string(&file_path) {
+            Ok(content) => content,
+            Err(e) => {
+                findings.push(Finding::violation(
+                    "unreadable-file",
+                    &relative,
+                    format!("could not read file: {e}; file skipped"),
+                ));
+                continue;
+            }
+        };
         if frontmatter_has_parent_key(&content) {
             explicit_parent_charters.insert(name.clone());
         }
-        let explicit = parse_charter(&content)
-            .map_err(|e| WorkspaceError::Parse(format!("{}: {}", file_path.display(), e)))?;
+        let explicit = match parse_charter(&content) {
+            Ok(charter) => charter,
+            Err(e) => {
+                findings.push(Finding::violation(
+                    "unparseable-file",
+                    &relative,
+                    format!("could not parse charter frontmatter: {e}; file skipped"),
+                ));
+                continue;
+            }
+        };
 
         let md_relative = relative.clone();
         charters
@@ -273,7 +357,7 @@ pub fn load_workspace_with_plans(
         }
     }
 
-    // Warn about parents that can't be resolved to a known charter alias.
+    // Flag parents that can't be resolved to a known charter alias.
     let known_aliases: std::collections::HashSet<&str> = charters
         .values()
         .filter_map(|c| c.alias.as_deref())
@@ -283,15 +367,18 @@ pub fn load_workspace_with_plans(
             if !known_aliases.contains(parent.as_str()) {
                 let file = path_for_name
                     .get(name)
-                    .map(|p| p.display().to_string())
-                    .unwrap_or_else(|| "<unknown>".to_string());
-                eprintln!(
-                    "warning: [{}] charter '{}' has unresolvable parent '{}' — \
-                     use the alias (machine key), not the display title",
+                    .cloned()
+                    .unwrap_or_else(|| PathBuf::from("<unknown>"));
+                findings.push(Finding::warning(
+                    "unresolvable-parent",
                     file,
-                    charter.alias.as_deref().unwrap_or(&charter.title),
-                    parent
-                );
+                    format!(
+                        "charter '{}' has unresolvable parent '{}' — \
+                         use the alias (machine key), not the display title",
+                        charter.alias.as_deref().unwrap_or(&charter.title),
+                        parent
+                    ),
+                ));
             }
         }
     }
@@ -306,7 +393,17 @@ pub fn load_workspace_with_plans(
     // workspace's own plans/ directory.
     let plans_root = plan_override.unwrap_or(&layout.plans_root);
     for entry in collect_plan_files_in(plans_root, layout.project_root_charter.as_deref())? {
-        let plans = parse_ics_file(&entry.path)?;
+        let plans = match parse_ics_file(&entry.path) {
+            Ok(plans) => plans,
+            Err(e) => {
+                findings.push(Finding::violation(
+                    "unparseable-file",
+                    &entry.relative_path,
+                    format!("could not parse ics: {e}; file skipped"),
+                ));
+                continue;
+            }
+        };
         if plans.is_empty() {
             continue;
         }
@@ -335,7 +432,31 @@ pub fn load_workspace_with_plans(
 
     let charters: Vec<MarkdownCharter> = charters_by_name.into_values().collect();
 
-    Ok(charters)
+    Ok(WorkspaceRead { charters, findings })
+}
+
+/// One human-readable summary of a document's recoverable syntax issues,
+/// detailing the first few diagnostics. Shared with `doctor`, which makes the
+/// same observation about completed archives (outside the loader's scope).
+pub(crate) fn syntax_error_summary(doc: &crate::workspace::actions::ParsedDocument) -> String {
+    let mut msg = format!(
+        "parsed with {} issue(s); loaded {} recoverable action(s)",
+        doc.syntax_errors.len(),
+        doc.actions.len()
+    );
+    for diagnostic in doc.syntax_errors.iter().take(5) {
+        msg.push_str(&format!(
+            "\n  - line {}, col {}: {}",
+            diagnostic.range.start_row + 1,
+            diagnostic.range.start_col + 1,
+            diagnostic.message
+        ));
+    }
+    let remaining = doc.syntax_errors.len().saturating_sub(5);
+    if remaining > 0 {
+        msg.push_str(&format!("\n  - ... and {} more issue(s)", remaining));
+    }
+    msg
 }
 
 /// Compute the plans directory slug for a charter: `<parent>-<alias>` for sub-charters,

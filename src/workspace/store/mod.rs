@@ -21,6 +21,8 @@
 //! `WorkspaceLayout` that all load/save functions use for path resolution.
 
 mod discovery;
+mod doctor;
+mod findings;
 pub mod load;
 mod manifest;
 mod pathing;
@@ -28,9 +30,11 @@ mod save;
 
 use std::path::{Path, PathBuf};
 
+pub use doctor::{Diagnosis, diagnose, diagnose_read};
+pub use findings::{Finding, FindingSeverity};
 pub use load::{
-    Workspace, load_domain_model, load_domain_model_with_plans, load_workspace,
-    load_workspace_with_plans, load_workspaces,
+    Workspace, WorkspaceRead, load_domain_model, load_domain_model_with_plans, load_workspace,
+    load_workspace_with_plans, load_workspaces, read_workspace, read_workspace_with_plans,
 };
 pub use manifest::{ManifestSourceType, WorkspaceManifestEntry, collect_workspace_manifest};
 pub use pathing::{infer_charter_name, infer_parent_charter_name};
