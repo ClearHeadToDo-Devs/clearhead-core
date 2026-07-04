@@ -195,7 +195,12 @@ pub fn parse_action_recursive(
             "context" => {
                 let text = get_node_text(&meta, &node.source);
                 if let Some(inner) = text.strip_prefix('+') {
-                    context_list = Some(inner.split(',').map(|s| s.trim().to_string()).collect());
+                    // Collect tags from every context node rather than overwriting.
+                    // The grammar emits one node per `+` group, so space-separated
+                    // `+work +meeting +client` (spec-documented) arrives as several
+                    // nodes; assigning here would silently keep only the last.
+                    let tags = inner.split(',').map(|s| s.trim().to_string());
+                    context_list.get_or_insert_with(Vec::new).extend(tags);
                     index_tag(tag_index, text, &meta);
                 }
             }
@@ -495,6 +500,32 @@ mod tests {
         let formatted = format!("{}", action);
         assert!(formatted.contains(&pred_uuid.to_string()));
         assert!(formatted.contains("<"));
+    }
+
+    #[test]
+    fn test_parse_space_separated_contexts_preserves_all_tags() {
+        // Regression for the multi-tag data-loss bug (cli charter 019f268f-eb4e):
+        // the spec documents space-separated tags (action_file_format.md line 145,
+        // `+work +meeting +client`), which parse as separate context nodes. The
+        // parser must collect every node, not silently keep only the last —
+        // silent loss on a source-of-truth file is the trust-destroying event.
+        let source = "[ ] Prepare deck +work +meeting +client";
+        let actions = parse_actions(source);
+
+        assert_eq!(actions.len(), 1);
+        let contexts = actions[0]
+            .contexts
+            .as_ref()
+            .expect("space-separated tags should parse to Some");
+        assert_eq!(
+            contexts,
+            &vec![
+                "work".to_string(),
+                "meeting".to_string(),
+                "client".to_string()
+            ],
+            "every space-separated tag must survive parsing, not just the last"
+        );
     }
 
     #[test]
