@@ -1,82 +1,15 @@
 use crate::domain::Action;
-use super::parser::ActionList;
 use super::source::SourceMetadata;
-use crate::workspace::store::infer_charter_name;
-use std::path::{Path, PathBuf};
 
-/// Metadata about an action's source file.
-#[derive(Debug, Clone)]
-pub struct ActionSource {
-    /// Path to the source file (relative to workspace root)
-    pub file_path: PathBuf,
-    /// Inferred project name from file/directory structure
-    pub project: Option<String>,
-}
-
-/// An action paired with its file-layer metadata.
+/// An action paired with its file-layer source metadata.
 ///
-/// `source` carries the file origin (path + inferred charter).
 /// `source_metadata` carries line/column positions for LSP diagnostics;
-/// absent when loaded from disk rather than from a live parse.
+/// absent when loaded from disk rather than from a live parse. File
+/// provenance is *not* stored per action — it derives from the enclosing
+/// file/charter group (see [`ActionsFile.path`] / [`MarkdownCharter.acts_file`]),
+/// which every consumer already iterates.
 #[derive(Debug, Clone)]
 pub struct SourcedAction {
     pub action: Action,
-    pub source: ActionSource,
     pub source_metadata: Option<SourceMetadata>,
-}
-
-/// Collection of actions from multiple files with source tracking.
-///
-/// This is a lightweight container for aggregating actions from across
-/// a workspace, preserving their origin for cross-file queries.
-#[derive(Debug, Default, Clone)]
-pub struct ActionRepository {
-    /// All actions with their source metadata
-    pub sourced_actions: Vec<SourcedAction>,
-}
-
-impl ActionRepository {
-    /// Create a new empty repository
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Get a flat list of all actions (without source metadata)
-    pub fn to_action_list(&self) -> ActionList {
-        self.sourced_actions
-            .iter()
-            .map(|sa| sa.action.clone())
-            .collect()
-    }
-
-    /// Add actions from a file
-    pub fn add_from_file(&mut self, file_path: &Path, actions: ActionList, workspace_root: &Path) {
-        let relative_path = file_path
-            .strip_prefix(workspace_root)
-            .unwrap_or(file_path)
-            .to_path_buf();
-
-        let project = infer_charter_name(&relative_path);
-
-        for action in actions {
-            self.sourced_actions.push(SourcedAction {
-                action,
-                source: ActionSource {
-                    file_path: relative_path.clone(),
-                    project: project.clone(),
-                },
-                source_metadata: None,
-            });
-        }
-    }
-
-    /// Get the number of actions
-    pub fn len(&self) -> usize {
-        self.sourced_actions.len()
-    }
-
-    /// Check if empty
-    pub fn is_empty(&self) -> bool {
-        self.sourced_actions.is_empty()
-    }
 }

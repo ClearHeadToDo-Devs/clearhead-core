@@ -14,9 +14,9 @@
 use std::path::{Path, PathBuf};
 
 use crate::workspace::actions::format::{OutputFormat, format};
-use crate::workspace::actions::repository::{ActionSource, SourcedAction};
+use crate::workspace::actions::repository::SourcedAction;
 use crate::workspace::actions::{Action, ActionList, parse_actions};
-use crate::workspace::store::{WorkspaceError, infer_charter_name};
+use crate::workspace::store::WorkspaceError;
 
 /// A parsed `.actions` file — the workspace-layer representation of a charter's actions.
 ///
@@ -140,18 +140,12 @@ pub fn read_actions(path: &Path) -> Result<ActionList, WorkspaceError> {
 ///
 /// `workspace_root` is used to infer the charter name from the relative path.
 /// Returns `Ok(ActionsFile { path, actions: [] })` if the file is absent.
-pub fn read_action_file(path: &Path, workspace_root: &Path) -> Result<ActionsFile, WorkspaceError> {
+pub fn read_action_file(path: &Path) -> Result<ActionsFile, WorkspaceError> {
     let actions = read_actions(path)?;
-    let relative = path.strip_prefix(workspace_root).unwrap_or(path);
-    let project = infer_charter_name(relative);
     let sourced = actions
         .into_iter()
         .map(|action| SourcedAction {
             action,
-            source: ActionSource {
-                file_path: relative.to_path_buf(),
-                project: project.clone(),
-            },
             source_metadata: None,
         })
         .collect();

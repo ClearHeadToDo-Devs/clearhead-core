@@ -20,7 +20,7 @@ pub mod templates;
 
 // Re-export key types at workspace level
 pub use actions::{
-    Action, ActionList, ActionRepository, ActionSource, ActionState, Diff, OutputFormat,
+    Action, ActionList, ActionState, Diff, OutputFormat,
     ParseFailure, ParseMode, ParseOutcome, ParsedDocument, RecoveryReport, SourceMetadata,
     SourceRange, SourcedAction, diff_actions, format, parse_actions, parse_actions_with_mode,
     parse_document, parse_tree, patch_action_list,

@@ -28,7 +28,7 @@ pub use source::{
 
 // Storage
 pub use convert::patch_action_list;
-pub use repository::{ActionRepository, ActionSource, SourcedAction};
+pub use repository::SourcedAction;
 
 // Diff
 pub use diff::{ActionDiff, Diff, FieldChange, diff_actions};

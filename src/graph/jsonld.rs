@@ -42,17 +42,20 @@ pub fn serialize_workspace_to_jsonld(workspace: &Workspace) -> Result<String> {
     let source_info: HashMap<Uuid, (String, usize)> = workspace
         .charters
         .iter()
-        .flat_map(|c| c.actions.iter())
-        .filter_map(|sa| {
-            sa.source_metadata.as_ref().map(|meta| {
-                (
-                    sa.action.id,
-                    (
-                        sa.source.file_path.to_string_lossy().into_owned(),
-                        meta.root.start_row + 1,
-                    ),
-                )
-            })
+        .flat_map(|c| {
+            // Provenance is the charter's actions-file path, shared by all its
+            // actions — carry it alongside each action.
+            let file = c
+                .acts_file
+                .as_deref()
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            c.actions.iter().map(move |sa| (file.clone(), sa))
+        })
+        .filter_map(|(file, sa)| {
+            sa.source_metadata
+                .as_ref()
+                .map(|meta| (sa.action.id, (file, meta.root.start_row + 1)))
         })
         .collect();
 

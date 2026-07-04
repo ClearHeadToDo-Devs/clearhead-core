@@ -267,11 +267,9 @@ mod tests {
     // ===== Hydration =====
 
     fn make_sourced(action: crate::domain::Action) -> crate::workspace::actions::repository::SourcedAction {
-        use crate::workspace::actions::repository::{ActionSource, SourcedAction};
-        use std::path::PathBuf;
+        use crate::workspace::actions::repository::SourcedAction;
         SourcedAction {
             action,
-            source: ActionSource { file_path: PathBuf::new(), project: None },
             source_metadata: None,
         }
     }

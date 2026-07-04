@@ -4,12 +4,11 @@ use super::{WorkspaceError, resolve_workspace_layout};
 use crate::workspace::durability::recover_pending;
 use crate::domain::{Charter, DomainModel};
 use crate::workspace::actions::convert::from_actions_with_charter;
-use crate::workspace::actions::repository::{ActionSource, SourcedAction};
+use crate::workspace::actions::repository::SourcedAction;
 use crate::workspace::charter::{MarkdownCharter, frontmatter_has_parent_key, implicit_charter, parse_charter};
 use crate::workspace::calendar::ics::parse_ics_file;
 use crate::workspace::calendar::plans::collect_plan_files_in;
 use crate::workspace::sidecar::{hydrate_acts, read_sidecar, sidecar_path};
-use crate::workspace::store::infer_charter_name;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -158,7 +157,6 @@ pub fn load_workspace_with_plans(
             }
         }
 
-        let project = infer_charter_name(&relative);
         let source_map = parsed_doc.source_map;
         let mut sourced: Vec<SourcedAction> = parsed_doc.actions
             .into_iter()
@@ -169,7 +167,6 @@ pub fn load_workspace_with_plans(
                 let metadata = source_map.get(&action.id).cloned();
                 SourcedAction {
                     action,
-                    source: ActionSource { file_path: relative.clone(), project: project.clone() },
                     source_metadata: metadata,
                 }
             })

@@ -101,6 +101,13 @@ pub fn insert_workspace_metadata(
     }
 
     for charter in &workspace.charters {
+        // File provenance is a property of the charter's actions file, not of
+        // each action — every action here shares this one path.
+        let source_file = charter
+            .acts_file
+            .as_deref()
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_default();
         for sourced in &charter.actions {
             let Some(ref meta) = sourced.source_metadata else {
                 continue;
@@ -117,7 +124,7 @@ pub fn insert_workspace_metadata(
             add(
                 ns(WORKSPACE_NS, "hasSourceFile"),
                 Term::Literal(Literal::new_typed_literal(
-                    sourced.source.file_path.to_string_lossy().as_ref(),
+                    source_file.as_str(),
                     NamedNode::new(format!("{}string", XSD_NS)).unwrap(),
                 )),
             )?;

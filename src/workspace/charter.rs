@@ -22,7 +22,7 @@ use std::path::PathBuf;
 use uuid::Uuid;
 
 use crate::domain::{Charter, CharterState};
-use crate::workspace::actions::repository::{ActionSource, SourcedAction};
+use crate::workspace::actions::repository::SourcedAction;
 use crate::workspace::calendar::ics::ICSPlan;
 
 /// A charter as it exists in the workspace — carries file paths alongside domain data.
@@ -76,7 +76,6 @@ impl From<Charter> for MarkdownCharter {
             plans: c.plans.into_iter().map(|plan| ICSPlan { path: PathBuf::new(), plan }).collect(),
             actions: c.actions.into_iter().map(|action| SourcedAction {
                 action,
-                source: ActionSource { file_path: PathBuf::new(), project: None },
                 source_metadata: None,
             }).collect(),
             md_file: None,
