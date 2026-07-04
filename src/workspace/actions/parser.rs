@@ -10,10 +10,91 @@ use uuid::Uuid;
 
 /// A collection of [`Action`]s, typically representing a parsed `.actions` document.
 pub type ActionList = Vec<Action>;
+
+/// Sigils the formatter escapes inside a freeform `safe_text` field (name,
+/// story/charter ref, predecessor ref) so they read back as literal text
+/// rather than starting a metadata field. Brackets are absent — they belong to
+/// `[[link]]` syntax, which [`escape_field`] copies verbatim.
+const NAME_ESCAPE: &[char] = &[
+    '\\', '$', '!', '*', '+', '@', '%', '^', '#', '>', '<', '~', '=', ':',
+];
+
+/// Sigils a description body escapes: only `$` (its block delimiter) and the
+/// backslash itself — a description already tolerates every other sigil.
+const DESC_ESCAPE: &[char] = &['\\', '$'];
+
+/// Whether a backslash may escape `c` when reading a field back — the grammar's
+/// escape set: every metadata sigil, both brackets, and the backslash itself.
+/// One uniform set is safe for every field: the per-field escaped forms are all
+/// subsets of it, so unescaping only ever undoes a backslash we (or the grammar)
+/// legitimately put there.
+fn is_escapable(c: char) -> bool {
+    matches!(
+        c,
+        '\\' | '$' | '!' | '*' | '+' | '@' | '%' | '^' | '#' | '>' | '<' | '~' | '=' | ':' | '[' | ']'
+    )
+}
+
+/// Escape `reserved` sigils for the on-disk form, leaving `[[link]]` spans
+/// untouched (a URL's `:` or `=` must not be escaped or the link breaks).
+fn escape_field(s: &str, reserved: &[char]) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        // A `[[` opens a link — copy through the closing `]]` verbatim.
+        if c == '[' && chars.peek() == Some(&'[') {
+            out.push('[');
+            out.push('[');
+            chars.next();
+            while let Some(n) = chars.next() {
+                out.push(n);
+                if n == ']' && chars.peek() == Some(&']') {
+                    out.push(']');
+                    chars.next();
+                    break;
+                }
+            }
+            continue;
+        }
+        if reserved.contains(&c) {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out
+}
+
+/// Escape a `safe_text` field — name, story/charter ref, predecessor ref.
+pub(crate) fn escape_name(s: &str) -> String {
+    escape_field(s, NAME_ESCAPE)
+}
+
+/// Escape a description body (only `$` and the backslash itself need it).
+pub(crate) fn escape_description(s: &str) -> String {
+    escape_field(s, DESC_ESCAPE)
+}
+
+/// Inverse of the escape functions: drop a backslash that escapes an escapable
+/// char, keeping the char literally. A backslash before a non-escapable char
+/// stays (a lenient read, matching the grammar). Safe to run over a whole field
+/// — link spans hold no backslashes to disturb.
+pub(crate) fn unescape_field(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\\' && chars.peek().is_some_and(|&n| is_escapable(n)) {
+            out.push(chars.next().unwrap());
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
 impl Action {
     /// Serialize the action content (state, name, metadata) to a formatter.
     pub fn fmt_content(&self, f: &mut fmt::Formatter<'_>, include_id: bool) -> fmt::Result {
-        write!(f, "[{}] {}", self.state, self.name)?;
+        write!(f, "[{}] {}", self.state, escape_name(&self.name))?;
         if let Some(alias) = &self.alias {
             write!(f, " ={}", alias)?;
         }
@@ -21,13 +102,13 @@ impl Action {
             write!(f, " ~")?;
         }
         if let Some(description) = &self.description {
-            write!(f, " $ {} $", description)?;
+            write!(f, " $ {} $", escape_description(description))?;
         }
         if let Some(priority) = &self.priority {
             write!(f, " !{}", priority)?;
         }
         if let Some(charter) = &self.charter {
-            write!(f, " *{}", charter)?;
+            write!(f, " *{}", escape_name(charter))?;
         }
         if let Some(contexts) = &self.contexts {
             write!(f, " +{}", contexts.join(","))?;
@@ -46,7 +127,7 @@ impl Action {
         }
         if let Some(predecessors) = &self.predecessors {
             for pred in predecessors {
-                write!(f, " <{}", pred.raw_ref)?;
+                write!(f, " <{}", escape_name(&pred.raw_ref))?;
             }
         }
         if include_id {
@@ -140,7 +221,7 @@ pub fn parse_action_recursive(
 
     // Parse name
     let name_node = node.require_field("name")?;
-    let name = get_node_text(&name_node, &node.source).trim().to_string();
+    let name = unescape_field(get_node_text(&name_node, &node.source).trim());
     let mut line_end_pos = name_node.end_position();
 
     // Parse metadata fields
@@ -182,14 +263,14 @@ pub fn parse_action_recursive(
                 // Extract just the 'text' field content, not the $ markers
                 description = meta
                     .child_by_field_name("text")
-                    .map(|text_node| get_node_text(&text_node, &node.source).trim().to_string());
+                    .map(|text_node| unescape_field(get_node_text(&text_node, &node.source).trim()));
             }
             "priority" => {
                 priority = get_prefixed_text(&meta, &node.source, '!').and_then(|s| s.parse().ok());
             }
             "story" => {
                 let text = get_node_text(&meta, &node.source);
-                charter = get_prefixed_text(&meta, &node.source, '*');
+                charter = get_prefixed_text(&meta, &node.source, '*').map(|s| unescape_field(&s));
                 index_tag(tag_index, text, &meta);
             }
             "context" => {
@@ -227,6 +308,7 @@ pub fn parse_action_recursive(
             }
             "predecessor" => {
                 if let Some(pred_val) = get_prefixed_text(&meta, &node.source, '<') {
+                    let pred_val = unescape_field(&pred_val);
                     predecessors.push(PredecessorRef {
                         resolved_uuid: Uuid::parse_str(&pred_val).ok(),
                         raw_ref: pred_val,
@@ -541,5 +623,91 @@ mod tests {
         let contexts = actions[0].contexts.as_ref().unwrap();
         assert_eq!(contexts.len(), 1);
         assert_eq!(contexts[0], "");
+    }
+
+    #[test]
+    fn test_escape_unescape_are_inverse() {
+        // escape_name -> unescape_name must be the identity for names carrying
+        // reserved sigils, a literal backslash, and a link (left untouched).
+        for name in [
+            "save $500 for the trip",
+            "review PR #42 before <friday",
+            "ratio 3:1 and 50% off *now*",
+            r"path C:\temp\logs",
+            "see [[docs|http://example.com/a?x=1]] and $5",
+            "plain title, no sigils",
+        ] {
+            assert_eq!(
+                unescape_field(&escape_name(name)),
+                name,
+                "escape/unescape not inverse for {name:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_escape_name_leaves_links_intact() {
+        let name = "see [[docs|http://example.com/a?x=1]] and $5";
+        let escaped = escape_name(name);
+        assert!(
+            escaped.contains("[[docs|http://example.com/a?x=1]]"),
+            "link internals must not be escaped: {escaped:?}"
+        );
+        assert!(
+            escaped.contains(r"\$5"),
+            "a sigil outside the link must still be escaped: {escaped:?}"
+        );
+    }
+
+    #[test]
+    fn test_reserved_chars_in_name_survive_full_format_pipeline() {
+        // The Decision-33 residue: a name with reserved sigils must survive the
+        // real formatter -> Topiary -> parser trip, not just the raw Display.
+        use crate::workspace::actions::format::{OutputFormat, format};
+        for raw in [
+            "save $500 for the trip",
+            "review PR #42 before <friday",
+            "ratio 3:1 and 50% off",
+            r"path C:\temp\logs",
+        ] {
+            let action = Action::new(raw);
+            let text = format(&vec![action.clone()], OutputFormat::Actions, None, None)
+                .expect("format should succeed");
+            let parsed = parse_actions(&text);
+            assert_eq!(parsed.len(), 1, "one action for {raw:?}; text was {text:?}");
+            assert_eq!(
+                parsed[0].name, raw,
+                "name did not survive the format->Topiary->parse trip; text was {text:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_reserved_chars_survive_in_description_and_refs() {
+        // Description bodies and predecessor refs are freeform too — a literal
+        // `$` in a description must not close the block, and a name-ref
+        // predecessor must keep its sigils.
+        use crate::workspace::actions::format::{OutputFormat, format};
+        let mut action = Action::new("headline with $ and #42");
+        action.description = Some("budget is $500; ratio 3:1; keep notes".to_string());
+        action.predecessors = Some(vec![PredecessorRef {
+            raw_ref: "buy $5 widget".to_string(),
+            resolved_uuid: None,
+        }]);
+
+        let text = format(&vec![action.clone()], OutputFormat::Actions, None, None).unwrap();
+        let parsed = parse_actions(&text);
+
+        assert_eq!(parsed.len(), 1, "text was {text:?}");
+        assert_eq!(parsed[0].name, action.name, "name; text {text:?}");
+        assert_eq!(
+            parsed[0].description, action.description,
+            "description with literal $ did not round-trip; text {text:?}"
+        );
+        let preds = parsed[0].predecessors.as_ref().expect("predecessors");
+        assert_eq!(
+            preds[0].raw_ref, "buy $5 widget",
+            "predecessor ref sigils did not round-trip; text {text:?}"
+        );
     }
 }
