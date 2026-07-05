@@ -206,7 +206,7 @@ pub fn filter_model_for_charter(
             for child in model
                 .charters
                 .iter()
-                .filter(|c| is_child_charter(c, parent))
+                .filter(|c| c.is_child_of(parent))
             {
                 if !keep.contains(&child.id) {
                     to_visit.push(child.id);
@@ -415,7 +415,7 @@ fn resolve_path(model: &DomainModel, segments: &[&str]) -> Result<ReferenceTarge
     let root_matches: Vec<&Charter> = model
         .charters
         .iter()
-        .filter(|c| is_root_charter(c) && charter_matches_segment(c, first))
+        .filter(|c| c.is_root() && charter_matches_segment(c, first))
         .collect();
 
     let mut scope = match root_matches.len() {
@@ -440,7 +440,7 @@ fn resolve_path(model: &DomainModel, segments: &[&str]) -> Result<ReferenceTarge
                 let child_charters: Vec<&Charter> = model
                     .charters
                     .iter()
-                    .filter(|c| is_child_charter(c, charter) && charter_matches_segment(c, segment))
+                    .filter(|c| c.is_child_of(charter) && charter_matches_segment(c, segment))
                     .collect();
 
                 let child_plans: Vec<&Plan> = charter
@@ -497,38 +497,6 @@ fn resolve_path(model: &DomainModel, segments: &[&str]) -> Result<ReferenceTarge
         Scope::Charter(charter) => Ok(ReferenceTarget::Charter(charter.id)),
         Scope::Plan(_, plan) => Ok(ReferenceTarget::Plan(plan.id)),
     }
-}
-
-fn is_root_charter(charter: &Charter) -> bool {
-    match &charter.parent {
-        None => true,
-        Some(parent) => parent.trim().is_empty(),
-    }
-}
-
-fn is_child_charter(child: &Charter, parent: &Charter) -> bool {
-    let parent_ref = match &child.parent {
-        Some(value) => value.trim().to_lowercase(),
-        None => return false,
-    };
-
-    if parent_ref.is_empty() {
-        return false;
-    }
-
-    if let Some(alias) = &parent.alias {
-        if parent_ref == alias.to_lowercase() {
-            return true;
-        }
-    }
-
-    let parent_id = parent.id.to_string();
-    if parent_ref == parent_id.to_lowercase() {
-        return true;
-    }
-
-    let short = &parent_id[..8];
-    parent_ref == short
 }
 
 fn charter_matches_segment(charter: &Charter, segment: &str) -> bool {

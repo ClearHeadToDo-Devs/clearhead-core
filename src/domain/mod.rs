@@ -512,7 +512,9 @@ pub struct Charter {
     pub description: Option<String>,
     /// Short identifier for CLI queries and DSL references (`*alias`).
     pub alias: Option<String>,
-    /// Title of the parent charter. Resolved at workspace load time.
+    /// Reference to the parent charter — its alias or UUID (never its title),
+    /// per the reference-syntax spec. Usually derived from directory placement
+    /// at workspace load time. `None` or empty means this is a root charter.
     pub parent: Option<String>,
     /// Titles of associated [`Objective`]s. Resolved at workspace load time.
     pub objectives: Option<Vec<String>>,
@@ -524,6 +526,47 @@ pub struct Charter {
     pub plans: Vec<Plan>,
     /// [`Action`]s scoped to this charter; each may optionally reference a plan.
     pub actions: Vec<Action>,
+}
+
+impl Charter {
+    /// Whether this charter is a hierarchy root — it declares no parent, or an
+    /// empty one. Combine with an iterator to collect roots:
+    /// `model.charters.iter().filter(|c| c.is_root())`.
+    pub fn is_root(&self) -> bool {
+        self.parent.as_deref().is_none_or(|p| p.trim().is_empty())
+    }
+
+    /// Whether this charter is a direct child of `parent`.
+    ///
+    /// Resolves this charter's `parent` reference against the candidate's
+    /// alias, full UUID, or 8-char short prefix — case-insensitively, per the
+    /// reference-syntax spec. Titles are never matched. Combine with a filter
+    /// to collect a parent's children:
+    /// `model.charters.iter().filter(|c| c.is_child_of(parent))`.
+    pub fn is_child_of(&self, parent: &Charter) -> bool {
+        let parent_ref = match self.parent.as_deref() {
+            Some(v) => v.trim().to_lowercase(),
+            None => return false,
+        };
+        if parent_ref.is_empty() {
+            return false;
+        }
+        if let Some(alias) = &parent.alias {
+            if parent_ref == alias.to_lowercase() {
+                return true;
+            }
+        }
+        // UUID reference: a full match, or a hex prefix of at least 4 chars per
+        // the reference-syntax spec. Prefixes may run past 8 to disambiguate
+        // IDs minted together (v7 timestamp prefixes, v5 namespacing).
+        let parent_id = parent.id.to_string();
+        if parent_ref == parent_id {
+            return true;
+        }
+        parent_ref.len() >= 4
+            && parent_ref.bytes().all(|b| b.is_ascii_hexdigit())
+            && parent_id.replace('-', "").starts_with(&parent_ref)
+    }
 }
 
 /// A [`Charter`] annotated with its source workspace.
@@ -716,6 +759,57 @@ impl DomainModel {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn charter_with(alias: Option<&str>, parent: Option<&str>) -> Charter {
+        Charter {
+            id: Uuid::now_v7(),
+            title: "Some Title".to_string(),
+            alias: alias.map(String::from),
+            parent: parent.map(String::from),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn is_root_when_parent_absent_or_blank() {
+        assert!(charter_with(None, None).is_root());
+        assert!(charter_with(None, Some("   ")).is_root());
+        assert!(!charter_with(None, Some("clearhead-cli")).is_root());
+    }
+
+    #[test]
+    fn is_child_of_matches_parent_alias_case_insensitively() {
+        let parent = charter_with(Some("clearhead-cli"), None);
+        let child = charter_with(None, Some("CLEARHEAD-CLI"));
+        assert!(child.is_child_of(&parent));
+    }
+
+    #[test]
+    fn is_child_of_matches_parent_uuid_at_variable_prefix_lengths() {
+        let parent = charter_with(Some("root"), None);
+        let hex = parent.id.to_string().replace('-', "");
+        // Full, and hex prefixes from the 4-char floor up past 8 (disambiguation).
+        for candidate in [parent.id.to_string(), hex[..4].into(), hex[..8].into(), hex[..12].into()] {
+            let child = charter_with(None, Some(&candidate));
+            assert!(child.is_child_of(&parent), "should match ref {candidate}");
+        }
+        // Below the floor does not match.
+        assert!(!charter_with(None, Some(&hex[..3])).is_child_of(&parent));
+    }
+
+    #[test]
+    fn is_child_of_never_matches_title() {
+        // Spec: titles are not used for reference resolution.
+        let parent = charter_with(Some("root"), None); // title == "Some Title"
+        let child = charter_with(None, Some("Some Title"));
+        assert!(!child.is_child_of(&parent));
+    }
+
+    #[test]
+    fn is_child_of_is_false_without_parent() {
+        let parent = charter_with(Some("root"), None);
+        assert!(!charter_with(None, None).is_child_of(&parent));
+    }
 
     #[test]
     fn test_expand_occurrences() {
