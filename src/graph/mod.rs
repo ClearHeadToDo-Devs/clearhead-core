@@ -116,10 +116,12 @@ pub mod insert;
 pub mod jsonld;
 pub mod query;
 pub mod serialize;
+pub mod shape;
 
 pub use insert::{insert_workspace_metadata, load_acts_into_store, load_domain_model, load_turtle, load_turtle_into_graph};
 pub use oxigraph::model::GraphName;
 pub use jsonld::{serialize_domain_to_jsonld, serialize_workspace_to_jsonld};
+pub use shape::{INDEX_REQUIRED, frame_index};
 pub use oxigraph::store::Store;
 pub use query::{
     build_raw_where_query, build_where_query, query_action_ids, query_raw,
@@ -148,6 +150,9 @@ pub enum GraphError {
     /// Error during domain model hydration/mapping.
     #[error("Domain mapping error: {0}")]
     Domain(String),
+    /// Query output violated its declared response-shape contract.
+    #[error("Shape contract violation: {0}")]
+    Contract(String),
 }
 
 use oxigraph::model::NamedNode;

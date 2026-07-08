@@ -39,7 +39,7 @@
     },
     "status": {
       "@id": "cco:ont00001868",
-      "@type": "@id"
+      "@type": "@vocab"
     },
     "priority": {
       "@id": "actionsv:hasPriority",
