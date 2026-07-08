@@ -430,9 +430,35 @@ pub fn read_workspace_with_plans(
         }
     }
 
-    let charters: Vec<MarkdownCharter> = charters_by_name.into_values().collect();
+    let mut charters: Vec<MarkdownCharter> = charters_by_name.into_values().collect();
+    resolve_predecessor_aliases(&mut charters);
 
     Ok(WorkspaceRead { charters, findings })
+}
+
+/// Resolve alias predecessor references (`<alias`) to UUIDs once the whole
+/// workspace is loaded. UUID refs resolve at parse time; alias refs need the
+/// workspace-wide alias table, so this is the earliest they can bind.
+/// Unresolvable refs stay `None` — doctor reports those as dangling.
+fn resolve_predecessor_aliases(charters: &mut [MarkdownCharter]) {
+    let alias_to_id: HashMap<String, uuid::Uuid> = charters
+        .iter()
+        .flat_map(|c| &c.actions)
+        .filter_map(|sa| sa.action.alias.as_ref().map(|a| (a.to_lowercase(), sa.action.id)))
+        .collect();
+    if alias_to_id.is_empty() {
+        return;
+    }
+    for charter in charters.iter_mut() {
+        for sa in &mut charter.actions {
+            for pred in sa.action.predecessors.iter_mut().flatten() {
+                if pred.resolved_uuid.is_none() {
+                    pred.resolved_uuid =
+                        alias_to_id.get(&pred.raw_ref.trim().to_lowercase()).copied();
+                }
+            }
+        }
+    }
 }
 
 /// One human-readable summary of a document's recoverable syntax issues,

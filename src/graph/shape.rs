@@ -23,6 +23,9 @@ type Row = HashMap<String, String>;
 pub const INDEX_REQUIRED: &[&str] =
     &["id", "name", "status", "source_file", "source_line", "charter_root"];
 
+/// Terms framed as JSON numbers rather than stringified literals.
+const INTEGER_TERMS: &[&str] = &["source_line", "priority"];
+
 /// Frame ordered SELECT bindings into the index JSON-LD document.
 ///
 /// Empty bindings frame as an empty `@graph` — one payload shape always.
@@ -52,11 +55,11 @@ fn validate_contract(rows: &[Row], required: &[&str]) -> Result<()> {
 fn index_node(row: &Row) -> Result<Value> {
     let mut node = Map::new();
     for (term, value) in row {
-        let framed = if term == "source_line" {
-            let line: u64 = value.parse().map_err(|_| {
-                GraphError::Contract(format!("source_line is not an integer: {value:?}"))
+        let framed = if INTEGER_TERMS.contains(&term.as_str()) {
+            let n: u64 = value.parse().map_err(|_| {
+                GraphError::Contract(format!("{term} is not an integer: {value:?}"))
             })?;
-            json!(line)
+            json!(n)
         } else {
             Value::String(value.clone())
         };
@@ -91,6 +94,7 @@ fn index_context() -> Value {
         "Cancelled": "actions:Cancelled",
         "source_file": "ws:hasSourceFile",
         "source_line": { "@id": "ws:hasSourceLine", "@type": "xsd:integer" },
+        "priority": { "@id": "actions:hasPriority", "@type": "xsd:integer" },
         "scheduled_at": { "@id": "actions:hasScheduledDateTime", "@type": "xsd:dateTime" },
         "due_date": { "@id": "actions:hasDueDateTime", "@type": "xsd:dateTime" }
     })
