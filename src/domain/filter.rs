@@ -76,7 +76,7 @@ mod tests {
     use crate::domain::{Action, ActionState, Charter, DomainModel};
     use uuid::Uuid;
 
-    fn action(state: ActionState) -> Action {
+    fn make_action(state: ActionState) -> Action {
         Action { id: Uuid::now_v7(), state, ..Default::default() }
     }
 
@@ -103,22 +103,22 @@ mod tests {
     #[test]
     fn empty_filter_passes_everything() {
         let filter = ActionFilter::default();
-        let acts = vec![
-            action(ActionState::NotStarted),
-            action(ActionState::Completed),
-            action(ActionState::Cancelled),
+        let actions = vec![
+            make_action(ActionState::NotStarted),
+            make_action(ActionState::Completed),
+            make_action(ActionState::Cancelled),
         ];
-        assert!(acts.iter().all(|a| filter.matches(a)));
+        assert!(actions.iter().all(|a| filter.matches(a)));
     }
 
     #[test]
     fn open_only_excludes_terminal_states() {
         let filter = ActionFilter { open_only: true, ..Default::default() };
-        assert!(filter.matches(&action(ActionState::NotStarted)));
-        assert!(filter.matches(&action(ActionState::InProgress)));
-        assert!(filter.matches(&action(ActionState::BlockedOrAwaiting)));
-        assert!(!filter.matches(&action(ActionState::Completed)));
-        assert!(!filter.matches(&action(ActionState::Cancelled)));
+        assert!(filter.matches(&make_action(ActionState::NotStarted)));
+        assert!(filter.matches(&make_action(ActionState::InProgress)));
+        assert!(filter.matches(&make_action(ActionState::BlockedOrAwaiting)));
+        assert!(!filter.matches(&make_action(ActionState::Completed)));
+        assert!(!filter.matches(&make_action(ActionState::Cancelled)));
     }
 
     #[test]
@@ -130,47 +130,47 @@ mod tests {
         assert!(filter.matches(&action_with_contexts(vec!["computer"])));
         assert!(filter.matches(&action_with_contexts(vec!["work", "computer"])));
         assert!(!filter.matches(&action_with_contexts(vec!["work"])));
-        assert!(!filter.matches(&action(ActionState::NotStarted))); // no contexts
+        assert!(!filter.matches(&make_action(ActionState::NotStarted))); // no contexts
     }
 
     #[test]
     fn empty_context_tags_passes_all() {
         let filter = ActionFilter { context_tags: vec![], ..Default::default() };
-        assert!(filter.matches(&action(ActionState::NotStarted)));
+        assert!(filter.matches(&make_action(ActionState::NotStarted)));
         assert!(filter.matches(&action_with_contexts(vec!["anything"])));
     }
 
     #[test]
     fn plan_ref_matches_full_uuid() {
         let plan_id = Uuid::now_v7();
-        let mut act = action(ActionState::NotStarted);
-        act.plan_id = Some(plan_id);
+        let mut action = make_action(ActionState::NotStarted);
+        action.plan_id = Some(plan_id);
 
         let filter = ActionFilter {
             plan_ref: Some(plan_id.to_string()),
             ..Default::default()
         };
-        assert!(filter.matches(&act));
-        assert!(!filter.matches(&action(ActionState::NotStarted))); // no plan_id
+        assert!(filter.matches(&action));
+        assert!(!filter.matches(&make_action(ActionState::NotStarted))); // no plan_id
     }
 
     #[test]
     fn plan_ref_matches_short_prefix() {
         let plan_id = Uuid::now_v7();
         let short = plan_id.to_string().replace('-', "")[..8].to_string();
-        let mut act = action(ActionState::NotStarted);
-        act.plan_id = Some(plan_id);
+        let mut action = make_action(ActionState::NotStarted);
+        action.plan_id = Some(plan_id);
 
         let filter = ActionFilter { plan_ref: Some(short), ..Default::default() };
-        assert!(filter.matches(&act));
+        assert!(filter.matches(&action));
     }
 
     #[test]
     fn apply_filter_mutates_model() {
         let mut model = model_with(vec![
-            action(ActionState::NotStarted),
-            action(ActionState::Completed),
-            action(ActionState::InProgress),
+            make_action(ActionState::NotStarted),
+            make_action(ActionState::Completed),
+            make_action(ActionState::InProgress),
         ]);
         let filter = ActionFilter { open_only: true, ..Default::default() };
         apply_filter(&mut model, &filter);
@@ -187,13 +187,13 @@ mod tests {
                 Charter {
                     id: Uuid::now_v7(),
                     title: "A".into(),
-                    actions: vec![action(ActionState::Completed), action(ActionState::NotStarted)],
+                    actions: vec![make_action(ActionState::Completed), make_action(ActionState::NotStarted)],
                     ..Default::default()
                 },
                 Charter {
                     id: Uuid::now_v7(),
                     title: "B".into(),
-                    actions: vec![action(ActionState::Cancelled)],
+                    actions: vec![make_action(ActionState::Cancelled)],
                     ..Default::default()
                 },
             ],

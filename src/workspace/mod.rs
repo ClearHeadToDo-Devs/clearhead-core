@@ -26,13 +26,13 @@ pub use actions::{
     parse_document, parse_tree, patch_action_list,
 };
 pub use action_files::{ActionsFile, completed_actions_path, upcoming_actions_path, read_action_file, read_actions, write_actions};
-pub use sidecar::{ActMeta, CharterMeta, CharterMetadata, PlanMeta, hydrate_acts, read_sidecar, sidecar_path, write_sidecar};
+pub use sidecar::{ActionMeta, CharterMeta, CharterMetadata, PlanMeta, hydrate_actions, read_sidecar, sidecar_path, write_sidecar};
 pub use charter::{MarkdownCharter, format_charter, implicit_charter, parse_charter};
 pub use archive_charter::{
     ArchiveCharterError, ArchiveCharterOptions, ArchiveCharterResult,
     archive_charter, archive_closed_charters, find_charter as find_markdown_charter,
 };
-pub use calendar::ics::{ICSPlan, action_to_vevent, actions_to_icalendar, occurrence_act_id};
+pub use calendar::ics::{ICSPlan, action_to_vevent, actions_to_icalendar, occurrence_action_id};
 pub use calendar::plans::{
     PlanFileEntry, action_mirror_path, charter_plans_dir_relative, collect_plan_files,
     collect_plan_files_with_plans, infer_plan_charter_name, infer_plan_parent, plan_file_name,
@@ -44,7 +44,7 @@ pub use calendar::reconcile::{
 };
 
 pub use detection::check_for_workspace;
-pub use calendar::expand::expand_plans_into_acts;
+pub use calendar::expand::expand_plans_into_actions;
 pub use store::{
     Diagnosis, diagnose, diagnose_read, Finding, FindingSeverity, Workspace, WorkspaceRead, ManifestSourceType, WorkspaceError,
     WorkspaceManifestEntry, collect_workspace_manifest, infer_charter_name,

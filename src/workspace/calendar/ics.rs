@@ -37,11 +37,11 @@ pub fn plan_id_from_ics_uid(uid: &str) -> uuid::Uuid {
     Uuid::new_v5(&ICS_NAMESPACE, uid.as_bytes())
 }
 
-/// Derive a deterministic UUID for a generated act from its schedule identity and occurrence key.
+/// Derive a deterministic UUID for a generated action from its schedule identity and occurrence key.
 ///
 /// Per the ICS schedule spec: UUID v5 from `(externalScheduleId, externalOccurrenceKey)`.
 /// Running expansion multiple times with the same inputs always yields the same UUID.
-pub fn occurrence_act_id(vevent_uid: &str, occurrence_rfc3339: &str) -> uuid::Uuid {
+pub fn occurrence_action_id(vevent_uid: &str, occurrence_rfc3339: &str) -> uuid::Uuid {
     let key = format!("{}:{}", vevent_uid, occurrence_rfc3339);
     uuid::Uuid::new_v5(&ICS_NAMESPACE, key.as_bytes())
 }
@@ -509,14 +509,14 @@ mod tests {
     }
 
     #[test]
-    fn occurrence_act_id_is_deterministic() {
+    fn occurrence_action_id_is_deterministic() {
         let uid = "weekly-review@example.com";
         let occ = "2026-04-27T10:00:00+00:00";
-        let id1 = occurrence_act_id(uid, occ);
-        let id2 = occurrence_act_id(uid, occ);
+        let id1 = occurrence_action_id(uid, occ);
+        let id2 = occurrence_action_id(uid, occ);
         assert_eq!(id1, id2, "same inputs must yield same UUID");
 
-        let other = occurrence_act_id(uid, "2026-05-04T10:00:00+00:00");
+        let other = occurrence_action_id(uid, "2026-05-04T10:00:00+00:00");
         assert_ne!(id1, other, "different occurrence must yield different UUID");
     }
 

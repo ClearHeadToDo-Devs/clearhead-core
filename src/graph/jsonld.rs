@@ -46,7 +46,7 @@ pub fn serialize_workspace_to_jsonld(workspace: &Workspace) -> Result<String> {
             // Provenance is the charter's actions-file path, shared by all its
             // actions — carry it alongside each action.
             let file = c
-                .acts_file
+                .actions_file
                 .as_deref()
                 .map(|p| p.to_string_lossy().into_owned())
                 .unwrap_or_default();
@@ -114,7 +114,7 @@ fn build_jsonld_document(model: &DomainModel) -> Result<Value> {
     let mut charter_children: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let mut alias_to_charter_id: BTreeMap<String, String> = BTreeMap::new();
     let mut title_to_charter_id: BTreeMap<String, String> = BTreeMap::new();
-    let mut acts_by_plan: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    let mut actions_by_plan: BTreeMap<String, Vec<String>> = BTreeMap::new();
 
     for charter in &model.charters {
         let charter_id = uuid_urn(charter.id.to_string());
@@ -126,12 +126,12 @@ fn build_jsonld_document(model: &DomainModel) -> Result<Value> {
         for plan in &charter.plans {
             plan_charter_id.insert(uuid_urn(plan.id.to_string()), charter_id.clone());
         }
-        for act in &charter.actions {
-            if let Some(plan_id) = act.plan_id {
-                acts_by_plan
+        for action in &charter.actions {
+            if let Some(plan_id) = action.plan_id {
+                actions_by_plan
                     .entry(uuid_urn(plan_id.to_string()))
                     .or_default()
-                    .push(uuid_urn(act.id.to_string()));
+                    .push(uuid_urn(action.id.to_string()));
             }
         }
     }
@@ -159,12 +159,12 @@ fn build_jsonld_document(model: &DomainModel) -> Result<Value> {
 
     for charter in &model.charters {
         for plan in &charter.plans {
-            nodes.push(plan_to_jsonld(plan, &plan_charter_id, &acts_by_plan));
+            nodes.push(plan_to_jsonld(plan, &plan_charter_id, &actions_by_plan));
         }
     }
 
-    for act in model.all_actions() {
-        nodes.push(action_to_jsonld(act));
+    for action in model.all_actions() {
+        nodes.push(action_to_jsonld(action));
     }
 
     nodes.sort_by_key(node_sort_key);
@@ -212,7 +212,7 @@ fn charter_to_jsonld(charter: &Charter, charter_children: &BTreeMap<String, Vec<
 fn plan_to_jsonld(
     plan: &Plan,
     plan_charter_id: &BTreeMap<String, String>,
-    acts_by_plan: &BTreeMap<String, Vec<String>>,
+    actions_by_plan: &BTreeMap<String, Vec<String>>,
 ) -> Value {
     let plan_id = uuid_urn(plan.id.to_string());
     let mut node = ordered_node(plan_id.clone(), "Plan");
@@ -226,7 +226,7 @@ fn plan_to_jsonld(
         insert_id(&mut node, "partOf", charter_id.clone());
     }
 
-    let actions: Vec<String> = acts_by_plan.get(&plan_id).cloned().unwrap_or_default();
+    let actions: Vec<String> = actions_by_plan.get(&plan_id).cloned().unwrap_or_default();
     insert_id_or_many(&mut node, "actions", actions);
 
     insert_str(&mut node, "uuid", &plan.id.to_string());
@@ -241,49 +241,49 @@ fn plan_to_jsonld(
     Value::Object(node)
 }
 
-fn action_to_jsonld(act: &Action) -> Value {
-    let mut node = ordered_node(uuid_urn(act.id.to_string()), "Action");
-    insert_str(&mut node, "name", &act.name);
-    if let Some(description) = &act.description {
+fn action_to_jsonld(action: &Action) -> Value {
+    let mut node = ordered_node(uuid_urn(action.id.to_string()), "Action");
+    insert_str(&mut node, "name", &action.name);
+    if let Some(description) = &action.description {
         insert_str(&mut node, "description", description);
     }
-    if let Some(alias) = &act.alias {
+    if let Some(alias) = &action.alias {
         insert_str(&mut node, "alias", alias);
     }
-    if let Some(priority) = act.priority {
+    if let Some(priority) = action.priority {
         node.insert("priority".to_string(), json!(priority));
     }
-    if let Some(contexts) = &act.contexts {
+    if let Some(contexts) = &action.contexts {
         let ids: Vec<String> = contexts.iter().map(|c| context_id(c)).collect();
         insert_id_or_many(&mut node, "requiresContext", ids);
     }
-    if let Some(parent_id) = act.parent_id {
+    if let Some(parent_id) = action.parent_id {
         insert_id(&mut node, "partOf", uuid_urn(parent_id.to_string()));
     }
-    let deps_on = act.depends_on();
+    let deps_on = action.depends_on();
     if !deps_on.is_empty() {
         let deps: Vec<String> = deps_on.iter().map(|id| uuid_urn(id.to_string())).collect();
         insert_id_or_many(&mut node, "isSuccessorOf", deps);
     }
-    insert_str(&mut node, "uuid", &act.id.to_string());
-    insert_str(&mut node, "status", phase_term(act.state));
+    insert_str(&mut node, "uuid", &action.id.to_string());
+    insert_str(&mut node, "status", phase_term(action.state));
 
-    if let Some(scheduled) = act.scheduled_at {
+    if let Some(scheduled) = action.scheduled_at {
         insert_str(&mut node, "scheduledAt", &scheduled.to_rfc3339());
     }
-    if let Some(due) = act.due_date {
+    if let Some(due) = action.due_date {
         insert_str(&mut node, "dueDate", &due.to_rfc3339());
     }
-    if let Some(completed) = act.completed_at {
+    if let Some(completed) = action.completed_at {
         insert_str(&mut node, "completedDate", &completed.to_rfc3339());
     }
-    if let Some(duration) = act.duration {
+    if let Some(duration) = action.duration {
         node.insert("durationMinutes".to_string(), json!(duration));
     }
-    if let Some(external_schedule_id) = &act.external_schedule_id {
+    if let Some(external_schedule_id) = &action.external_schedule_id {
         insert_str(&mut node, "externalScheduleId", external_schedule_id);
     }
-    if let Some(external_occurrence_key) = &act.external_occurrence_key {
+    if let Some(external_occurrence_key) = &action.external_occurrence_key {
         insert_str(&mut node, "externalOccurrenceKey", external_occurrence_key);
     }
 
@@ -395,7 +395,7 @@ mod tests {
 
     fn sample_model() -> DomainModel {
         let plan_id = Uuid::parse_str("019d7100-1111-7111-8111-111111111111").unwrap();
-        let act_id = Uuid::parse_str("019d7100-2222-7222-8222-222222222222").unwrap();
+        let action_id = Uuid::parse_str("019d7100-2222-7222-8222-222222222222").unwrap();
         let charter_id = Uuid::parse_str("019d7100-3333-7333-8333-333333333333").unwrap();
 
         DomainModel {
@@ -418,7 +418,7 @@ mod tests {
                     ..Default::default()
                 }],
                 actions: vec![Action {
-                    id: act_id,
+                    id: action_id,
                     name: "Write graph tests".to_string(),
                     description: Some("Lock down graph semantics".to_string()),
                     priority: Some(1),
@@ -487,11 +487,11 @@ mod tests {
         let charter_idx = types.iter().position(|t| t == "Charter").unwrap();
         let context_idx = types.iter().position(|t| t == "Context").unwrap();
         let plan_idx = types.iter().position(|t| t == "Plan").unwrap();
-        let act_idx = types.iter().position(|t| t == "Action").unwrap();
+        let action_idx = types.iter().position(|t| t == "Action").unwrap();
 
         assert!(charter_idx < context_idx);
         assert!(context_idx < plan_idx);
-        assert!(plan_idx < act_idx);
+        assert!(plan_idx < action_idx);
     }
 
     #[test]
@@ -513,17 +513,17 @@ mod tests {
         assert!(plan.get("uuid").is_some());
         assert!(plan.get("recurrence").is_some());
 
-        let act = graph
+        let action = graph
             .iter()
             .find(|n| n.get("type") == Some(&json!("Action")))
-            .expect("act node");
-        assert!(act.get("name").is_some());
-        assert!(act.get("status").is_some());
-        assert!(act.get("scheduledAt").is_some());
-        assert!(act.get("durationMinutes").is_some());
-        assert!(act.get("externalScheduleId").is_some());
-        assert!(act.get("externalOccurrenceKey").is_some());
-        assert_eq!(act.get("status"), Some(&json!("InProgress")));
+            .expect("action node");
+        assert!(action.get("name").is_some());
+        assert!(action.get("status").is_some());
+        assert!(action.get("scheduledAt").is_some());
+        assert!(action.get("durationMinutes").is_some());
+        assert!(action.get("externalScheduleId").is_some());
+        assert!(action.get("externalOccurrenceKey").is_some());
+        assert_eq!(action.get("status"), Some(&json!("InProgress")));
     }
 
     #[test]

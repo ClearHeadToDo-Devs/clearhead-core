@@ -43,7 +43,7 @@ pub struct MarkdownCharter {
     pub actions: Vec<SourcedAction>,
 
     pub md_file: Option<PathBuf>,
-    pub acts_file: Option<PathBuf>,
+    pub actions_file: Option<PathBuf>,
     pub plans_dir: Option<PathBuf>,
 }
 
@@ -79,7 +79,7 @@ impl From<Charter> for MarkdownCharter {
                 source_metadata: None,
             }).collect(),
             md_file: None,
-            acts_file: None,
+            actions_file: None,
             plans_dir: None,
         }
     }

@@ -12,7 +12,7 @@ use crate::workspace::charter::{
 };
 use crate::workspace::calendar::ics::parse_ics_file;
 use crate::workspace::calendar::plans::collect_plan_files_in;
-use crate::workspace::sidecar::{collect_sidecar_acts, hydrate_acts_map, read_sidecar, sidecar_path};
+use crate::workspace::sidecar::{collect_sidecar_actions, hydrate_actions_map, read_sidecar, sidecar_path};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -165,7 +165,7 @@ pub fn read_workspace_with_plans(
     // hydrate from this rather than from a single path-derived sidecar, so a
     // sidecar orphaned by a moved or renamed `.actions` file still finds its
     // actions wherever their lines now live.
-    let global_acts = collect_sidecar_acts(&layout.charter_root);
+    let global_actions = collect_sidecar_actions(&layout.charter_root);
 
     for file_path in discover_action_files(&layout.charter_root)? {
         let relative = file_path
@@ -234,7 +234,7 @@ pub fn read_workspace_with_plans(
             name.clone(),
         );
         let mut mc = MarkdownCharter::from(base);
-        mc.acts_file = Some(relative.clone());
+        mc.actions_file = Some(relative.clone());
         mc.actions = sourced.clone();
 
         // The sidecar at the conventional path is still checked for corruption,
@@ -248,7 +248,7 @@ pub fn read_workspace_with_plans(
                 format!("could not read sidecar at expected path: {e}"),
             ));
         }
-        hydrate_acts_map(&mut sourced, &global_acts);
+        hydrate_actions_map(&mut sourced, &global_actions);
         mc.actions = sourced;
 
         charters
@@ -349,10 +349,10 @@ pub fn read_workspace_with_plans(
         if explicit_id_charters.contains(name) {
             continue;
         }
-        let Some(acts_file) = &charter.acts_file else {
+        let Some(actions_file) = &charter.actions_file else {
             continue;
         };
-        let sc_path = layout.charter_root.join(sidecar_path(acts_file));
+        let sc_path = layout.charter_root.join(sidecar_path(actions_file));
         if let Ok(recorded) = read_sidecar(&sc_path).map(|sc| sc.charter.and_then(|c| c.id)) {
             if let Some(id) = recorded {
                 charter.id = id;

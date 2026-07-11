@@ -19,10 +19,10 @@
       "name": "Buy milk",
       "partOf": "urn:charter:groceries",
       "requiresContext": ["urn:context:errands", "urn:context:grocery-store"],
-      "actions": "urn:uuid:act-1"
+      "actions": "urn:uuid:action-1"
     },
     {
-      "id": "urn:uuid:act-1",
+      "id": "urn:uuid:action-1",
       "type": "Action",
       "name": "Buy milk",
       "scheduledAt": "2026-04-10T00:00:00Z",

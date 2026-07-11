@@ -5,7 +5,7 @@ use uuid::Uuid;
 
 use crate::domain::Plan;
 use crate::workspace::actions::{Action, ActionState};
-use super::ics::occurrence_act_id;
+use super::ics::occurrence_action_id;
 
 // ============================================================================
 // Public types
@@ -35,7 +35,7 @@ impl Default for ExpansionConfig {
     }
 }
 
-/// Output of [`expand_plans_into_acts`].
+/// Output of [`expand_plans_into_actions`].
 ///
 /// `primary` actions go into `<charter>.actions`.
 /// `upcoming` actions go into `<charter>.upcoming.actions`.
@@ -49,7 +49,7 @@ pub struct ExpandResult {
 // Core expansion logic
 // ============================================================================
 
-/// Expand a set of plans into new acts split across primary and upcoming files.
+/// Expand a set of plans into new actions split across primary and upcoming files.
 ///
 /// Pure — no IO. Callers own file discovery, reading, and writing.
 ///
@@ -72,7 +72,7 @@ pub struct ExpandResult {
 /// Any occurrence whose UUID already appears in either existing slice
 /// (regardless of state) is always skipped — it will not be regenerated.
 /// Running expansion multiple times for the same inputs is always safe.
-pub fn expand_plans_into_acts(
+pub fn expand_plans_into_actions(
     plans: &[Plan],
     existing_primary: &[Action],
     existing_upcoming: &[Action],
@@ -130,16 +130,16 @@ pub fn expand_plans_into_acts(
             }
 
             let occ_key = occ_local.to_rfc3339();
-            let act_id = occurrence_act_id(vevent_uid, &occ_key);
+            let action_id = occurrence_action_id(vevent_uid, &occ_key);
 
             // Check if this occurrence is already represented in either file.
-            if let Some(state) = primary_by_id.get(&act_id) {
+            if let Some(state) = primary_by_id.get(&action_id) {
                 if is_open(state) {
                     primary_slots_used = primary_slots_used.saturating_add(1);
                 }
                 continue; // already in primary — skip regardless of state
             }
-            if let Some(state) = upcoming_by_id.get(&act_id) {
+            if let Some(state) = upcoming_by_id.get(&action_id) {
                 if is_open(state) {
                     upcoming_slots_used = upcoming_slots_used.saturating_add(1);
                 }
@@ -148,7 +148,7 @@ pub fn expand_plans_into_acts(
 
             // Not in any file — generate to whichever slot still has room.
             let action = Action {
-                id: act_id,
+                id: action_id,
                 state: ActionState::NotStarted,
                 name: plan.name.clone(),
                 scheduled_at: Some(occ_local),
@@ -227,7 +227,7 @@ mod tests {
     fn one_shot_plan_produces_primary_action() {
         let dtstart = Local.with_ymd_and_hms(2026, 5, 3, 10, 0, 0).unwrap();
         let plan = make_plan("review specs", "uid-1", dtstart, None);
-        let result = expand_plans_into_acts(&[plan], &[], &[], now(), &cfg(2, 1));
+        let result = expand_plans_into_actions(&[plan], &[], &[], now(), &cfg(2, 1));
 
         assert_eq!(result.primary.len(), 1);
         assert!(result.upcoming.is_empty());
@@ -238,7 +238,7 @@ mod tests {
     fn one_shot_plan_in_the_past_is_skipped() {
         let dtstart = Local.with_ymd_and_hms(2026, 4, 1, 10, 0, 0).unwrap();
         let plan = make_plan("past event", "uid-past", dtstart, None);
-        let result = expand_plans_into_acts(&[plan], &[], &[], now(), &cfg(2, 1));
+        let result = expand_plans_into_actions(&[plan], &[], &[], now(), &cfg(2, 1));
 
         assert!(result.primary.is_empty());
         assert!(result.upcoming.is_empty());
@@ -250,7 +250,7 @@ mod tests {
     fn recurring_plan_fills_primary_then_upcoming() {
         let dtstart = Local.with_ymd_and_hms(2026, 5, 4, 9, 0, 0).unwrap();
         let plan = make_plan("standup", "uid-standup", dtstart, Some("daily"));
-        let result = expand_plans_into_acts(&[plan], &[], &[], now(), &cfg(2, 1));
+        let result = expand_plans_into_actions(&[plan], &[], &[], now(), &cfg(2, 1));
 
         assert_eq!(result.primary.len(), 1, "one primary slot");
         assert_eq!(result.upcoming.len(), 1, "one upcoming slot");
@@ -260,7 +260,7 @@ mod tests {
     fn recurring_plan_with_total_3_primary_1_gives_1_primary_2_upcoming() {
         let dtstart = Local.with_ymd_and_hms(2026, 5, 4, 9, 0, 0).unwrap();
         let plan = make_plan("standup", "uid-standup2", dtstart, Some("daily"));
-        let result = expand_plans_into_acts(&[plan], &[], &[], now(), &cfg(3, 1));
+        let result = expand_plans_into_actions(&[plan], &[], &[], now(), &cfg(3, 1));
 
         assert_eq!(result.primary.len(), 1);
         assert_eq!(result.upcoming.len(), 2);
@@ -272,10 +272,10 @@ mod tests {
     fn existing_open_primary_occupies_its_slot() {
         let dtstart = Local.with_ymd_and_hms(2026, 5, 3, 10, 0, 0).unwrap();
         let uid = "uid-idem";
-        let act_id = occurrence_act_id(uid, &dtstart.to_rfc3339());
+        let action_id = occurrence_action_id(uid, &dtstart.to_rfc3339());
 
         let existing = Action {
-            id: act_id,
+            id: action_id,
             state: ActionState::NotStarted,
             name: "review specs".to_string(),
             ..Default::default()
@@ -283,7 +283,7 @@ mod tests {
 
         let plan = make_plan("review specs", uid, dtstart, None);
         // primary has 1 open already → no new primaries needed
-        let result = expand_plans_into_acts(&[plan], &[existing], &[], now(), &cfg(2, 1));
+        let result = expand_plans_into_actions(&[plan], &[existing], &[], now(), &cfg(2, 1));
 
         assert!(result.primary.is_empty(), "slot already occupied");
         assert!(result.upcoming.is_empty(), "one-shot: no upcoming slot");
@@ -293,25 +293,25 @@ mod tests {
     fn completed_primary_vacates_slot_for_next_occurrence() {
         let dtstart = Local.with_ymd_and_hms(2026, 5, 4, 9, 0, 0).unwrap();
         let uid = "uid-completed";
-        let act_id = occurrence_act_id(uid, &dtstart.to_rfc3339());
+        let action_id = occurrence_action_id(uid, &dtstart.to_rfc3339());
 
         // Completed action in primary — does not count as open
         let completed = Action {
-            id: act_id,
+            id: action_id,
             state: ActionState::Completed,
             name: "standup".to_string(),
             ..Default::default()
         };
 
         let plan = make_plan("standup", uid, dtstart, Some("daily"));
-        let result = expand_plans_into_acts(&[plan], &[completed], &[], now(), &cfg(2, 1));
+        let result = expand_plans_into_actions(&[plan], &[completed], &[], now(), &cfg(2, 1));
 
         // primary slot is empty (completed doesn't count) → one new primary generated
         assert_eq!(result.primary.len(), 1);
         // upcoming slot also needs filling → one new upcoming
         assert_eq!(result.upcoming.len(), 1);
         // the new primary must be a different occurrence (not the completed one)
-        assert_ne!(result.primary[0].id, act_id);
+        assert_ne!(result.primary[0].id, action_id);
     }
 
     #[test]
@@ -321,7 +321,7 @@ mod tests {
         // second occurrence goes to upcoming
         let second_occ =
             Local.with_ymd_and_hms(2026, 5, 5, 9, 0, 0).unwrap();
-        let cancelled_id = occurrence_act_id(uid, &second_occ.to_rfc3339());
+        let cancelled_id = occurrence_action_id(uid, &second_occ.to_rfc3339());
 
         let cancelled = Action {
             id: cancelled_id,
@@ -331,7 +331,7 @@ mod tests {
         };
 
         let plan = make_plan("standup", uid, dtstart, Some("daily"));
-        let result = expand_plans_into_acts(&[plan], &[], &[cancelled], now(), &cfg(2, 1));
+        let result = expand_plans_into_actions(&[plan], &[], &[cancelled], now(), &cfg(2, 1));
 
         // upcoming slot vacated → a new upcoming occurrence should be generated
         assert_eq!(result.primary.len(), 1);
@@ -347,7 +347,7 @@ mod tests {
         let dtstart = Local.with_ymd_and_hms(2026, 5, 4, 9, 0, 0).unwrap();
         let plan =
             make_plan_with_primary_override("standup", "uid-override", dtstart, Some("daily"), 0);
-        let result = expand_plans_into_acts(&[plan], &[], &[], now(), &cfg(2, 0));
+        let result = expand_plans_into_actions(&[plan], &[], &[], now(), &cfg(2, 0));
 
         assert!(result.primary.is_empty());
         assert_eq!(result.upcoming.len(), 2);
@@ -364,7 +364,7 @@ mod tests {
             external_id: None,
             ..Default::default()
         };
-        let result = expand_plans_into_acts(&[plan], &[], &[], now(), &cfg(2, 1));
+        let result = expand_plans_into_actions(&[plan], &[], &[], now(), &cfg(2, 1));
         assert!(result.primary.is_empty());
         assert!(result.upcoming.is_empty());
     }

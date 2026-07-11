@@ -29,12 +29,12 @@ pub fn resolve_template(
     Ok(None)
 }
 
-/// Instantiate a template, remapping all UUIDs and optionally reparenting root acts.
+/// Instantiate a template, remapping all UUIDs and optionally reparenting root actions.
 ///
 /// `id_for(template_id)` maps each original action UUID to a new instance UUID.
-/// `parent_override` sets `parent_id` on template root acts (those with no parent in
-/// the template) — used by `expand acts` to attach template children under a
-/// VEVENT-generated root act.
+/// `parent_override` sets `parent_id` on template root actions (those with no parent in
+/// the template) — used by `expand actions` to attach template children under a
+/// VEVENT-generated root action.
 pub fn instantiate_template(
     template: &ActionList,
     id_for: impl Fn(Uuid) -> Uuid,
@@ -151,7 +151,7 @@ mod tests {
 
         let template = vec![Action {
             id: root_id,
-            name: "Root act".into(),
+            name: "Root action".into(),
             state: ActionState::NotStarted,
             ..Default::default()
         }];

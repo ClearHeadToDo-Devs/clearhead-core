@@ -9,7 +9,7 @@ use oxigraph::model::GraphNameRef;
 
 /// Serialize all Actions from a `DomainModel` to Turtle format.
 ///
-/// Loads the full model (Plans + Acts) into a temporary store,
+/// Loads the full model (Plans + Actions) into a temporary store,
 /// then serializes the default graph to Turtle.
 pub fn serialize_acts_to_turtle(model: &DomainModel) -> Result<String> {
     let store = create_store()?;
@@ -17,9 +17,9 @@ pub fn serialize_acts_to_turtle(model: &DomainModel) -> Result<String> {
     store_to_turtle(&store)
 }
 
-/// Serialize only completed/cancelled acts (and their plans) to Turtle format.
+/// Serialize only completed/cancelled actions (and their plans) to Turtle format.
 ///
-/// Useful for generating a "closed acts" archive file.
+/// Useful for generating a "closed actions" archive file.
 pub fn serialize_closed_acts_to_turtle(model: &DomainModel) -> Result<String> {
     let filtered = filter_model_by_phase(model, |phase| {
         matches!(phase, ActionState::Completed | ActionState::Cancelled)
@@ -29,9 +29,9 @@ pub fn serialize_closed_acts_to_turtle(model: &DomainModel) -> Result<String> {
     store_to_turtle(&store)
 }
 
-/// Serialize only open (non-completed, non-cancelled) acts to Turtle format.
+/// Serialize only open (non-completed, non-cancelled) actions to Turtle format.
 ///
-/// Useful for generating an "upcoming acts" file.
+/// Useful for generating an "upcoming actions" file.
 pub fn serialize_open_acts_to_turtle(model: &DomainModel) -> Result<String> {
     let filtered = filter_model_by_phase(model, |phase| {
         !matches!(phase, ActionState::Completed | ActionState::Cancelled)
@@ -43,8 +43,8 @@ pub fn serialize_open_acts_to_turtle(model: &DomainModel) -> Result<String> {
 
 /// Serialize an Oxigraph store's default graph to Turtle.
 ///
-/// Companion to `load_acts_into_store` for the archive workflow:
-/// load existing archive + new acts → call this → write back to `archive.ttl`.
+/// Companion to `load_actions_into_store` for the archive workflow:
+/// load existing archive + new actions → call this → write back to `archive.ttl`.
 pub fn dump_store_to_turtle(store: &Store) -> Result<String> {
     store_to_turtle(store)
 }
@@ -61,7 +61,7 @@ fn store_to_turtle(store: &Store) -> Result<String> {
     String::from_utf8(buffer).map_err(|e| GraphError::Syntax(e.to_string()))
 }
 
-/// Filter a `DomainModel` to only include acts matching `predicate`,
+/// Filter a `DomainModel` to only include actions matching `predicate`,
 /// preserving the charter hierarchy.
 fn filter_model_by_phase(
     model: &DomainModel,

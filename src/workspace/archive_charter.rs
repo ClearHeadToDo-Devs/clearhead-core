@@ -177,7 +177,7 @@ fn archive_one(
 
     // Primary .actions path (absolute)
     let acts_abs: Option<PathBuf> = mc
-        .acts_file
+        .actions_file
         .as_ref()
         .map(|rel| layout.charter_root.join(rel));
 

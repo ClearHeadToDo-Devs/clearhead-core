@@ -58,16 +58,16 @@ pub fn validate_actions_vocabulary(store: &Store) -> Result<Vec<String>> {
     // ── Status checks ──────────────────────────────────────────────────────
 
     let q_missing_status = format!(
-        "SELECT ?act WHERE {{ GRAPH ?g {{ \
-            ?act a <{actions}{action}> . \
-            FILTER NOT EXISTS {{ ?act <{cco}{status_prop}> ?s }} \
+        "SELECT ?action WHERE {{ GRAPH ?g {{ \
+            ?action a <{actions}{action}> . \
+            FILTER NOT EXISTS {{ ?action <{cco}{status_prop}> ?s }} \
         }} }}",
         actions = ACTIONS_NS,
         action = ACTIONS_ACTION,
         cco = CCO_NS,
         status_prop = CCO_STATUS_PROP,
     );
-    for uri in query_term_values(store, &q_missing_status, "act")? {
+    for uri in query_term_values(store, &q_missing_status, "action")? {
         violations.push(format!(
             "ActionStatusShape: <{uri}> is missing a status (cco:{prop})",
             prop = CCO_STATUS_PROP,
@@ -75,8 +75,8 @@ pub fn validate_actions_vocabulary(store: &Store) -> Result<Vec<String>> {
     }
 
     let q_invalid_status = format!(
-        "SELECT ?act WHERE {{ GRAPH ?g {{ \
-            ?act <{cco}{status_prop}> ?s . \
+        "SELECT ?action WHERE {{ GRAPH ?g {{ \
+            ?action <{cco}{status_prop}> ?s . \
             FILTER (?s NOT IN ( \
                 <{ns}NotStarted>, \
                 <{ns}InProgress>, \
@@ -89,7 +89,7 @@ pub fn validate_actions_vocabulary(store: &Store) -> Result<Vec<String>> {
         status_prop = CCO_STATUS_PROP,
         ns = ACTIONS_NS,
     );
-    for uri in query_term_values(store, &q_invalid_status, "act")? {
+    for uri in query_term_values(store, &q_invalid_status, "action")? {
         violations.push(format!(
             "ActionStatusShape (sh:in): <{uri}> has an unrecognized status value",
         ));
@@ -136,17 +136,17 @@ pub fn validate_actions_vocabulary(store: &Store) -> Result<Vec<String>> {
     // ── Completed actions must have a completion date ──────────────────────
 
     let q_completed_no_date = format!(
-        "SELECT ?act WHERE {{ GRAPH ?g {{ \
-            ?act a <{actions}{action}> ; \
+        "SELECT ?action WHERE {{ GRAPH ?g {{ \
+            ?action a <{actions}{action}> ; \
                  <{cco}{status}> <{actions}Completed> . \
-            FILTER NOT EXISTS {{ ?act <{actions}hasCompletedDateTime> ?d }} \
+            FILTER NOT EXISTS {{ ?action <{actions}hasCompletedDateTime> ?d }} \
         }} }}",
         actions = ACTIONS_NS,
         action = ACTIONS_ACTION,
         cco = CCO_NS,
         status = CCO_STATUS_PROP,
     );
-    for uri in query_term_values(store, &q_completed_no_date, "act")? {
+    for uri in query_term_values(store, &q_completed_no_date, "action")? {
         violations.push(format!(
             "CompletedDateShape: <{uri}> has status Completed but no hasCompletedDateTime"
         ));
@@ -177,13 +177,13 @@ pub fn validate_actions_vocabulary(store: &Store) -> Result<Vec<String>> {
     // Transitive cycles are not checked here (would require recursion in SPARQL 1.1).
 
     let q_self_successor = format!(
-        "SELECT ?act WHERE {{ GRAPH ?g {{ \
-            ?act <{cco}{successor}> ?act . \
+        "SELECT ?action WHERE {{ GRAPH ?g {{ \
+            ?action <{cco}{successor}> ?action . \
         }} }}",
         cco = CCO_NS,
         successor = CCO_IS_SUCCESSOR_OF,
     );
-    for uri in query_term_values(store, &q_self_successor, "act")? {
+    for uri in query_term_values(store, &q_self_successor, "action")? {
         violations.push(format!(
             "SuccessorCycleShape: <{uri}> is its own successor (self-loop)"
         ));

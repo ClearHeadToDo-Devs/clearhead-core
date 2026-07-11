@@ -16,8 +16,8 @@ pub mod ics;
 pub mod plans;
 pub mod reconcile;
 
-pub use expand::{ExpandResult, ExpansionConfig, expand_plans_into_acts};
-pub use ics::{ICSPlan, action_to_vevent, actions_to_icalendar, occurrence_act_id};
+pub use expand::{ExpandResult, ExpansionConfig, expand_plans_into_actions};
+pub use ics::{ICSPlan, action_to_vevent, actions_to_icalendar, occurrence_action_id};
 pub use plans::{
     PlanFileEntry, action_mirror_path, charter_plans_dir_relative, collect_plan_files,
     collect_plan_files_with_plans, infer_plan_charter_name, infer_plan_parent, plan_file_name,

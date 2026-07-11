@@ -256,12 +256,12 @@ pub fn filter_model_for_plan(model: &DomainModel, plan_id: Uuid) -> DomainModel 
 /// The returned charter contains only the matched action. If the action has
 /// an associated plan that plan is also included; other plans are excluded.
 /// Returns an empty model if the action is not found.
-pub fn filter_model_for_action(model: &DomainModel, act_id: Uuid) -> DomainModel {
+pub fn filter_model_for_action(model: &DomainModel, action_id: Uuid) -> DomainModel {
     for charter in &model.charters {
-        if let Some(act) = charter.actions.iter().find(|a| a.id == act_id) {
+        if let Some(action) = charter.actions.iter().find(|a| a.id == action_id) {
             let mut charter_copy = charter.clone();
-            charter_copy.actions = vec![act.clone()];
-            if let Some(plan_id) = act.plan_id {
+            charter_copy.actions = vec![action.clone()];
+            if let Some(plan_id) = action.plan_id {
                 charter_copy.plans.retain(|p| p.id == plan_id);
             } else {
                 charter_copy.plans.clear();
@@ -387,9 +387,9 @@ fn resolve_action_global(
 ) -> Result<ReferenceTarget, ReferenceError> {
     let mut matches: Vec<&Action> = Vec::new();
     for charter in &model.charters {
-        for act in &charter.actions {
-            if action_matches_segment(act, segment) {
-                matches.push(act);
+        for action in &charter.actions {
+            if action_matches_segment(action, segment) {
+                matches.push(action);
             }
         }
     }
@@ -514,8 +514,8 @@ fn plan_matches_segment(plan: &Plan, segment: &str) -> bool {
     matches_uuid(&plan.id, segment)
 }
 
-fn action_matches_segment(act: &Action, segment: &str) -> bool {
-    matches_uuid(&act.id, segment)
+fn action_matches_segment(action: &Action, segment: &str) -> bool {
+    matches_uuid(&action.id, segment)
 }
 
 fn matches_uuid(id: &Uuid, segment: &str) -> bool {
@@ -571,10 +571,10 @@ mod tests {
         }
     }
 
-    fn make_act(id: Uuid, plan_id: Uuid) -> Action {
+    fn make_action(id: Uuid, plan_id: Uuid) -> Action {
         Action {
             id,
-            name: "act".to_string(),
+            name: "action".to_string(),
             plan_id: Some(plan_id),
             ..Default::default()
         }
@@ -586,7 +586,7 @@ mod tests {
         let implicit_charter_id = Uuid::parse_str("abcdef12-0000-0000-0000-000000000099").unwrap();
         let plan_id = Uuid::parse_str("11223344-0000-0000-0000-000000000003").unwrap();
         let subplan_id = Uuid::parse_str("55667788-0000-0000-0000-000000000004").unwrap();
-        let act_id = Uuid::parse_str("deadbeef-0000-0000-0000-000000000005").unwrap();
+        let action_id = Uuid::parse_str("deadbeef-0000-0000-0000-000000000005").unwrap();
 
         let plan = make_plan(plan_id, "core");
 
@@ -601,7 +601,7 @@ mod tests {
             objectives: None,
             state: None,
             plans: vec![plan, subplan],
-            actions: vec![make_act(act_id, plan_id)],
+            actions: vec![make_action(action_id, plan_id)],
         };
 
         let child_charter = Charter {
@@ -660,12 +660,12 @@ mod tests {
     fn resolves_act_in_plan_path() {
         let model = sample_model();
         let plan_id = Uuid::parse_str("11223344-0000-0000-0000-000000000003").unwrap();
-        let act_id = Uuid::parse_str("deadbeef-0000-0000-0000-000000000005").unwrap();
+        let action_id = Uuid::parse_str("deadbeef-0000-0000-0000-000000000005").unwrap();
         let plan_short = &plan_id.to_string()[..8];
-        let act_short = &act_id.to_string()[..8];
-        let path = format!("build/{}/{}", plan_short, act_short);
+        let action_short = &action_id.to_string()[..8];
+        let path = format!("build/{}/{}", plan_short, action_short);
         let target = resolve_reference(&model, &path, &ReferenceOptions::default()).unwrap();
-        assert_eq!(target, ReferenceTarget::Action(act_id));
+        assert_eq!(target, ReferenceTarget::Action(action_id));
     }
 
     #[test]
@@ -727,9 +727,9 @@ mod tests {
     #[test]
     fn short_uuid_prefix_longer_than_eight_resolves() {
         let model = sample_model();
-        let act_id = Uuid::parse_str("deadbeef-0000-0000-0000-000000000005").unwrap();
-        let long_prefix = &act_id.to_string().replace('-', "")[..12];
+        let action_id = Uuid::parse_str("deadbeef-0000-0000-0000-000000000005").unwrap();
+        let long_prefix = &action_id.to_string().replace('-', "")[..12];
         let target = resolve_reference(&model, &format!("a:{}", long_prefix), &ReferenceOptions::default()).unwrap();
-        assert_eq!(target, ReferenceTarget::Action(act_id));
+        assert_eq!(target, ReferenceTarget::Action(action_id));
     }
 }

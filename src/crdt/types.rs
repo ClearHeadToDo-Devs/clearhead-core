@@ -109,7 +109,7 @@ pub struct SyncPlannedAct {
     pub created_at: Option<chrono::DateTime<chrono::Local>>,
 }
 
-/// CRDT mirror of `domain::ActPhase`.
+/// CRDT mirror of `domain::ActionState`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Reconcile, Hydrate)]
 pub enum SyncActPhase {
     #[default]

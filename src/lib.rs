@@ -48,9 +48,9 @@ pub use workspace::{
     implicit_charter, infer_charter_name, infer_parent_charter_name,
     infer_plan_charter_name, infer_plan_parent, action_mirror_path, charter_plans_dir_relative,
     plan_file_name, plan_output_path,
-    expand_plans_into_acts, upcoming_actions_path, list_action_files, load_domain_model,
+    expand_plans_into_actions, upcoming_actions_path, list_action_files, load_domain_model,
     load_domain_model_with_plans, load_workspace, load_workspace_with_plans, load_workspaces,
-    action_to_vevent, actions_to_icalendar, occurrence_act_id, parse_actions,
+    action_to_vevent, actions_to_icalendar, occurrence_action_id, parse_actions,
     parse_actions_with_mode, parse_charter, parse_document, parse_tree, patch_action_list,
     charter_root, plans_root, read_action_file, read_actions, save_domain_model,
     apply_sync, plan_sync, read_ics_dates, reconcile,
@@ -63,7 +63,7 @@ pub use workspace::calendar::expand::{ExpandResult, ExpansionConfig};
 pub mod domain;
 #[doc(inline)]
 pub use domain::diff::{
-    ActDiff, ActFieldChange, CharterDiff, CharterFieldChange, DomainDiff, PlanDiff,
+    ActionDiff, ActionFieldChange, CharterDiff, CharterFieldChange, DomainDiff, PlanDiff,
     PlanFieldChange, diff_domain_models,
 };
 #[doc(inline)]

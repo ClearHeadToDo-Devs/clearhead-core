@@ -49,7 +49,7 @@ pub fn workspace_data_root(root: &Path) -> PathBuf {
 
 /// Returns the charter tree root (`<data_root>/charters/`).
 ///
-/// All `.actions` and `.md` charter files live here. Use this for charter/act path resolution.
+/// All `.actions` and `.md` charter files live here. Use this for charter/action path resolution.
 pub fn charter_root(root: &Path) -> PathBuf {
     resolve_workspace_layout(root).charter_root
 }
@@ -76,9 +76,9 @@ pub enum WorkspaceError {
     /// Error parsing a `.actions` file.
     #[error("Parse error: {0}")]
     Parse(String),
-    /// Error loading or saving sidecar acts.
-    #[error("Acts error: {0}")]
-    Acts(String),
+    /// Error loading or saving sidecar actions.
+    #[error("Actions error: {0}")]
+    Actions(String),
     /// A path provided was not within the workspace or was otherwise invalid.
     #[error("Invalid path: {0}")]
     InvalidPath(PathBuf),

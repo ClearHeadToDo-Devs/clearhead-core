@@ -21,10 +21,14 @@ pub struct CharterMetadata {
     /// A `BTreeMap` so the committed JSON serializes in a stable key order —
     /// a `HashMap` reshuffles on every save and turns each write into diff
     /// noise, which defeats the sidecar's job as a plaintext audit surface.
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub acts: BTreeMap<String, ActMeta>,
+    ///
+    /// `alias = "acts"` reads pre-rename sidecars written under the old key;
+    /// every write always emits `actions`, so files migrate to the new key
+    /// the next time anything touches them.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty", alias = "acts")]
+    pub actions: BTreeMap<String, ActionMeta>,
     /// Per-plan metadata keyed by UUID string. `BTreeMap` for the same
-    /// stable-ordering reason as `acts`.
+    /// stable-ordering reason as `actions`.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub plans: BTreeMap<String, PlanMeta>,
 }
@@ -46,7 +50,7 @@ pub struct CharterMeta {
 
 /// Per-action sidecar metadata.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct ActMeta {
+pub struct ActionMeta {
     /// When this action was first created by tooling.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub created: Option<DateTime<Local>>,
@@ -67,7 +71,7 @@ pub struct ActMeta {
 /// Per-plan sidecar metadata.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct PlanMeta {
-    /// When `expand acts` last ran for this plan.
+    /// When `expand actions` last ran for this plan.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_expanded: Option<DateTime<Local>>,
 }
@@ -96,18 +100,18 @@ pub fn read_sidecar(path: &Path) -> Result<CharterMetadata, WorkspaceError> {
     serde_json::from_str(&content).map_err(|e| WorkspaceError::Parse(format!("sidecar: {}", e)))
 }
 
-/// Union every sidecar under `charter_root` into one `uuid -> ActMeta` map.
+/// Union every sidecar under `charter_root` into one `uuid -> ActionMeta` map.
 ///
 /// Sidecars are re-joined to actions by UUID, not by file path, so a sidecar
 /// left behind when its `.actions` file moved or was renamed still hydrates its
-/// actions (see [`hydrate_acts_map`]). Unreadable or corrupt sidecars are
+/// actions (see [`hydrate_actions_map`]). Unreadable or corrupt sidecars are
 /// skipped here — the loader reports those against their own path.
-pub fn collect_sidecar_acts(charter_root: &Path) -> BTreeMap<String, ActMeta> {
-    let mut union: BTreeMap<String, ActMeta> = BTreeMap::new();
+pub fn collect_sidecar_actions(charter_root: &Path) -> BTreeMap<String, ActionMeta> {
+    let mut union: BTreeMap<String, ActionMeta> = BTreeMap::new();
     for path in sidecar_files(charter_root) {
         let Ok(meta) = read_sidecar(&path) else { continue };
-        for (key, act) in meta.acts {
-            merge_act(union.entry(key).or_default(), act);
+        for (key, action) in meta.actions {
+            merge_action(union.entry(key).or_default(), action);
         }
     }
     union
@@ -118,7 +122,7 @@ pub fn collect_sidecar_acts(charter_root: &Path) -> BTreeMap<String, ActMeta> {
 /// carries them — so an empty re-stamp can never clobber a real historical
 /// record. Callers walk sidecars in sorted path order for a deterministic
 /// `created` on the rare duplicate.
-fn merge_act(to: &mut ActMeta, from: ActMeta) {
+fn merge_action(to: &mut ActionMeta, from: ActionMeta) {
     to.created = to.created.or(from.created);
     to.source_vevent = to.source_vevent.take().or(from.source_vevent);
     to.scheduled_at_sync = to.scheduled_at_sync.or(from.scheduled_at_sync);
@@ -154,44 +158,44 @@ fn sidecar_files(dir: &Path) -> Vec<PathBuf> {
     out
 }
 
-/// Hydrate acts with metadata from the sidecar.
+/// Hydrate actions with metadata from the sidecar.
 ///
-/// For each act, if the sidecar has a matching entry (by UUID string key),
-/// fills in `created_at` and `external_schedule_id` where the act doesn't
+/// For each action, if the sidecar has a matching entry (by UUID string key),
+/// fills in `created_at` and `external_schedule_id` where the action doesn't
 /// already have them (DSL values are authoritative).
 ///
 /// The merge-base copies (`scheduled_at_sync` / `due_date_sync`) have no DSL
 /// form at all — the sidecar is their sole source, so they are assigned
 /// directly rather than filled-if-absent.
-pub fn hydrate_acts(acts: &mut [crate::workspace::actions::repository::SourcedAction], metadata: &CharterMetadata) {
-    hydrate_acts_map(acts, &metadata.acts);
+pub fn hydrate_actions(actions: &mut [crate::workspace::actions::repository::SourcedAction], metadata: &CharterMetadata) {
+    hydrate_actions_map(actions, &metadata.actions);
 }
 
-/// Hydrate acts from a bare `uuid -> ActMeta` map.
+/// Hydrate actions from a bare `uuid -> ActionMeta` map.
 ///
 /// The loader passes a *union* of every sidecar in the workspace here, not just
 /// the charter's own file. Metadata is keyed by action UUID, so an entry reaches
 /// its action wherever the line now lives — even if the sidecar was orphaned by
 /// a moved or renamed `.actions` file. Location is storage, not identity.
-pub fn hydrate_acts_map(
-    acts: &mut [crate::workspace::actions::repository::SourcedAction],
-    acts_meta: &BTreeMap<String, ActMeta>,
+pub fn hydrate_actions_map(
+    actions: &mut [crate::workspace::actions::repository::SourcedAction],
+    actions_meta: &BTreeMap<String, ActionMeta>,
 ) {
-    for sa in acts.iter_mut() {
-        let act = &mut sa.action;
-        let key = act
+    for sa in actions.iter_mut() {
+        let action = &mut sa.action;
+        let key = action
             .plan_id
             .map(|id| id.to_string())
-            .unwrap_or_else(|| act.id.to_string());
-        if let Some(meta) = acts_meta.get(&key) {
-            if act.created_at.is_none() {
-                act.created_at = meta.created;
+            .unwrap_or_else(|| action.id.to_string());
+        if let Some(meta) = actions_meta.get(&key) {
+            if action.created_at.is_none() {
+                action.created_at = meta.created;
             }
-            if act.external_schedule_id.is_none() {
-                act.external_schedule_id = meta.source_vevent.clone();
+            if action.external_schedule_id.is_none() {
+                action.external_schedule_id = meta.source_vevent.clone();
             }
-            act.scheduled_at_sync = meta.scheduled_at_sync;
-            act.due_date_sync = meta.due_date_sync;
+            action.scheduled_at_sync = meta.scheduled_at_sync;
+            action.due_date_sync = meta.due_date_sync;
         }
     }
 }
@@ -208,7 +212,7 @@ pub fn stamp_sidecar_entries(
     let mut meta = read_sidecar(&sc_path)?;
     for action in actions {
         let key = action.id.to_string();
-        meta.acts.entry(key).or_insert_with(|| ActMeta {
+        meta.actions.entry(key).or_insert_with(|| ActionMeta {
             created: Some(created_from_uuid(action.id).unwrap_or_else(Local::now)),
             ..Default::default()
         });
@@ -301,17 +305,17 @@ mod tests {
         let json = serde_json::to_string(&meta).unwrap();
         let parsed: CharterMetadata = serde_json::from_str(&json).unwrap();
         assert!(parsed.charter.is_none());
-        assert!(parsed.acts.is_empty());
+        assert!(parsed.actions.is_empty());
         assert!(parsed.plans.is_empty());
     }
 
     #[test]
-    fn metadata_with_act_roundtrips() {
+    fn metadata_with_action_roundtrips() {
         let mut meta = CharterMetadata::default();
         let synced = Local::now();
-        meta.acts.insert(
+        meta.actions.insert(
             "019dad29-c05d-7781-a92c-40d71adfb88e".to_string(),
-            ActMeta {
+            ActionMeta {
                 created: Some(Local::now()),
                 source_vevent: Some("weekly-review@clearhead.us".to_string()),
                 scheduled_at_sync: Some(synced),
@@ -320,16 +324,16 @@ mod tests {
         );
         let json = serde_json::to_string_pretty(&meta).unwrap();
         let parsed: CharterMetadata = serde_json::from_str(&json).unwrap();
-        assert_eq!(parsed.acts.len(), 1);
-        let act = &parsed.acts["019dad29-c05d-7781-a92c-40d71adfb88e"];
-        assert!(act.created.is_some());
+        assert_eq!(parsed.actions.len(), 1);
+        let action = &parsed.actions["019dad29-c05d-7781-a92c-40d71adfb88e"];
+        assert!(action.created.is_some());
         assert_eq!(
-            act.source_vevent.as_deref(),
+            action.source_vevent.as_deref(),
             Some("weekly-review@clearhead.us")
         );
         // The B column round-trips; an unset side stays None (skip_serializing_if).
-        assert_eq!(act.scheduled_at_sync, Some(synced));
-        assert!(act.due_date_sync.is_none());
+        assert_eq!(action.scheduled_at_sync, Some(synced));
+        assert!(action.due_date_sync.is_none());
     }
 
     #[test]
@@ -355,7 +359,7 @@ mod tests {
     #[test]
     fn deserialize_ignores_unknown_fields() {
         let json = r#"{
-            "acts": {
+            "actions": {
                 "some-id": {
                     "created": "2026-04-20T16:11:00-05:00",
                     "custom_tool_field": "should not break"
@@ -364,14 +368,42 @@ mod tests {
             "unknown_section": { "whatever": true }
         }"#;
         let parsed: CharterMetadata = serde_json::from_str(json).unwrap();
-        assert_eq!(parsed.acts.len(), 1);
+        assert_eq!(parsed.actions.len(), 1);
     }
 
     #[test]
     fn empty_json_object_parses() {
         let parsed: CharterMetadata = serde_json::from_str("{}").unwrap();
         assert!(parsed.charter.is_none());
-        assert!(parsed.acts.is_empty());
+        assert!(parsed.actions.is_empty());
+    }
+
+    // ===== Backward compatibility: pre-rename "acts" key =====
+
+    #[test]
+    fn deserialize_accepts_legacy_acts_key() {
+        // Sidecars written before the acts -> actions rename still deserialize —
+        // #[serde(alias = "acts")] on `CharterMetadata::actions` reads the old key.
+        let json = r#"{"acts": {"legacy-id": {"created": "2026-04-20T16:11:00-05:00"}}}"#;
+        let parsed: CharterMetadata = serde_json::from_str(json).unwrap();
+        assert_eq!(parsed.actions.len(), 1);
+        assert!(parsed.actions.contains_key("legacy-id"));
+    }
+
+    #[test]
+    fn legacy_acts_key_is_rewritten_as_actions_on_save() {
+        // Reading an old-format sidecar and writing it back migrates the key —
+        // this is the self-healing half of the migration (no explicit tool needed).
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(".legacy.json");
+        std::fs::write(&path, r#"{"acts": {"legacy-id": {"created": "2026-04-20T16:11:00-05:00"}}}"#).unwrap();
+
+        let meta = read_sidecar(&path).unwrap();
+        write_sidecar(&path, &meta).unwrap();
+
+        let rewritten = std::fs::read_to_string(&path).unwrap();
+        assert!(rewritten.contains("\"actions\""));
+        assert!(!rewritten.contains("\"acts\""));
     }
 
     // ===== Hydration =====
@@ -391,12 +423,12 @@ mod tests {
 
         let id = Uuid::now_v7();
         let created = Local::now();
-        let mut acts = vec![make_sourced(Action { id, ..Default::default() })];
+        let mut actions = vec![make_sourced(Action { id, ..Default::default() })];
         let mut meta = CharterMetadata::default();
-        meta.acts.insert(id.to_string(), ActMeta { created: Some(created), ..Default::default() });
+        meta.actions.insert(id.to_string(), ActionMeta { created: Some(created), ..Default::default() });
 
-        hydrate_acts(&mut acts, &meta);
-        assert_eq!(acts[0].action.created_at, Some(created));
+        hydrate_actions(&mut actions, &meta);
+        assert_eq!(actions[0].action.created_at, Some(created));
     }
 
     #[test]
@@ -407,12 +439,12 @@ mod tests {
         let id = Uuid::now_v7();
         let dsl_created = Local::now();
         let sidecar_created = dsl_created - chrono::Duration::hours(1);
-        let mut acts = vec![make_sourced(Action { id, created_at: Some(dsl_created), ..Default::default() })];
+        let mut actions = vec![make_sourced(Action { id, created_at: Some(dsl_created), ..Default::default() })];
         let mut meta = CharterMetadata::default();
-        meta.acts.insert(id.to_string(), ActMeta { created: Some(sidecar_created), ..Default::default() });
+        meta.actions.insert(id.to_string(), ActionMeta { created: Some(sidecar_created), ..Default::default() });
 
-        hydrate_acts(&mut acts, &meta);
-        assert_eq!(acts[0].action.created_at, Some(dsl_created));
+        hydrate_actions(&mut actions, &meta);
+        assert_eq!(actions[0].action.created_at, Some(dsl_created));
     }
 
     #[test]
@@ -421,15 +453,15 @@ mod tests {
         use uuid::Uuid;
 
         let id = Uuid::now_v7();
-        let mut acts = vec![make_sourced(Action { id, ..Default::default() })];
+        let mut actions = vec![make_sourced(Action { id, ..Default::default() })];
         let mut meta = CharterMetadata::default();
-        meta.acts.insert(
+        meta.actions.insert(
             id.to_string(),
-            ActMeta { created: None, source_vevent: Some("weekly-review@clearhead.us".to_string()), ..Default::default() },
+            ActionMeta { created: None, source_vevent: Some("weekly-review@clearhead.us".to_string()), ..Default::default() },
         );
 
-        hydrate_acts(&mut acts, &meta);
-        assert_eq!(acts[0].action.external_schedule_id.as_deref(), Some("weekly-review@clearhead.us"));
+        hydrate_actions(&mut actions, &meta);
+        assert_eq!(actions[0].action.external_schedule_id.as_deref(), Some("weekly-review@clearhead.us"));
     }
 
     #[test]
@@ -439,29 +471,29 @@ mod tests {
 
         let id = Uuid::now_v7();
         let synced = Local::now();
-        let mut acts = vec![make_sourced(Action { id, ..Default::default() })];
+        let mut actions = vec![make_sourced(Action { id, ..Default::default() })];
         let mut meta = CharterMetadata::default();
-        meta.acts.insert(
+        meta.actions.insert(
             id.to_string(),
-            ActMeta { scheduled_at_sync: Some(synced), ..Default::default() },
+            ActionMeta { scheduled_at_sync: Some(synced), ..Default::default() },
         );
 
-        hydrate_acts(&mut acts, &meta);
-        assert_eq!(acts[0].action.scheduled_at_sync, Some(synced));
+        hydrate_actions(&mut actions, &meta);
+        assert_eq!(actions[0].action.scheduled_at_sync, Some(synced));
         // No sidecar value for the deadline → stays "not yet synced".
-        assert!(acts[0].action.due_date_sync.is_none());
+        assert!(actions[0].action.due_date_sync.is_none());
     }
 
     #[test]
-    fn hydrate_skips_acts_not_in_sidecar() {
+    fn hydrate_skips_actions_not_in_sidecar() {
         use crate::domain::Action;
         use uuid::Uuid;
 
-        let mut acts = vec![make_sourced(Action { id: Uuid::now_v7(), ..Default::default() })];
+        let mut actions = vec![make_sourced(Action { id: Uuid::now_v7(), ..Default::default() })];
         let meta = CharterMetadata::default();
 
-        hydrate_acts(&mut acts, &meta);
-        assert!(acts[0].action.created_at.is_none());
+        hydrate_actions(&mut actions, &meta);
+        assert!(actions[0].action.created_at.is_none());
     }
 
     // ===== created_from_uuid version guard =====
@@ -491,12 +523,12 @@ mod tests {
         use uuid::Uuid;
 
         let dir = tempfile::tempdir().unwrap();
-        let acts_path = dir.path().join("next.actions");
+        let actions_path = dir.path().join("next.actions");
         let v4 = Uuid::new_v4();
-        stamp_sidecar_entries(&acts_path, &[Action { id: v4, ..Default::default() }]).unwrap();
+        stamp_sidecar_entries(&actions_path, &[Action { id: v4, ..Default::default() }]).unwrap();
 
-        let meta = read_sidecar(&sidecar_path(&acts_path)).unwrap();
-        let created = meta.acts[&v4.to_string()].created.expect("stamped");
+        let meta = read_sidecar(&sidecar_path(&actions_path)).unwrap();
+        let created = meta.actions[&v4.to_string()].created.expect("stamped");
         // "The date we saw it", not a decoded far-future date.
         assert!((Local::now() - created).num_seconds().abs() < 5);
     }
@@ -506,7 +538,7 @@ mod tests {
     #[test]
     fn read_sidecar_missing_file_returns_default() {
         let result = read_sidecar(Path::new("/nonexistent/.inbox.json")).unwrap();
-        assert!(result.acts.is_empty());
+        assert!(result.actions.is_empty());
     }
 
     #[test]
@@ -515,9 +547,9 @@ mod tests {
         let path = dir.path().join(".test.json");
 
         let mut meta = CharterMetadata::default();
-        meta.acts.insert(
+        meta.actions.insert(
             "test-uuid".to_string(),
-            ActMeta {
+            ActionMeta {
                 created: Some(Local::now()),
                 ..Default::default()
             },
@@ -525,55 +557,55 @@ mod tests {
 
         write_sidecar(&path, &meta).unwrap();
         let loaded = read_sidecar(&path).unwrap();
-        assert_eq!(loaded.acts.len(), 1);
-        assert!(loaded.acts.contains_key("test-uuid"));
+        assert_eq!(loaded.actions.len(), 1);
+        assert!(loaded.actions.contains_key("test-uuid"));
     }
 
     // ===== Union across sidecars (location-independent hydration) =====
 
     #[test]
-    fn collect_sidecar_acts_unions_across_files_and_dirs() {
+    fn collect_sidecar_actions_unions_across_files_and_dirs() {
         let dir = tempfile::tempdir().unwrap();
         let sub = dir.path().join("feature");
         std::fs::create_dir_all(&sub).unwrap();
         std::fs::write(
             dir.path().join(".root.json"),
-            r#"{"acts": {"aaa": {"created": "2024-01-01T00:00:00+00:00"}}}"#,
+            r#"{"actions": {"aaa": {"created": "2024-01-01T00:00:00+00:00"}}}"#,
         )
         .unwrap();
         std::fs::write(
             sub.join(".nested.json"),
-            r#"{"acts": {"bbb": {"created": "2024-02-02T00:00:00+00:00"}}}"#,
+            r#"{"actions": {"bbb": {"created": "2024-02-02T00:00:00+00:00"}}}"#,
         )
         .unwrap();
         // A non-sidecar json and a non-json hidden file contribute nothing.
         std::fs::write(dir.path().join(".config.json"), r#"{"unrelated": true}"#).unwrap();
         std::fs::write(dir.path().join(".keep"), "ignore me").unwrap();
 
-        let union = collect_sidecar_acts(dir.path());
+        let union = collect_sidecar_actions(dir.path());
         assert!(union.contains_key("aaa"));
         assert!(union.contains_key("bbb"));
         assert_eq!(union.len(), 2);
     }
 
     #[test]
-    fn merge_act_never_clobbers_an_irreplaceable_sync_base() {
+    fn merge_action_never_clobbers_an_irreplaceable_sync_base() {
         // Same uuid in two sidecars: one is the real record (a source_vevent that
         // cannot be recomputed), the other an empty re-stamp (created only). The
         // union must keep the sync base regardless of which file is seen first.
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(
             dir.path().join(".aaa.json"),
-            r#"{"acts": {"dup": {"created": "2024-01-01T00:00:00+00:00", "source_vevent": "vevent-7"}}}"#,
+            r#"{"actions": {"dup": {"created": "2024-01-01T00:00:00+00:00", "source_vevent": "vevent-7"}}}"#,
         )
         .unwrap();
         std::fs::write(
             dir.path().join(".zzz.json"),
-            r#"{"acts": {"dup": {"created": "2025-05-05T00:00:00+00:00"}}}"#,
+            r#"{"actions": {"dup": {"created": "2025-05-05T00:00:00+00:00"}}}"#,
         )
         .unwrap();
 
-        let union = collect_sidecar_acts(dir.path());
+        let union = collect_sidecar_actions(dir.path());
         let entry = &union["dup"];
         assert_eq!(
             entry.source_vevent.as_deref(),

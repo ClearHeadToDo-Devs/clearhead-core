@@ -1,7 +1,7 @@
 //! Hierarchical diff between two DomainModels.
 //!
 //! The diff mirrors the domain hierarchy: charter-level changes contain
-//! plan-level changes, which contain act-level changes. This preserves
+//! plan-level changes, which contain action-level changes. This preserves
 //! charter context throughout — no post-hoc lookups needed.
 
 use super::{ActionState, Action, Charter, DomainModel, Plan, Recurrence};
@@ -48,7 +48,7 @@ pub enum PlanFieldChange {
 
 /// A change to a single field on an Action.
 #[derive(Debug, Clone, PartialEq)]
-pub enum ActFieldChange {
+pub enum ActionFieldChange {
     Phase {
         old: ActionState,
         new: ActionState,
@@ -102,28 +102,28 @@ pub enum CharterFieldChange {
 
 /// Changes detected for a single Action.
 #[derive(Debug, Clone, PartialEq)]
-pub struct ActDiff {
+pub struct ActionDiff {
     pub id: Uuid,
     pub plan_id: Option<Uuid>,
-    pub changes: Vec<ActFieldChange>,
+    pub changes: Vec<ActionFieldChange>,
 }
 
-/// Changes detected for a single Plan and its acts.
+/// Changes detected for a single Plan and its actions.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PlanDiff {
     pub id: Uuid,
     pub changes: Vec<PlanFieldChange>,
-    pub acts_added: Vec<Action>,
-    pub acts_removed: Vec<Action>,
-    pub acts_modified: Vec<ActDiff>,
+    pub actions_added: Vec<Action>,
+    pub actions_removed: Vec<Action>,
+    pub actions_modified: Vec<ActionDiff>,
 }
 
 impl PlanDiff {
     pub fn is_empty(&self) -> bool {
         self.changes.is_empty()
-            && self.acts_added.is_empty()
-            && self.acts_removed.is_empty()
-            && self.acts_modified.is_empty()
+            && self.actions_added.is_empty()
+            && self.actions_removed.is_empty()
+            && self.actions_modified.is_empty()
     }
 }
 
@@ -185,7 +185,7 @@ impl DomainDiff {
 /// Diff two [`DomainModel`]s, producing a hierarchical [`DomainDiff`].
 ///
 /// [`Charter`]s are matched by `charter.id`. [`Plan`]s within a charter are matched
-/// by `plan.id`. [`Action`]s within a plan are matched by `act.id`.
+/// by `plan.id`. [`Action`]s within a plan are matched by `action.id`.
 pub fn diff_domain_models(old: &DomainModel, new: &DomainModel) -> DomainDiff {
     let old_charters: HashMap<Uuid, &Charter> = old.charters.iter().map(|c| (c.id, c)).collect();
     let new_charters: HashMap<Uuid, &Charter> = new.charters.iter().map(|c| (c.id, c)).collect();
@@ -251,53 +251,53 @@ fn diff_charters(old: &Charter, new: &Charter) -> CharterDiff {
 fn diff_plans(
     old: &Plan,
     new: &Plan,
-    old_charter_acts: &[Action],
-    new_charter_acts: &[Action],
+    old_charter_actions: &[Action],
+    new_charter_actions: &[Action],
 ) -> PlanDiff {
     let changes = compare_plans(old, new);
 
-    let old_acts: HashMap<Uuid, &Action> = old_charter_acts
+    let old_actions: HashMap<Uuid, &Action> = old_charter_actions
         .iter()
         .filter(|a| a.plan_id == Some(old.id))
         .map(|a| (a.id, a))
         .collect();
-    let new_acts: HashMap<Uuid, &Action> = new_charter_acts
+    let new_actions: HashMap<Uuid, &Action> = new_charter_actions
         .iter()
         .filter(|a| a.plan_id == Some(new.id))
         .map(|a| (a.id, a))
         .collect();
 
-    let mut acts_added = Vec::new();
-    let mut acts_removed = Vec::new();
-    let mut acts_modified = Vec::new();
+    let mut actions_added = Vec::new();
+    let mut actions_removed = Vec::new();
+    let mut actions_modified = Vec::new();
 
-    for (id, new_act) in &new_acts {
-        if let Some(old_act) = old_acts.get(id) {
-            let act_changes = compare_acts(old_act, new_act);
-            if !act_changes.is_empty() {
-                acts_modified.push(ActDiff {
-                    id: new_act.id,
-                    plan_id: new_act.plan_id,
-                    changes: act_changes,
+    for (id, new_action) in &new_actions {
+        if let Some(old_action) = old_actions.get(id) {
+            let action_changes = compare_actions(old_action, new_action);
+            if !action_changes.is_empty() {
+                actions_modified.push(ActionDiff {
+                    id: new_action.id,
+                    plan_id: new_action.plan_id,
+                    changes: action_changes,
                 });
             }
         } else {
-            acts_added.push((*new_act).clone());
+            actions_added.push((*new_action).clone());
         }
     }
 
-    for (id, old_act) in &old_acts {
-        if !new_acts.contains_key(id) {
-            acts_removed.push((*old_act).clone());
+    for (id, old_action) in &old_actions {
+        if !new_actions.contains_key(id) {
+            actions_removed.push((*old_action).clone());
         }
     }
 
     PlanDiff {
         id: new.id,
         changes,
-        acts_added,
-        acts_removed,
-        acts_modified,
+        actions_added,
+        actions_removed,
+        actions_modified,
     }
 }
 
@@ -377,40 +377,40 @@ fn compare_plans(old: &Plan, new: &Plan) -> Vec<PlanFieldChange> {
     changes
 }
 
-fn compare_acts(old: &Action, new: &Action) -> Vec<ActFieldChange> {
+fn compare_actions(old: &Action, new: &Action) -> Vec<ActionFieldChange> {
     let mut changes = Vec::new();
     if old.state != new.state {
-        changes.push(ActFieldChange::Phase {
+        changes.push(ActionFieldChange::Phase {
             old: old.state,
             new: new.state,
         });
     }
     if !dates_equal(&old.scheduled_at, &new.scheduled_at) {
-        changes.push(ActFieldChange::ScheduledAt {
+        changes.push(ActionFieldChange::ScheduledAt {
             old: old.scheduled_at,
             new: new.scheduled_at,
         });
     }
     if old.duration != new.duration {
-        changes.push(ActFieldChange::Duration {
+        changes.push(ActionFieldChange::Duration {
             old: old.duration,
             new: new.duration,
         });
     }
     if !dates_equal(&old.completed_at, &new.completed_at) {
-        changes.push(ActFieldChange::CompletedAt {
+        changes.push(ActionFieldChange::CompletedAt {
             old: old.completed_at,
             new: new.completed_at,
         });
     }
     if !dates_equal(&old.created_at, &new.created_at) {
-        changes.push(ActFieldChange::CreatedAt {
+        changes.push(ActionFieldChange::CreatedAt {
             old: old.created_at,
             new: new.created_at,
         });
     }
     if !dates_equal(&old.due_date, &new.due_date) {
-        changes.push(ActFieldChange::DueDate {
+        changes.push(ActionFieldChange::DueDate {
             old: old.due_date,
             new: new.due_date,
         });
@@ -442,7 +442,7 @@ mod tests {
 
     fn make_model(id: &str, name: &str) -> DomainModel {
         let plan_id = Uuid::parse_str(id).unwrap();
-        let act_id = Uuid::new_v5(&plan_id, b"act-0");
+        let action_id = Uuid::new_v5(&plan_id, b"action-0");
         let charter_id = Uuid::new_v5(&plan_id, b"charter");
 
         DomainModel {
@@ -456,7 +456,7 @@ mod tests {
                     ..Default::default()
                 }],
                 actions: vec![Action {
-                    id: act_id,
+                    id: action_id,
                     name: name.to_string(),
                     plan_id: Some(plan_id),
                     ..Default::default()
@@ -517,7 +517,7 @@ mod tests {
     }
 
     #[test]
-    fn test_act_phase_changed() {
+    fn test_action_phase_changed() {
         let id = "019baaec-00b6-7991-be34-94b68212619a";
         let old = make_model(id, "Task");
         let mut new = old.clone();
@@ -528,12 +528,12 @@ mod tests {
         assert_eq!(diff.charters_modified.len(), 1);
         let charter_diff = &diff.charters_modified[0];
         assert_eq!(charter_diff.plans_modified.len(), 1);
-        assert_eq!(charter_diff.plans_modified[0].acts_modified.len(), 1);
+        assert_eq!(charter_diff.plans_modified[0].actions_modified.len(), 1);
         assert!(
-            charter_diff.plans_modified[0].acts_modified[0]
+            charter_diff.plans_modified[0].actions_modified[0]
                 .changes
                 .iter()
-                .any(|c| matches!(c, ActFieldChange::Phase { .. }))
+                .any(|c| matches!(c, ActionFieldChange::Phase { .. }))
         );
     }
 

@@ -26,7 +26,7 @@
 //!
 //! | Call site | Why DefaultGraph is correct |
 //! |-----------|-----------------------------|
-//! | [`load_acts_into_store`] | Single-use store written directly to Turtle (archival).  Never queried via SPARQL. |
+//! | [`load_actions_into_store`] | Single-use store written directly to Turtle (archival).  Never queried via SPARQL. |
 //! | [`serialize`] module internals | Same — transient TTL-output stores. |
 //!
 //! Everywhere else — CLI query paths, tests, multi-workspace loading — use a
@@ -49,7 +49,7 @@
 //!
 //! ```sparql
 //! SELECT ?name WHERE {
-//!     ?act a actions:Action ; rdfs:label ?name .
+//!     ?action a actions:Action ; rdfs:label ?name .
 //! }
 //! ```
 //!
@@ -61,7 +61,7 @@
 //! ```sparql
 //! SELECT ?g ?name WHERE {
 //!     GRAPH ?g {
-//!         ?act a actions:Action ; rdfs:label ?name .
+//!         ?action a actions:Action ; rdfs:label ?name .
 //!     }
 //! }
 //! ```
@@ -103,7 +103,7 @@
 //! ```
 //!
 //! Using `GraphName::DefaultGraph` in tests is only correct when testing the
-//! archive/serialization path (`load_acts_into_store` / `serialize` module).
+//! archive/serialization path (`load_actions_into_store` / `serialize` module).
 //!
 //! # Submodules
 //!
@@ -118,7 +118,7 @@ pub mod query;
 pub mod serialize;
 pub mod shape;
 
-pub use insert::{insert_workspace_metadata, load_acts_into_store, load_domain_model, load_turtle, load_turtle_into_graph};
+pub use insert::{insert_workspace_metadata, load_actions_into_store, load_domain_model, load_turtle, load_turtle_into_graph};
 pub use oxigraph::model::GraphName;
 pub use jsonld::{serialize_domain_to_jsonld, serialize_workspace_to_jsonld};
 pub use shape::{INDEX_REQUIRED, frame_index};

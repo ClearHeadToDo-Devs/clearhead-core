@@ -300,16 +300,16 @@ pub fn apply_sync(
             )));
         };
 
-        let acts_relative = workspace.charters[charter_idx]
-            .acts_file
+        let actions_relative = workspace.charters[charter_idx]
+            .actions_file
             .clone()
             .ok_or_else(|| {
                 WorkspaceError::Parse(format!(
-                    "sync charter for action {} has no acts_file",
+                    "sync charter for action {} has no actions_file",
                     entry.action_id
                 ))
             })?;
-        let sidecar_abs = layout.charter_root.join(sidecar_path(&acts_relative));
+        let sidecar_abs = layout.charter_root.join(sidecar_path(&actions_relative));
         if !sidecars.contains_key(&sidecar_abs) {
             sidecars.insert(sidecar_abs.clone(), read_sidecar(&sidecar_abs)?);
         }
@@ -338,7 +338,7 @@ pub fn apply_sync(
                     .scheduled_at_sync = time;
                 let sidecar = sidecars.get_mut(&sidecar_abs).expect("sidecar loaded");
                 sidecar
-                    .acts
+                    .actions
                     .entry(action_key)
                     .or_default()
                     .scheduled_at_sync = time;
@@ -355,12 +355,12 @@ pub fn apply_sync(
 
                 let sidecar = sidecars.get_mut(&sidecar_abs).expect("sidecar loaded");
                 sidecar
-                    .acts
+                    .actions
                     .entry(action_key)
                     .or_default()
                     .scheduled_at_sync = time;
 
-                dirty_actions.insert(layout.charter_root.join(&acts_relative));
+                dirty_actions.insert(layout.charter_root.join(&actions_relative));
                 dirty_sidecars.insert(sidecar_abs);
                 applied.take_calendar += 1;
             }
@@ -370,7 +370,7 @@ pub fn apply_sync(
                     .scheduled_at_sync = time;
                 let sidecar = sidecars.get_mut(&sidecar_abs).expect("sidecar loaded");
                 sidecar
-                    .acts
+                    .actions
                     .entry(action_key)
                     .or_default()
                     .scheduled_at_sync = time;
@@ -391,7 +391,7 @@ pub fn apply_sync(
         let charter = workspace
             .charters
             .iter()
-            .find(|charter| charter.acts_file.as_deref() == Some(relative))
+            .find(|charter| charter.actions_file.as_deref() == Some(relative))
             .ok_or_else(|| {
                 WorkspaceError::Parse(format!(
                     "dirty action file missing charter: {}",
@@ -436,7 +436,7 @@ fn render_actions(actions: &[SourcedAction]) -> Result<String, WorkspaceError> {
         .iter()
         .map(|sa| sa.action.clone())
         .collect::<Vec<_>>();
-    format(&list, OutputFormat::Actions, None, None).map_err(WorkspaceError::Acts)
+    format(&list, OutputFormat::Actions, None, None).map_err(WorkspaceError::Actions)
 }
 
 fn write_action_mirror(path: &Path, action: &crate::domain::Action) -> Result<(), WorkspaceError> {

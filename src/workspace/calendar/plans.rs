@@ -55,7 +55,7 @@ pub fn charter_plans_dir_relative(charter: &MarkdownCharter) -> PathBuf {
 
     let key = charter.alias.as_deref().unwrap_or(&charter.title);
     let is_root = charter
-        .acts_file
+        .actions_file
         .as_deref()
         .and_then(|p| p.file_name())
         .and_then(|n| n.to_str())

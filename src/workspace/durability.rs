@@ -279,11 +279,11 @@ mod tests {
 
         // Prior state: action file and sidecar both exist.
         std::fs::write(root.join("health.actions"), "[ ] old action\n").unwrap();
-        std::fs::write(root.join(".health.json"), r#"{"acts":{}}"#).unwrap();
+        std::fs::write(root.join(".health.json"), r#"{"actions":{}}"#).unwrap();
 
         // Temps written (staged), but process dies before the journal is recorded.
-        std::fs::write(root.join(".tmp.act"), "[ ] new action\n").unwrap();
-        std::fs::write(root.join(".tmp.sidecar"), r#"{"acts":{"id":"stamp"}}"#).unwrap();
+        std::fs::write(root.join(".tmp.action"), "[ ] new action\n").unwrap();
+        std::fs::write(root.join(".tmp.sidecar"), r#"{"actions":{"id":"stamp"}}"#).unwrap();
 
         // No journal → recovery is a no-op.
         recover_pending(root).unwrap();
@@ -295,7 +295,7 @@ mod tests {
         );
         assert_eq!(
             std::fs::read_to_string(root.join(".health.json")).unwrap(),
-            r#"{"acts":{}}"#
+            r#"{"actions":{}}"#
         );
     }
 

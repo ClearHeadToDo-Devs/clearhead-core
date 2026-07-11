@@ -374,8 +374,8 @@ fn scheduled_actions_on_or_before_date() {
 const NEXT_ACTIONS_SPARQL: &str = include_str!(
     "../../clearhead-cli/src/queries/next-actions.sparql"
 );
-const ACTS_BY_PHASE_SPARQL: &str = include_str!(
-    "../../clearhead-cli/src/queries/acts-by-phase.sparql"
+const ACTIONS_BY_PHASE_SPARQL: &str = include_str!(
+    "../../clearhead-cli/src/queries/actions-by-phase.sparql"
 );
 const OPEN_PLANS_SPARQL: &str = include_str!(
     "../../clearhead-cli/src/queries/open-plans.sparql"
@@ -399,32 +399,32 @@ fn named_query_next_actions_returns_results_against_fixture() {
 }
 
 #[test]
-fn named_query_acts_by_phase_returns_not_started_actions() {
+fn named_query_actions_by_phase_returns_not_started_actions() {
     let (_, store) = user_flat_store();
     let sparql = inject_status(
-        ACTS_BY_PHASE_SPARQL,
+        ACTIONS_BY_PHASE_SPARQL,
         &format!("<{ACTIONS}NotStarted>"),
     );
-    let rows = query_raw(&store, &sparql).expect("acts-by-phase query");
+    let rows = query_raw(&store, &sparql).expect("actions-by-phase query");
     assert!(
         !rows.is_empty(),
-        "acts-by-phase (NotStarted) returned nothing against fixture; \
+        "actions-by-phase (NotStarted) returned nothing against fixture; \
          fixture has NotStarted actions — check predicate / class drift"
     );
 }
 
 #[test]
-fn named_query_acts_by_phase_returns_in_progress_actions() {
+fn named_query_actions_by_phase_returns_in_progress_actions() {
     let (_, store) = user_flat_store();
     let sparql = inject_status(
-        ACTS_BY_PHASE_SPARQL,
+        ACTIONS_BY_PHASE_SPARQL,
         &format!("<{ACTIONS}InProgress>"),
     );
-    let rows = query_raw(&store, &sparql).expect("acts-by-phase query");
+    let rows = query_raw(&store, &sparql).expect("actions-by-phase query");
     // Fixture has 2 InProgress actions.
     assert!(
         !rows.is_empty(),
-        "acts-by-phase (InProgress) returned nothing; fixture has InProgress actions"
+        "actions-by-phase (InProgress) returned nothing; fixture has InProgress actions"
     );
 }
 

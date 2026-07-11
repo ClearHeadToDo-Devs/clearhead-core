@@ -696,9 +696,9 @@ impl Action {
     }
 }
 
-/// Hierarchical domain model: Objectives → Charters → Plans → Acts.
+/// Hierarchical domain model: Objectives → Charters → Plans → Actions.
 ///
-/// Each charter contains its plans, and each plan contains its acts.
+/// Each charter contains its plans, and each plan contains its actions.
 /// This structure reflects the ontology hierarchy and eliminates the
 /// need for separate flat HashMaps.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -745,7 +745,7 @@ impl DomainModel {
             .collect()
     }
 
-    /// Get all incomplete acts across the hierarchy.
+    /// Get all incomplete actions across the hierarchy.
     pub fn incomplete_actions(&self) -> Vec<&Action> {
         self.all_actions()
             .into_iter()

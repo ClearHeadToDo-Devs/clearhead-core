@@ -6,7 +6,7 @@ use super::source::SourceMetadata;
 /// `source_metadata` carries line/column positions for LSP diagnostics;
 /// absent when loaded from disk rather than from a live parse. File
 /// provenance is *not* stored per action — it derives from the enclosing
-/// file/charter group (see [`ActionsFile.path`] / [`MarkdownCharter.acts_file`]),
+/// file/charter group (see [`ActionsFile.path`] / [`MarkdownCharter.actions_file`]),
 /// which every consumer already iterates.
 #[derive(Debug, Clone)]
 pub struct SourcedAction {

@@ -113,7 +113,7 @@ fn build_action_file_manifest(
             relative_actions_path_for_charter(&key, &parent_by_key, project_root_key.as_deref());
         let actions = actions_for_charter(charter, &key);
         let rendered =
-            format(&actions, OutputFormat::Actions, None, None).map_err(WorkspaceError::Acts)?;
+            format(&actions, OutputFormat::Actions, None, None).map_err(WorkspaceError::Actions)?;
         manifest.insert(path, rendered);
     }
 

@@ -104,7 +104,7 @@ pub fn insert_workspace_metadata(
         // File provenance is a property of the charter's actions file, not of
         // each action — every action here shares this one path.
         let source_file = charter
-            .acts_file
+            .actions_file
             .as_deref()
             .map(|p| p.to_string_lossy().into_owned())
             .unwrap_or_default();
@@ -144,13 +144,13 @@ pub fn insert_workspace_metadata(
 ///
 /// Used by the archive command to populate a store before serializing to
 /// `archive.ttl`.  Quad idempotence means calling this with already-present
-/// acts is safe.
-pub fn load_acts_into_store(store: &Store, acts: &[Action]) -> Result<()> {
+/// actions is safe.
+pub fn load_actions_into_store(store: &Store, actions: &[Action]) -> Result<()> {
     // Archive serialization stores always use the default graph — they are
     // transient single-use stores written to TTL, not persistent query stores.
     let graph = GraphName::DefaultGraph;
-    for act in acts {
-        insert_action(store, act, &graph)?;
+    for action in actions {
+        insert_action(store, action, &graph)?;
     }
     Ok(())
 }
@@ -367,9 +367,9 @@ fn insert_plan(store: &Store, plan: &Plan, charter_actions: &[Action], graph_nam
     Ok(())
 }
 
-fn insert_action(store: &Store, act: &Action, graph_name: &GraphName) -> Result<()> {
+fn insert_action(store: &Store, action: &Action, graph_name: &GraphName) -> Result<()> {
     let subject =
-        NamedOrBlankNode::NamedNode(NamedNode::new(format!("urn:uuid:{}", act.id)).unwrap());
+        NamedOrBlankNode::NamedNode(NamedNode::new(format!("urn:uuid:{}", action.id)).unwrap());
     let graph = graph_name.clone();
 
     let add = |pred: NamedNode, term: Term| {
@@ -381,22 +381,22 @@ fn insert_action(store: &Store, act: &Action, graph_name: &GraphName) -> Result<
     add(rdf_type(), Term::NamedNode(ns(super::ACTIONS_NS, ACTIONS_ACTION)))?;
     add(
         actions_pred("hasUUID"),
-        Term::Literal(Literal::new_simple_literal(act.id.to_string())),
+        Term::Literal(Literal::new_simple_literal(action.id.to_string())),
     )?;
 
     add(
         rdfs_pred(RDFS_LABEL),
-        Term::Literal(Literal::new_simple_literal(&act.name)),
+        Term::Literal(Literal::new_simple_literal(&action.name)),
     )?;
 
-    if let Some(description) = &act.description {
+    if let Some(description) = &action.description {
         add(
             rdfs_pred(RDFS_COMMENT),
             Term::Literal(Literal::new_simple_literal(description)),
         )?;
     }
 
-    if let Some(priority) = act.priority {
+    if let Some(priority) = action.priority {
         add(
             actions_pred("hasPriority"),
             Term::Literal(Literal::new_typed_literal(
@@ -406,19 +406,19 @@ fn insert_action(store: &Store, act: &Action, graph_name: &GraphName) -> Result<
         )?;
     }
 
-    if let Some(contexts) = &act.contexts {
+    if let Some(contexts) = &action.contexts {
         for context in contexts {
             let ctx_node = insert_context_node(store, context, graph_name)?;
             add(actions_pred("requiresContext"), Term::NamedNode(ctx_node))?;
         }
     }
 
-    if let Some(parent_id) = act.parent_id {
+    if let Some(parent_id) = action.parent_id {
         let parent_uri = NamedNode::new(format!("urn:uuid:{}", parent_id)).unwrap();
         add(bfo_pred(BFO_PART_OF), Term::NamedNode(parent_uri))?;
     }
 
-    let depends_on = act.depends_on();
+    let depends_on = action.depends_on();
     if !depends_on.is_empty() {
         for dep_id in depends_on {
             let dep_uri = NamedNode::new(format!("urn:uuid:{}", dep_id)).unwrap();
@@ -426,33 +426,33 @@ fn insert_action(store: &Store, act: &Action, graph_name: &GraphName) -> Result<
         }
     }
 
-    if let Some(alias) = &act.alias {
+    if let Some(alias) = &action.alias {
         add(
             actions_pred("hasAlias"),
             Term::Literal(Literal::new_simple_literal(alias)),
         )?;
     }
 
-    if let Some(true) = act.is_sequential {
+    if let Some(true) = action.is_sequential {
         add(
             actions_pred("hasSequentialChildren"),
             Term::Literal(Literal::new_typed_literal("true", ns(XSD_NS, "boolean"))),
         )?;
     }
 
-    if let Some(plan_id) = act.plan_id {
+    if let Some(plan_id) = action.plan_id {
         let plan_uri = NamedNode::new(format!("urn:uuid:{}", plan_id)).unwrap();
         add(cco_node(CCO_PRESCRIBED_BY), Term::NamedNode(plan_uri))?;
     }
 
-    if let Some(external_schedule_id) = &act.external_schedule_id {
+    if let Some(external_schedule_id) = &action.external_schedule_id {
         add(
             actions_pred("hasExternalScheduleId"),
             Term::Literal(Literal::new_simple_literal(external_schedule_id)),
         )?;
     }
 
-    if let Some(external_occurrence_key) = &act.external_occurrence_key {
+    if let Some(external_occurrence_key) = &action.external_occurrence_key {
         add(
             actions_pred("hasExternalOccurrenceKey"),
             Term::Literal(Literal::new_simple_literal(external_occurrence_key)),
@@ -462,10 +462,10 @@ fn insert_action(store: &Store, act: &Action, graph_name: &GraphName) -> Result<
     // cco:is_measured_by_nominal (ont00001868) — status as nominal ICE
     add(
         cco_node(CCO_STATUS_PROP),
-        Term::NamedNode(phase_node(&act.state)),
+        Term::NamedNode(phase_node(&action.state)),
     )?;
 
-    if let Some(dt) = &act.scheduled_at {
+    if let Some(dt) = &action.scheduled_at {
         add(
             actions_pred("hasScheduledDateTime"),
             Term::Literal(Literal::new_typed_literal(
@@ -475,7 +475,7 @@ fn insert_action(store: &Store, act: &Action, graph_name: &GraphName) -> Result<
         )?;
     }
 
-    if let Some(dt) = &act.due_date {
+    if let Some(dt) = &action.due_date {
         add(
             actions_pred("hasDueDateTime"),
             Term::Literal(Literal::new_typed_literal(
@@ -485,7 +485,7 @@ fn insert_action(store: &Store, act: &Action, graph_name: &GraphName) -> Result<
         )?;
     }
 
-    if let Some(duration) = act.duration {
+    if let Some(duration) = action.duration {
         add(
             actions_pred("hasDurationMinutes"),
             Term::Literal(Literal::new_typed_literal(
@@ -495,7 +495,7 @@ fn insert_action(store: &Store, act: &Action, graph_name: &GraphName) -> Result<
         )?;
     }
 
-    if let Some(dt) = &act.completed_at {
+    if let Some(dt) = &action.completed_at {
         add(
             actions_pred("hasCompletedDateTime"),
             Term::Literal(Literal::new_typed_literal(
@@ -505,7 +505,7 @@ fn insert_action(store: &Store, act: &Action, graph_name: &GraphName) -> Result<
         )?;
     }
 
-    if let Some(dt) = &act.created_at {
+    if let Some(dt) = &action.created_at {
         add(
             actions_pred("hasCreatedDateTime"),
             Term::Literal(Literal::new_typed_literal(
@@ -600,7 +600,7 @@ mod tests {
 
     fn sample_model() -> DomainModel {
         let plan_id = Uuid::parse_str("019d7100-1111-7111-8111-111111111111").unwrap();
-        let act_id = Uuid::parse_str("019d7100-2222-7222-8222-222222222222").unwrap();
+        let action_id = Uuid::parse_str("019d7100-2222-7222-8222-222222222222").unwrap();
         let charter_id = Uuid::parse_str("019d7100-3333-7333-8333-333333333333").unwrap();
 
         DomainModel {
@@ -628,7 +628,7 @@ mod tests {
                     ..Default::default()
                 }],
                 actions: vec![Action {
-                    id: act_id,
+                    id: action_id,
                     name: "Write graph tests".to_string(),
                     description: Some("Lock down graph semantics".to_string()),
                     priority: Some(1),
@@ -699,7 +699,7 @@ mod tests {
         )).expect("load model into graph");
 
         let plan = NamedNodeRef::new("urn:uuid:019d7100-1111-7111-8111-111111111111").unwrap();
-        let act = NamedNodeRef::new("urn:uuid:019d7100-2222-7222-8222-222222222222").unwrap();
+        let action = NamedNodeRef::new("urn:uuid:019d7100-2222-7222-8222-222222222222").unwrap();
         let charter = NamedNodeRef::new("urn:uuid:019d7100-3333-7333-8333-333333333333").unwrap();
         assert!(has_term(
             &store,
@@ -727,31 +727,31 @@ mod tests {
         ));
         assert!(has_term(
             &store,
-            act,
+            action,
             cco_node(CCO_PRESCRIBED_BY).as_ref(),
             plan.into(),
         ));
         assert!(has_term(
             &store,
-            act,
+            action,
             actions_pred("hasDurationMinutes").as_ref(),
             LiteralRef::new_typed_literal("45", ns(XSD_NS, "integer").as_ref()).into(),
         ));
         assert!(has_term(
             &store,
-            act,
+            action,
             actions_pred("hasExternalScheduleId").as_ref(),
             LiteralRef::new_simple_literal("weekly-review@example.com").into(),
         ));
         assert!(has_term(
             &store,
-            act,
+            action,
             actions_pred("hasExternalOccurrenceKey").as_ref(),
             LiteralRef::new_simple_literal("2026-04-09T10:00:00-07:00").into(),
         ));
         assert!(has_predicate(
             &store,
-            act,
+            action,
             actions_pred("hasCreatedDateTime").as_ref(),
         ));
 
@@ -779,17 +779,17 @@ mod tests {
         ));
         assert!(!has_predicate(
             &store,
-            act,
+            action,
             actions_pred("duration").as_ref()
         ));
         assert!(!has_predicate(
             &store,
-            act,
+            action,
             actions_pred("createdAt").as_ref()
         ));
         assert!(!has_predicate(
             &store,
-            act,
+            action,
             actions_pred("prescribedBy").as_ref(),
         ));
     }
@@ -815,14 +815,14 @@ mod tests {
     fn action_with_contexts(contexts: Vec<&str>) -> DomainModel {
         use crate::domain::ActionState;
         let charter_id = Uuid::parse_str("019d7100-cccc-7ccc-8ccc-cccccccccccc").unwrap();
-        let act_id = Uuid::parse_str("019d7100-aaaa-7aaa-8aaa-aaaaaaaaaaaa").unwrap();
+        let action_id = Uuid::parse_str("019d7100-aaaa-7aaa-8aaa-aaaaaaaaaaaa").unwrap();
         DomainModel {
             objectives: vec![],
             charters: vec![Charter {
                 id: charter_id,
                 title: "Test".to_string(),
                 actions: vec![Action {
-                    id: act_id,
+                    id: action_id,
                     name: "Tagged action".to_string(),
                     contexts: Some(contexts.into_iter().map(String::from).collect()),
                     state: ActionState::NotStarted,
@@ -842,13 +842,13 @@ mod tests {
         );
         load_domain_model(&store, &model, None, g).expect("load");
 
-        let act = NamedNodeRef::new("urn:uuid:019d7100-aaaa-7aaa-8aaa-aaaaaaaaaaaa").unwrap();
+        let action = NamedNodeRef::new("urn:uuid:019d7100-aaaa-7aaa-8aaa-aaaaaaaaaaaa").unwrap();
         let neovim = NamedNodeRef::new("urn:context:neovim").unwrap();
         let work = NamedNodeRef::new("urn:context:work").unwrap();
 
         // Action links to context nodes via requiresContext
-        assert!(has_term(&store, act, actions_pred("requiresContext").as_ref(), neovim.into()));
-        assert!(has_term(&store, act, actions_pred("requiresContext").as_ref(), work.into()));
+        assert!(has_term(&store, action, actions_pred("requiresContext").as_ref(), neovim.into()));
+        assert!(has_term(&store, action, actions_pred("requiresContext").as_ref(), work.into()));
 
         // Each context node has the right type and identifier
         assert!(has_term(

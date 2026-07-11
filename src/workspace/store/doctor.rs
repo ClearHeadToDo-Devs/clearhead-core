@@ -169,7 +169,7 @@ fn check_dangling_predecessors(
 ) {
     let known: HashSet<Uuid> = all_actions(charters, completed).map(|(_, a)| a.id).collect();
     for charter in charters {
-        let Some(file) = &charter.acts_file else { continue };
+        let Some(file) = &charter.actions_file else { continue };
         for sa in &charter.actions {
             for pred in sa.action.predecessors.iter().flatten() {
                 let target = pred
@@ -226,24 +226,24 @@ fn check_sidecar_coherence(
     findings: &mut Vec<Finding>,
 ) {
     for charter in charters {
-        let Some(acts_file) = &charter.acts_file else { continue };
-        let sc_relative = sidecar_path(acts_file);
+        let Some(actions_file) = &charter.actions_file else { continue };
+        let sc_relative = sidecar_path(actions_file);
         let Ok(meta) = read_sidecar(&charter_root.join(&sc_relative)) else {
             continue; // corrupt sidecars are already a loader finding
         };
 
-        // Entries are keyed by action id — or plan id for plan-generated acts.
+        // Entries are keyed by action id — or plan id for plan-generated actions.
         let mut allowed: HashSet<Uuid> = HashSet::new();
         for sa in &charter.actions {
             allowed.insert(sa.action.id);
             allowed.extend(sa.action.plan_id);
         }
-        for action in completed.get(&completed_actions_path(acts_file)).into_iter().flatten() {
+        for action in completed.get(&completed_actions_path(actions_file)).into_iter().flatten() {
             allowed.insert(action.id);
             allowed.extend(action.plan_id);
         }
 
-        for key in meta.acts.keys() {
+        for key in meta.actions.keys() {
             let orphaned = match Uuid::parse_str(key) {
                 Ok(id) => !allowed.contains(&id),
                 Err(_) => true,
@@ -255,7 +255,7 @@ fn check_sidecar_coherence(
                     format!(
                         "entry '{}' matches no action in {} or its completed archive",
                         key,
-                        acts_file.display()
+                        actions_file.display()
                     ),
                 ));
             }
@@ -288,13 +288,13 @@ fn check_sidecar_created_sanity(
         .expect("EARLIEST_PLAUSIBLE_CREATED is a valid RFC3339 constant")
         .with_timezone(&chrono::Local);
     for charter in charters {
-        let Some(acts_file) = &charter.acts_file else { continue };
-        let sc_relative = sidecar_path(acts_file);
+        let Some(actions_file) = &charter.actions_file else { continue };
+        let sc_relative = sidecar_path(actions_file);
         let Ok(meta) = read_sidecar(&charter_root.join(&sc_relative)) else {
             continue; // corrupt sidecars are already a loader finding
         };
-        for (key, act) in &meta.acts {
-            let Some(created) = act.created else { continue };
+        for (key, action) in &meta.actions {
+            let Some(created) = action.created else { continue };
             if created > now || created < floor {
                 findings.push(Finding::warning(
                     "implausible-created",
@@ -341,7 +341,7 @@ fn check_dangling_vevent_links(charters: &[MarkdownCharter], findings: &mut Vec<
         .filter_map(|p| p.plan.external_id.as_deref())
         .collect();
     for charter in charters {
-        let Some(file) = &charter.acts_file else { continue };
+        let Some(file) = &charter.actions_file else { continue };
         for sa in &charter.actions {
             if let Some(uid) = sa.action.external_schedule_id.as_deref()
                 && !known_uids.contains(uid)
@@ -363,7 +363,7 @@ fn check_dangling_vevent_links(charters: &[MarkdownCharter], findings: &mut Vec<
 /// an implicit charter for it rather than telling anyone (load.rs).
 fn check_charterless_plans(charters: &[MarkdownCharter], findings: &mut Vec<Finding>) {
     for charter in charters {
-        if !charter.plans.is_empty() && charter.acts_file.is_none() && charter.md_file.is_none() {
+        if !charter.plans.is_empty() && charter.actions_file.is_none() && charter.md_file.is_none() {
             let dir = charter.plans_dir.clone().unwrap_or_else(|| PathBuf::from(&charter.title));
             findings.push(Finding::warning(
                 "charterless-plans",
@@ -409,7 +409,7 @@ fn all_actions<'a>(
     charters: &'a [MarkdownCharter],
     completed: &'a HashMap<PathBuf, Vec<Action>>,
 ) -> impl Iterator<Item = (&'a PathBuf, &'a Action)> {
-    let open = charters.iter().filter_map(|c| c.acts_file.as_ref().map(|f| (f, c))).flat_map(
+    let open = charters.iter().filter_map(|c| c.actions_file.as_ref().map(|f| (f, c))).flat_map(
         |(file, charter)| charter.actions.iter().map(move |sa| (file, &sa.action)),
     );
     let closed = completed
@@ -420,7 +420,7 @@ fn all_actions<'a>(
 
 fn charter_file(charter: &MarkdownCharter) -> PathBuf {
     charter
-        .acts_file
+        .actions_file
         .clone()
         .or_else(|| charter.md_file.clone())
         .unwrap_or_else(|| PathBuf::from(&charter.title))

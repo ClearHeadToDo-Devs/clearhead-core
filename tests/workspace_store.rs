@@ -778,14 +778,14 @@ fn sidecar_hydrates_acts_on_load() {
     ]);
 
     let model = load_domain_model(workspace.path()).unwrap();
-    let act = model
+    let action = model
         .charters
         .iter()
         .flat_map(|c| c.actions.iter())
         .find(|a| a.id == Uuid::parse_str(uuid).unwrap())
-        .expect("act not found in model");
+        .expect("action not found in model");
 
-    assert!(act.created_at.is_some(), "sidecar created date should be hydrated into Action");
+    assert!(action.created_at.is_some(), "sidecar created date should be hydrated into Action");
 }
 
 #[test]
@@ -806,19 +806,19 @@ fn orphaned_sidecar_hydrates_acts_by_uuid() {
     ]);
 
     let model = load_domain_model(workspace.path()).unwrap();
-    let act = model
+    let action = model
         .charters
         .iter()
         .flat_map(|c| c.actions.iter())
         .find(|a| a.id == Uuid::parse_str(uuid).unwrap())
-        .expect("act not found in model");
+        .expect("action not found in model");
 
     assert!(
-        act.created_at.is_some(),
+        action.created_at.is_some(),
         "an orphaned sidecar's created should still hydrate by UUID"
     );
     assert_eq!(
-        act.external_schedule_id.as_deref(),
+        action.external_schedule_id.as_deref(),
         Some("vevent-42"),
         "the irreplaceable source_vevent must survive the sidecar being orphaned"
     );
@@ -893,14 +893,14 @@ fn sidecar_does_not_overwrite_dsl_created() {
     ]);
 
     let model = load_domain_model(workspace.path()).unwrap();
-    let act = model
+    let action = model
         .charters
         .iter()
         .flat_map(|c| c.actions.iter())
         .find(|a| a.id == Uuid::parse_str(uuid).unwrap())
-        .expect("act not found in model");
+        .expect("action not found in model");
 
-    let created = act.created_at.expect("created_at should be set from DSL ^ date");
+    let created = action.created_at.expect("created_at should be set from DSL ^ date");
     assert_eq!(
         created.format("%Y").to_string(),
         "2024",
