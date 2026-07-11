@@ -30,7 +30,7 @@ pub use sidecar::{ActionMeta, CharterMeta, CharterMetadata, PlanMeta, hydrate_ac
 pub use charter::{MarkdownCharter, format_charter, implicit_charter, parse_charter};
 pub use archive_charter::{
     ArchiveCharterError, ArchiveCharterOptions, ArchiveCharterResult,
-    archive_charter, archive_closed_charters, find_charter as find_markdown_charter,
+    archive_charter, archive_terminal_charters, find_charter as find_markdown_charter,
 };
 pub use calendar::ics::{ICSPlan, action_to_vevent, actions_to_icalendar, occurrence_action_id};
 pub use calendar::plans::{

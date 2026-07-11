@@ -327,9 +327,10 @@ impl Recurrence {
 
 /// Lifecycle state of a [`Charter`].
 ///
-/// Charters move through a simple workflow. `Closed` is the precondition
-/// for archival — the charter and all its artifacts are swept into
-/// `archive.ttl` only when this state is set.
+/// Charters move through a simple workflow. `Closed` and `Cancelled` are
+/// both terminal — either is a precondition for archival, and the charter
+/// and all its artifacts are swept into `archive.ttl` once one of them is
+/// set (see [`CharterState::is_terminal`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CharterState {
     /// Newly created, not yet active.
@@ -340,6 +341,15 @@ pub enum CharterState {
     Blocked,
     /// All work is done; ready to be archived.
     Closed,
+    /// Abandoned without completion; ready to be archived.
+    Cancelled,
+}
+
+impl CharterState {
+    /// Whether this state is a precondition for archival (`Closed` or `Cancelled`).
+    pub fn is_terminal(&self) -> bool {
+        matches!(self, CharterState::Closed | CharterState::Cancelled)
+    }
 }
 
 impl std::fmt::Display for CharterState {
@@ -349,6 +359,7 @@ impl std::fmt::Display for CharterState {
             CharterState::Active => write!(f, "Active"),
             CharterState::Blocked => write!(f, "Blocked"),
             CharterState::Closed => write!(f, "Closed"),
+            CharterState::Cancelled => write!(f, "Cancelled"),
         }
     }
 }

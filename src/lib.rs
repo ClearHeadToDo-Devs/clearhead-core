@@ -56,7 +56,7 @@ pub use workspace::{
     apply_sync, plan_sync, read_ics_dates, reconcile,
     workspace_data_root, write_actions,
     ArchiveCharterError, ArchiveCharterOptions, ArchiveCharterResult,
-    archive_charter, archive_closed_charters, find_markdown_charter,
+    archive_charter, archive_terminal_charters, find_markdown_charter,
 };
 pub use workspace::calendar::expand::{ExpandResult, ExpansionConfig};
 

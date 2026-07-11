@@ -2,11 +2,15 @@
 //!
 //! # Process (per spec)
 //!
-//! 1. Verify the charter's `state` is [`CharterState::Closed`].
+//! 1. Verify the charter's `state` is terminal ([`CharterState::Closed`] or
+//!    [`CharterState::Cancelled`]).
 //! 2. Count open actions in the primary `.actions` file.
 //!    - If any are open and `force` is false, refuse and return
 //!      [`ArchiveCharterError::OpenActions`].
-//! 3. Read all actions (primary + completed).
+//! 3. Read all actions (primary + completed), then hydrate them from the
+//!    charter's `.<stem>.json` sidecar (`created_at`, `external_schedule_id`)
+//!    the same way the workspace loader does — otherwise that metadata is
+//!    silently lost the moment the sidecar is deleted in step 7.
 //! 4. Build a [`DomainModel`] from the charter + all its actions. Plans
 //!    (`.ics`) are deliberately excluded: they are a calendar projection the
 //!    server owns, and the actions already carry the scheduling source of
@@ -19,6 +23,8 @@
 //!    - `<charter>.completed.actions`
 //!    - `<charter>.upcoming.actions`
 //!    - `<charter>.md` (if present)
+//!    - `.<charter>.json` sidecar (if present) — its data has already been
+//!      folded into the actions written to `archive.ttl` in step 3.
 //!    - The charter subdirectory itself if it is now empty (directory-form
 //!      charters only; silently skipped when non-empty so sub-charters survive).
 //!
@@ -32,12 +38,14 @@ use std::path::{Path, PathBuf};
 
 use uuid::Uuid;
 
-use crate::domain::{Action, ActionState, Charter, CharterState, DomainModel};
+use crate::domain::{Action, ActionState, Charter, DomainModel};
 use crate::graph::{
     create_store, dump_store_to_turtle, insert::load_domain_model as insert_model_into_store,
     insert::load_turtle,
 };
 use crate::workspace::action_files::{completed_actions_path, read_actions, upcoming_actions_path};
+use crate::workspace::actions::repository::SourcedAction;
+use crate::workspace::sidecar::{hydrate_actions_map, read_sidecar, sidecar_path};
 use crate::workspace::store::{WorkspaceError, resolve_workspace_layout};
 use crate::workspace::store::load_workspace;
 use crate::workspace::MarkdownCharter;
@@ -79,9 +87,11 @@ pub enum ArchiveCharterError {
     #[error("Charter '{0}' not found")]
     NotFound(String),
 
-    /// The charter exists but is not in the `Closed` state.
-    #[error("Charter '{0}' is not Closed (current state: {1}); set state: Closed before archiving")]
-    NotClosed(String, String),
+    /// The charter exists but is not in a terminal state (`Closed` or `Cancelled`).
+    #[error(
+        "Charter '{0}' is not Closed or Cancelled (current state: {1}); set state: Closed or state: Cancelled before archiving"
+    )]
+    NotArchivable(String, String),
 
     /// The charter has open actions and `force` was not set.
     #[error(
@@ -123,24 +133,25 @@ pub fn archive_charter(
     archive_one(root, &mc, opts)
 }
 
-/// Archive every charter whose `state` is [`CharterState::Closed`].
+/// Archive every charter whose `state` is terminal ([`CharterState::Closed`]
+/// or [`CharterState::Cancelled`]).
 ///
 /// Returns one result per charter. The first `ArchiveCharterError::OpenActions`
 /// or workspace error aborts the sweep unless you want to add a
 /// `continue-on-error` flag in the future.
-pub fn archive_closed_charters(
+pub fn archive_terminal_charters(
     root: &Path,
     opts: &ArchiveCharterOptions,
 ) -> Result<Vec<ArchiveCharterResult>, ArchiveCharterError> {
     let charters = load_workspace(root)?;
 
-    let closed: Vec<MarkdownCharter> = charters
+    let terminal: Vec<MarkdownCharter> = charters
         .into_iter()
-        .filter(|c| c.state == Some(CharterState::Closed))
+        .filter(|c| c.state.is_some_and(|s| s.is_terminal()))
         .collect();
 
     let mut results = Vec::new();
-    for mc in &closed {
+    for mc in &terminal {
         let result = archive_one(root, mc, opts)?;
         results.push(result);
     }
@@ -163,12 +174,12 @@ fn archive_one(
         .unwrap_or_else(|| mc.title.clone());
 
     // ── 1. State guard ─────────────────────────────────────────────────────
-    if mc.state != Some(CharterState::Closed) {
+    if !mc.state.is_some_and(|s| s.is_terminal()) {
         let current = mc
             .state
             .map(|s| s.to_string())
             .unwrap_or_else(|| "New".to_string());
-        return Err(ArchiveCharterError::NotClosed(charter_name, current));
+        return Err(ArchiveCharterError::NotArchivable(charter_name, current));
     }
 
     // ── 2. Resolve absolute paths ───────────────────────────────────────────
@@ -191,6 +202,9 @@ fn archive_one(
         .as_ref()
         .map(|rel| layout.charter_root.join(rel));
 
+    // Sidecar (`.<stem>.json`) path, derived the same way the loader derives it.
+    let sidecar_abs: Option<PathBuf> = acts_abs.as_ref().map(|p| sidecar_path(p));
+
     // Optional charter subdirectory (for directory-form charters like health/next.actions)
     let charter_subdir: Option<PathBuf> = acts_abs.as_ref().and_then(|p| {
         let filename = p.file_name()?.to_str()?;
@@ -201,11 +215,17 @@ fn archive_one(
         }
     });
 
-    // ── 3. Read primary actions ─────────────────────────────────────────────
-    let primary_actions: Vec<Action> = match &acts_abs {
+    // ── 3. Read primary actions, hydrated from the sidecar ─────────────────
+    let sidecar_meta = match &sidecar_abs {
+        Some(p) => read_sidecar(p)?,
+        None => Default::default(),
+    };
+
+    let mut primary_actions: Vec<Action> = match &acts_abs {
         Some(p) => read_actions(p)?,
         None => vec![],
     };
+    hydrate_action_vec(&mut primary_actions, &sidecar_meta);
 
     let open_count = primary_actions
         .iter()
@@ -216,11 +236,12 @@ fn archive_one(
         return Err(ArchiveCharterError::OpenActions(charter_name, open_count));
     }
 
-    // ── 4. Read completed actions ───────────────────────────────────────────
-    let completed_actions: Vec<Action> = match &completed_abs {
+    // ── 4. Read completed actions, hydrated from the sidecar ───────────────
+    let mut completed_actions: Vec<Action> = match &completed_abs {
         Some(p) => read_actions(p)?,
         None => vec![],
     };
+    hydrate_action_vec(&mut completed_actions, &sidecar_meta);
 
     let primary_swept = primary_actions.len();
     let completed_swept = completed_actions.len();
@@ -271,6 +292,7 @@ fn archive_one(
     remove_if_exists(&completed_abs)?;
     remove_if_exists(&upcoming_abs)?;
     remove_if_exists(&md_abs)?;
+    remove_if_exists(&sidecar_abs)?;
 
     // `.ics` plans are intentionally left untouched — the server owns them.
 
@@ -339,6 +361,19 @@ fn remove_if_exists(path: &Option<PathBuf>) -> Result<(), ArchiveCharterError> {
         }
     }
     Ok(())
+}
+
+/// Fill in `created_at` / `external_schedule_id` (etc.) from the sidecar,
+/// the same hydration the workspace loader applies on every normal read —
+/// so archived actions carry that metadata into `archive.ttl` instead of
+/// losing it when the sidecar is deleted in step 7.
+fn hydrate_action_vec(actions: &mut Vec<Action>, metadata: &crate::workspace::sidecar::CharterMetadata) {
+    let mut sourced: Vec<SourcedAction> = actions
+        .drain(..)
+        .map(|action| SourcedAction { action, source_metadata: None })
+        .collect();
+    hydrate_actions_map(&mut sourced, &metadata.actions);
+    *actions = sourced.into_iter().map(|sa| sa.action).collect();
 }
 
 // ============================================================================
@@ -415,6 +450,126 @@ mod tests {
         // …but the server-owned `.ics` is left exactly where it was.
         assert!(ics_path.exists(), "`.ics` must survive archival");
         assert!(plans_dir.exists(), "plans directory must survive archival");
+    }
+
+    #[test]
+    fn archive_hydrates_sidecar_and_removes_it() {
+        // The sidecar carries data (VEVENT linkage) that has no DSL form at
+        // all — it only ever lives in the sidecar. Archiving must fold it
+        // into archive.ttl before the sidecar itself is deleted, or the
+        // data is lost with no record it ever existed.
+        use crate::workspace::sidecar::{ActionMeta, CharterMetadata, sidecar_path, write_sidecar};
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path().join("ws");
+        let charters_dir = root.join(".clearhead/charters");
+        std::fs::create_dir_all(&charters_dir).expect("create charters dir");
+
+        std::fs::write(
+            charters_dir.join("done.md"),
+            "---\nalias: done\nstate: Closed\n---\n# Done\n",
+        )
+        .expect("write charter md");
+        let acts_path = charters_dir.join("done.actions");
+        let action_id: Uuid = "01942d99-4c27-77f6-9316-107024843939".parse().unwrap();
+        std::fs::write(&acts_path, format!("[x] Test action #{action_id}\n"))
+            .expect("write actions");
+
+        let sc_path = sidecar_path(&acts_path);
+        let mut meta = CharterMetadata::default();
+        meta.actions.insert(
+            action_id.to_string(),
+            ActionMeta {
+                source_vevent: Some("weekly-review@example.com".to_string()),
+                ..Default::default()
+            },
+        );
+        write_sidecar(&sc_path, &meta).expect("write sidecar");
+        assert!(sc_path.exists(), "sidecar written before archiving");
+
+        archive_charter(&root, "done", &ArchiveCharterOptions::default())
+            .expect("archive should succeed");
+
+        // The VEVENT linkage survived into archive.ttl…
+        let ttl = std::fs::read_to_string(root.join(".clearhead/archive.ttl"))
+            .expect("archive.ttl written");
+        assert!(
+            ttl.contains("weekly-review@example.com"),
+            "sidecar-only data must be folded into archive.ttl before the sidecar is deleted:\n{ttl}"
+        );
+
+        // …and the sidecar itself, now redundant, is swept away like the other artifacts.
+        assert!(!sc_path.exists(), "sidecar must be removed once archived");
+    }
+
+    #[test]
+    fn archive_accepts_cancelled_charter() {
+        // Cancelled is a terminal state exactly like Closed: it's a
+        // precondition for archival, not just a display label.
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path().join("ws");
+        let charters_dir = root.join(".clearhead/charters");
+        std::fs::create_dir_all(&charters_dir).expect("create charters dir");
+
+        std::fs::write(
+            charters_dir.join("abandoned.md"),
+            "---\nalias: abandoned\nstate: Cancelled\n---\n# Abandoned\n",
+        )
+        .expect("write charter md");
+        std::fs::write(charters_dir.join("abandoned.actions"), "").expect("write actions");
+
+        let result = archive_charter(&root, "abandoned", &ArchiveCharterOptions::default())
+            .expect("cancelled charters must be archivable");
+        assert_eq!(result.charter_name, "abandoned");
+        assert!(!charters_dir.join("abandoned.md").exists());
+    }
+
+    #[test]
+    fn archive_rejects_active_charter_with_updated_message() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path().join("ws");
+        let charters_dir = root.join(".clearhead/charters");
+        std::fs::create_dir_all(&charters_dir).expect("create charters dir");
+
+        std::fs::write(
+            charters_dir.join("live.md"),
+            "---\nalias: live\nstate: Active\n---\n# Live\n",
+        )
+        .expect("write charter md");
+        std::fs::write(charters_dir.join("live.actions"), "").expect("write actions");
+
+        let err = archive_charter(&root, "live", &ArchiveCharterOptions::default())
+            .expect_err("Active charters are not archivable");
+        assert!(matches!(err, ArchiveCharterError::NotArchivable(_, _)));
+        assert!(err.to_string().contains("Closed or Cancelled"));
+    }
+
+    #[test]
+    fn archive_terminal_charters_sweeps_closed_and_cancelled_only() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path().join("ws");
+        let charters_dir = root.join(".clearhead/charters");
+        std::fs::create_dir_all(&charters_dir).expect("create charters dir");
+
+        for (alias, state) in [("done", "Closed"), ("abandoned", "Cancelled"), ("live", "Active")] {
+            std::fs::write(
+                charters_dir.join(format!("{alias}.md")),
+                format!("---\nalias: {alias}\nstate: {state}\n---\n# {alias}\n"),
+            )
+            .expect("write charter md");
+            std::fs::write(charters_dir.join(format!("{alias}.actions")), "")
+                .expect("write actions");
+        }
+
+        let results = archive_terminal_charters(&root, &ArchiveCharterOptions::default())
+            .expect("sweep should succeed");
+        let archived: std::collections::HashSet<_> =
+            results.iter().map(|r| r.charter_name.clone()).collect();
+
+        assert_eq!(archived.len(), 2, "only the two terminal charters archive: {archived:?}");
+        assert!(archived.contains("done"));
+        assert!(archived.contains("abandoned"));
+        assert!(charters_dir.join("live.md").exists(), "Active charter is left alone");
     }
 
     #[test]

@@ -249,6 +249,7 @@ fn insert_charter(
             CharterState::Active => "Active",
             CharterState::Blocked => "Blocked",
             CharterState::Closed => "Closed",
+            CharterState::Cancelled => "Cancelled",
         };
         add(
             actions_pred("hasCharterState"),
