@@ -10,9 +10,21 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use super::store::WorkspaceError;
 
+/// The published contract for this file's shape. Stamped into every sidecar
+/// on save (see [`write_sidecar`]) so the file is self-describing and editors
+/// validate on write — the same declarative-filesystem theme as recording
+/// `charter.id`. Points at `master`; retargeting to a tagged release is
+/// tracked separately (see the schema-source-of-truth decision).
+pub const CHARTER_METADATA_SCHEMA_URL: &str = "https://raw.githubusercontent.com/ClearHeadToDo-Devs/specifications/master/schemas/charter_metadata.schema.json";
+
 /// Root of the per-charter sidecar JSON (`.<charter>.json`).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct CharterMetadata {
+    /// Schema contract pointer. Always overwritten with [`CHARTER_METADATA_SCHEMA_URL`]
+    /// by `write_sidecar` regardless of what a file previously carried, the same
+    /// self-healing treatment the `acts` → `actions` key rename got.
+    #[serde(rename = "$schema", default, skip_serializing_if = "Option::is_none")]
+    pub schema: Option<String>,
     /// Charter-level metadata (creation timestamp).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub charter: Option<CharterMeta>,
@@ -253,9 +265,14 @@ fn created_from_uuid(id: uuid::Uuid) -> Option<DateTime<Local>> {
 }
 
 /// Write sidecar metadata to disk, atomically.
+///
+/// Always stamps `$schema` to [`CHARTER_METADATA_SCHEMA_URL`] before writing,
+/// overwriting whatever value (or absence) the in-memory metadata carried in.
 pub fn write_sidecar(path: &Path, metadata: &CharterMetadata) -> Result<(), WorkspaceError> {
+    let mut metadata = metadata.clone();
+    metadata.schema = Some(CHARTER_METADATA_SCHEMA_URL.to_string());
     let content =
-        serde_json::to_string_pretty(metadata).map_err(|e| WorkspaceError::Parse(e.to_string()))?;
+        serde_json::to_string_pretty(&metadata).map_err(|e| WorkspaceError::Parse(e.to_string()))?;
     super::durability::atomic_write(path, content.as_bytes())?;
     Ok(())
 }
@@ -539,6 +556,35 @@ mod tests {
     fn read_sidecar_missing_file_returns_default() {
         let result = read_sidecar(Path::new("/nonexistent/.inbox.json")).unwrap();
         assert!(result.actions.is_empty());
+    }
+
+    #[test]
+    fn write_sidecar_stamps_schema_pointer() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(".test.json");
+
+        write_sidecar(&path, &CharterMetadata::default()).unwrap();
+
+        let raw = std::fs::read_to_string(&path).unwrap();
+        assert!(raw.contains(&format!("\"$schema\": \"{}\"", CHARTER_METADATA_SCHEMA_URL)));
+
+        let loaded = read_sidecar(&path).unwrap();
+        assert_eq!(loaded.schema.as_deref(), Some(CHARTER_METADATA_SCHEMA_URL));
+    }
+
+    #[test]
+    fn write_sidecar_overwrites_a_stale_schema_pointer() {
+        // A sidecar carrying an old/foreign $schema value gets corrected on save,
+        // the same self-healing treatment the acts -> actions rename got.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(".test.json");
+        std::fs::write(&path, r#"{"$schema": "https://example.com/stale.json"}"#).unwrap();
+
+        let meta = read_sidecar(&path).unwrap();
+        write_sidecar(&path, &meta).unwrap();
+
+        let reloaded = read_sidecar(&path).unwrap();
+        assert_eq!(reloaded.schema.as_deref(), Some(CHARTER_METADATA_SCHEMA_URL));
     }
 
     #[test]
