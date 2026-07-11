@@ -67,7 +67,7 @@ pub use domain::diff::{
     PlanFieldChange, diff_domain_models,
 };
 #[doc(inline)]
-pub use domain::{ActionState, PredecessorRef, Charter, CharterState, DomainModel, Metric, Objective, Plan, Recurrence, WorkspaceCharter};
+pub use domain::{ActionState, PredecessorRef, Charter, CharterState, DomainModel, Metric, Objective, Plan, Recurrence, WorkspaceCharter, close_subtree, collect_subtree_ids};
 pub use workspace::{Reconcile, SyncEntry, SyncReport, SyncTally};
 #[doc(inline)]
 pub use domain::filter::{ActionFilter, apply_filter};

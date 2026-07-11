@@ -707,6 +707,51 @@ impl Action {
     }
 }
 
+/// Collect the IDs of `root_id` and all its recursive descendants in `actions`.
+pub fn collect_subtree_ids(actions: &[Action], root_id: Uuid) -> Vec<Uuid> {
+    let mut ids = vec![root_id];
+    let mut i = 0;
+    while i < ids.len() {
+        let parent = ids[i];
+        for a in actions {
+            if a.parent_id == Some(parent) && !ids.contains(&a.id) {
+                ids.push(a.id);
+            }
+        }
+        i += 1;
+    }
+    ids
+}
+
+/// Close `root_id` and its full subtree in `actions`: stamp `closing_state` and
+/// `completed_at`, and detach each from its parent. Returns the closed subtree
+/// (root first, then descendants in discovery order) for the caller to append
+/// to the `.completed.actions` file — `actions` itself is untouched; removing
+/// the closed ids from the open list is the caller's job.
+///
+/// `completed_at` is stamped for `closing_state == Cancelled` too: there is no
+/// separate `cancelled_at` field yet (tracked by the action-lifecycle charter,
+/// which this was originally sequenced after). Revisit when that lands.
+pub fn close_subtree(
+    actions: &[Action],
+    root_id: Uuid,
+    closing_state: ActionState,
+    now: DateTime<Local>,
+) -> Vec<Action> {
+    let subtree_ids = collect_subtree_ids(actions, root_id);
+    actions
+        .iter()
+        .filter(|a| subtree_ids.contains(&a.id))
+        .map(|a| {
+            let mut closed = a.clone();
+            closed.state = closing_state;
+            closed.completed_at = Some(now);
+            closed.parent_id = None;
+            closed
+        })
+        .collect()
+}
+
 /// Hierarchical domain model: Objectives → Charters → Plans → Actions.
 ///
 /// Each charter contains its plans, and each plan contains its actions.
@@ -858,5 +903,74 @@ mod tests {
         assert_eq!(occurrences[0].format("%Y-%m-%d").to_string(), "2025-01-01");
         assert_eq!(occurrences[1].format("%Y-%m-%d").to_string(), "2025-01-02");
         assert_eq!(occurrences[2].format("%Y-%m-%d").to_string(), "2025-01-03");
+    }
+
+    fn action_with(name: &str, parent_id: Option<Uuid>) -> Action {
+        Action { parent_id, ..Action::new(name) }
+    }
+
+    #[test]
+    fn collect_subtree_ids_includes_root_and_descendants() {
+        let root = action_with("root", None);
+        let child = action_with("child", Some(root.id));
+        let grandchild = action_with("grandchild", Some(child.id));
+        let unrelated = action_with("unrelated", None);
+        let actions = vec![root.clone(), child.clone(), grandchild.clone(), unrelated];
+
+        let ids = collect_subtree_ids(&actions, root.id);
+
+        assert_eq!(ids.len(), 3);
+        assert!(ids.contains(&root.id));
+        assert!(ids.contains(&child.id));
+        assert!(ids.contains(&grandchild.id));
+    }
+
+    #[test]
+    fn collect_subtree_ids_leaf_is_just_itself() {
+        let leaf = action_with("leaf", None);
+        let actions = vec![leaf.clone()];
+        assert_eq!(collect_subtree_ids(&actions, leaf.id), vec![leaf.id]);
+    }
+
+    #[test]
+    fn close_subtree_stamps_state_and_detaches_parent() {
+        let root = action_with("root", None);
+        let child = action_with("child", Some(root.id));
+        let unrelated = action_with("unrelated", None);
+        let actions = vec![root.clone(), child.clone(), unrelated.clone()];
+        let now = Local::now();
+
+        let closed = close_subtree(&actions, root.id, ActionState::Completed, now);
+
+        assert_eq!(closed.len(), 2);
+        assert!(closed.iter().all(|a| a.state == ActionState::Completed));
+        assert!(closed.iter().all(|a| a.completed_at == Some(now)));
+        assert!(closed.iter().all(|a| a.parent_id.is_none()));
+        assert!(closed.iter().any(|a| a.id == root.id));
+        assert!(closed.iter().any(|a| a.id == child.id));
+        assert!(!closed.iter().any(|a| a.id == unrelated.id));
+    }
+
+    #[test]
+    fn close_subtree_stamps_completed_at_for_cancelled_too() {
+        // No separate cancelled_at field yet (action-lifecycle charter, not landed) —
+        // Cancelled reuses completed_at, matching the CLI's prior inline behavior.
+        let root = action_with("root", None);
+        let actions = vec![root.clone()];
+        let now = Local::now();
+
+        let closed = close_subtree(&actions, root.id, ActionState::Cancelled, now);
+
+        assert_eq!(closed[0].state, ActionState::Cancelled);
+        assert_eq!(closed[0].completed_at, Some(now));
+    }
+
+    #[test]
+    fn close_subtree_leaves_source_actions_untouched() {
+        let root = action_with("root", None);
+        let actions = vec![root.clone()];
+        let _ = close_subtree(&actions, root.id, ActionState::Completed, Local::now());
+        assert_eq!(actions[0].state, ActionState::NotStarted);
+        assert_eq!(actions[0].parent_id, None);
     }
 }
