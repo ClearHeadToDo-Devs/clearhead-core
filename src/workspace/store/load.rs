@@ -9,7 +9,7 @@ use crate::workspace::actions::repository::SourcedAction;
 use crate::workspace::charter::{MarkdownCharter, frontmatter_has_parent_key, implicit_charter, parse_charter};
 use crate::workspace::calendar::ics::parse_ics_file;
 use crate::workspace::calendar::plans::collect_plan_files_in;
-use crate::workspace::sidecar::{hydrate_acts, read_sidecar, sidecar_path};
+use crate::workspace::sidecar::{collect_sidecar_acts, hydrate_acts_map, read_sidecar, sidecar_path};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -158,6 +158,12 @@ pub fn read_workspace_with_plans(
     let mut charters: HashMap<String, MarkdownCharter> = HashMap::new();
     let mut path_for_name: HashMap<String, PathBuf> = HashMap::new();
 
+    // One union of every sidecar's per-action metadata, keyed by UUID. Actions
+    // hydrate from this rather than from a single path-derived sidecar, so a
+    // sidecar orphaned by a moved or renamed `.actions` file still finds its
+    // actions wherever their lines now live.
+    let global_acts = collect_sidecar_acts(&layout.charter_root);
+
     for file_path in discover_action_files(&layout.charter_root)? {
         let relative = file_path
             .strip_prefix(&layout.charter_root)
@@ -228,19 +234,18 @@ pub fn read_workspace_with_plans(
         mc.acts_file = Some(relative.clone());
         mc.actions = sourced.clone();
 
+        // The sidecar at the conventional path is still checked for corruption,
+        // but hydration draws from the workspace-wide union so a sidecar orphaned
+        // by a moved or renamed `.actions` file still reaches its actions by UUID.
         let sc_path = layout.charter_root.join(sidecar_path(&relative));
-        let sidecar = match read_sidecar(&sc_path) {
-            Ok(sidecar) => sidecar,
-            Err(e) => {
-                findings.push(Finding::violation(
-                    "sidecar-corrupt",
-                    sidecar_path(&relative),
-                    format!("could not read sidecar: {e}; actions loaded without sidecar metadata"),
-                ));
-                Default::default()
-            }
-        };
-        hydrate_acts(&mut sourced, &sidecar);
+        if let Err(e) = read_sidecar(&sc_path) {
+            findings.push(Finding::violation(
+                "sidecar-corrupt",
+                sidecar_path(&relative),
+                format!("could not read sidecar at expected path: {e}"),
+            ));
+        }
+        hydrate_acts_map(&mut sourced, &global_acts);
         mc.actions = sourced;
 
         charters

@@ -6,7 +6,7 @@
 
 use chrono::{DateTime, Local};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use super::store::WorkspaceError;
 
@@ -17,11 +17,16 @@ pub struct CharterMetadata {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub charter: Option<CharterMeta>,
     /// Per-action metadata keyed by UUID string.
-    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-    pub acts: HashMap<String, ActMeta>,
-    /// Per-plan metadata keyed by UUID string.
-    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-    pub plans: HashMap<String, PlanMeta>,
+    ///
+    /// A `BTreeMap` so the committed JSON serializes in a stable key order —
+    /// a `HashMap` reshuffles on every save and turns each write into diff
+    /// noise, which defeats the sidecar's job as a plaintext audit surface.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub acts: BTreeMap<String, ActMeta>,
+    /// Per-plan metadata keyed by UUID string. `BTreeMap` for the same
+    /// stable-ordering reason as `acts`.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub plans: BTreeMap<String, PlanMeta>,
 }
 
 /// Charter-level sidecar metadata.
@@ -84,6 +89,64 @@ pub fn read_sidecar(path: &Path) -> Result<CharterMetadata, WorkspaceError> {
     serde_json::from_str(&content).map_err(|e| WorkspaceError::Parse(format!("sidecar: {}", e)))
 }
 
+/// Union every sidecar under `charter_root` into one `uuid -> ActMeta` map.
+///
+/// Sidecars are re-joined to actions by UUID, not by file path, so a sidecar
+/// left behind when its `.actions` file moved or was renamed still hydrates its
+/// actions (see [`hydrate_acts_map`]). Unreadable or corrupt sidecars are
+/// skipped here — the loader reports those against their own path.
+pub fn collect_sidecar_acts(charter_root: &Path) -> BTreeMap<String, ActMeta> {
+    let mut union: BTreeMap<String, ActMeta> = BTreeMap::new();
+    for path in sidecar_files(charter_root) {
+        let Ok(meta) = read_sidecar(&path) else { continue };
+        for (key, act) in meta.acts {
+            merge_act(union.entry(key).or_default(), act);
+        }
+    }
+    union
+}
+
+/// Fold `from` into `to`, keeping the first present value per field. The
+/// irreplaceable sync bases survive regardless of order — only one entry ever
+/// carries them — so an empty re-stamp can never clobber a real historical
+/// record. Callers walk sidecars in sorted path order for a deterministic
+/// `created` on the rare duplicate.
+fn merge_act(to: &mut ActMeta, from: ActMeta) {
+    to.created = to.created.or(from.created);
+    to.source_vevent = to.source_vevent.take().or(from.source_vevent);
+    to.scheduled_at_sync = to.scheduled_at_sync.or(from.scheduled_at_sync);
+    to.due_date_sync = to.due_date_sync.or(from.due_date_sync);
+}
+
+/// Every hidden `.json` file under `dir`, recursively, sorted for determinism.
+/// The pattern matches sidecars (`.<stem>.json`); a stray non-sidecar `.json`
+/// simply deserializes to an empty [`CharterMetadata`] and contributes nothing.
+fn sidecar_files(dir: &Path) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(current) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&current) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let hidden_name = path
+                .file_name()
+                .map(|n| n.to_string_lossy().starts_with('.'))
+                .unwrap_or(false);
+            if path.is_dir() {
+                if !hidden_name {
+                    stack.push(path);
+                }
+            } else if hidden_name && path.extension().and_then(|e| e.to_str()) == Some("json") {
+                out.push(path);
+            }
+        }
+    }
+    out.sort();
+    out
+}
+
 /// Hydrate acts with metadata from the sidecar.
 ///
 /// For each act, if the sidecar has a matching entry (by UUID string key),
@@ -94,13 +157,26 @@ pub fn read_sidecar(path: &Path) -> Result<CharterMetadata, WorkspaceError> {
 /// form at all — the sidecar is their sole source, so they are assigned
 /// directly rather than filled-if-absent.
 pub fn hydrate_acts(acts: &mut [crate::workspace::actions::repository::SourcedAction], metadata: &CharterMetadata) {
+    hydrate_acts_map(acts, &metadata.acts);
+}
+
+/// Hydrate acts from a bare `uuid -> ActMeta` map.
+///
+/// The loader passes a *union* of every sidecar in the workspace here, not just
+/// the charter's own file. Metadata is keyed by action UUID, so an entry reaches
+/// its action wherever the line now lives — even if the sidecar was orphaned by
+/// a moved or renamed `.actions` file. Location is storage, not identity.
+pub fn hydrate_acts_map(
+    acts: &mut [crate::workspace::actions::repository::SourcedAction],
+    acts_meta: &BTreeMap<String, ActMeta>,
+) {
     for sa in acts.iter_mut() {
         let act = &mut sa.action;
         let key = act
             .plan_id
             .map(|id| id.to_string())
             .unwrap_or_else(|| act.id.to_string());
-        if let Some(meta) = metadata.acts.get(&key) {
+        if let Some(meta) = acts_meta.get(&key) {
             if act.created_at.is_none() {
                 act.created_at = meta.created;
             }
@@ -134,7 +210,15 @@ pub fn stamp_sidecar_entries(
 }
 
 /// Extract the creation timestamp embedded in a UUIDv7.
+///
+/// Only v7 carries a timestamp in its high bits. For any other version — a
+/// hand- or agent-authored v4 `#id`, say — those bits are random and would
+/// decode to a nonsense far-future date, so we return `None` and let the
+/// caller fall back to the wall clock ("the date we first saw it").
 fn created_from_uuid(id: uuid::Uuid) -> Option<DateTime<Local>> {
+    if id.get_version_num() != 7 {
+        return None;
+    }
     let timestamp_ms = (id.as_u128() >> 80) as i64;
     DateTime::from_timestamp(timestamp_ms / 1000, ((timestamp_ms % 1000) * 1_000_000) as u32)
         .map(|dt| dt.into())
@@ -354,6 +438,43 @@ mod tests {
         assert!(acts[0].action.created_at.is_none());
     }
 
+    // ===== created_from_uuid version guard =====
+
+    #[test]
+    fn created_from_uuid_reads_v7_timestamp() {
+        use uuid::Uuid;
+        // A v7 id minted now decodes to ~now (within a second).
+        let id = Uuid::now_v7();
+        let created = created_from_uuid(id).expect("v7 carries a timestamp");
+        assert!((Local::now() - created).num_seconds().abs() < 5);
+    }
+
+    #[test]
+    fn created_from_uuid_rejects_v4() {
+        use uuid::Uuid;
+        // v4 high bits are random — decoding them would manufacture a nonsense
+        // (often far-future) date, so the guard must return None instead.
+        for _ in 0..1000 {
+            assert!(created_from_uuid(Uuid::new_v4()).is_none());
+        }
+    }
+
+    #[test]
+    fn stamp_uses_now_for_non_v7_ids() {
+        use crate::domain::Action;
+        use uuid::Uuid;
+
+        let dir = tempfile::tempdir().unwrap();
+        let acts_path = dir.path().join("next.actions");
+        let v4 = Uuid::new_v4();
+        stamp_sidecar_entries(&acts_path, &[Action { id: v4, ..Default::default() }]).unwrap();
+
+        let meta = read_sidecar(&sidecar_path(&acts_path)).unwrap();
+        let created = meta.acts[&v4.to_string()].created.expect("stamped");
+        // "The date we saw it", not a decoded far-future date.
+        assert!((Local::now() - created).num_seconds().abs() < 5);
+    }
+
     // ===== Filesystem read/write =====
 
     #[test]
@@ -380,5 +501,59 @@ mod tests {
         let loaded = read_sidecar(&path).unwrap();
         assert_eq!(loaded.acts.len(), 1);
         assert!(loaded.acts.contains_key("test-uuid"));
+    }
+
+    // ===== Union across sidecars (location-independent hydration) =====
+
+    #[test]
+    fn collect_sidecar_acts_unions_across_files_and_dirs() {
+        let dir = tempfile::tempdir().unwrap();
+        let sub = dir.path().join("feature");
+        std::fs::create_dir_all(&sub).unwrap();
+        std::fs::write(
+            dir.path().join(".root.json"),
+            r#"{"acts": {"aaa": {"created": "2024-01-01T00:00:00+00:00"}}}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            sub.join(".nested.json"),
+            r#"{"acts": {"bbb": {"created": "2024-02-02T00:00:00+00:00"}}}"#,
+        )
+        .unwrap();
+        // A non-sidecar json and a non-json hidden file contribute nothing.
+        std::fs::write(dir.path().join(".config.json"), r#"{"unrelated": true}"#).unwrap();
+        std::fs::write(dir.path().join(".keep"), "ignore me").unwrap();
+
+        let union = collect_sidecar_acts(dir.path());
+        assert!(union.contains_key("aaa"));
+        assert!(union.contains_key("bbb"));
+        assert_eq!(union.len(), 2);
+    }
+
+    #[test]
+    fn merge_act_never_clobbers_an_irreplaceable_sync_base() {
+        // Same uuid in two sidecars: one is the real record (a source_vevent that
+        // cannot be recomputed), the other an empty re-stamp (created only). The
+        // union must keep the sync base regardless of which file is seen first.
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join(".aaa.json"),
+            r#"{"acts": {"dup": {"created": "2024-01-01T00:00:00+00:00", "source_vevent": "vevent-7"}}}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join(".zzz.json"),
+            r#"{"acts": {"dup": {"created": "2025-05-05T00:00:00+00:00"}}}"#,
+        )
+        .unwrap();
+
+        let union = collect_sidecar_acts(dir.path());
+        let entry = &union["dup"];
+        assert_eq!(
+            entry.source_vevent.as_deref(),
+            Some("vevent-7"),
+            "the source_vevent must survive an empty re-stamp under the same uuid",
+        );
+        assert!(entry.created.is_some());
     }
 }

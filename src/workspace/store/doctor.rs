@@ -65,6 +65,7 @@ pub fn diagnose_read(root: &Path, read: &super::load::WorkspaceRead) -> Diagnosi
     check_dangling_predecessors(charters, &completed, &mut findings);
     check_charter_alias_collisions(charters, &mut findings);
     check_sidecar_coherence(&layout.charter_root, charters, &completed, &mut findings);
+    check_sidecar_created_sanity(&layout.charter_root, charters, &mut findings);
     check_orphaned_sidecars(&layout.charter_root, &mut findings);
     check_dangling_vevent_links(charters, &mut findings);
     check_charterless_plans(charters, &mut findings);
@@ -255,6 +256,54 @@ fn check_sidecar_coherence(
                         "entry '{}' matches no action in {} or its completed archive",
                         key,
                         acts_file.display()
+                    ),
+                ));
+            }
+        }
+    }
+}
+
+/// The earliest plausible `created` timestamp. ClearHead's files-as-truth
+/// storage did not exist before this, so anything earlier is a corrupt
+/// derivation (a non-v7 id whose random bits decoded as a timestamp), not
+/// real history.
+const EARLIEST_PLAUSIBLE_CREATED: &str = "2020-01-01T00:00:00Z";
+
+/// Sidecar `created` timestamps outside a sane window — after now, or before
+/// ClearHead could have created anything.
+///
+/// The classic failure is a non-v7 id decoded as if its high bits were a v7
+/// timestamp: 12 such entries in the 5081–10143 range were found on
+/// 2026-07-10, live in the RDF graph where recency queries surfaced them
+/// first. The schema types `created` as a string and lint's W005 future check
+/// runs pre-hydration on the DSL, so neither observes the sidecar value —
+/// this is the only place the invariant actually runs.
+fn check_sidecar_created_sanity(
+    charter_root: &Path,
+    charters: &[MarkdownCharter],
+    findings: &mut Vec<Finding>,
+) {
+    let now = chrono::Local::now();
+    let floor = chrono::DateTime::parse_from_rfc3339(EARLIEST_PLAUSIBLE_CREATED)
+        .expect("EARLIEST_PLAUSIBLE_CREATED is a valid RFC3339 constant")
+        .with_timezone(&chrono::Local);
+    for charter in charters {
+        let Some(acts_file) = &charter.acts_file else { continue };
+        let sc_relative = sidecar_path(acts_file);
+        let Ok(meta) = read_sidecar(&charter_root.join(&sc_relative)) else {
+            continue; // corrupt sidecars are already a loader finding
+        };
+        for (key, act) in &meta.acts {
+            let Some(created) = act.created else { continue };
+            if created > now || created < floor {
+                findings.push(Finding::warning(
+                    "implausible-created",
+                    &sc_relative,
+                    format!(
+                        "entry '{}' has created '{}', outside the plausible window (after now, or before {})",
+                        key,
+                        created.to_rfc3339(),
+                        EARLIEST_PLAUSIBLE_CREATED,
                     ),
                 ));
             }

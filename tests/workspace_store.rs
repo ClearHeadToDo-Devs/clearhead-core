@@ -789,6 +789,42 @@ fn sidecar_hydrates_acts_on_load() {
 }
 
 #[test]
+fn orphaned_sidecar_hydrates_acts_by_uuid() {
+    use uuid::Uuid;
+
+    // The action lives in work.actions, but its sidecar sits at a path matching
+    // no .actions file — as if work.actions had been renamed and the sidecar left
+    // behind. Hydration must still reach it by UUID, including the irreplaceable
+    // source_vevent (a merge base that cannot be recomputed).
+    let uuid = "01951111-0000-7000-0000-000000000030";
+    let sidecar_json = format!(
+        r#"{{"acts": {{"{uuid}": {{"created": "2024-01-15T08:00:00+00:00", "source_vevent": "vevent-42"}}}}}}"#
+    );
+    let workspace = make_workspace(&[
+        ("work.actions", &format!("[ ] Task one #{uuid}\n")),
+        (".stale-name.json", &sidecar_json),
+    ]);
+
+    let model = load_domain_model(workspace.path()).unwrap();
+    let act = model
+        .charters
+        .iter()
+        .flat_map(|c| c.actions.iter())
+        .find(|a| a.id == Uuid::parse_str(uuid).unwrap())
+        .expect("act not found in model");
+
+    assert!(
+        act.created_at.is_some(),
+        "an orphaned sidecar's created should still hydrate by UUID"
+    );
+    assert_eq!(
+        act.external_schedule_id.as_deref(),
+        Some("vevent-42"),
+        "the irreplaceable source_vevent must survive the sidecar being orphaned"
+    );
+}
+
+#[test]
 fn sidecar_does_not_overwrite_dsl_created() {
     use uuid::Uuid;
 
@@ -1029,6 +1065,34 @@ fn doctor_flags_orphaned_sidecar_entry() {
         .collect();
     assert_eq!(orphans.len(), 1, "findings: {:?}", diagnosis.findings);
     assert!(orphans[0].message.contains(gone));
+}
+
+#[test]
+fn doctor_flags_implausible_created_timestamp() {
+    use clearhead_core::workspace::diagnose;
+
+    let sane = "01951111-0000-7000-0000-000000000030";
+    // A v4 id whose bits were decoded as a v7 timestamp: a year-8723 date.
+    let corrupt = "01951111-0000-7000-0000-000000000031";
+    let sidecar = format!(
+        r#"{{"acts": {{"{sane}": {{"created": "2026-01-01T00:00:00+00:00"}}, "{corrupt}": {{"created": "8723-01-03T06:19:31+00:00"}}}}}}"#
+    );
+    let workspace = make_workspace(&[
+        (
+            "work.actions",
+            &format!("[ ] Sane #{sane}\n[ ] Corrupt #{corrupt}\n"),
+        ),
+        (".work.json", &sidecar),
+    ]);
+
+    let diagnosis = diagnose(workspace.path(), None).expect("diagnose failed");
+    let bad: Vec<_> = diagnosis
+        .findings
+        .iter()
+        .filter(|f| f.code == "implausible-created")
+        .collect();
+    assert_eq!(bad.len(), 1, "findings: {:?}", diagnosis.findings);
+    assert!(bad[0].message.contains(corrupt));
 }
 
 #[test]
