@@ -245,6 +245,21 @@ pub(crate) fn frontmatter_has_parent_key(content: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// Return true if the markdown frontmatter contains an explicit `id:` key.
+///
+/// Lets the loader tell a *declared* charter identity from a `v5(title)` seed:
+/// only a declared id is authoritative, so a charter without this key may have
+/// its id superseded by a recorded sidecar `charter.id`.
+pub(crate) fn frontmatter_has_id_key(content: &str) -> bool {
+    let (frontmatter, _) = split_frontmatter(content);
+    frontmatter
+        .and_then(|yaml| {
+            serde_yaml_ng::from_str::<std::collections::HashMap<String, serde_yaml_ng::Value>>(yaml).ok()
+        })
+        .map(|map| map.contains_key("id"))
+        .unwrap_or(false)
+}
+
 /// Extract the first H1 title and remaining description from markdown body.
 fn extract_title_and_description(body: &str) -> (Option<String>, Option<String>) {
     let mut title = None;

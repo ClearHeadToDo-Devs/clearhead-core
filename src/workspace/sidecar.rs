@@ -32,6 +32,13 @@ pub struct CharterMetadata {
 /// Charter-level sidecar metadata.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct CharterMeta {
+    /// The charter's identity, recorded so the sidecar can re-join its charter
+    /// by id rather than by file path — self-identifying, and move-safe even for
+    /// a charter with no actions to match on. A *reference*: the charter's own
+    /// declaration (frontmatter `id`, or the file itself for an action-only
+    /// charter) stays authoritative and doctor verifies agreement.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<uuid::Uuid>,
     /// When this charter was first created by tooling.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub created: Option<DateTime<Local>>,
@@ -209,6 +216,23 @@ pub fn stamp_sidecar_entries(
     write_sidecar(&sc_path, &meta)
 }
 
+/// Record the charter's identity in its sidecar (`charter.id`).
+///
+/// This makes the sidecar self-identifying, so the loader resolves a charter's
+/// identity from the data rather than re-deriving it from the filename. Idempotent
+/// and freeze-preserving: it sets the id only when none is recorded, never
+/// overwriting a value already frozen by an earlier stamp.
+pub fn stamp_charter_id(actions_path: &Path, charter_id: uuid::Uuid) -> Result<(), WorkspaceError> {
+    let sc_path = sidecar_path(actions_path);
+    let mut meta = read_sidecar(&sc_path)?;
+    let charter = meta.charter.get_or_insert_with(CharterMeta::default);
+    if charter.id.is_none() {
+        charter.id = Some(charter_id);
+        write_sidecar(&sc_path, &meta)?;
+    }
+    Ok(())
+}
+
 /// Extract the creation timestamp embedded in a UUIDv7.
 ///
 /// Only v7 carries a timestamp in its high bits. For any other version — a
@@ -310,8 +334,10 @@ mod tests {
 
     #[test]
     fn metadata_with_charter_and_plan_roundtrips() {
+        let charter_id = uuid::Uuid::new_v4();
         let mut meta = CharterMetadata::default();
         meta.charter = Some(CharterMeta {
+            id: Some(charter_id),
             created: Some(Local::now()),
         });
         meta.plans.insert(
@@ -322,7 +348,7 @@ mod tests {
         );
         let json = serde_json::to_string_pretty(&meta).unwrap();
         let parsed: CharterMetadata = serde_json::from_str(&json).unwrap();
-        assert!(parsed.charter.is_some());
+        assert_eq!(parsed.charter.and_then(|c| c.id), Some(charter_id));
         assert_eq!(parsed.plans.len(), 1);
     }
 

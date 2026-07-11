@@ -6,7 +6,10 @@ use crate::workspace::durability::recover_pending;
 use crate::domain::{Charter, DomainModel};
 use crate::workspace::actions::convert::from_actions_with_charter;
 use crate::workspace::actions::repository::SourcedAction;
-use crate::workspace::charter::{MarkdownCharter, frontmatter_has_parent_key, implicit_charter, parse_charter};
+use crate::workspace::charter::{
+    MarkdownCharter, frontmatter_has_id_key, frontmatter_has_parent_key, implicit_charter,
+    parse_charter,
+};
 use crate::workspace::calendar::ics::parse_ics_file;
 use crate::workspace::calendar::plans::collect_plan_files_in;
 use crate::workspace::sidecar::{collect_sidecar_acts, hydrate_acts_map, read_sidecar, sidecar_path};
@@ -260,6 +263,11 @@ pub fn read_workspace_with_plans(
     let mut explicit_parent_charters: std::collections::HashSet<String> =
         std::collections::HashSet::new();
 
+    // Charters whose `.md` frontmatter declares an explicit `id:` — a real
+    // identity declaration, never to be superseded by a recorded sidecar id.
+    let mut explicit_id_charters: std::collections::HashSet<String> =
+        std::collections::HashSet::new();
+
     for file_path in discover_charter_files(&layout.charter_root)? {
         let relative = file_path
             .strip_prefix(&layout.charter_root)
@@ -289,6 +297,9 @@ pub fn read_workspace_with_plans(
         };
         if frontmatter_has_parent_key(&content) {
             explicit_parent_charters.insert(name.clone());
+        }
+        if frontmatter_has_id_key(&content) {
+            explicit_id_charters.insert(name.clone());
         }
         let explicit = match parse_charter(&content) {
             Ok(charter) => charter,
@@ -328,6 +339,25 @@ pub fn read_workspace_with_plans(
                 mc.md_file = Some(md_relative);
                 mc
             });
+    }
+
+    // Resolve charter identity: an id derived from the name/title (no explicit
+    // frontmatter `id:`) yields to a recorded sidecar `charter.id`, so identity
+    // survives a rename that would otherwise recompute it. Inert until the write
+    // side records ids — an absent id leaves the derived seed untouched.
+    for (name, charter) in charters.iter_mut() {
+        if explicit_id_charters.contains(name) {
+            continue;
+        }
+        let Some(acts_file) = &charter.acts_file else {
+            continue;
+        };
+        let sc_path = layout.charter_root.join(sidecar_path(acts_file));
+        if let Ok(recorded) = read_sidecar(&sc_path).map(|sc| sc.charter.and_then(|c| c.id)) {
+            if let Some(id) = recorded {
+                charter.id = id;
+            }
+        }
     }
 
     // Explicit frontmatter wins: translate filesystem-inferred parent names to their
