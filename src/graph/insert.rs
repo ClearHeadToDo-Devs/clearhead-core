@@ -47,8 +47,55 @@ pub fn load_domain_model(
     for action in model.all_actions() {
         insert_action(store, action, &graph_name)?;
     }
+    for charter in &model.charters {
+        insert_sequential_chain_edges(store, charter, &graph_name)?;
+    }
     if let Some(cfg) = config {
         inject_context_hierarchy(store, cfg, &graph_name)?;
+    }
+    Ok(())
+}
+
+/// Chain the direct children of every `~` (sequential) parent in `charter`:
+/// child N gets an implicit `cco:is_successor_of` edge to child N-1, in
+/// document order, so a bare `~` is enough to make "first in chain" query
+/// logic (`unscheduled.sparql`, `agenda.sparql`) surface only the earliest
+/// open child — authors don't have to write an explicit `<predecessor>` ref
+/// between every sibling by hand.
+fn insert_sequential_chain_edges(
+    store: &Store,
+    charter: &Charter,
+    graph_name: &GraphName,
+) -> Result<()> {
+    let mut children_by_parent: HashMap<Uuid, Vec<&Action>> = HashMap::new();
+    for action in &charter.actions {
+        if let Some(parent_id) = action.parent_id {
+            children_by_parent.entry(parent_id).or_default().push(action);
+        }
+    }
+
+    for parent in &charter.actions {
+        if parent.is_sequential != Some(true) {
+            continue;
+        }
+        let Some(children) = children_by_parent.get(&parent.id) else {
+            continue;
+        };
+        for pair in children.windows(2) {
+            let (prev, next) = (pair[0], pair[1]);
+            let subject = NamedOrBlankNode::NamedNode(
+                NamedNode::new(format!("urn:uuid:{}", next.id)).unwrap(),
+            );
+            let pred_uri = NamedNode::new(format!("urn:uuid:{}", prev.id)).unwrap();
+            store
+                .insert(&Quad::new(
+                    subject,
+                    cco_node(CCO_IS_SUCCESSOR_OF),
+                    Term::NamedNode(pred_uri),
+                    graph_name.clone(),
+                ))
+                .map_err(|e| GraphError::Store(e.to_string()))?;
+        }
     }
     Ok(())
 }
@@ -809,6 +856,67 @@ mod tests {
         let violations = validate_actions_vocabulary(&store).expect("validate graph");
 
         assert!(violations.is_empty(), "violations: {violations:?}");
+    }
+
+    // ============================================================================
+    // Sequential chain edges
+    // ============================================================================
+
+    #[test]
+    fn sequential_parent_chains_children_in_document_order() {
+        let charter_id = Uuid::parse_str("019d7100-5555-7555-8555-555555555555").unwrap();
+        let parent_id = Uuid::parse_str("019d7100-6666-7666-8666-666666666666").unwrap();
+        let child_a = Uuid::parse_str("019d7100-7777-7777-8777-777777777777").unwrap();
+        let child_b = Uuid::parse_str("019d7100-8888-7888-8888-888888888888").unwrap();
+        let child_c = Uuid::parse_str("019d7100-9999-7999-8999-999999999999").unwrap();
+        let stray = Uuid::parse_str("019d7100-aaaa-7aaa-8aaa-aaaaaaaaaaaa").unwrap();
+
+        let model = DomainModel {
+            objectives: vec![],
+            charters: vec![Charter {
+                id: charter_id,
+                title: "Sequential".to_string(),
+                actions: vec![
+                    Action {
+                        id: parent_id,
+                        name: "Deploy".to_string(),
+                        is_sequential: Some(true),
+                        ..Default::default()
+                    },
+                    Action { id: child_a, name: "Backup".to_string(), parent_id: Some(parent_id), ..Default::default() },
+                    Action { id: child_b, name: "Migrate".to_string(), parent_id: Some(parent_id), ..Default::default() },
+                    Action { id: child_c, name: "Ship".to_string(), parent_id: Some(parent_id), ..Default::default() },
+                    // Not under a sequential parent — must not get chained.
+                    Action { id: stray, name: "Freestanding".to_string(), ..Default::default() },
+                ],
+                ..Default::default()
+            }],
+        };
+
+        let store = graph::create_store().expect("store");
+        load_domain_model(&store, &model, None, GraphName::NamedNode(
+            oxigraph::model::NamedNode::new(super::super::TRANSIENT_GRAPH_URI).unwrap()
+        )).expect("load model into graph");
+
+        let (a_uri, b_uri, c_uri) = (
+            format!("urn:uuid:{child_a}"),
+            format!("urn:uuid:{child_b}"),
+            format!("urn:uuid:{child_c}"),
+        );
+        let a = NamedNodeRef::new(&a_uri).unwrap();
+        let b = NamedNodeRef::new(&b_uri).unwrap();
+        let c = NamedNodeRef::new(&c_uri).unwrap();
+
+        // child N is_successor_of child N-1, first child has no implicit predecessor.
+        assert!(!has_predicate(&store, a, cco_node(CCO_IS_SUCCESSOR_OF).as_ref()));
+        assert!(has_term(&store, b, cco_node(CCO_IS_SUCCESSOR_OF).as_ref(), a.into()));
+        assert!(has_term(&store, c, cco_node(CCO_IS_SUCCESSOR_OF).as_ref(), b.into()));
+        // No spurious edge skipping the middle child.
+        assert!(!has_term(&store, c, cco_node(CCO_IS_SUCCESSOR_OF).as_ref(), a.into()));
+
+        let free_uri = format!("urn:uuid:{stray}");
+        let free = NamedNodeRef::new(&free_uri).unwrap();
+        assert!(!has_predicate(&store, free, cco_node(CCO_IS_SUCCESSOR_OF).as_ref()));
     }
 
     // ============================================================================
