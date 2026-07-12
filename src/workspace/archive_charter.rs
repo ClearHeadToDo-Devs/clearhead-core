@@ -34,6 +34,7 @@
 //! resurface on the next load as an implicit charter — an honest reflection
 //! that the calendar still holds those events.
 
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use uuid::Uuid;
@@ -130,29 +131,33 @@ pub fn archive_charter(
         .ok_or_else(|| ArchiveCharterError::NotFound(query.to_string()))?
         .clone();
 
-    archive_one(root, &mc, opts)
+    let subtree = collect_charter_subtree(&charters, &mc);
+    archive_many(root, &subtree, opts)
 }
 
 /// Archive every charter whose `state` is terminal ([`CharterState::Closed`]
 /// or [`CharterState::Cancelled`]).
 ///
-/// Returns one result per charter. The first `ArchiveCharterError::OpenActions`
-/// or workspace error aborts the sweep unless you want to add a
-/// `continue-on-error` flag in the future.
+/// Returns one result per charter subtree. The first
+/// `ArchiveCharterError::OpenActions` or workspace error aborts the sweep
+/// unless you want to add a `continue-on-error` flag in the future.
 pub fn archive_terminal_charters(
     root: &Path,
     opts: &ArchiveCharterOptions,
 ) -> Result<Vec<ArchiveCharterResult>, ArchiveCharterError> {
     let charters = load_workspace(root)?;
 
-    let terminal: Vec<MarkdownCharter> = charters
-        .into_iter()
+    let terminal_roots: Vec<MarkdownCharter> = charters
+        .iter()
         .filter(|c| c.state.is_some_and(|s| s.is_terminal()))
+        .filter(|c| !has_terminal_ancestor(c, &charters))
+        .cloned()
         .collect();
 
     let mut results = Vec::new();
-    for mc in &terminal {
-        let result = archive_one(root, mc, opts)?;
+    for mc in &terminal_roots {
+        let subtree = collect_charter_subtree(&charters, mc);
+        let result = archive_many(root, &subtree, opts)?;
         results.push(result);
     }
     Ok(results)
@@ -162,91 +167,116 @@ pub fn archive_terminal_charters(
 // Core logic
 // ============================================================================
 
-/// Execute (or dry-run) the archive of a single `MarkdownCharter`.
-fn archive_one(
+/// Execute (or dry-run) the archive of one charter subtree.
+fn archive_many(
     root: &Path,
-    mc: &MarkdownCharter,
+    charters: &[MarkdownCharter],
     opts: &ArchiveCharterOptions,
 ) -> Result<ArchiveCharterResult, ArchiveCharterError> {
-    let charter_name = mc
-        .alias
-        .clone()
-        .unwrap_or_else(|| mc.title.clone());
+    let root_charter = charters
+        .first()
+        .expect("archive_many requires at least one charter");
+    let charter_name = charter_display_name(root_charter);
 
-    // ── 1. State guard ─────────────────────────────────────────────────────
-    if !mc.state.is_some_and(|s| s.is_terminal()) {
-        let current = mc
-            .state
-            .map(|s| s.to_string())
-            .unwrap_or_else(|| "New".to_string());
-        return Err(ArchiveCharterError::NotArchivable(charter_name, current));
-    }
-
-    // ── 2. Resolve absolute paths ───────────────────────────────────────────
     let layout = resolve_workspace_layout(root);
     let archive_ttl = layout.data_root.join("archive.ttl");
 
-    // Primary .actions path (absolute)
-    let acts_abs: Option<PathBuf> = mc
-        .actions_file
-        .as_ref()
-        .map(|rel| layout.charter_root.join(rel));
+    let mut primary_swept = 0usize;
+    let mut completed_swept = 0usize;
+    let mut model_charters = Vec::new();
+    let mut files_to_remove: Vec<Option<PathBuf>> = Vec::new();
+    let mut dirs_to_remove: BTreeSet<(usize, PathBuf)> = BTreeSet::new();
 
-    // Completed / upcoming paths derived from the primary path
-    let completed_abs: Option<PathBuf> = acts_abs.as_ref().map(|p| completed_actions_path(p));
-    let upcoming_abs: Option<PathBuf> = acts_abs.as_ref().map(|p| upcoming_actions_path(p));
-
-    // Charter .md path
-    let md_abs: Option<PathBuf> = mc
-        .md_file
-        .as_ref()
-        .map(|rel| layout.charter_root.join(rel));
-
-    // Sidecar (`.<stem>.json`) path, derived the same way the loader derives it.
-    let sidecar_abs: Option<PathBuf> = acts_abs.as_ref().map(|p| sidecar_path(p));
-
-    // Optional charter subdirectory (for directory-form charters like health/next.actions)
-    let charter_subdir: Option<PathBuf> = acts_abs.as_ref().and_then(|p| {
-        let filename = p.file_name()?.to_str()?;
-        if filename == "next.actions" {
-            p.parent().map(PathBuf::from)
-        } else {
-            None
+    for mc in charters {
+        let current_name = charter_display_name(mc);
+        if !mc.state.is_some_and(|s| s.is_terminal()) {
+            let current = mc
+                .state
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| "New".to_string());
+            return Err(ArchiveCharterError::NotArchivable(current_name, current));
         }
-    });
 
-    // ── 3. Read primary actions, hydrated from the sidecar ─────────────────
-    let sidecar_meta = match &sidecar_abs {
-        Some(p) => read_sidecar(p)?,
-        None => Default::default(),
-    };
+        // Primary .actions path (absolute)
+        let acts_abs: Option<PathBuf> = mc
+            .actions_file
+            .as_ref()
+            .map(|rel| layout.charter_root.join(rel));
 
-    let mut primary_actions: Vec<Action> = match &acts_abs {
-        Some(p) => read_actions(p)?,
-        None => vec![],
-    };
-    hydrate_action_vec(&mut primary_actions, &sidecar_meta);
+        // Completed / upcoming paths derived from the primary path
+        let completed_abs: Option<PathBuf> = acts_abs.as_ref().map(|p| completed_actions_path(p));
+        let upcoming_abs: Option<PathBuf> = acts_abs.as_ref().map(|p| upcoming_actions_path(p));
 
-    let open_count = primary_actions
-        .iter()
-        .filter(|a| !matches!(a.state, ActionState::Completed | ActionState::Cancelled))
-        .count();
+        // Charter .md path
+        let md_abs: Option<PathBuf> = mc
+            .md_file
+            .as_ref()
+            .map(|rel| layout.charter_root.join(rel));
 
-    if open_count > 0 && !opts.force {
-        return Err(ArchiveCharterError::OpenActions(charter_name, open_count));
+        // Sidecar (`.<stem>.json`) path, derived the same way the loader derives it.
+        let sidecar_abs: Option<PathBuf> = acts_abs.as_ref().map(|p| sidecar_path(p));
+
+        // Optional charter subdirectory (for directory-form charters like health/next.actions)
+        let charter_subdir: Option<PathBuf> = acts_abs.as_ref().and_then(|p| {
+            let filename = p.file_name()?.to_str()?;
+            if filename == "next.actions" {
+                p.parent().map(PathBuf::from)
+            } else {
+                None
+            }
+        });
+
+        let sidecar_meta = match &sidecar_abs {
+            Some(p) => read_sidecar(p)?,
+            None => Default::default(),
+        };
+
+        let mut primary_actions: Vec<Action> = match &acts_abs {
+            Some(p) => read_actions(p)?,
+            None => vec![],
+        };
+        hydrate_action_vec(&mut primary_actions, &sidecar_meta);
+
+        let open_count = primary_actions
+            .iter()
+            .filter(|a| !matches!(a.state, ActionState::Completed | ActionState::Cancelled))
+            .count();
+
+        if open_count > 0 && !opts.force {
+            return Err(ArchiveCharterError::OpenActions(current_name, open_count));
+        }
+
+        let mut completed_actions: Vec<Action> = match &completed_abs {
+            Some(p) => read_actions(p)?,
+            None => vec![],
+        };
+        hydrate_action_vec(&mut completed_actions, &sidecar_meta);
+
+        primary_swept += primary_actions.len();
+        completed_swept += completed_actions.len();
+
+        let mut all_actions = primary_actions.clone();
+        all_actions.extend(completed_actions.iter().cloned());
+
+        let mut charter_domain = Charter::from(mc.clone());
+        charter_domain.actions = all_actions;
+        // Plans are not archived: the `.ics` are server-owned and stay on disk.
+        charter_domain.plans = vec![];
+        model_charters.push(charter_domain);
+
+        files_to_remove.extend([
+            acts_abs,
+            completed_abs,
+            upcoming_abs,
+            md_abs,
+            sidecar_abs,
+        ]);
+
+        if let Some(subdir) = charter_subdir {
+            dirs_to_remove.insert((subdir.components().count(), subdir));
+        }
     }
 
-    // ── 4. Read completed actions, hydrated from the sidecar ───────────────
-    let mut completed_actions: Vec<Action> = match &completed_abs {
-        Some(p) => read_actions(p)?,
-        None => vec![],
-    };
-    hydrate_action_vec(&mut completed_actions, &sidecar_meta);
-
-    let primary_swept = primary_actions.len();
-    let completed_swept = completed_actions.len();
-
-    // ── 5. Dry-run short-circuit ────────────────────────────────────────────
     if opts.dry_run {
         return Ok(ArchiveCharterResult {
             charter_name,
@@ -257,23 +287,13 @@ fn archive_one(
         });
     }
 
-    // ── 6. Build DomainModel and merge into archive.ttl ─────────────────────
-    let mut all_actions = primary_actions.clone();
-    all_actions.extend(completed_actions.iter().cloned());
-
-    let mut charter_domain = Charter::from(mc.clone());
-    charter_domain.actions = all_actions;
-    // Plans are not archived: the `.ics` are server-owned and stay on disk.
-    charter_domain.plans = vec![];
-
     let model = DomainModel {
         objectives: vec![],
-        charters: vec![charter_domain],
+        charters: model_charters,
     };
 
     let store = create_store().map_err(|e| ArchiveCharterError::Graph(e.to_string()))?;
 
-    // Load existing archive.ttl if it exists
     if archive_ttl.exists() {
         let existing = std::fs::read_to_string(&archive_ttl)?;
         load_turtle(&store, &existing).map_err(|e| ArchiveCharterError::Graph(e.to_string()))?;
@@ -287,19 +307,15 @@ fn archive_one(
     crate::workspace::durability::atomic_write(&archive_ttl, ttl.as_bytes())
         .map_err(ArchiveCharterError::Io)?;
 
-    // ── 7. Delete source files ──────────────────────────────────────────────
-    remove_if_exists(&acts_abs)?;
-    remove_if_exists(&completed_abs)?;
-    remove_if_exists(&upcoming_abs)?;
-    remove_if_exists(&md_abs)?;
-    remove_if_exists(&sidecar_abs)?;
+    for path in &files_to_remove {
+        remove_if_exists(path)?;
+    }
 
     // `.ics` plans are intentionally left untouched — the server owns them.
-
-    // Try to remove the charter subdirectory; silently ignore if non-empty
-    // (sub-charters still live there).
-    if let Some(ref subdir) = charter_subdir {
-        let _ = std::fs::remove_dir(subdir); // ok if non-empty
+    // Remove directory-form charter folders deepest-first so a fully archived
+    // subtree collapses cleanly once its descendants are gone.
+    for (_, dir) in dirs_to_remove.iter().rev() {
+        let _ = std::fs::remove_dir(dir); // ok if non-empty
     }
 
     Ok(ArchiveCharterResult {
@@ -309,6 +325,80 @@ fn archive_one(
         archive_ttl_path: archive_ttl,
         was_dry_run: false,
     })
+}
+
+fn charter_display_name(mc: &MarkdownCharter) -> String {
+    mc.alias.clone().unwrap_or_else(|| mc.title.clone())
+}
+
+fn markdown_is_child_of(child: &MarkdownCharter, parent: &MarkdownCharter) -> bool {
+    Charter::from(child.clone()).is_child_of(&Charter::from(parent.clone()))
+}
+
+fn find_direct_children<'a>(
+    parent: &MarkdownCharter,
+    charters: &'a [MarkdownCharter],
+) -> Vec<&'a MarkdownCharter> {
+    charters
+        .iter()
+        .filter(|candidate| candidate.id != parent.id && markdown_is_child_of(candidate, parent))
+        .collect()
+}
+
+fn collect_charter_subtree(
+    charters: &[MarkdownCharter],
+    root: &MarkdownCharter,
+) -> Vec<MarkdownCharter> {
+    fn visit(
+        node: &MarkdownCharter,
+        all: &[MarkdownCharter],
+        seen: &mut HashSet<Uuid>,
+        out: &mut Vec<MarkdownCharter>,
+    ) {
+        if !seen.insert(node.id) {
+            return;
+        }
+        out.push(node.clone());
+        for child in find_direct_children(node, all) {
+            visit(child, all, seen, out);
+        }
+    }
+
+    let mut out = Vec::new();
+    let mut seen = HashSet::new();
+    visit(root, charters, &mut seen, &mut out);
+    out
+}
+
+fn parent_index(charters: &[MarkdownCharter]) -> HashMap<Uuid, Uuid> {
+    let mut parents = HashMap::new();
+    for child in charters {
+        if let Some(parent) = charters
+            .iter()
+            .find(|candidate| candidate.id != child.id && markdown_is_child_of(child, candidate))
+        {
+            parents.insert(child.id, parent.id);
+        }
+    }
+    parents
+}
+
+fn has_terminal_ancestor(charter: &MarkdownCharter, charters: &[MarkdownCharter]) -> bool {
+    let parents = parent_index(charters);
+    let by_id: HashMap<Uuid, &MarkdownCharter> =
+        charters.iter().map(|c| (c.id, c)).collect();
+
+    let mut current = charter.id;
+    while let Some(parent_id) = parents.get(&current) {
+        let Some(parent) = by_id.get(parent_id) else {
+            break;
+        };
+        if parent.state.is_some_and(|s| s.is_terminal()) {
+            return true;
+        }
+        current = *parent_id;
+    }
+    false
 }
 
 // ============================================================================
@@ -545,30 +635,93 @@ mod tests {
     }
 
     #[test]
-    fn archive_terminal_charters_sweeps_closed_and_cancelled_only() {
+    fn archive_archives_child_charters_too() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path().join("ws");
+        let work_dir = root.join(".clearhead/charters/work");
+        let ops_dir = work_dir.join("ops");
+        std::fs::create_dir_all(&ops_dir).expect("create charter dirs");
+
+        std::fs::write(
+            work_dir.join("README.md"),
+            "---\nalias: work\nstate: Closed\n---\n# Work\n",
+        )
+        .expect("write parent charter md");
+        std::fs::write(work_dir.join("next.actions"), "[x] Parent done\n")
+            .expect("write parent actions");
+
+        std::fs::write(
+            ops_dir.join("README.md"),
+            "---\nalias: ops\nstate: Closed\n---\n# Ops\n",
+        )
+        .expect("write child charter md");
+        std::fs::write(ops_dir.join("next.actions"), "[x] Child done\n")
+            .expect("write child actions");
+
+        let result = archive_charter(&root, "work", &ArchiveCharterOptions::default())
+            .expect("archive should succeed");
+        assert_eq!(result.charter_name, "work");
+        assert_eq!(result.primary_actions_swept, 2, "parent + child actions should be swept");
+
+        assert!(!work_dir.join("README.md").exists(), "parent charter removed");
+        assert!(!work_dir.join("next.actions").exists(), "parent actions removed");
+        assert!(!ops_dir.join("README.md").exists(), "child charter removed");
+        assert!(!ops_dir.join("next.actions").exists(), "child actions removed");
+        assert!(!ops_dir.exists(), "child directory removed once empty");
+        assert!(!work_dir.exists(), "parent directory removed once subtree is archived");
+
+        let ttl = std::fs::read_to_string(root.join(".clearhead/archive.ttl"))
+            .expect("archive.ttl written");
+        assert!(ttl.contains("Work"), "parent charter should be archived:\n{ttl}");
+        assert!(ttl.contains("Ops"), "child charter should be archived too:\n{ttl}");
+    }
+
+    #[test]
+    fn archive_terminal_charters_sweeps_closed_roots_once() {
         let temp = tempfile::tempdir().expect("tempdir");
         let root = temp.path().join("ws");
         let charters_dir = root.join(".clearhead/charters");
-        std::fs::create_dir_all(&charters_dir).expect("create charters dir");
+        let work_dir = charters_dir.join("work");
+        let ops_dir = work_dir.join("ops");
+        std::fs::create_dir_all(&ops_dir).expect("create charter dirs");
 
-        for (alias, state) in [("done", "Closed"), ("abandoned", "Cancelled"), ("live", "Active")] {
-            std::fs::write(
-                charters_dir.join(format!("{alias}.md")),
-                format!("---\nalias: {alias}\nstate: {state}\n---\n# {alias}\n"),
-            )
-            .expect("write charter md");
-            std::fs::write(charters_dir.join(format!("{alias}.actions")), "")
-                .expect("write actions");
-        }
+        std::fs::write(
+            charters_dir.join("done.md"),
+            "---\nalias: done\nstate: Closed\n---\n# done\n",
+        )
+        .expect("write root charter md");
+        std::fs::write(charters_dir.join("done.actions"), "").expect("write root actions");
+
+        std::fs::write(
+            work_dir.join("README.md"),
+            "---\nalias: work\nstate: Closed\n---\n# Work\n",
+        )
+        .expect("write parent charter md");
+        std::fs::write(work_dir.join("next.actions"), "").expect("write parent actions");
+
+        std::fs::write(
+            ops_dir.join("README.md"),
+            "---\nalias: ops\nstate: Closed\n---\n# Ops\n",
+        )
+        .expect("write child charter md");
+        std::fs::write(ops_dir.join("next.actions"), "").expect("write child actions");
+
+        std::fs::write(
+            charters_dir.join("live.md"),
+            "---\nalias: live\nstate: Active\n---\n# live\n",
+        )
+        .expect("write live charter md");
+        std::fs::write(charters_dir.join("live.actions"), "").expect("write live actions");
 
         let results = archive_terminal_charters(&root, &ArchiveCharterOptions::default())
             .expect("sweep should succeed");
         let archived: std::collections::HashSet<_> =
             results.iter().map(|r| r.charter_name.clone()).collect();
 
-        assert_eq!(archived.len(), 2, "only the two terminal charters archive: {archived:?}");
+        assert_eq!(archived.len(), 2, "closed child charter should ride with its parent: {archived:?}");
         assert!(archived.contains("done"));
-        assert!(archived.contains("abandoned"));
+        assert!(archived.contains("work"));
+        assert!(!work_dir.exists(), "closed subtree should be archived once at the root");
         assert!(charters_dir.join("live.md").exists(), "Active charter is left alone");
     }
 
