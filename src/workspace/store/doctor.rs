@@ -8,6 +8,7 @@
 use super::findings::{Finding, FindingSeverity};
 use super::load::{read_workspace_with_plans, syntax_error_summary};
 use super::{WorkspaceError, resolve_workspace_layout};
+use crate::config::WorkspaceConfig;
 use crate::domain::Action;
 use crate::workspace::action_files::completed_actions_path;
 use crate::workspace::charter::MarkdownCharter;
@@ -43,17 +44,30 @@ impl Diagnosis {
 
 /// Run every workspace coherence check and return the combined findings —
 /// the loader's per-file findings plus doctor's cross-file ones.
-pub fn diagnose(root: &Path, plan_override: Option<&Path>) -> Result<Diagnosis, WorkspaceError> {
+///
+/// `config` is the workspace config the *tool* loaded — core never reads
+/// `config.json` itself (see `config.rs`) but some invariants live there.
+pub fn diagnose(
+    root: &Path,
+    plan_override: Option<&Path>,
+    config: &WorkspaceConfig,
+) -> Result<Diagnosis, WorkspaceError> {
     let read = read_workspace_with_plans(root, plan_override)?;
-    Ok(diagnose_read(root, &read))
+    Ok(diagnose_read(root, &read, config))
 }
 
 /// Like [`diagnose`], but over a workspace the caller already read — for
 /// read-only surfaces (e.g. `debug`) that need the workspace *and* its
 /// diagnosis without reading twice.
-pub fn diagnose_read(root: &Path, read: &super::load::WorkspaceRead) -> Diagnosis {
+pub fn diagnose_read(
+    root: &Path,
+    read: &super::load::WorkspaceRead,
+    config: &WorkspaceConfig,
+) -> Diagnosis {
     let layout = resolve_workspace_layout(root);
     let mut findings = read.findings.clone();
+
+    check_workspace_identity(config, &mut findings);
 
     // Completed archives are outside the loader's scope but inside the
     // coherence universe: predecessors may point at closed actions, and a
@@ -84,6 +98,20 @@ pub fn diagnose_read(root: &Path, read: &super::load::WorkspaceRead) -> Diagnosi
         findings,
         checked_charters: charters.len(),
         checked_actions: open_actions + completed_actions,
+    }
+}
+
+/// A workspace with no `workspace_id` inserts no `ws:Workspace` node into the
+/// graph, so every index query returns an empty `@graph` with no error —
+/// "nothing due today" and "workspace was never initialized" become
+/// indistinguishable to a client. Doctor is where that silence gets a name.
+fn check_workspace_identity(config: &WorkspaceConfig, findings: &mut Vec<Finding>) {
+    if config.workspace_id.is_none() {
+        findings.push(Finding::warning(
+            "uninitialized-workspace",
+            "config.json",
+            "workspace has no workspace_id, so index queries return an empty graph — run `clearhead init` to assign one",
+        ));
     }
 }
 
