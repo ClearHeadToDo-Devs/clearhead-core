@@ -329,6 +329,10 @@ fn check_duplicate_ids(doc: &ParsedDocument) -> Vec<LintDiagnostic> {
     diagnostics
 }
 
+fn is_closed_action(state: ActionState) -> bool {
+    matches!(state, ActionState::Completed | ActionState::Cancelled)
+}
+
 /// Check tree consistency rules across the document (W002, W003)
 fn check_tree_consistency(doc: &ParsedDocument) -> Vec<LintDiagnostic> {
     let mut diagnostics = Vec::new();
@@ -345,25 +349,24 @@ fn check_tree_consistency(doc: &ParsedDocument) -> Vec<LintDiagnostic> {
                 continue;
             }
 
-            let all_children_completed = children.iter().all(|c| c.state == ActionState::Completed);
-            let any_children_uncompleted =
-                children.iter().any(|c| c.state != ActionState::Completed);
-            let is_completed = action.state == ActionState::Completed;
+            let all_children_closed = children.iter().all(|c| is_closed_action(c.state));
+            let any_children_open = children.iter().any(|c| !is_closed_action(c.state));
+            let is_closed = is_closed_action(action.state);
 
-            // W002: Completed parent with uncompleted children
-            if is_completed && any_children_uncompleted {
+            // W002: Closed parent with open children
+            if is_closed && any_children_open {
                 diagnostics.push(LintDiagnostic::warning(
                     "W002",
-                    "Parent is completed but some children are still active (W002).".to_string(),
+                    "Parent is closed but some children are still active (W002).".to_string(),
                     metadata.root,
                 ));
             }
 
-            // W003: Uncompleted parent with all children completed
-            if !is_completed && all_children_completed {
+            // W003: Open parent with all children closed
+            if !is_closed && all_children_closed {
                 diagnostics.push(LintDiagnostic::warning(
                     "W003",
-                    "All children are completed. Should this parent be completed too? (W003)"
+                    "All children are closed. Should this parent be closed too? (W003)"
                         .to_string(),
                     metadata.root,
                 ));
@@ -377,15 +380,15 @@ fn check_tree_consistency(doc: &ParsedDocument) -> Vec<LintDiagnostic> {
 // Action-Level Checks (continued)
 // ============================================================================
 
-/// Check if completed action is missing completion date (I001)
+/// Check if closed action is missing completion date (I001)
 fn check_missing_completion_date(
     action: &Action,
     metadata: &SourceMetadata,
 ) -> Option<LintDiagnostic> {
-    if action.state == ActionState::Completed && action.completed_at.is_none() {
+    if is_closed_action(action.state) && action.completed_at.is_none() {
         Some(LintDiagnostic::info(
             "I001",
-            "Completed action is missing a completion date (I001).".to_string(),
+            "Closed action is missing a completion date (I001).".to_string(),
             metadata.root,
         ))
     } else {
@@ -393,15 +396,15 @@ fn check_missing_completion_date(
     }
 }
 
-/// Check if action has completion date but isn't completed (I002)
+/// Check if action has completion date but isn't closed (I002)
 fn check_completion_date_without_state(
     action: &Action,
     metadata: &SourceMetadata,
 ) -> Option<LintDiagnostic> {
-    if action.state != ActionState::Completed && action.completed_at.is_some() {
+    if !is_closed_action(action.state) && action.completed_at.is_some() {
         Some(LintDiagnostic::info(
             "I002",
-            "Action has a completion date but is not marked as completed (I002).".to_string(),
+            "Action has a completion date but is not marked as closed (completed/cancelled) (I002).".to_string(),
             metadata.completed_date.unwrap_or(metadata.root),
         ))
     } else {
@@ -581,6 +584,25 @@ mod tests {
     }
 
     #[test]
+    fn test_check_missing_completion_date_cancelled_info() {
+        let text =
+            "[_] Cancelled task with no completion date #01942d99-4c27-77f6-9316-107024843939";
+        let parsed = get_parsed_document(text).unwrap();
+
+        let results = lint_document(&parsed);
+        assert!(results.info.iter().any(|d| d.code == "I001"));
+    }
+
+    #[test]
+    fn test_check_completion_date_cancelled_ok() {
+        let text = "[_] Cancelled task %2025-01-09T14:00 #01942d99-4c27-77f6-9316-107024843939";
+        let parsed = get_parsed_document(text).unwrap();
+
+        let results = lint_document(&parsed);
+        assert!(!results.info.iter().any(|d| d.code == "I001" || d.code == "I002"));
+    }
+
+    #[test]
     fn test_check_invalid_uuid_format() {
         // Test the check_invalid_uuid function directly since grammar won't parse invalid formats
         use crate::workspace::actions::Action;
@@ -690,6 +712,15 @@ mod tests {
         assert!(results.warnings.iter().any(|d| d.code == "W003"));
         let diag = results.warnings.iter().find(|d| d.code == "W003").unwrap();
         assert_eq!(diag.severity, LintSeverity::Warning);
+    }
+
+    #[test]
+    fn test_check_tree_consistency_children_cancelled_counts_as_closed() {
+        let text = "[ ] Parent task #01942d99-4c27-77f6-9316-107024843939\n>[_] Child task cancelled #01942d99-4c27-77f6-9316-107024843998 %2025-01-09T14:00\n>[_] Another child cancelled #01942d99-4c27-77f6-9316-107024843999 %2025-01-09T14:00";
+        let parsed = get_parsed_document(text).unwrap();
+
+        let results = lint_document(&parsed);
+        assert!(results.warnings.iter().any(|d| d.code == "W003"));
     }
 
     #[test]
