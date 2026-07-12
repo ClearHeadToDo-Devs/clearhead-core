@@ -15,6 +15,12 @@ use crate::workspace::calendar::plans::collect_plan_files_in;
 use crate::workspace::sidecar::{collect_sidecar_actions, hydrate_actions_map, read_sidecar, sidecar_path};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use uuid::Uuid;
+
+/// Namespace UUID for deterministic workspace IDs (v5, derived from root path).
+const WORKSPACE_ID_NS: Uuid = Uuid::from_bytes([
+    0x77, 0x6f, 0x72, 0x6b, 0x73, 0x70, 0x61, 0x63, 0x65, 0x2d, 0x6e, 0x73, 0x2d, 0x75, 0x69, 0x64,
+]);
 
 /// The complete filesystem representation of a workspace.
 ///
@@ -45,6 +51,29 @@ impl Workspace {
     ) -> Result<Self, WorkspaceError> {
         let charters = load_workspace_with_plans(root, plan_override)?;
         Ok(Self { root: root.to_path_buf(), id: None, name: None, charters })
+    }
+
+    /// The workspace's stable id, falling back to a deterministic UUIDv5
+    /// derived from the canonical root path when uninitialized — per
+    /// specifications/workspace.md, uninitialized workspaces must stay
+    /// functional (named graph, index queries) without a `config.json`.
+    pub fn effective_id(&self) -> String {
+        self.id.clone().unwrap_or_else(|| {
+            let root = self.root.canonicalize().unwrap_or_else(|_| self.root.clone());
+            Uuid::new_v5(&WORKSPACE_ID_NS, root.to_string_lossy().as_bytes()).to_string()
+        })
+    }
+
+    /// The workspace's display name, falling back to its directory name.
+    pub fn effective_name(&self) -> String {
+        self.name.clone().unwrap_or_else(|| {
+            self.root
+                .canonicalize()
+                .unwrap_or_else(|_| self.root.clone())
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "workspace".to_string())
+        })
     }
 }
 

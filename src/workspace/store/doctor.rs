@@ -102,16 +102,18 @@ pub fn diagnose_read(
     }
 }
 
-/// A workspace with no `workspace_id` inserts no `ws:Workspace` node into the
-/// graph, so every index query returns an empty `@graph` with no error —
-/// "nothing due today" and "workspace was never initialized" become
-/// indistinguishable to a client. Doctor is where that silence gets a name.
+/// A workspace with no `workspace_id` still works — queries fall back to a
+/// deterministic identity derived from the root path ([`Workspace::effective_id`])
+/// — but that identity changes if the directory moves, breaking named-graph
+/// continuity for archived or shared data. Doctor nudges toward the durable id.
+///
+/// [`Workspace::effective_id`]: crate::workspace::store::load::Workspace::effective_id
 fn check_workspace_identity(config: &WorkspaceConfig, findings: &mut Vec<Finding>) {
     if config.workspace_id.is_none() {
         findings.push(Finding::warning(
             "uninitialized-workspace",
             "config.json",
-            "workspace has no workspace_id, so index queries return an empty graph — run `clearhead init` to assign one",
+            "workspace has no workspace_id — queries use a path-derived fallback identity that breaks if the directory moves; run `clearhead init` to assign a durable one",
         ));
     }
 }

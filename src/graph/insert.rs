@@ -55,9 +55,11 @@ pub fn load_domain_model(
 
 /// Insert workspace identity and source-location triples into the store.
 ///
-/// If the workspace has an `id` and `name`, emits a `ws:Workspace` resource
-/// triple with `rdfs:label` and `actions:hasAlias` — enabling reference
-/// resolution to find a workspace by alias across named graphs.
+/// Emits a `ws:Workspace` resource triple with `rdfs:label` and
+/// `actions:hasAlias` — enabling reference resolution to find a workspace by
+/// alias across named graphs. Uninitialized workspaces get deterministic
+/// fallback identity ([`Workspace::effective_id`]) so index queries that join
+/// on the workspace node never silently drop their rows.
 ///
 /// Also emits `ws:hasSourceFile` and `ws:hasSourceLine` for each action that
 /// has source metadata. These are workspace-snapshot properties — valid for the
@@ -69,36 +71,36 @@ pub fn insert_workspace_metadata(
     workspace: &Workspace,
     graph_name: GraphName,
 ) -> Result<()> {
-    if let (Some(id), Some(name)) = (&workspace.id, &workspace.name) {
-        let ws_subject = NamedOrBlankNode::NamedNode(
-            NamedNode::new(format!("urn:clearhead:workspace:{}", id)).unwrap(),
-        );
-        let graph = graph_name.clone();
-        let add_ws = |pred: NamedNode, term: Term| {
-            store
-                .insert(&Quad::new(ws_subject.clone(), pred, term, graph.clone()))
-                .map_err(|e| GraphError::Store(e.to_string()))
-        };
-        add_ws(rdf_type(), Term::NamedNode(ns(WORKSPACE_NS, "Workspace")))?;
-        add_ws(rdfs_pred(RDFS_LABEL), Term::Literal(Literal::new_simple_literal(name)))?;
-        add_ws(actions_pred("hasAlias"), Term::Literal(Literal::new_simple_literal(name)))?;
-        let canonical_root = workspace.root.canonicalize().unwrap_or_else(|_| workspace.root.clone());
-        add_ws(
-            ns(WORKSPACE_NS, "root"),
-            Term::Literal(Literal::new_typed_literal(
-                canonical_root.to_string_lossy().as_ref(),
-                NamedNode::new(format!("{}string", XSD_NS)).unwrap(),
-            )),
-        )?;
-        let charter_root = resolve_workspace_layout(&canonical_root).charter_root;
-        add_ws(
-            ns(WORKSPACE_NS, "charterRoot"),
-            Term::Literal(Literal::new_typed_literal(
-                charter_root.to_string_lossy().as_ref(),
-                NamedNode::new(format!("{}string", XSD_NS)).unwrap(),
-            )),
-        )?;
-    }
+    let id = workspace.effective_id();
+    let name = workspace.effective_name();
+    let ws_subject = NamedOrBlankNode::NamedNode(
+        NamedNode::new(format!("urn:clearhead:workspace:{}", id)).unwrap(),
+    );
+    let graph = graph_name.clone();
+    let add_ws = |pred: NamedNode, term: Term| {
+        store
+            .insert(&Quad::new(ws_subject.clone(), pred, term, graph.clone()))
+            .map_err(|e| GraphError::Store(e.to_string()))
+    };
+    add_ws(rdf_type(), Term::NamedNode(ns(WORKSPACE_NS, "Workspace")))?;
+    add_ws(rdfs_pred(RDFS_LABEL), Term::Literal(Literal::new_simple_literal(&name)))?;
+    add_ws(actions_pred("hasAlias"), Term::Literal(Literal::new_simple_literal(&name)))?;
+    let canonical_root = workspace.root.canonicalize().unwrap_or_else(|_| workspace.root.clone());
+    add_ws(
+        ns(WORKSPACE_NS, "root"),
+        Term::Literal(Literal::new_typed_literal(
+            canonical_root.to_string_lossy().as_ref(),
+            NamedNode::new(format!("{}string", XSD_NS)).unwrap(),
+        )),
+    )?;
+    let charter_root = resolve_workspace_layout(&canonical_root).charter_root;
+    add_ws(
+        ns(WORKSPACE_NS, "charterRoot"),
+        Term::Literal(Literal::new_typed_literal(
+            charter_root.to_string_lossy().as_ref(),
+            NamedNode::new(format!("{}string", XSD_NS)).unwrap(),
+        )),
+    )?;
 
     for charter in &workspace.charters {
         // File provenance is a property of the charter's actions file, not of
