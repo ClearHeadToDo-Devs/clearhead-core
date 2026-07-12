@@ -9,7 +9,7 @@ use super::findings::{Finding, FindingSeverity};
 use super::load::{read_workspace_with_plans, syntax_error_summary};
 use super::{WorkspaceError, resolve_workspace_layout};
 use crate::config::WorkspaceConfig;
-use crate::domain::Action;
+use crate::domain::{Action, ActionState};
 use crate::workspace::action_files::completed_actions_path;
 use crate::workspace::charter::MarkdownCharter;
 use crate::workspace::sidecar::{read_sidecar, sidecar_path};
@@ -78,6 +78,7 @@ pub fn diagnose_read(
     check_duplicate_uuids(charters, &completed, &mut findings);
     check_dangling_predecessors(charters, &completed, &mut findings);
     check_charter_alias_collisions(charters, &mut findings);
+    check_open_actions_under_unresolved_parents(charters, &mut findings);
     check_sidecar_coherence(&layout.charter_root, charters, &completed, &mut findings);
     check_sidecar_created_sanity(&layout.charter_root, charters, &mut findings);
     check_orphaned_sidecars(&layout.charter_root, &mut findings);
@@ -242,6 +243,54 @@ fn check_charter_alias_collisions(charters: &[MarkdownCharter], findings: &mut V
                 ),
             ));
         }
+    }
+}
+
+/// Open actions under a charter whose parent cannot be resolved to any loaded
+/// charter. The common real-world cause is a parent charter that was archived
+/// while a child charter still has live work, so agenda views keep surfacing
+/// that work under a now-missing branch.
+fn check_open_actions_under_unresolved_parents(
+    charters: &[MarkdownCharter],
+    findings: &mut Vec<Finding>,
+) {
+    let known_aliases: HashSet<&str> = charters
+        .iter()
+        .filter_map(|c| c.alias.as_deref())
+        .collect();
+
+    for charter in charters {
+        let Some(parent) = charter.parent.as_deref() else {
+            continue;
+        };
+        let nested_under_another_charter = charter
+            .actions_file
+            .as_ref()
+            .map(|path| path.components().count() > 1)
+            .unwrap_or(false);
+        if !nested_under_another_charter || known_aliases.contains(parent) {
+            continue;
+        }
+
+        let open_count = charter
+            .actions
+            .iter()
+            .filter(|sa| !matches!(sa.action.state, ActionState::Completed | ActionState::Cancelled))
+            .count();
+        if open_count == 0 {
+            continue;
+        }
+
+        findings.push(Finding::warning(
+            "archived-parent-open-actions",
+            charter_file(charter),
+            format!(
+                "charter '{}' has {} open action(s) but its parent '{}' is not loaded; this usually means the parent charter was archived or deleted while child work remains open",
+                charter.alias.as_deref().unwrap_or(&charter.title),
+                open_count,
+                parent,
+            ),
+        ));
     }
 }
 

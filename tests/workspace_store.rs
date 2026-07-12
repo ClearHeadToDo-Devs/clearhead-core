@@ -1224,3 +1224,26 @@ fn doctor_flags_charter_alias_collision() {
         .expect("alias collision should be a finding");
     assert!(finding.message.contains("shared"));
 }
+
+#[test]
+fn doctor_flags_open_actions_under_archived_parent_charter() {
+    use clearhead_core::workspace::diagnose;
+
+    let (_outer, project) = make_named_project(
+        "workspace",
+        &[(
+            "work/ops.actions",
+            "[ ] still open #01951111-0000-7000-0000-000000000020\n",
+        )],
+    );
+
+    let diagnosis = diagnose(&project, None, &initialized_config()).expect("diagnose failed");
+    let finding = diagnosis
+        .findings
+        .iter()
+        .find(|f| f.code == "archived-parent-open-actions")
+        .expect("open child work under an unresolved parent should be flagged");
+    assert_eq!(finding.path, std::path::PathBuf::from("work/ops.actions"));
+    assert!(finding.message.contains("parent 'work' is not loaded"));
+    assert!(finding.message.contains("1 open action(s)"));
+}
