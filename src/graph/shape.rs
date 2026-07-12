@@ -11,7 +11,7 @@
 //! locator-bearing entries, each addressable by canonical `@id`. Future
 //! shapes (`table` for aggregates, `graph` for networks) slot alongside.
 
-use super::{ACTIONS_NS, CCO_NS, GraphError, Result, WORKSPACE_NS, XSD_NS};
+use super::{ACTIONS_NS, BFO_NS, CCO_NS, GraphError, Result, WORKSPACE_NS, XSD_NS};
 use serde_json::{Map, Value, json};
 use std::collections::HashMap;
 
@@ -80,6 +80,7 @@ fn index_context() -> Value {
     json!({
         "@version": 1.1,
         "actions": ACTIONS_NS,
+        "bfo": BFO_NS,
         "cco": CCO_NS,
         "ws": WORKSPACE_NS,
         "rdfs": "http://www.w3.org/2000/01/rdf-schema#",
@@ -96,7 +97,8 @@ fn index_context() -> Value {
         "source_line": { "@id": "ws:hasSourceLine", "@type": "xsd:integer" },
         "priority": { "@id": "actions:hasPriority", "@type": "xsd:integer" },
         "scheduled_at": { "@id": "actions:hasScheduledDateTime", "@type": "xsd:dateTime" },
-        "due_date": { "@id": "actions:hasDueDateTime", "@type": "xsd:dateTime" }
+        "due_date": { "@id": "actions:hasDueDateTime", "@type": "xsd:dateTime" },
+        "parent": { "@id": "bfo:BFO_0000050", "@type": "@id" }
     })
 }
 
