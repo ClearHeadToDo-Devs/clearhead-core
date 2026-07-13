@@ -1,8 +1,10 @@
 //! ICS schedule file parser and exporter.
 //!
 //! **Parse direction** (`ics → domain`): reads `.ics` files and converts each
-//! VEVENT into a [`Plan`], populating `recurrence`, `dtstart`, `external_id`,
-//! and `template_name`.
+//! VEVENT *or* VTODO into a [`Plan`], populating `recurrence`, `dtstart`,
+//! `external_id`, and `template_name`. Both component kinds are accepted on
+//! read so existing VEVENT plan/mirror files keep working while the write
+//! side migrates to VTODO — see caldav-integration/README.md.
 //!
 //! **Export direction** (`domain → ics`): converts a slice of [`Action`]s into
 //! an iCalendar string. Each action with `scheduled_at` becomes one VEVENT —
@@ -46,14 +48,14 @@ pub fn occurrence_action_id(vevent_uid: &str, occurrence_rfc3339: &str) -> uuid:
     uuid::Uuid::new_v5(&ICS_NAMESPACE, key.as_bytes())
 }
 
-/// Parse all VEVENTs in an `.ics` file into [`Plan`] structs.
+/// Parse all VEVENTs and VTODOs in an `.ics` file into [`Plan`] structs.
 ///
-/// Each VEVENT becomes one Plan:
-/// - `Plan.id` — UUID v5 from VEVENT UID (deterministic across reloads)
+/// Each component becomes one Plan:
+/// - `Plan.id` — UUID v5 from the component's UID (deterministic across reloads)
 /// - `Plan.name` — SUMMARY
 /// - `Plan.recurrence` — parsed from RRULE
 /// - `Plan.dtstart` — DTSTART as local time (recurrence expansion anchor)
-/// - `Plan.external_id` — raw VEVENT UID string
+/// - `Plan.external_id` — raw UID string
 /// - `Plan.template_name` — extracted from DESCRIPTION if it starts with `template: <name>`
 pub fn parse_ics_file(path: &Path) -> Result<Vec<ICSPlan>, WorkspaceError> {
     let content = fs::read_to_string(path).map_err(WorkspaceError::Io)?;
@@ -65,44 +67,52 @@ pub fn parse_ics_file(path: &Path) -> Result<Vec<ICSPlan>, WorkspaceError> {
     let mut plans = Vec::new();
 
     for component in calendar.components {
-        let CalendarComponent::Event(event) = component else {
-            continue;
+        let plan = match component {
+            CalendarComponent::Event(event) => component_to_plan(&event, path),
+            CalendarComponent::Todo(todo) => component_to_plan(&todo, path),
+            _ => None,
         };
-
-        let Some(uid) = event.get_uid() else { continue };
-        let Some(summary) = event.get_summary() else {
-            continue;
-        };
-
-        let plan_id = plan_id_from_ics_uid(uid);
-
-        let dtstart = parse_dtstart(&event);
-        let recurrence = event
-            .property_value("RRULE")
-            .and_then(Recurrence::from_rrule_str);
-
-        let (template_name, primary_instances, description) = event
-            .get_description()
-            .map(parse_description_directives)
-            .unwrap_or((None, None, None));
-
-        plans.push(ICSPlan {
-            path: path.to_path_buf(),
-            plan: Plan {
-                id: plan_id,
-                name: summary.to_string(),
-                description,
-                recurrence,
-                dtstart,
-                external_id: Some(uid.to_string()),
-                template_name,
-                primary_instances,
-                ..Default::default()
-            },
-        });
+        if let Some(plan) = plan {
+            plans.push(plan);
+        }
     }
 
     Ok(plans)
+}
+
+/// Build an [`ICSPlan`] from any component that carries the fields a plan
+/// needs (UID, SUMMARY, DTSTART, RRULE, DESCRIPTION) — VEVENT and VTODO both
+/// qualify via the shared [`Component`] trait. Returns `None` if UID or
+/// SUMMARY is missing.
+fn component_to_plan<T: Component>(component: &T, path: &Path) -> Option<ICSPlan> {
+    let uid = component.get_uid()?;
+    let summary = component.get_summary()?;
+
+    let plan_id = plan_id_from_ics_uid(uid);
+    let dtstart = parse_dtstart(component);
+    let recurrence = component
+        .property_value("RRULE")
+        .and_then(Recurrence::from_rrule_str);
+
+    let (template_name, primary_instances, description) = component
+        .get_description()
+        .map(parse_description_directives)
+        .unwrap_or((None, None, None));
+
+    Some(ICSPlan {
+        path: path.to_path_buf(),
+        plan: Plan {
+            id: plan_id,
+            name: summary.to_string(),
+            description,
+            recurrence,
+            dtstart,
+            external_id: Some(uid.to_string()),
+            template_name,
+            primary_instances,
+            ..Default::default()
+        },
+    })
 }
 
 /// Parse directives and description body from a VEVENT DESCRIPTION.
@@ -153,8 +163,8 @@ fn parse_description_directives(desc: &str) -> (Option<String>, Option<u32>, Opt
     (template, primary_instances, rest)
 }
 
-fn parse_dtstart(event: &icalendar::Event) -> Option<DateTime<Local>> {
-    let dpt = event.get_start()?;
+fn parse_dtstart<T: Component>(component: &T) -> Option<DateTime<Local>> {
+    let dpt = component.get_start()?;
     match dpt {
         DatePerhapsTime::DateTime(CalendarDateTime::Floating(naive)) => {
             Local.from_local_datetime(&naive).earliest()
