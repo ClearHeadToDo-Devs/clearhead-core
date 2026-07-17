@@ -40,9 +40,8 @@ pub fn load_domain_model(
         .map(|c| (c.title.to_lowercase(), c.id))
         .collect();
 
-    let workspace_name = config.and_then(|c| c.workspace_name.as_deref());
     for charter in &model.charters {
-        insert_charter(store, charter, &charter_id_by_title, &graph_name, workspace_name)?;
+        insert_charter(store, charter, &charter_id_by_title, &graph_name)?;
     }
     for action in model.all_actions() {
         insert_action(store, action, &graph_name)?;
@@ -246,7 +245,6 @@ fn insert_charter(
     charter: &Charter,
     charter_id_by_title: &HashMap<String, Uuid>,
     graph_name: &GraphName,
-    workspace_name: Option<&str>,
 ) -> Result<()> {
     let subject =
         NamedOrBlankNode::NamedNode(NamedNode::new(format!("urn:uuid:{}", charter.id)).unwrap());
@@ -282,13 +280,6 @@ fn insert_charter(
         add(
             actions_pred("hasAlias"),
             Term::Literal(Literal::new_simple_literal(alias)),
-        )?;
-    }
-
-    if let Some(name) = workspace_name {
-        add(
-            actions_pred("hasWorkspaceName"),
-            Term::Literal(Literal::new_simple_literal(name)),
         )?;
     }
 

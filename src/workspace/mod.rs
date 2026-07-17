@@ -14,6 +14,7 @@ pub mod durability;
 pub mod archive_charter;
 pub mod charter;
 pub mod detection;
+pub mod manifest;
 pub mod sidecar;
 pub mod store;
 pub mod templates;
@@ -28,6 +29,7 @@ pub use actions::{
 pub use action_files::{ActionsFile, completed_actions_path, upcoming_actions_path, read_action_file, read_actions, write_actions};
 pub use sidecar::{ActionMeta, CharterMeta, CharterMetadata, PlanMeta, hydrate_actions, read_sidecar, sidecar_path, write_sidecar};
 pub use charter::{MarkdownCharter, format_charter, implicit_charter, parse_charter};
+pub use manifest::WorkspaceManifest;
 pub use archive_charter::{
     ArchiveCharterError, ArchiveCharterOptions, ArchiveCharterResult,
     archive_charter, archive_terminal_charters, find_charter as find_markdown_charter,

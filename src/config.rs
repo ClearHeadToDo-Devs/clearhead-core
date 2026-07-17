@@ -19,6 +19,12 @@ use std::collections::{HashMap, HashSet};
 /// specifications repository. Tools are responsible for loading and
 /// constructing this from `~/.config/clearhead/config.json`; core only
 /// consumes it.
+///
+/// Workspace *identity* (`workspace_id`, `workspace_name`, `created_at`) is
+/// deliberately **not** here — it is a per-workspace fact that must not layer
+/// through the config precedence chain, so it lives in the
+/// [`WorkspaceManifest`](crate::workspace::manifest::WorkspaceManifest)
+/// (`.clearhead/workspace.json`) and is read from the workspace itself.
 #[derive(Debug, Clone)]
 pub struct WorkspaceConfig {
     /// Tag parent→children relationships for implicit context inheritance.
@@ -34,25 +40,6 @@ pub struct WorkspaceConfig {
     /// When true, workspace discovery ignores project-scoped `.clearhead`
     /// directories and only loads user-scoped data from `data_dir`.
     pub default_to_user_scope: bool,
-
-    /// Stable UUID identifying this workspace's RDF named graph.
-    ///
-    /// Generated once by `clearhead init` and written to `.clearhead/config.json`.
-    /// Derived graph URI: `urn:clearhead:workspace:<uuid>`.
-    /// Must never be regenerated — it is the durable identity for this workspace.
-    pub workspace_id: Option<String>,
-
-    /// Human-readable name for this workspace.
-    ///
-    /// Set by `clearhead init` from the project directory name. Used as the
-    /// outermost scope in multi-workspace reference syntax (`name:charter/action`)
-    /// and as a display annotation when querying across workspaces.
-    /// Elided in single-workspace contexts.
-    pub workspace_name: Option<String>,
-
-    /// ISO 8601 date when this workspace was initialized.
-    /// Written once by `clearhead init`. Informational only.
-    pub created_at: Option<String>,
 
     /// Additional workspace directories to merge into the domain model.
     /// Each path should follow the `.clearhead` directory layout.
@@ -84,9 +71,6 @@ impl Default for WorkspaceConfig {
         Self {
             tag_hierarchies: Default::default(),
             default_to_user_scope: false,
-            workspace_id: None,
-            workspace_name: None,
-            created_at: None,
             additional_workspaces: Vec::new(),
             expansion_total_instances: 2,
             expansion_primary_instances: 1,

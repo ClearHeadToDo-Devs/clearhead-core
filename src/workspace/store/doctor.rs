@@ -8,7 +8,6 @@
 use super::findings::{Finding, FindingSeverity};
 use super::load::{read_workspace_with_plans, syntax_error_summary};
 use super::{WorkspaceError, resolve_workspace_layout};
-use crate::config::WorkspaceConfig;
 use crate::domain::{Action, ActionState};
 use crate::workspace::action_files::completed_actions_path;
 use crate::workspace::charter::MarkdownCharter;
@@ -44,16 +43,12 @@ impl Diagnosis {
 
 /// Run every workspace coherence check and return the combined findings —
 /// the loader's per-file findings plus doctor's cross-file ones.
-///
-/// `config` is the workspace config the *tool* loaded — core never reads
-/// `config.json` itself (see `config.rs`) but some invariants live there.
 pub fn diagnose(
     root: &Path,
     plan_override: Option<&Path>,
-    config: &WorkspaceConfig,
 ) -> Result<Diagnosis, WorkspaceError> {
     let read = read_workspace_with_plans(root, plan_override)?;
-    Ok(diagnose_read(root, &read, config))
+    Ok(diagnose_read(root, &read))
 }
 
 /// Like [`diagnose`], but over a workspace the caller already read — for
@@ -62,12 +57,11 @@ pub fn diagnose(
 pub fn diagnose_read(
     root: &Path,
     read: &super::load::WorkspaceRead,
-    config: &WorkspaceConfig,
 ) -> Diagnosis {
     let layout = resolve_workspace_layout(root);
     let mut findings = read.findings.clone();
 
-    check_workspace_identity(config, &mut findings);
+    check_workspace_identity(root, &mut findings);
 
     // Completed archives are outside the loader's scope but inside the
     // coherence universe: predecessors may point at closed actions, and a
@@ -102,18 +96,23 @@ pub fn diagnose_read(
     }
 }
 
-/// A workspace with no `workspace_id` still works — queries fall back to a
-/// deterministic identity derived from the root path ([`Workspace::effective_id`])
-/// — but that identity changes if the directory moves, breaking named-graph
-/// continuity for archived or shared data. Doctor nudges toward the durable id.
+/// A workspace with no persisted `workspace_id` still works — queries fall back
+/// to an ephemeral per-load identity ([`Workspace::effective_id`]) — but that
+/// identity is not stable across sessions, breaking named-graph continuity for
+/// archived or shared data. Doctor nudges toward the durable id, reading it from
+/// the [`WorkspaceManifest`] (`workspace.json`).
 ///
 /// [`Workspace::effective_id`]: crate::workspace::store::load::Workspace::effective_id
-fn check_workspace_identity(config: &WorkspaceConfig, findings: &mut Vec<Finding>) {
-    if config.workspace_id.is_none() {
+/// [`WorkspaceManifest`]: crate::workspace::manifest::WorkspaceManifest
+fn check_workspace_identity(root: &Path, findings: &mut Vec<Finding>) {
+    if crate::workspace::manifest::WorkspaceManifest::read(root)
+        .workspace_id
+        .is_none()
+    {
         findings.push(Finding::warning(
             "uninitialized-workspace",
-            "config.json",
-            "workspace has no workspace_id — queries use a path-derived fallback identity that breaks if the directory moves; run `clearhead init` to assign a durable one",
+            "workspace.json",
+            "workspace has no workspace_id — queries use an ephemeral identity that changes every session; run `clearhead init` to assign a durable one",
         ));
     }
 }

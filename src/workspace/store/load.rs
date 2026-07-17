@@ -13,14 +13,10 @@ use crate::workspace::charter::{
 use crate::workspace::calendar::ics::parse_ics_file;
 use crate::workspace::calendar::plans::collect_plan_files_in;
 use crate::workspace::sidecar::{collect_sidecar_actions, hydrate_actions_map, read_sidecar, sidecar_path};
+use crate::workspace::manifest::WorkspaceManifest;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
-
-/// Namespace UUID for deterministic workspace IDs (v5, derived from root path).
-const WORKSPACE_ID_NS: Uuid = Uuid::from_bytes([
-    0x77, 0x6f, 0x72, 0x6b, 0x73, 0x70, 0x61, 0x63, 0x65, 0x2d, 0x6e, 0x73, 0x2d, 0x75, 0x69, 0x64,
-]);
 
 /// The complete filesystem representation of a workspace.
 ///
@@ -31,10 +27,16 @@ const WORKSPACE_ID_NS: Uuid = Uuid::from_bytes([
 /// [`ICSPlan`]: crate::workspace::calendar::ics::ICSPlan
 pub struct Workspace {
     pub root: PathBuf,
-    /// Stable UUID for this workspace's RDF named graph. `None` for uninitialized workspaces.
+    /// Durable UUID for this workspace's RDF named graph, read from the
+    /// [`WorkspaceManifest`]. `None` for a workspace with no persisted identity.
     pub id: Option<String>,
     /// Display name — used to scope output in multi-workspace contexts.
     pub name: Option<String>,
+    /// A random UUID minted once per load, used as the graph identity only when
+    /// `id` is absent. Ephemeral by design: distinct per load, never persisted,
+    /// and never derived from the root path — a workspace without a durable id
+    /// stays queryable, but its graph URI is not stable across sessions.
+    ephemeral_id: String,
     pub charters: Vec<MarkdownCharter>,
 }
 
@@ -50,18 +52,21 @@ impl Workspace {
         plan_override: Option<&Path>,
     ) -> Result<Self, WorkspaceError> {
         let charters = load_workspace_with_plans(root, plan_override)?;
-        Ok(Self { root: root.to_path_buf(), id: None, name: None, charters })
+        let manifest = WorkspaceManifest::read(root);
+        Ok(Self {
+            root: root.to_path_buf(),
+            id: manifest.workspace_id,
+            name: manifest.workspace_name,
+            ephemeral_id: Uuid::now_v7().to_string(),
+            charters,
+        })
     }
 
-    /// The workspace's stable id, falling back to a deterministic UUIDv5
-    /// derived from the canonical root path when uninitialized — per
-    /// specifications/workspace.md, uninitialized workspaces must stay
-    /// functional (named graph, index queries) without a `config.json`.
+    /// The workspace's graph id: its durable [`id`](Self::id) when persisted,
+    /// otherwise the per-load [`ephemeral_id`](Self::ephemeral_id). Never
+    /// derived from the root path — see the field docs for why.
     pub fn effective_id(&self) -> String {
-        self.id.clone().unwrap_or_else(|| {
-            let root = self.root.canonicalize().unwrap_or_else(|_| self.root.clone());
-            Uuid::new_v5(&WORKSPACE_ID_NS, root.to_string_lossy().as_bytes()).to_string()
-        })
+        self.id.clone().unwrap_or_else(|| self.ephemeral_id.clone())
     }
 
     /// The workspace's display name, falling back to its directory name.
@@ -79,9 +84,9 @@ impl Workspace {
 
 /// Load the primary workspace and all additional workspaces listed in `config`.
 ///
-/// The primary workspace gets `id` and `name` from `config`.
-/// Additional workspaces have neither — each has its own config that
-/// only the calling tool knows how to load.
+/// Every workspace reads its own `id` and `name` from its co-located
+/// [`WorkspaceManifest`] during load — identity is a property of the workspace,
+/// not of the (layered) config.
 ///
 /// Returns `Err` on the first workspace that fails to load.
 pub fn load_workspaces(
@@ -92,9 +97,7 @@ pub fn load_workspaces(
     // own their own config (which only the calling tool knows how to load) and so
     // fall back to their default plans/ directory.
     let plan_override = config.plan_path.as_deref().map(Path::new);
-    let mut primary = Workspace::load_with_plans(primary_root, plan_override)?;
-    primary.id = config.workspace_id.clone();
-    primary.name = config.workspace_name.clone();
+    let primary = Workspace::load_with_plans(primary_root, plan_override)?;
     let mut workspaces = vec![primary];
     for path_str in &config.additional_workspaces {
         workspaces.push(Workspace::load(Path::new(path_str))?);

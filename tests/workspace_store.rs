@@ -1028,15 +1028,19 @@ fn read_does_not_replay_pending_journal_but_load_does() {
 
 // --- Doctor: read-only cross-file fsck (Decision 34) ---
 
-/// Config for an initialized workspace — what `clearhead init` would have
-/// written. Doctor flags a missing `workspace_id`, so fixtures that test
-/// *other* findings pass this to stay out of that check's way.
-fn initialized_config() -> clearhead_core::WorkspaceConfig {
-    clearhead_core::WorkspaceConfig {
+/// Stamp a durable identity onto the workspace at `root` — what `clearhead init`
+/// would have written to `workspace.json`. Doctor flags a missing `workspace_id`
+/// (read from the manifest), so fixtures testing *other* findings call this to
+/// stay out of that check's way. Returns `root` for inline use.
+fn initialized(root: &Path) -> &Path {
+    clearhead_core::workspace::WorkspaceManifest {
         workspace_id: Some("01951111-0000-7000-0000-00000000c0f9".to_string()),
         workspace_name: Some("test".to_string()),
-        ..Default::default()
+        created_at: None,
     }
+    .write(root)
+    .expect("write workspace manifest");
+    root
 }
 
 #[test]
@@ -1048,7 +1052,7 @@ fn doctor_flags_uninitialized_workspace() {
         "[ ] Task one #01951111-0000-7000-0000-000000000010\n",
     )]);
 
-    let diagnosis = diagnose(workspace.path(), None, &Default::default()).expect("diagnose failed");
+    let diagnosis = diagnose(workspace.path(), None).expect("diagnose failed");
     let finding = diagnosis
         .findings
         .iter()
@@ -1066,7 +1070,7 @@ fn doctor_reports_clean_on_a_coherent_workspace() {
         "[ ] Task one #01951111-0000-7000-0000-000000000010\n",
     )]);
 
-    let diagnosis = diagnose(workspace.path(), None, &initialized_config()).expect("diagnose failed");
+    let diagnosis = diagnose(initialized(workspace.path()), None).expect("diagnose failed");
     // The tempdir root charter is inferred but has no charter file — filter to
     // real violations/warnings that concern the fixture.
     let relevant: Vec<_> = diagnosis
@@ -1088,7 +1092,7 @@ fn doctor_flags_duplicate_uuids_across_files() {
         ("home.actions", &format!("[ ] Copy-pasted into home #{uuid}\n")),
     ]);
 
-    let diagnosis = diagnose(workspace.path(), None, &initialized_config()).expect("diagnose failed");
+    let diagnosis = diagnose(initialized(workspace.path()), None).expect("diagnose failed");
     let finding = diagnosis
         .findings
         .iter()
@@ -1116,7 +1120,7 @@ fn doctor_flags_dangling_predecessor_but_not_completed_one() {
         ),
     ]);
 
-    let diagnosis = diagnose(workspace.path(), None, &initialized_config()).expect("diagnose failed");
+    let diagnosis = diagnose(initialized(workspace.path()), None).expect("diagnose failed");
     let dangling: Vec<_> = diagnosis
         .findings
         .iter()
@@ -1141,7 +1145,7 @@ fn doctor_flags_orphaned_sidecar_entry() {
         (".work.json", &sidecar),
     ]);
 
-    let diagnosis = diagnose(workspace.path(), None, &initialized_config()).expect("diagnose failed");
+    let diagnosis = diagnose(initialized(workspace.path()), None).expect("diagnose failed");
     let orphans: Vec<_> = diagnosis
         .findings
         .iter()
@@ -1169,7 +1173,7 @@ fn doctor_flags_implausible_created_timestamp() {
         (".work.json", &sidecar),
     ]);
 
-    let diagnosis = diagnose(workspace.path(), None, &initialized_config()).expect("diagnose failed");
+    let diagnosis = diagnose(initialized(workspace.path()), None).expect("diagnose failed");
     let bad: Vec<_> = diagnosis
         .findings
         .iter()
@@ -1196,7 +1200,7 @@ fn doctor_reports_pending_journal_without_replaying_it() {
     )
     .expect("write journal");
 
-    let diagnosis = diagnose(workspace.path(), None, &initialized_config()).expect("diagnose failed");
+    let diagnosis = diagnose(initialized(workspace.path()), None).expect("diagnose failed");
     assert!(
         charter_root.join(".pending").exists(),
         "doctor must not replay the journal"
@@ -1216,7 +1220,7 @@ fn doctor_flags_charter_alias_collision() {
         ("two.md", "---\nalias: shared\n---\n# Two\n"),
     ]);
 
-    let diagnosis = diagnose(workspace.path(), None, &initialized_config()).expect("diagnose failed");
+    let diagnosis = diagnose(initialized(workspace.path()), None).expect("diagnose failed");
     let finding = diagnosis
         .findings
         .iter()
@@ -1237,7 +1241,7 @@ fn doctor_flags_open_actions_under_archived_parent_charter() {
         )],
     );
 
-    let diagnosis = diagnose(&project, None, &initialized_config()).expect("diagnose failed");
+    let diagnosis = diagnose(initialized(&project), None).expect("diagnose failed");
     let finding = diagnosis
         .findings
         .iter()
