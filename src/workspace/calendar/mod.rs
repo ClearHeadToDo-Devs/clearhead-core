@@ -15,6 +15,7 @@ pub mod expand;
 pub mod ics;
 pub mod plans;
 pub mod reconcile;
+pub mod sync_store;
 
 pub use expand::{ExpandResult, ExpansionConfig, expand_plans_into_actions};
 pub use ics::{ICSPlan, action_to_vevent, actions_to_icalendar, occurrence_action_id};
@@ -27,3 +28,4 @@ pub use reconcile::{
     AppliedSync, Reconcile, SyncEntry, SyncReport, SyncTally, apply_sync, plan_sync,
     read_ics_dates, reconcile,
 };
+pub use sync_store::{DEFAULT_SYNC_PAIR, SyncStore, read_sync_store, sync_store_path};

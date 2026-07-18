@@ -49,6 +49,9 @@ pub use calendar::reconcile::{
     AppliedSync, Reconcile, SyncEntry, SyncReport, SyncTally, apply_sync, plan_sync,
     read_ics_dates, reconcile,
 };
+pub use calendar::sync_store::{
+    DEFAULT_SYNC_PAIR, SyncStore, read_sync_store, sync_store_path,
+};
 
 pub use detection::check_for_workspace;
 pub use calendar::expand::expand_plans_into_actions;

@@ -57,7 +57,7 @@ pub use workspace::{
     action_to_vevent, actions_to_icalendar, occurrence_action_id, parse_actions,
     parse_actions_with_mode, parse_charter, parse_document, parse_tree, patch_action_list,
     plan_action_archive, charter_root, plans_root, read_action_file, read_actions, save_domain_model,
-    apply_sync, plan_sync, read_ics_dates, reconcile,
+    apply_sync, plan_sync, read_ics_dates, read_sync_store, reconcile, sync_store_path,
     workspace_data_root, write_actions,
     ArchiveCharterError, ArchiveCharterOptions, ArchiveCharterResult,
     archive_charter, archive_terminal_charters, find_markdown_charter,
@@ -72,7 +72,7 @@ pub use domain::diff::{
 };
 #[doc(inline)]
 pub use domain::{ActionState, PredecessorRef, Charter, CharterState, DomainModel, Metric, Objective, Plan, Recurrence, WorkspaceCharter, close_subtree, collect_subtree_ids};
-pub use workspace::{Reconcile, SyncEntry, SyncReport, SyncTally};
+pub use workspace::{DEFAULT_SYNC_PAIR, Reconcile, SyncEntry, SyncReport, SyncStore, SyncTally};
 #[doc(inline)]
 pub use domain::filter::{ActionFilter, apply_filter};
 

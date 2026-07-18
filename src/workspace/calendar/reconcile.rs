@@ -6,7 +6,7 @@
 //! the last sync. That gives three observable times for one action:
 //!
 //! - **A** — the action's current `scheduled_at`.
-//! - **B** — the merge base (`scheduled_at_sync` in the sidecar).
+//! - **B** — the merge base in the sync pair's machine-local store.
 //! - **C** — the `DTSTART` in the `.ics`.
 //!
 //! Each is an [`Option`]: `None` is "no scheduled time", a first-class value
@@ -45,15 +45,15 @@
 
 use chrono::{DateTime, Local};
 use std::collections::{HashMap, HashSet};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use uuid::Uuid;
 
 use super::ics::{actions_to_icalendar, parse_ics_file};
 use super::plans::{action_mirror_path, collect_plan_files_in};
+use super::sync_store::{read_sync_store, serialize_sync_store, sync_store_path};
 use crate::domain::DomainModel;
 use crate::workspace::charter::MarkdownCharter;
 use crate::workspace::durability::{PendingBatch, WorkspaceLock, atomic_write, recover_pending};
-use crate::workspace::sidecar::{CharterMetadata, read_sidecar, sidecar_path};
 use crate::workspace::store::{Workspace, WorkspaceError, resolve_workspace_layout};
 use crate::workspace::{OutputFormat, SourcedAction, format};
 
@@ -169,7 +169,11 @@ impl SyncReport {
 ///
 /// Plan-generated actions (`external_schedule_id` set) are skipped — they are
 /// represented by their plan's recurring master, never individually mirrored.
-pub fn plan_sync(model: &DomainModel, ics_dates: &HashMap<Uuid, Time>) -> SyncReport {
+pub fn plan_sync(
+    model: &DomainModel,
+    base_map: &HashMap<Uuid, Time>,
+    ics_dates: &HashMap<Uuid, Time>,
+) -> SyncReport {
     let mut entries = Vec::new();
     let mut warnings = Vec::new();
 
@@ -180,7 +184,7 @@ pub fn plan_sync(model: &DomainModel, ics_dates: &HashMap<Uuid, Time>) -> SyncRe
             }
 
             let a = action.scheduled_at;
-            let b = action.scheduled_at_sync;
+            let b = base_map.get(&action.id).copied().flatten();
             let c = ics_dates.get(&action.id).copied().flatten();
 
             if let Some(warning) = detect_merge_base_drift(&action.name, action.id, a, b, c) {
@@ -264,19 +268,20 @@ pub struct AppliedSync {
 /// Apply a planned sync report to disk.
 ///
 /// Ordering is load-bearing:
-/// - `TakeAction` writes the `.ics` first, then stamps B in the sidecar batch.
-/// - `TakeCalendar` stages `.actions` + sidecar together in one pending batch.
+/// - `TakeAction` writes the `.ics` first, then stamps B in the sync-store batch.
+/// - `TakeCalendar` stages `.actions` + sync store together in one pending batch.
 /// - `Converged` stamps B only.
 /// - `Conflict` is surfaced by the caller and skipped here.
+///
+/// The store is staged even for an otherwise empty report. That makes the
+/// one-time sidecar migration durable when an existing workspace is already in
+/// sync.
 pub fn apply_sync(
     root: &Path,
     plan_override: Option<&Path>,
+    pair: &str,
     report: &SyncReport,
 ) -> Result<AppliedSync, WorkspaceError> {
-    if report.is_empty() {
-        return Ok(AppliedSync::default());
-    }
-
     let layout = resolve_workspace_layout(root);
     std::fs::create_dir_all(&layout.charter_root)?;
 
@@ -286,10 +291,9 @@ pub fn apply_sync(
 
     let mut workspace = Workspace::load_with_plans(root, plan_override)?;
     let plans_root = plan_override.unwrap_or(&layout.plans_root);
+    let mut sync_store = read_sync_store(root, pair)?;
 
-    let mut sidecars: HashMap<PathBuf, CharterMetadata> = HashMap::new();
-    let mut dirty_actions: HashSet<PathBuf> = HashSet::new();
-    let mut dirty_sidecars: HashSet<PathBuf> = HashSet::new();
+    let mut dirty_actions = HashSet::new();
     let mut applied = AppliedSync::default();
 
     for entry in &report.entries {
@@ -310,12 +314,6 @@ pub fn apply_sync(
                     entry.action_id
                 ))
             })?;
-        let sidecar_abs = layout.charter_root.join(sidecar_path(&actions_relative));
-        if !sidecars.contains_key(&sidecar_abs) {
-            sidecars.insert(sidecar_abs.clone(), read_sidecar(&sidecar_abs)?);
-        }
-        let action_key = entry.action_id.to_string();
-
         match entry.outcome {
             Reconcile::NoOp => {}
             Reconcile::Conflict { .. } => {
@@ -334,48 +332,20 @@ pub fn apply_sync(
                 action_for_ics.scheduled_at = time;
                 write_action_mirror(&ics_path, &action_for_ics)?;
 
-                workspace.charters[charter_idx].actions[action_idx]
-                    .action
-                    .scheduled_at_sync = time;
-                let sidecar = sidecars.get_mut(&sidecar_abs).expect("sidecar loaded");
-                sidecar
-                    .actions
-                    .entry(action_key)
-                    .or_default()
-                    .scheduled_at_sync = time;
-                dirty_sidecars.insert(sidecar_abs);
+                sync_store.stamp_scheduled_at(entry.action_id, time);
                 applied.take_action += 1;
             }
             Reconcile::TakeCalendar(time) => {
                 workspace.charters[charter_idx].actions[action_idx]
                     .action
                     .scheduled_at = time;
-                workspace.charters[charter_idx].actions[action_idx]
-                    .action
-                    .scheduled_at_sync = time;
-
-                let sidecar = sidecars.get_mut(&sidecar_abs).expect("sidecar loaded");
-                sidecar
-                    .actions
-                    .entry(action_key)
-                    .or_default()
-                    .scheduled_at_sync = time;
+                sync_store.stamp_scheduled_at(entry.action_id, time);
 
                 dirty_actions.insert(layout.charter_root.join(&actions_relative));
-                dirty_sidecars.insert(sidecar_abs);
                 applied.take_calendar += 1;
             }
             Reconcile::Converged(time) => {
-                workspace.charters[charter_idx].actions[action_idx]
-                    .action
-                    .scheduled_at_sync = time;
-                let sidecar = sidecars.get_mut(&sidecar_abs).expect("sidecar loaded");
-                sidecar
-                    .actions
-                    .entry(action_key)
-                    .or_default()
-                    .scheduled_at_sync = time;
-                dirty_sidecars.insert(sidecar_abs);
+                sync_store.stamp_scheduled_at(entry.action_id, time);
                 applied.converged += 1;
             }
         }
@@ -403,19 +373,8 @@ pub fn apply_sync(
         batch.stage(action_path, content.as_bytes())?;
     }
 
-    let mut sidecar_paths: Vec<_> = dirty_sidecars.into_iter().collect();
-    sidecar_paths.sort();
-    for sidecar_path_abs in sidecar_paths {
-        let metadata = sidecars.get(&sidecar_path_abs).ok_or_else(|| {
-            WorkspaceError::Parse(format!(
-                "dirty sidecar missing metadata: {}",
-                sidecar_path_abs.display()
-            ))
-        })?;
-        let content = serde_json::to_string_pretty(metadata)
-            .map_err(|e| WorkspaceError::Parse(e.to_string()))?;
-        batch.stage(sidecar_path_abs, content.as_bytes())?;
-    }
+    let sync_content = serialize_sync_store(&sync_store)?;
+    batch.stage(sync_store_path(root, pair)?, sync_content.as_bytes())?;
 
     batch.commit()?;
     Ok(applied)
@@ -622,12 +581,11 @@ mod shell_tests {
         Local.with_ymd_and_hms(2026, 5, 1, 9, 0, 0).unwrap()
     }
 
-    fn action(name: &str, scheduled: Time, sync: Time) -> Action {
+    fn action(name: &str, scheduled: Time) -> Action {
         Action {
             id: Uuid::new_v4(),
             name: name.to_string(),
             scheduled_at: scheduled,
-            scheduled_at_sync: sync,
             ..Default::default()
         }
     }
@@ -644,25 +602,24 @@ mod shell_tests {
 
     #[test]
     fn empty_model_plans_nothing() {
-        let report = plan_sync(&model(vec![]), &HashMap::new());
+        let report = plan_sync(&model(vec![]), &HashMap::new(), &HashMap::new());
         assert!(report.is_empty());
     }
 
     #[test]
     fn already_synced_action_is_noop_and_omitted() {
-        // A == B == C → no-op, and no-ops never clutter the report.
-        let a = action("synced", Some(t1()), Some(t1()));
+        let a = action("synced", Some(t1()));
+        let bases = HashMap::from([(a.id, Some(t1()))]);
         let ics = HashMap::from([(a.id, Some(t1()))]);
-        let report = plan_sync(&model(vec![a]), &ics);
+        let report = plan_sync(&model(vec![a]), &bases, &ics);
         assert!(report.is_empty());
     }
 
     #[test]
     fn first_sync_of_new_action_plans_take_action() {
-        // A set, never synced (B None), no .ics (C absent) → push to the calendar.
-        let a = action("new", Some(t1()), None);
+        let a = action("new", Some(t1()));
         let id = a.id;
-        let report = plan_sync(&model(vec![a]), &HashMap::new());
+        let report = plan_sync(&model(vec![a]), &HashMap::new(), &HashMap::new());
         assert_eq!(report.entries.len(), 1);
         assert_eq!(report.entries[0].action_id, id);
         assert_eq!(report.entries[0].outcome, Reconcile::TakeAction(Some(t1())));
@@ -671,10 +628,10 @@ mod shell_tests {
 
     #[test]
     fn calendar_edit_plans_take_calendar() {
-        // A == B, C moved → the calendar wins.
-        let a = action("cal-edit", Some(t1()), Some(t1()));
+        let a = action("cal-edit", Some(t1()));
+        let bases = HashMap::from([(a.id, Some(t1()))]);
         let ics = HashMap::from([(a.id, Some(t2()))]);
-        let report = plan_sync(&model(vec![a]), &ics);
+        let report = plan_sync(&model(vec![a]), &bases, &ics);
         assert_eq!(
             report.entries[0].outcome,
             Reconcile::TakeCalendar(Some(t2()))
@@ -684,20 +641,19 @@ mod shell_tests {
 
     #[test]
     fn both_moved_differently_plans_conflict() {
-        // A=t2, B=t1, C=t3 → conflict, surfaced for a human.
-        let a = action("clash", Some(t2()), Some(t1()));
+        let a = action("clash", Some(t2()));
+        let bases = HashMap::from([(a.id, Some(t1()))]);
         let ics = HashMap::from([(a.id, Some(t3()))]);
-        let report = plan_sync(&model(vec![a]), &ics);
+        let report = plan_sync(&model(vec![a]), &bases, &ics);
         assert_eq!(report.tally().conflict, 1);
         assert_eq!(report.conflicts().count(), 1);
     }
 
     #[test]
     fn plan_generated_action_is_skipped() {
-        // A moved (would be TakeAction), but external_schedule_id ⇒ never mirrored.
-        let mut a = action("recurring-occurrence", Some(t2()), Some(t1()));
+        let mut a = action("recurring-occurrence", Some(t2()));
         a.external_schedule_id = Some("some-plan-uid".to_string());
-        let report = plan_sync(&model(vec![a]), &HashMap::new());
+        let report = plan_sync(&model(vec![a]), &HashMap::new(), &HashMap::new());
         assert!(
             report.is_empty(),
             "plan-generated actions must not be mirrored"
@@ -706,11 +662,12 @@ mod shell_tests {
 
     #[test]
     fn mixed_batch_tallies_each_kind_and_omits_noops() {
-        let new = action("new", Some(t1()), None); // TakeAction
-        let cal = action("cal", Some(t1()), Some(t1())); // TakeCalendar (C moves)
-        let noop = action("noop", Some(t1()), Some(t1())); // NoOp (C same)
+        let new = action("new", Some(t1()));
+        let cal = action("cal", Some(t1()));
+        let noop = action("noop", Some(t1()));
+        let bases = HashMap::from([(cal.id, Some(t1())), (noop.id, Some(t1()))]);
         let ics = HashMap::from([(cal.id, Some(t2())), (noop.id, Some(t1()))]);
-        let report = plan_sync(&model(vec![new, cal, noop]), &ics);
+        let report = plan_sync(&model(vec![new, cal, noop]), &bases, &ics);
         let tally = report.tally();
         assert_eq!(tally.take_action, 1);
         assert_eq!(tally.take_calendar, 1);
@@ -719,9 +676,10 @@ mod shell_tests {
 
     #[test]
     fn converged_sync_reports_merge_base_drift_warning() {
-        let a = action("recovered", Some(t2()), Some(t1()));
+        let a = action("recovered", Some(t2()));
+        let bases = HashMap::from([(a.id, Some(t1()))]);
         let ics = HashMap::from([(a.id, Some(t2()))]);
-        let report = plan_sync(&model(vec![a]), &ics);
+        let report = plan_sync(&model(vec![a]), &bases, &ics);
         assert_eq!(report.entries[0].outcome, Reconcile::Converged(Some(t2())));
         assert_eq!(report.warnings.len(), 1);
         assert!(report.warnings[0].contains("merge base drift"));
@@ -729,9 +687,9 @@ mod shell_tests {
 
     #[test]
     fn missing_merge_base_with_existing_calendar_mirror_warns_loudly() {
-        let a = action("missing-b", Some(t1()), None);
+        let a = action("missing-b", Some(t1()));
         let ics = HashMap::from([(a.id, Some(t2()))]);
-        let report = plan_sync(&model(vec![a]), &ics);
+        let report = plan_sync(&model(vec![a]), &HashMap::new(), &ics);
         assert_eq!(
             report.entries[0].outcome,
             Reconcile::Conflict {

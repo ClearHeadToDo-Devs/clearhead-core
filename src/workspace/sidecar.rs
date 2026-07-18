@@ -69,15 +69,6 @@ pub struct ActionMeta {
     /// VEVENT UID this action was generated from (links back to the ICS source).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_vevent: Option<String>,
-    /// The action's `scheduled_at` as of the last reconcile — the **B** column,
-    /// the three-way merge base against the action (A) and the `.ics` (C).
-    /// Machine-owned: only the reconcile engine may move it (see decision 31).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub scheduled_at_sync: Option<DateTime<Local>>,
-    /// The action's `due_date` as of the last reconcile — the **B** column for
-    /// the deadline. Machine-owned merge base; see `scheduled_at_sync`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub due_date_sync: Option<DateTime<Local>>,
 }
 
 /// Per-plan sidecar metadata.
@@ -129,16 +120,12 @@ pub fn collect_sidecar_actions(charter_root: &Path) -> BTreeMap<String, ActionMe
     union
 }
 
-/// Fold `from` into `to`, keeping the first present value per field. The
-/// irreplaceable sync bases survive regardless of order — only one entry ever
-/// carries them — so an empty re-stamp can never clobber a real historical
-/// record. Callers walk sidecars in sorted path order for a deterministic
-/// `created` on the rare duplicate.
+/// Fold `from` into `to`, keeping the first present value per field. Callers
+/// walk sidecars in sorted path order for a deterministic result on the rare
+/// duplicate.
 fn merge_action(to: &mut ActionMeta, from: ActionMeta) {
     to.created = to.created.or(from.created);
     to.source_vevent = to.source_vevent.take().or(from.source_vevent);
-    to.scheduled_at_sync = to.scheduled_at_sync.or(from.scheduled_at_sync);
-    to.due_date_sync = to.due_date_sync.or(from.due_date_sync);
 }
 
 /// Every hidden `.json` file under `dir`, recursively, sorted for determinism.
@@ -175,10 +162,6 @@ fn sidecar_files(dir: &Path) -> Vec<PathBuf> {
 /// For each action, if the sidecar has a matching entry (by UUID string key),
 /// fills in `created_at` and `external_schedule_id` where the action doesn't
 /// already have them (DSL values are authoritative).
-///
-/// The merge-base copies (`scheduled_at_sync` / `due_date_sync`) have no DSL
-/// form at all — the sidecar is their sole source, so they are assigned
-/// directly rather than filled-if-absent.
 pub fn hydrate_actions(actions: &mut [crate::workspace::actions::repository::SourcedAction], metadata: &CharterMetadata) {
     hydrate_actions_map(actions, &metadata.actions);
 }
@@ -206,8 +189,6 @@ pub fn hydrate_actions_map(
             if action.external_schedule_id.is_none() {
                 action.external_schedule_id = meta.source_vevent.clone();
             }
-            action.scheduled_at_sync = meta.scheduled_at_sync;
-            action.due_date_sync = meta.due_date_sync;
         }
     }
 }
@@ -329,14 +310,11 @@ mod tests {
     #[test]
     fn metadata_with_action_roundtrips() {
         let mut meta = CharterMetadata::default();
-        let synced = Local::now();
         meta.actions.insert(
             "019dad29-c05d-7781-a92c-40d71adfb88e".to_string(),
             ActionMeta {
                 created: Some(Local::now()),
                 source_vevent: Some("weekly-review@clearhead.us".to_string()),
-                scheduled_at_sync: Some(synced),
-                due_date_sync: None,
             },
         );
         let json = serde_json::to_string_pretty(&meta).unwrap();
@@ -348,9 +326,6 @@ mod tests {
             action.source_vevent.as_deref(),
             Some("weekly-review@clearhead.us")
         );
-        // The B column round-trips; an unset side stays None (skip_serializing_if).
-        assert_eq!(action.scheduled_at_sync, Some(synced));
-        assert!(action.due_date_sync.is_none());
     }
 
     #[test]
@@ -479,26 +454,6 @@ mod tests {
 
         hydrate_actions(&mut actions, &meta);
         assert_eq!(actions[0].action.external_schedule_id.as_deref(), Some("weekly-review@clearhead.us"));
-    }
-
-    #[test]
-    fn hydrate_fills_merge_base_b_columns() {
-        use crate::domain::Action;
-        use uuid::Uuid;
-
-        let id = Uuid::now_v7();
-        let synced = Local::now();
-        let mut actions = vec![make_sourced(Action { id, ..Default::default() })];
-        let mut meta = CharterMetadata::default();
-        meta.actions.insert(
-            id.to_string(),
-            ActionMeta { scheduled_at_sync: Some(synced), ..Default::default() },
-        );
-
-        hydrate_actions(&mut actions, &meta);
-        assert_eq!(actions[0].action.scheduled_at_sync, Some(synced));
-        // No sidecar value for the deadline → stays "not yet synced".
-        assert!(actions[0].action.due_date_sync.is_none());
     }
 
     #[test]
@@ -635,10 +590,10 @@ mod tests {
     }
 
     #[test]
-    fn merge_action_never_clobbers_an_irreplaceable_sync_base() {
-        // Same uuid in two sidecars: one is the real record (a source_vevent that
-        // cannot be recomputed), the other an empty re-stamp (created only). The
-        // union must keep the sync base regardless of which file is seen first.
+    fn merge_action_never_clobbers_source_linkage() {
+        // Same uuid in two sidecars: one carries source linkage that cannot be
+        // recomputed, the other only a created stamp. The union must keep the
+        // linkage regardless of which file is seen first.
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(
             dir.path().join(".aaa.json"),
