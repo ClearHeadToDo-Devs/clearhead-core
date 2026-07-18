@@ -1,5 +1,5 @@
 //! The calendar projection: the bridge between ClearHead actions and the
-//! `.ics` plans a CalDAV server shares with us.
+//! configured vdir of `.ics` plans.
 //!
 //! Everything here is about that one boundary — parsing and emitting `.ics`,
 //! expanding recurring plans into actions, locating plan files on disk, and
@@ -28,4 +28,6 @@ pub use reconcile::{
     AppliedSync, Reconcile, SyncEntry, SyncReport, SyncTally, apply_sync, plan_sync,
     read_ics_dates, reconcile,
 };
-pub use sync_store::{DEFAULT_SYNC_PAIR, SyncStore, read_sync_store, sync_store_path};
+pub use sync_store::{
+    PlansSyncStore, plans_sync_store_path, read_plans_sync_store,
+};

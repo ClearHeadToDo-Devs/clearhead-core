@@ -50,7 +50,7 @@ pub use calendar::reconcile::{
     read_ics_dates, reconcile,
 };
 pub use calendar::sync_store::{
-    DEFAULT_SYNC_PAIR, SyncStore, read_sync_store, sync_store_path,
+    PlansSyncStore, plans_sync_store_path, read_plans_sync_store,
 };
 
 pub use detection::check_for_workspace;

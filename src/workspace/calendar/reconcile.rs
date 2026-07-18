@@ -1,4 +1,4 @@
-//! Three-way reconcile for CalDAV sync ([decision 31]).
+//! Three-way reconcile between actions and the configured plans vdir ([decision 31]).
 //!
 //! Edits to a scheduled action can originate on either side — in ClearHead or
 //! in the calendar app — and we honor both without knowing *when* anything
@@ -6,7 +6,7 @@
 //! the last sync. That gives three observable times for one action:
 //!
 //! - **A** — the action's current `scheduled_at`.
-//! - **B** — the merge base in the sync pair's machine-local store.
+//! - **B** — the merge base in the plans projection's machine-local store.
 //! - **C** — the `DTSTART` in the `.ics`.
 //!
 //! Each is an [`Option`]: `None` is "no scheduled time", a first-class value
@@ -50,7 +50,9 @@ use uuid::Uuid;
 
 use super::ics::{actions_to_icalendar, parse_ics_file};
 use super::plans::{action_mirror_path, collect_plan_files_in};
-use super::sync_store::{read_sync_store, serialize_sync_store, sync_store_path};
+use super::sync_store::{
+    plans_sync_store_path, read_plans_sync_store, serialize_plans_sync_store,
+};
 use crate::domain::DomainModel;
 use crate::workspace::charter::MarkdownCharter;
 use crate::workspace::durability::{PendingBatch, WorkspaceLock, atomic_write, recover_pending};
@@ -273,13 +275,11 @@ pub struct AppliedSync {
 /// - `Converged` stamps B only.
 /// - `Conflict` is surfaced by the caller and skipped here.
 ///
-/// The store is staged even for an otherwise empty report. That makes the
-/// one-time sidecar migration durable when an existing workspace is already in
-/// sync.
+/// The store is staged even for an otherwise empty report so it records which
+/// configured plans vdir subsequent reconciliations belong to.
 pub fn apply_sync(
     root: &Path,
     plan_override: Option<&Path>,
-    pair: &str,
     report: &SyncReport,
 ) -> Result<AppliedSync, WorkspaceError> {
     let layout = resolve_workspace_layout(root);
@@ -291,7 +291,7 @@ pub fn apply_sync(
 
     let mut workspace = Workspace::load_with_plans(root, plan_override)?;
     let plans_root = plan_override.unwrap_or(&layout.plans_root);
-    let mut sync_store = read_sync_store(root, pair)?;
+    let mut sync_store = read_plans_sync_store(root, plans_root)?;
 
     let mut dirty_actions = HashSet::new();
     let mut applied = AppliedSync::default();
@@ -373,8 +373,8 @@ pub fn apply_sync(
         batch.stage(action_path, content.as_bytes())?;
     }
 
-    let sync_content = serialize_sync_store(&sync_store)?;
-    batch.stage(sync_store_path(root, pair)?, sync_content.as_bytes())?;
+    let sync_content = serialize_plans_sync_store(&sync_store)?;
+    batch.stage(plans_sync_store_path(root), sync_content.as_bytes())?;
 
     batch.commit()?;
     Ok(applied)

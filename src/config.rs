@@ -56,13 +56,13 @@ pub struct WorkspaceConfig {
     /// `expansion_total_instances`. Defaults to `1`.
     pub expansion_primary_instances: u32,
 
-    /// Directory where plan `.ics` files are written, laid out flat as
-    /// `<plan_path>/<charter>/<uid>.ics`. A CalDAV server can point at the same
-    /// directory to share plans through the files themselves.
+    /// Configured vdir where plan `.ics` files are written, laid out as
+    /// `<plan_path>/<charter>/<uid>.ics`. ClearHead's integration boundary is
+    /// this filesystem convention; transport or sharing is external.
     ///
     /// When `None`, plans live under the workspace's own `<data_root>/plans`.
-    /// Core stores the configured value; resolving it into `plans_root` is the
-    /// CalDAV charter's slice-2 work — nothing consumes it yet.
+    /// Callers resolve configured values before passing them into workspace
+    /// operations.
     pub plan_path: Option<String>,
 }
 

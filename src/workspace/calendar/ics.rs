@@ -4,7 +4,7 @@
 //! VEVENT *or* VTODO into a [`Plan`], populating `recurrence`, `dtstart`,
 //! `external_id`, and `template_name`. Both component kinds are accepted on
 //! read so existing VEVENT plan/mirror files keep working while the write
-//! side migrates to VTODO — see caldav-integration/README.md.
+//! side migrates to VTODO — see the platform's VTODO integration charter.
 //!
 //! **Export direction** (`domain → ics`): converts a slice of [`Action`]s into
 //! an iCalendar string. Each action with `scheduled_at` becomes one VEVENT —
