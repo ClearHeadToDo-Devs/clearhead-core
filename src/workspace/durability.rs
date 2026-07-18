@@ -46,16 +46,24 @@ pub fn atomic_write(path: &Path, content: impl AsRef<[u8]>) -> io::Result<()> {
 // ============================================================================
 
 struct BatchEntry {
-    temp_path: PathBuf,
+    /// The file to rename into `final_path` on commit. For [`stage`] this is a
+    /// freshly-written temp; for [`stage_move`] it is an existing source file
+    /// being relocated. Either way, commit renames `source_path -> final_path`
+    /// and recovery replays that same rename.
+    ///
+    /// [`stage`]: PendingBatch::stage
+    /// [`stage_move`]: PendingBatch::stage_move
+    source_path: PathBuf,
     final_path: PathBuf,
 }
 
 /// Staged multi-file commit.
 ///
 /// Usage:
-/// 1. Call [`stage`](PendingBatch::stage) for each file to write.
+/// 1. Call [`stage`](PendingBatch::stage) for each file to write, and/or
+///    [`stage_move`](PendingBatch::stage_move) for each existing file to relocate.
 /// 2. Call [`commit`](PendingBatch::commit) to write the journal, rename all
-///    temps to their finals, and unlink the journal.
+///    sources to their finals, and unlink the journal.
 ///
 /// The `journal_dir` receives the `.pending` file; all staged files should live
 /// on the same filesystem so renames are atomic.
@@ -80,11 +88,31 @@ impl PendingBatch {
         f.write_all(content)?;
         f.sync_all()?;
 
-        self.entries.push(BatchEntry { temp_path: tmp_path, final_path });
+        self.entries.push(BatchEntry { source_path: tmp_path, final_path });
         Ok(())
     }
 
-    /// Commit the batch: write journal, rename temps, fsync dir, unlink journal.
+    /// Record an *existing* file for relocation to `final_path` on commit.
+    ///
+    /// Unlike [`stage`](PendingBatch::stage), nothing is copied: `src` is
+    /// itself the file that gets renamed into place, so this is a true move,
+    /// not a copy-then-delete. `src` is assumed already durable on disk (it
+    /// was written by an earlier operation), so no content fsync is needed;
+    /// only the destination directory is created ahead of the rename.
+    ///
+    /// A crash between journal-write and completion leaves `src` in place, and
+    /// [`recover_pending`] replays the rename — identical semantics to a
+    /// staged write, because both reduce to "if the source still exists,
+    /// rename it to its final path."
+    pub fn stage_move(&mut self, src: PathBuf, final_path: PathBuf) -> io::Result<()> {
+        if let Some(parent) = final_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        self.entries.push(BatchEntry { source_path: src, final_path });
+        Ok(())
+    }
+
+    /// Commit the batch: write journal, rename sources, fsync dir, unlink journal.
     ///
     /// A no-op if no files were staged.
     pub fn commit(self) -> io::Result<()> {
@@ -99,7 +127,7 @@ impl PendingBatch {
                 .entries
                 .iter()
                 .map(|e| {
-                    format!("{}\t{}\n", e.temp_path.display(), e.final_path.display())
+                    format!("{}\t{}\n", e.source_path.display(), e.final_path.display())
                 })
                 .collect();
             let mut jf = std::fs::File::create(&journal_path)?;
@@ -110,7 +138,7 @@ impl PendingBatch {
 
         // Rename in a fixed order (deterministic, matches recovery order).
         for entry in &self.entries {
-            std::fs::rename(&entry.temp_path, &entry.final_path)?;
+            std::fs::rename(&entry.source_path, &entry.final_path)?;
         }
 
         std::fs::File::open(&self.journal_dir)?.sync_all()?;
@@ -247,6 +275,52 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         PendingBatch::new(dir.path().to_path_buf()).commit().unwrap();
         assert!(!dir.path().join(".pending").exists());
+    }
+
+    // ── PendingBatch::stage_move ──────────────────────────────────────────────
+
+    /// `stage_move` relocates an existing file (no copy), creating the
+    /// destination's parent directory as needed.
+    #[test]
+    fn stage_move_relocates_existing_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let src = root.join("charters/done.actions");
+        std::fs::create_dir_all(src.parent().unwrap()).unwrap();
+        std::fs::write(&src, "[x] done\n").unwrap();
+
+        let dest = root.join("archive/done.actions");
+        let mut batch = PendingBatch::new(root.join("charters"));
+        batch.stage_move(src.clone(), dest.clone()).unwrap();
+        batch.commit().unwrap();
+
+        assert!(!src.exists(), "source is moved, not copied");
+        assert_eq!(std::fs::read_to_string(&dest).unwrap(), "[x] done\n");
+        assert!(!root.join("charters/.pending").exists());
+    }
+
+    /// A crash after the journal but before the move completes: recovery
+    /// replays the rename, because a staged move reduces to the same
+    /// "if the source still exists, rename it" contract as a staged write.
+    #[test]
+    fn stage_move_recovers_after_crash() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let src = root.join("charters/done.actions");
+        let dest = root.join("archive/done.actions");
+        std::fs::create_dir_all(src.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(dest.parent().unwrap()).unwrap();
+        std::fs::write(&src, "[x] done\n").unwrap();
+
+        // Journal written (source still in place), then "crash" before rename.
+        let journal = format!("{}\t{}\n", src.display(), dest.display());
+        std::fs::write(root.join(".pending"), &journal).unwrap();
+
+        recover_pending(root).unwrap();
+
+        assert!(!src.exists(), "recovery completes the move");
+        assert_eq!(std::fs::read_to_string(&dest).unwrap(), "[x] done\n");
+        assert!(!root.join(".pending").exists());
     }
 
     // ── recover_pending ───────────────────────────────────────────────────────

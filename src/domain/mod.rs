@@ -328,9 +328,9 @@ impl Recurrence {
 /// Lifecycle state of a [`Charter`].
 ///
 /// Charters move through a simple workflow. `Closed` and `Cancelled` are
-/// both terminal — either is a precondition for archival, and the charter
-/// and all its artifacts are swept into `archive.ttl` once one of them is
-/// set (see [`CharterState::is_terminal`]).
+/// both terminal — either is a precondition for archival, at which point the
+/// charter and all its artifacts are moved into the `archive/` region
+/// (see [`CharterState::is_terminal`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CharterState {
     /// Newly created, not yet active.

@@ -1,32 +1,34 @@
-//! Charter archival: sweep a closed charter's artifacts into `archive.ttl`.
+//! Charter archival: relocate a closed charter's artifacts into the `archive/`
+//! region as plaintext, untouched.
+//!
+//! The archived form is *data, not a projection*: nothing is serialized to
+//! Turtle or JSON-LD. The subtree's own `.actions` / `.completed.actions` /
+//! `.md` / sidecar files are moved verbatim into `<data_root>/archive/`,
+//! mirroring their path under `charters/`. Because discovery only recurses into
+//! `charters/`, the moved files drop out of the default read automatically while
+//! staying fully parseable when reference resolution or the graph binary needs
+//! them. Any RDF view of archived data is regenerated on read, exactly like
+//! live data. This is what lets `clearhead-core` shed Oxigraph: archival no
+//! longer writes Turtle.
 //!
 //! # Process (per spec)
 //!
-//! 1. Verify the charter's `state` is terminal ([`CharterState::Closed`] or
-//!    [`CharterState::Cancelled`]).
-//! 2. Count open actions in the primary `.actions` file.
+//! 1. Verify each charter in the subtree is terminal ([`CharterState::Closed`]
+//!    or [`CharterState::Cancelled`]).
+//! 2. Count open actions in each primary `.actions` file.
 //!    - If any are open and `force` is false, refuse and return
 //!      [`ArchiveCharterError::OpenActions`].
-//! 3. Read all actions (primary + completed), then hydrate them from the
-//!    charter's `.<stem>.json` sidecar (`created_at`, `external_schedule_id`)
-//!    the same way the workspace loader does — otherwise that metadata is
-//!    silently lost the moment the sidecar is deleted in step 7.
-//! 4. Build a [`DomainModel`] from the charter + all its actions. Plans
-//!    (`.ics`) are deliberately excluded: they are a calendar projection the
-//!    server owns, and the actions already carry the scheduling source of
-//!    truth (`scheduled_at` / `due_at`).
-//! 5. Load the existing `archive.ttl` (if present) into an Oxigraph store,
-//!    then load the new model on top (quad idempotence means re-runs are safe).
-//! 6. Serialize the merged store back to `archive.ttl`.
-//! 7. Delete the source files:
+//! 3. Move the source files, all-or-none, through the batch transaction:
 //!    - `<charter>.actions`
 //!    - `<charter>.completed.actions`
 //!    - `<charter>.upcoming.actions`
 //!    - `<charter>.md` (if present)
-//!    - `.<charter>.json` sidecar (if present) — its data has already been
-//!      folded into the actions written to `archive.ttl` in step 3.
-//!    - The charter subdirectory itself if it is now empty (directory-form
-//!      charters only; silently skipped when non-empty so sub-charters survive).
+//!    - `.<charter>.json` sidecar (if present) — moved *with* the files rather
+//!      than folded into the lines, so its `created_at` / `external_schedule_id`
+//!      / VEVENT linkage survive intact.
+//!    Each lands at `<data_root>/archive/<path-under-charters>`.
+//! 4. Collapse the now-empty charter subdirectory (directory-form charters
+//!    only; silently skipped when non-empty so sub-charters survive).
 //!
 //! `.ics` plans are never touched. Once a plan's `.ics` exists the server owns
 //! it; archiving the actions leaves the calendar files in place (the user
@@ -39,14 +41,10 @@ use std::path::{Path, PathBuf};
 
 use uuid::Uuid;
 
-use crate::domain::{Action, ActionState, Charter, DomainModel};
-use crate::graph::{
-    create_store, dump_store_to_turtle, insert::load_domain_model as insert_model_into_store,
-    insert::load_turtle,
-};
+use crate::domain::{ActionState, Charter};
 use crate::workspace::action_files::{completed_actions_path, read_actions, upcoming_actions_path};
-use crate::workspace::actions::repository::SourcedAction;
-use crate::workspace::sidecar::{hydrate_actions_map, read_sidecar, sidecar_path};
+use crate::workspace::durability::PendingBatch;
+use crate::workspace::sidecar::sidecar_path;
 use crate::workspace::store::{WorkspaceError, resolve_workspace_layout};
 use crate::workspace::store::load_workspace;
 use crate::workspace::MarkdownCharter;
@@ -75,8 +73,9 @@ pub struct ArchiveCharterResult {
     pub primary_actions_swept: usize,
     /// Number of actions swept from `.completed.actions`.
     pub completed_actions_swept: usize,
-    /// Absolute path to the `archive.ttl` that was written (or would be).
-    pub archive_ttl_path: PathBuf,
+    /// Absolute path to the `archive/` region the files were moved into
+    /// (or would be).
+    pub archive_dir: PathBuf,
     /// Mirrors `ArchiveCharterOptions::dry_run`.
     pub was_dry_run: bool,
 }
@@ -107,10 +106,6 @@ pub enum ArchiveCharterError {
     /// Filesystem I/O error.
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
-
-    /// RDF graph error.
-    #[error("Graph error: {0}")]
-    Graph(String),
 }
 
 // ============================================================================
@@ -179,12 +174,14 @@ fn archive_many(
     let charter_name = charter_display_name(root_charter);
 
     let layout = resolve_workspace_layout(root);
-    let archive_ttl = layout.data_root.join("archive.ttl");
+    let archive_root = layout.data_root.join("archive");
 
     let mut primary_swept = 0usize;
     let mut completed_swept = 0usize;
-    let mut model_charters = Vec::new();
-    let mut files_to_remove: Vec<Option<PathBuf>> = Vec::new();
+    // Source → destination pairs. Destinations mirror the source's path under
+    // `charters/`, rooted at `archive/`, so the subtree's internal structure
+    // (and thus its parent/child relationships) survives the move intact.
+    let mut moves: Vec<(PathBuf, PathBuf)> = Vec::new();
     let mut dirs_to_remove: BTreeSet<(usize, PathBuf)> = BTreeSet::new();
 
     for mc in charters {
@@ -226,51 +223,33 @@ fn archive_many(
             }
         });
 
-        let sidecar_meta = match &sidecar_abs {
-            Some(p) => read_sidecar(p)?,
-            None => Default::default(),
+        // Precondition: refuse if the primary file still holds open actions,
+        // unless forced. Counting is the only reason we read the files — the
+        // bytes themselves move verbatim, so there is no hydration to do.
+        let open_count = match &acts_abs {
+            Some(p) if p.exists() => read_actions(p)?
+                .iter()
+                .filter(|a| !matches!(a.state, ActionState::Completed | ActionState::Cancelled))
+                .count(),
+            _ => 0,
         };
-
-        let mut primary_actions: Vec<Action> = match &acts_abs {
-            Some(p) => read_actions(p)?,
-            None => vec![],
-        };
-        hydrate_action_vec(&mut primary_actions, &sidecar_meta);
-
-        let open_count = primary_actions
-            .iter()
-            .filter(|a| !matches!(a.state, ActionState::Completed | ActionState::Cancelled))
-            .count();
-
         if open_count > 0 && !opts.force {
             return Err(ArchiveCharterError::OpenActions(current_name, open_count));
         }
 
-        let mut completed_actions: Vec<Action> = match &completed_abs {
-            Some(p) => read_actions(p)?,
-            None => vec![],
-        };
-        hydrate_action_vec(&mut completed_actions, &sidecar_meta);
+        primary_swept += count_actions(&acts_abs)?;
+        completed_swept += count_actions(&completed_abs)?;
 
-        primary_swept += primary_actions.len();
-        completed_swept += completed_actions.len();
-
-        let mut all_actions = primary_actions.clone();
-        all_actions.extend(completed_actions.iter().cloned());
-
-        let mut charter_domain = Charter::from(mc.clone());
-        charter_domain.actions = all_actions;
-        // Plans are not archived: the `.ics` are server-owned and stay on disk.
-        charter_domain.plans = vec![];
-        model_charters.push(charter_domain);
-
-        files_to_remove.extend([
-            acts_abs,
-            completed_abs,
-            upcoming_abs,
-            md_abs,
-            sidecar_abs,
-        ]);
+        // The `.ics` plans are intentionally excluded: the server owns them and
+        // they stay on disk. Everything else moves all-or-none.
+        for src in [acts_abs, completed_abs, upcoming_abs, md_abs, sidecar_abs]
+            .into_iter()
+            .flatten()
+            .filter(|p| p.exists())
+        {
+            let dest = archive_dest(&src, &layout.charter_root, &archive_root);
+            moves.push((src, dest));
+        }
 
         if let Some(subdir) = charter_subdir {
             dirs_to_remove.insert((subdir.components().count(), subdir));
@@ -282,38 +261,22 @@ fn archive_many(
             charter_name,
             primary_actions_swept: primary_swept,
             completed_actions_swept: completed_swept,
-            archive_ttl_path: archive_ttl,
+            archive_dir: archive_root,
             was_dry_run: true,
         });
     }
 
-    let model = DomainModel {
-        objectives: vec![],
-        charters: model_charters,
-    };
-
-    let store = create_store().map_err(|e| ArchiveCharterError::Graph(e.to_string()))?;
-
-    if archive_ttl.exists() {
-        let existing = std::fs::read_to_string(&archive_ttl)?;
-        load_turtle(&store, &existing).map_err(|e| ArchiveCharterError::Graph(e.to_string()))?;
+    // Atomic move of the whole subtree: the journal lives in `charters/` (where
+    // `load` runs recovery), so an interrupted archive replays forward on the
+    // next load — never a half-archived subtree that orphans a sidecar.
+    let mut batch = PendingBatch::new(layout.charter_root.clone());
+    for (src, dest) in &moves {
+        batch.stage_move(src.clone(), dest.clone())?;
     }
+    batch.commit()?;
 
-    insert_model_into_store(&store, &model, None, oxigraph::model::GraphName::DefaultGraph)
-        .map_err(|e| ArchiveCharterError::Graph(e.to_string()))?;
-
-    let ttl = dump_store_to_turtle(&store).map_err(|e| ArchiveCharterError::Graph(e.to_string()))?;
-
-    crate::workspace::durability::atomic_write(&archive_ttl, ttl.as_bytes())
-        .map_err(ArchiveCharterError::Io)?;
-
-    for path in &files_to_remove {
-        remove_if_exists(path)?;
-    }
-
-    // `.ics` plans are intentionally left untouched — the server owns them.
     // Remove directory-form charter folders deepest-first so a fully archived
-    // subtree collapses cleanly once its descendants are gone.
+    // subtree collapses cleanly once its descendants have moved out.
     for (_, dir) in dirs_to_remove.iter().rev() {
         let _ = std::fs::remove_dir(dir); // ok if non-empty
     }
@@ -322,9 +285,27 @@ fn archive_many(
         charter_name,
         primary_actions_swept: primary_swept,
         completed_actions_swept: completed_swept,
-        archive_ttl_path: archive_ttl,
+        archive_dir: archive_root,
         was_dry_run: false,
     })
+}
+
+/// Destination for an archived source file: its path relative to `charters/`,
+/// re-rooted under `archive/`. Falls back to the bare filename directly under
+/// `archive/` if the source somehow isn't under `charter_root` (never expected).
+fn archive_dest(src: &Path, charter_root: &Path, archive_root: &Path) -> PathBuf {
+    match src.strip_prefix(charter_root) {
+        Ok(rel) => archive_root.join(rel),
+        Err(_) => archive_root.join(src.file_name().unwrap_or(src.as_os_str())),
+    }
+}
+
+/// Count the actions in an optional file, treating a missing file as empty.
+fn count_actions(path: &Option<PathBuf>) -> Result<usize, ArchiveCharterError> {
+    match path {
+        Some(p) if p.exists() => Ok(read_actions(p)?.len()),
+        _ => Ok(0),
+    }
 }
 
 fn charter_display_name(mc: &MarkdownCharter) -> String {
@@ -441,32 +422,6 @@ pub fn find_charter<'a>(charters: &'a [MarkdownCharter], query: &str) -> Option<
 }
 
 // ============================================================================
-// Helpers
-// ============================================================================
-
-fn remove_if_exists(path: &Option<PathBuf>) -> Result<(), ArchiveCharterError> {
-    if let Some(p) = path {
-        if p.exists() {
-            std::fs::remove_file(p)?;
-        }
-    }
-    Ok(())
-}
-
-/// Fill in `created_at` / `external_schedule_id` (etc.) from the sidecar,
-/// the same hydration the workspace loader applies on every normal read —
-/// so archived actions carry that metadata into `archive.ttl` instead of
-/// losing it when the sidecar is deleted in step 7.
-fn hydrate_action_vec(actions: &mut Vec<Action>, metadata: &crate::workspace::sidecar::CharterMetadata) {
-    let mut sourced: Vec<SourcedAction> = actions
-        .drain(..)
-        .map(|action| SourcedAction { action, source_metadata: None })
-        .collect();
-    hydrate_actions_map(&mut sourced, &metadata.actions);
-    *actions = sourced.into_iter().map(|sa| sa.action).collect();
-}
-
-// ============================================================================
 // Tests
 // ============================================================================
 
@@ -498,8 +453,9 @@ mod tests {
 
     #[test]
     fn archive_leaves_ics_in_place() {
-        // Archiving a closed charter sweeps its `.actions`/`.md` into archive.ttl
-        // but must never touch the `.ics` plans — the server owns those files.
+        // Archiving a closed charter relocates its `.actions`/`.md` into the
+        // `archive/` region but must never touch the `.ics` plans — the server
+        // owns those files.
         let temp = tempfile::tempdir().expect("tempdir");
         let root = temp.path().join("ws");
         let charters_dir = root.join(".clearhead/charters");
@@ -532,10 +488,14 @@ mod tests {
             .expect("archive should succeed");
         assert_eq!(result.charter_name, "done");
 
-        // The charter's own artifacts are swept away…
-        assert!(!charters_dir.join("done.actions").exists(), "actions removed");
-        assert!(!charters_dir.join("done.md").exists(), "charter md removed");
-        assert!(root.join(".clearhead/archive.ttl").exists(), "archive written");
+        // The charter's own artifacts move out of `charters/`…
+        let archive_dir = root.join(".clearhead/archive");
+        assert!(!charters_dir.join("done.actions").exists(), "actions moved out");
+        assert!(!charters_dir.join("done.md").exists(), "charter md moved out");
+        // …and land under `archive/`, verbatim, as plaintext (no Turtle).
+        assert!(archive_dir.join("done.actions").exists(), "actions in archive/");
+        assert!(archive_dir.join("done.md").exists(), "charter md in archive/");
+        assert!(!archive_dir.join("archive.ttl").exists(), "no Turtle is written");
 
         // …but the server-owned `.ics` is left exactly where it was.
         assert!(ics_path.exists(), "`.ics` must survive archival");
@@ -543,11 +503,11 @@ mod tests {
     }
 
     #[test]
-    fn archive_hydrates_sidecar_and_removes_it() {
+    fn archive_moves_sidecar_with_files() {
         // The sidecar carries data (VEVENT linkage) that has no DSL form at
-        // all — it only ever lives in the sidecar. Archiving must fold it
-        // into archive.ttl before the sidecar itself is deleted, or the
-        // data is lost with no record it ever existed.
+        // all — it only ever lives in the sidecar. Archival moves it *with* the
+        // files rather than folding it into the lines, so the linkage survives
+        // intact and byte-identical, no lossy translation.
         use crate::workspace::sidecar::{ActionMeta, CharterMetadata, sidecar_path, write_sidecar};
 
         let temp = tempfile::tempdir().expect("tempdir");
@@ -580,16 +540,16 @@ mod tests {
         archive_charter(&root, "done", &ArchiveCharterOptions::default())
             .expect("archive should succeed");
 
-        // The VEVENT linkage survived into archive.ttl…
-        let ttl = std::fs::read_to_string(root.join(".clearhead/archive.ttl"))
-            .expect("archive.ttl written");
+        // The sidecar left `charters/` …
+        assert!(!sc_path.exists(), "sidecar must move out of charters/");
+        // … and its VEVENT linkage now lives in the archived sidecar, intact.
+        let archived_sc = sidecar_path(&root.join(".clearhead/archive/done.actions"));
+        let moved = std::fs::read_to_string(&archived_sc)
+            .expect("sidecar must be moved into archive/");
         assert!(
-            ttl.contains("weekly-review@example.com"),
-            "sidecar-only data must be folded into archive.ttl before the sidecar is deleted:\n{ttl}"
+            moved.contains("weekly-review@example.com"),
+            "sidecar-only data must survive the move verbatim:\n{moved}"
         );
-
-        // …and the sidecar itself, now redundant, is swept away like the other artifacts.
-        assert!(!sc_path.exists(), "sidecar must be removed once archived");
     }
 
     #[test]
@@ -670,10 +630,13 @@ mod tests {
         assert!(!ops_dir.exists(), "child directory removed once empty");
         assert!(!work_dir.exists(), "parent directory removed once subtree is archived");
 
-        let ttl = std::fs::read_to_string(root.join(".clearhead/archive.ttl"))
-            .expect("archive.ttl written");
-        assert!(ttl.contains("Work"), "parent charter should be archived:\n{ttl}");
-        assert!(ttl.contains("Ops"), "child charter should be archived too:\n{ttl}");
+        // Both charters land under archive/, and the subtree's nesting is
+        // preserved so their parent/child structure stays reconstructable.
+        let archive_dir = root.join(".clearhead/archive");
+        assert!(archive_dir.join("work/README.md").exists(), "parent charter in archive/");
+        assert!(archive_dir.join("work/next.actions").exists(), "parent actions in archive/");
+        assert!(archive_dir.join("work/ops/README.md").exists(), "child charter nested in archive/");
+        assert!(archive_dir.join("work/ops/next.actions").exists(), "child actions nested in archive/");
     }
 
     #[test]

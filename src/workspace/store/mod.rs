@@ -42,7 +42,7 @@ pub use save::save_domain_model;
 
 /// Returns the workspace root directory (`.clearhead/` for project layout).
 ///
-/// Use this for non-charter files: `archive.ttl`, `objectives/`, `templates/`.
+/// Use this for non-charter files: `archive/`, `objectives/`, `templates/`.
 pub fn workspace_data_root(root: &Path) -> PathBuf {
     resolve_workspace_layout(root).data_root
 }
