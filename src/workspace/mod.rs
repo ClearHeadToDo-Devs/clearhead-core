@@ -9,6 +9,7 @@
 
 pub mod actions;
 pub mod action_files;
+pub mod archive_actions;
 pub mod calendar;
 pub mod durability;
 pub mod archive_charter;
@@ -27,6 +28,9 @@ pub use actions::{
     parse_document, parse_tree, patch_action_list,
 };
 pub use action_files::{ActionsFile, completed_actions_path, upcoming_actions_path, read_action_file, read_actions, write_actions};
+pub use archive_actions::{
+    ActionArchivePlan, ActionArchiveResult, archive_actions, plan_action_archive,
+};
 pub use sidecar::{ActionMeta, CharterMeta, CharterMetadata, PlanMeta, hydrate_actions, read_sidecar, sidecar_path, write_sidecar};
 pub use charter::{MarkdownCharter, format_charter, implicit_charter, parse_charter};
 pub use manifest::WorkspaceManifest;

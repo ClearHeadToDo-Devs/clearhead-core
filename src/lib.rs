@@ -41,10 +41,12 @@ pub mod config;
 pub use config::WorkspaceConfig;
 #[doc(inline)]
 pub use workspace::{
-    Action, ActionList, AppliedSync, Diff, Workspace, ICSPlan, MarkdownCharter, OutputFormat,
+    Action, ActionArchivePlan, ActionArchiveResult, ActionList, AppliedSync, Diff, Workspace,
+    ICSPlan, MarkdownCharter, OutputFormat,
     ParseFailure, ParseMode, ParseOutcome, ParsedDocument, RecoveryReport, SourceMetadata,
     SourceRange, collect_plan_files, collect_plan_files_with_plans,
-    collect_workspace_manifest, completed_actions_path, diff_actions, format, format_charter,
+    archive_actions, collect_workspace_manifest, completed_actions_path, diff_actions, format,
+    format_charter,
     implicit_charter, infer_charter_name, infer_parent_charter_name,
     infer_plan_charter_name, infer_plan_parent, action_mirror_path, charter_plans_dir_relative,
     plan_file_name, plan_output_path,
@@ -52,7 +54,7 @@ pub use workspace::{
     load_domain_model_with_plans, load_workspace, load_workspace_with_plans, load_workspaces,
     action_to_vevent, actions_to_icalendar, occurrence_action_id, parse_actions,
     parse_actions_with_mode, parse_charter, parse_document, parse_tree, patch_action_list,
-    charter_root, plans_root, read_action_file, read_actions, save_domain_model,
+    plan_action_archive, charter_root, plans_root, read_action_file, read_actions, save_domain_model,
     apply_sync, plan_sync, read_ics_dates, reconcile,
     workspace_data_root, write_actions,
     ArchiveCharterError, ArchiveCharterOptions, ArchiveCharterResult,
