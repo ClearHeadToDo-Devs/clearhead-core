@@ -15,7 +15,6 @@ the rest is various formats that are able to leverage the core domain model to p
 There are three primary modules:
 - domain: the in-memory representation of the domain model, including the core structs and the various algorithms that operate on them
 - workspace: the various formats that we use to interact with the domain model, including the actions files and the markdown files for charters and objectives
-- graph: the graph layer that converts the domain model into RDF triples that can be stored in a graph database and queried with SPARQL all according to the [ontology](https://github.com/ClearHeadToDo-Devs/ontology/blob/main/README.md)
 - crdt: the CRDT layer for syncing changes, which is responsible for converting the domain
   - currently deferred in leu of getting the others done first but the skeleton is still there for future contributors if the need for a mobile app arises
 
@@ -48,9 +47,13 @@ instead, this library is responsible for converting the domain model into a form
 
 ## RDF and SPARQL
 
-Finally, the RDF layer allows us to translate the domain model into RDF triples that can be stored in an graph database. This allows us to leverage SPARQL for querying the data in a flexible and powerful way, and also to perform SHACL validation against the data to ensure it conforms to our ontology.
+RDF translation, SPARQL execution, graph validation, and linked-data export live
+in the separate `clearhead-graphd` crate. It consumes the public domain and
+workspace model from core like any other integration. This keeps graph database
+dependencies and graph-specific functionality out of the foundational library.
 
-the choice of graph db is left up to the implementors but the important part is making sure that the domain model can be easily translated into RDF and that we have a clear way to apply changes from the graph database back into the domain model.
+The workspace files remain truth; graphd builds a disposable read model from
+core's parsed representation.
 ### Module Structure
 
 
@@ -61,7 +64,8 @@ graph TD
     DSL[Actions DSL] -->|parse file| actions[ActionList]
     actions -->|Transform| domain[Domain Structs]
     domain -->|autosurgeon| crdt[CRDT State]
-    domain -->|oxigraph| graph[Graph Store]
+    domain -->|JSON/library API| graphd[clearhead-graphd]
+    graphd -->|oxigraph| graph[Graph Store]
     domain -->|format| output[Formatted Output]
 ```
 

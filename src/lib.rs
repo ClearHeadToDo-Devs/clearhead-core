@@ -29,8 +29,8 @@
 //! - [`config`]: [`WorkspaceConfig`] — semantic settings (tag hierarchies, expansion
 //!   counts) passed in by tools; core never reads disk config itself.
 //! - [`sync`]: [`DomainSyncDecision`] for CRDT merge/save orchestration.
-//! - [`graph`]: RDF/SPARQL integration (Oxigraph) for semantic queries and
-//!   linked-data exports.
+//! Graph execution and linked-data export deliberately live in the separate
+//! `clearhead-graphd` crate, which consumes this crate's domain/workspace API.
 //! - [`telemetry`]: Structured event emission for action lifecycle observability.
 //! - [`crdt`]: CRDT operations (in progress).
 
@@ -78,8 +78,6 @@ pub mod sync;
 #[doc(inline)]
 pub use sync::DomainSyncDecision;
 
-#[cfg(feature = "graph")]
-pub mod graph;
 
 pub mod reference;
 #[doc(inline)]
