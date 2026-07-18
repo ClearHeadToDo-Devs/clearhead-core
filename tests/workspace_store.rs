@@ -1132,6 +1132,58 @@ fn doctor_flags_dangling_predecessor_but_not_completed_one() {
 }
 
 #[test]
+fn doctor_resolves_predecessors_into_the_archive_three_ways() {
+    use clearhead_core::workspace::diagnose;
+
+    // Three live actions, each depending on a target that has left the live set:
+    //   ...00a1 → archived Completed  → satisfied (no finding)
+    //   ...00a2 → archived Cancelled  → abandoned (warning)
+    //   ...dead → nowhere at all      → dangling  (violation)
+    let workspace = make_workspace(&[(
+        "work.actions",
+        "[ ] needs-satisfied <01951111-0000-7000-0000-0000000000a1 #01951111-0000-7000-0000-0000000000b1\n\
+         [ ] needs-abandoned <01951111-0000-7000-0000-0000000000a2 #01951111-0000-7000-0000-0000000000b2\n\
+         [ ] needs-dangling <01951111-dead-7000-0000-0000000000a3 #01951111-0000-7000-0000-0000000000b3\n",
+    )]);
+
+    // The targets live in the archive/ region as plaintext, excluded from the
+    // default read but consulted for predecessor resolution.
+    let archive = workspace.path().join(".clearhead").join("archive");
+    fs::create_dir_all(&archive).expect("create archive region");
+    fs::write(
+        archive.join("proj.actions"),
+        "[x] finished #01951111-0000-7000-0000-0000000000a1\n\
+         [_] dropped #01951111-0000-7000-0000-0000000000a2\n",
+    )
+    .expect("write archived actions");
+
+    let diagnosis = diagnose(initialized(workspace.path()), None).expect("diagnose failed");
+
+    let dangling: Vec<_> = diagnosis
+        .findings
+        .iter()
+        .filter(|f| f.code == "dangling-predecessor")
+        .collect();
+    assert_eq!(dangling.len(), 1, "only the true break is dangling: {:?}", diagnosis.findings);
+    assert!(dangling[0].message.contains("01951111-dead"));
+
+    let abandoned: Vec<_> = diagnosis
+        .findings
+        .iter()
+        .filter(|f| f.code == "abandoned-predecessor")
+        .collect();
+    assert_eq!(abandoned.len(), 1, "cancelled archived target is abandoned: {:?}", diagnosis.findings);
+    assert!(abandoned[0].message.contains("0000000000a2"));
+
+    // The satisfied dependency is healthy — it produces no finding at all.
+    assert!(
+        !diagnosis.findings.iter().any(|f| f.message.contains("0000000000a1")),
+        "a completed archived dependency must be silent: {:?}",
+        diagnosis.findings
+    );
+}
+
+#[test]
 fn doctor_flags_orphaned_sidecar_entry() {
     use clearhead_core::workspace::diagnose;
 

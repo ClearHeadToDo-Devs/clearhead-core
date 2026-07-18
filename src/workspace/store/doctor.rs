@@ -67,10 +67,13 @@ pub fn diagnose_read(
     // coherence universe: predecessors may point at closed actions, and a
     // crash mid-archive can leave an action in both files.
     let completed = collect_completed_actions(&layout.charter_root, &mut findings);
+    // Archived actions (plaintext, in the archive/ region) let predecessors that
+    // point into the archive resolve to satisfied/abandoned instead of dangling.
+    let archived = collect_archived_action_states(&layout.data_root.join("archive"), &mut findings);
     let charters = &read.charters;
 
     check_duplicate_uuids(charters, &completed, &mut findings);
-    check_dangling_predecessors(charters, &completed, &mut findings);
+    check_dangling_predecessors(charters, &completed, &archived, &mut findings);
     check_charter_alias_collisions(charters, &mut findings);
     check_open_actions_under_unresolved_parents(charters, &mut findings);
     check_sidecar_coherence(&layout.charter_root, charters, &completed, &mut findings);
@@ -189,12 +192,67 @@ fn check_duplicate_uuids(
     }
 }
 
-/// A predecessor reference (`<uuid`) pointing at no known action, open or
-/// completed. Only UUID-shaped references are judged; unresolved name/alias
-/// text is the linter's live-buffer territory.
+/// Index every archived action by UUID to its terminal state, reading the
+/// `archive/` region as plaintext (no graph). This is what lets a predecessor
+/// pointing into the archive resolve to a *state* — satisfied / abandoned —
+/// rather than reading as a broken reference. Unparseable archives become
+/// warnings, not violations: archived history is lower-stakes than live files.
+fn collect_archived_action_states(
+    archive_root: &Path,
+    findings: &mut Vec<Finding>,
+) -> HashMap<Uuid, ActionState> {
+    let mut states = HashMap::new();
+    if !archive_root.is_dir() {
+        return states;
+    }
+    for path in walk_visible_files(archive_root) {
+        let is_actions = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|e| e == "actions")
+            .unwrap_or(false);
+        if !is_actions {
+            continue;
+        }
+        let relative = path.strip_prefix(archive_root).unwrap_or(&path).to_path_buf();
+        let Ok(source) = std::fs::read_to_string(&path) else {
+            findings.push(Finding::warning(
+                "unreadable-archive",
+                &relative,
+                "could not read archived actions file",
+            ));
+            continue;
+        };
+        match crate::workspace::parse_document(&source) {
+            Ok(doc) => {
+                for action in doc.actions {
+                    states.insert(action.id, action.state);
+                }
+            }
+            Err(e) => findings.push(Finding::warning(
+                "unparseable-archive",
+                &relative,
+                format!("could not parse archived actions: {e}"),
+            )),
+        }
+    }
+    states
+}
+
+/// A predecessor reference (`<uuid`) resolved against the live workspace and,
+/// failing that, the archive. Only UUID-shaped references are judged; unresolved
+/// name/alias text is the linter's live-buffer territory. An archived target
+/// resolves three ways:
+///
+/// - **satisfied** — Completed: the dependency was met; not a finding.
+/// - **abandoned** — Cancelled (or otherwise non-completed): you depend on
+///   something that was dropped; a `warning`.
+/// - **dangling** — resolves nowhere, live or archived: a genuine broken
+///   reference; a `violation`.
 fn check_dangling_predecessors(
     charters: &[MarkdownCharter],
     completed: &HashMap<PathBuf, Vec<Action>>,
+    archived: &HashMap<Uuid, ActionState>,
     findings: &mut Vec<Finding>,
 ) {
     let known: HashSet<Uuid> = all_actions(charters, completed).map(|(_, a)| a.id).collect();
@@ -205,17 +263,31 @@ fn check_dangling_predecessors(
                 let target = pred
                     .resolved_uuid
                     .or_else(|| Uuid::parse_str(pred.raw_ref.trim()).ok());
-                if let Some(target) = target
-                    && !known.contains(&target)
-                {
-                    findings.push(Finding::violation(
+                let Some(target) = target else { continue };
+                if known.contains(&target) {
+                    continue; // live target — resolves normally
+                }
+                match archived.get(&target) {
+                    // satisfied — the dependency was completed before archival.
+                    Some(ActionState::Completed) => {}
+                    // abandoned — the dependency was cancelled/dropped.
+                    Some(_) => findings.push(Finding::warning(
+                        "abandoned-predecessor",
+                        file,
+                        format!(
+                            "action '{}' depends on {} which was archived without completing (abandoned)",
+                            sa.action.name, target
+                        ),
+                    )),
+                    // dangling — resolves nowhere, live or archived.
+                    None => findings.push(Finding::violation(
                         "dangling-predecessor",
                         file,
                         format!(
-                            "action '{}' depends on {} which matches no action, open or completed",
+                            "action '{}' depends on {} which matches no action, open, completed, or archived",
                             sa.action.name, target
                         ),
-                    ));
+                    )),
                 }
             }
         }
