@@ -78,6 +78,7 @@ pub mod sync;
 #[doc(inline)]
 pub use sync::DomainSyncDecision;
 
+#[cfg(feature = "graph")]
 pub mod graph;
 
 pub mod reference;

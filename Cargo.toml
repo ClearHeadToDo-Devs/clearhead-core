@@ -7,13 +7,17 @@ edition = "2024"
 license = "MIT"
 repository = "https://github.com/ClearHeadToDo-Devs/clearhead-core.git"
 
+[features]
+default = ["graph"]
+graph = ["dep:oxigraph"]
+
 [dependencies]
 # Core domain dependencies (no filesystem/config dependencies!)
 automerge = "0.7.2"
 autosurgeon = { version = "0.10.1", features = ["uuid"] }
 chrono = { version = "0.4", features = ["serde"] }
 icalendar = "0.17.10"
-oxigraph = "0.5.3"
+oxigraph = { version = "0.5.3", optional = true }
 quick-xml = { version = "0.31", features = ["serialize"] }
 rrule = "0.14.0"
 serde = { version = "1.0", features = ["derive"] }
