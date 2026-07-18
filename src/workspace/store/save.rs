@@ -22,8 +22,9 @@ pub fn save_domain_model(root: &Path, model: &DomainModel) -> Result<(), Workspa
     let layout = resolve_workspace_layout(root);
     std::fs::create_dir_all(&layout.charter_root)?;
 
-    // Best-effort advisory lock — degrades to unprotected writes if unavailable.
-    let _lock = WorkspaceLock::try_acquire(&layout.data_root).ok();
+    // Every multi-file writer follows the same fail-on-contention policy.
+    let _lock = WorkspaceLock::try_acquire(&layout.data_root)?
+        .ok_or_else(|| WorkspaceError::WorkspaceLocked(layout.data_root.clone()))?;
 
     // Replay any journal left by a previous interrupted save.
     recover_pending(&layout.charter_root)?;

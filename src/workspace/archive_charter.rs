@@ -42,12 +42,12 @@ use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
 use crate::domain::{ActionState, Charter};
-use crate::workspace::action_files::{completed_actions_path, read_actions, upcoming_actions_path};
-use crate::workspace::durability::PendingBatch;
-use crate::workspace::sidecar::sidecar_path;
-use crate::workspace::store::{WorkspaceError, resolve_workspace_layout};
-use crate::workspace::store::load_workspace;
 use crate::workspace::MarkdownCharter;
+use crate::workspace::action_files::{completed_actions_path, read_actions, upcoming_actions_path};
+use crate::workspace::durability::{PendingBatch, WorkspaceLock, recover_pending};
+use crate::workspace::sidecar::sidecar_path;
+use crate::workspace::store::load_workspace;
+use crate::workspace::store::{WorkspaceError, resolve_workspace_layout};
 
 // ============================================================================
 // Public types
@@ -94,9 +94,7 @@ pub enum ArchiveCharterError {
     NotArchivable(String, String),
 
     /// The charter has open actions and `force` was not set.
-    #[error(
-        "Charter '{0}' has {1} open action(s); resolve them or pass --force to archive anyway"
-    )]
+    #[error("Charter '{0}' has {1} open action(s); resolve them or pass --force to archive anyway")]
     OpenActions(String, usize),
 
     /// Underlying workspace I/O or parse error.
@@ -120,6 +118,9 @@ pub fn archive_charter(
     query: &str,
     opts: &ArchiveCharterOptions,
 ) -> Result<ArchiveCharterResult, ArchiveCharterError> {
+    let layout = resolve_workspace_layout(root);
+    let _lock = acquire_mutation_lock(&layout)?;
+    recover_pending(&layout.charter_root)?;
     let charters = load_workspace(root)?;
 
     let mc = find_charter(&charters, query)
@@ -140,6 +141,9 @@ pub fn archive_terminal_charters(
     root: &Path,
     opts: &ArchiveCharterOptions,
 ) -> Result<Vec<ArchiveCharterResult>, ArchiveCharterError> {
+    let layout = resolve_workspace_layout(root);
+    let _lock = acquire_mutation_lock(&layout)?;
+    recover_pending(&layout.charter_root)?;
     let charters = load_workspace(root)?;
 
     let terminal_roots: Vec<MarkdownCharter> = charters
@@ -182,6 +186,7 @@ fn archive_many(
     // `charters/`, rooted at `archive/`, so the subtree's internal structure
     // (and thus its parent/child relationships) survives the move intact.
     let mut moves: Vec<(PathBuf, PathBuf)> = Vec::new();
+    let mut seen_sources = HashSet::new();
     let mut dirs_to_remove: BTreeSet<(usize, PathBuf)> = BTreeSet::new();
 
     for mc in charters {
@@ -205,10 +210,7 @@ fn archive_many(
         let upcoming_abs: Option<PathBuf> = acts_abs.as_ref().map(|p| upcoming_actions_path(p));
 
         // Charter .md path
-        let md_abs: Option<PathBuf> = mc
-            .md_file
-            .as_ref()
-            .map(|rel| layout.charter_root.join(rel));
+        let md_abs: Option<PathBuf> = mc.md_file.as_ref().map(|rel| layout.charter_root.join(rel));
 
         // Sidecar (`.<stem>.json`) path, derived the same way the loader derives it.
         let sidecar_abs: Option<PathBuf> = acts_abs.as_ref().map(|p| sidecar_path(p));
@@ -247,11 +249,24 @@ fn archive_many(
             .flatten()
             .filter(|p| p.exists())
         {
-            let dest = archive_dest(&src, &layout.charter_root, &archive_root);
-            moves.push((src, dest));
+            if seen_sources.insert(src.clone()) {
+                let dest = archive_dest(&src, &layout.charter_root, &archive_root);
+                moves.push((src, dest));
+            }
         }
 
         if let Some(subdir) = charter_subdir {
+            // Directory-form charters own all files below their directory, not
+            // only the formats core knows about. Move notes, inventories, and
+            // future charter-local artifacts verbatim with the subtree.
+            if subdir != layout.charter_root {
+                for src in collect_supporting_files(&subdir)? {
+                    if seen_sources.insert(src.clone()) {
+                        let dest = archive_dest(&src, &layout.charter_root, &archive_root);
+                        moves.push((src, dest));
+                    }
+                }
+            }
             dirs_to_remove.insert((subdir.components().count(), subdir));
         }
     }
@@ -288,6 +303,31 @@ fn archive_many(
         archive_dir: archive_root,
         was_dry_run: false,
     })
+}
+
+fn acquire_mutation_lock(
+    layout: &crate::workspace::store::WorkspaceLayout,
+) -> Result<WorkspaceLock, ArchiveCharterError> {
+    WorkspaceLock::try_acquire(&layout.data_root)?.ok_or_else(|| {
+        ArchiveCharterError::Workspace(WorkspaceError::WorkspaceLocked(layout.data_root.clone()))
+    })
+}
+
+fn collect_supporting_files(root: &Path) -> Result<Vec<PathBuf>, std::io::Error> {
+    let mut files = Vec::new();
+    let mut dirs = vec![root.to_path_buf()];
+    while let Some(dir) = dirs.pop() {
+        for entry in std::fs::read_dir(dir)? {
+            let entry = entry?;
+            if entry.file_type()?.is_dir() {
+                dirs.push(entry.path());
+            } else {
+                files.push(entry.path());
+            }
+        }
+    }
+    files.sort();
+    Ok(files)
 }
 
 /// Destination for an archived source file: its path relative to `charters/`,
@@ -366,8 +406,7 @@ fn parent_index(charters: &[MarkdownCharter]) -> HashMap<Uuid, Uuid> {
 
 fn has_terminal_ancestor(charter: &MarkdownCharter, charters: &[MarkdownCharter]) -> bool {
     let parents = parent_index(charters);
-    let by_id: HashMap<Uuid, &MarkdownCharter> =
-        charters.iter().map(|c| (c.id, c)).collect();
+    let by_id: HashMap<Uuid, &MarkdownCharter> = charters.iter().map(|c| (c.id, c)).collect();
 
     let mut current = charter.id;
     while let Some(parent_id) = parents.get(&current) {
@@ -388,7 +427,10 @@ fn has_terminal_ancestor(charter: &MarkdownCharter, charters: &[MarkdownCharter]
 
 /// Find a charter in a loaded workspace by UUID, UUID prefix, alias (exact),
 /// or title (partial, case-insensitive).
-pub fn find_charter<'a>(charters: &'a [MarkdownCharter], query: &str) -> Option<&'a MarkdownCharter> {
+pub fn find_charter<'a>(
+    charters: &'a [MarkdownCharter],
+    query: &str,
+) -> Option<&'a MarkdownCharter> {
     let q = query.to_lowercase();
 
     // Full UUID
@@ -400,7 +442,10 @@ pub fn find_charter<'a>(charters: &'a [MarkdownCharter], query: &str) -> Option<
 
     // UUID prefix (≥ 4 hex chars)
     if query.len() >= 4 && query.chars().all(|c| c.is_ascii_hexdigit() || c == '-') {
-        if let Some(c) = charters.iter().find(|c| c.id.to_string().starts_with(query)) {
+        if let Some(c) = charters
+            .iter()
+            .find(|c| c.id.to_string().starts_with(query))
+        {
             return Some(c);
         }
     }
@@ -439,7 +484,10 @@ mod tests {
 
     #[test]
     fn find_by_alias() {
-        let charters = vec![make_mc("health", None), make_mc("work", Some(CharterState::Closed))];
+        let charters = vec![
+            make_mc("health", None),
+            make_mc("work", Some(CharterState::Closed)),
+        ];
         let found = find_charter(&charters, "work").unwrap();
         assert_eq!(found.alias.as_deref(), Some("work"));
     }
@@ -490,12 +538,27 @@ mod tests {
 
         // The charter's own artifacts move out of `charters/`…
         let archive_dir = root.join(".clearhead/archive");
-        assert!(!charters_dir.join("done.actions").exists(), "actions moved out");
-        assert!(!charters_dir.join("done.md").exists(), "charter md moved out");
+        assert!(
+            !charters_dir.join("done.actions").exists(),
+            "actions moved out"
+        );
+        assert!(
+            !charters_dir.join("done.md").exists(),
+            "charter md moved out"
+        );
         // …and land under `archive/`, verbatim, as plaintext (no Turtle).
-        assert!(archive_dir.join("done.actions").exists(), "actions in archive/");
-        assert!(archive_dir.join("done.md").exists(), "charter md in archive/");
-        assert!(!archive_dir.join("archive.ttl").exists(), "no Turtle is written");
+        assert!(
+            archive_dir.join("done.actions").exists(),
+            "actions in archive/"
+        );
+        assert!(
+            archive_dir.join("done.md").exists(),
+            "charter md in archive/"
+        );
+        assert!(
+            !archive_dir.join("archive.ttl").exists(),
+            "no Turtle is written"
+        );
 
         // …but the server-owned `.ics` is left exactly where it was.
         assert!(ics_path.exists(), "`.ics` must survive archival");
@@ -544,8 +607,8 @@ mod tests {
         assert!(!sc_path.exists(), "sidecar must move out of charters/");
         // … and its VEVENT linkage now lives in the archived sidecar, intact.
         let archived_sc = sidecar_path(&root.join(".clearhead/archive/done.actions"));
-        let moved = std::fs::read_to_string(&archived_sc)
-            .expect("sidecar must be moved into archive/");
+        let moved =
+            std::fs::read_to_string(&archived_sc).expect("sidecar must be moved into archive/");
         assert!(
             moved.contains("weekly-review@example.com"),
             "sidecar-only data must survive the move verbatim:\n{moved}"
@@ -609,6 +672,8 @@ mod tests {
         .expect("write parent charter md");
         std::fs::write(work_dir.join("next.actions"), "[x] Parent done\n")
             .expect("write parent actions");
+        std::fs::write(work_dir.join("inventory.md"), "# Supporting inventory\n")
+            .expect("write supporting file");
 
         std::fs::write(
             ops_dir.join("README.md"),
@@ -621,22 +686,81 @@ mod tests {
         let result = archive_charter(&root, "work", &ArchiveCharterOptions::default())
             .expect("archive should succeed");
         assert_eq!(result.charter_name, "work");
-        assert_eq!(result.primary_actions_swept, 2, "parent + child actions should be swept");
+        assert_eq!(
+            result.primary_actions_swept, 2,
+            "parent + child actions should be swept"
+        );
 
-        assert!(!work_dir.join("README.md").exists(), "parent charter removed");
-        assert!(!work_dir.join("next.actions").exists(), "parent actions removed");
+        assert!(
+            !work_dir.join("README.md").exists(),
+            "parent charter removed"
+        );
+        assert!(
+            !work_dir.join("next.actions").exists(),
+            "parent actions removed"
+        );
+        assert!(
+            !work_dir.join("inventory.md").exists(),
+            "supporting file removed"
+        );
         assert!(!ops_dir.join("README.md").exists(), "child charter removed");
-        assert!(!ops_dir.join("next.actions").exists(), "child actions removed");
+        assert!(
+            !ops_dir.join("next.actions").exists(),
+            "child actions removed"
+        );
         assert!(!ops_dir.exists(), "child directory removed once empty");
-        assert!(!work_dir.exists(), "parent directory removed once subtree is archived");
+        assert!(
+            !work_dir.exists(),
+            "parent directory removed once subtree is archived"
+        );
 
         // Both charters land under archive/, and the subtree's nesting is
         // preserved so their parent/child structure stays reconstructable.
         let archive_dir = root.join(".clearhead/archive");
-        assert!(archive_dir.join("work/README.md").exists(), "parent charter in archive/");
-        assert!(archive_dir.join("work/next.actions").exists(), "parent actions in archive/");
-        assert!(archive_dir.join("work/ops/README.md").exists(), "child charter nested in archive/");
-        assert!(archive_dir.join("work/ops/next.actions").exists(), "child actions nested in archive/");
+        assert!(
+            archive_dir.join("work/README.md").exists(),
+            "parent charter in archive/"
+        );
+        assert!(
+            archive_dir.join("work/next.actions").exists(),
+            "parent actions in archive/"
+        );
+        assert!(
+            archive_dir.join("work/inventory.md").exists(),
+            "supporting file in archive/"
+        );
+        assert!(
+            archive_dir.join("work/ops/README.md").exists(),
+            "child charter nested in archive/"
+        );
+        assert!(
+            archive_dir.join("work/ops/next.actions").exists(),
+            "child actions nested in archive/"
+        );
+    }
+
+    #[test]
+    fn archive_refuses_lock_contention() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path().join("ws");
+        let charters = root.join(".clearhead/charters");
+        std::fs::create_dir_all(&charters).unwrap();
+        std::fs::write(
+            charters.join("done.md"),
+            "---\nalias: done\nstate: Closed\n---\n# Done\n",
+        )
+        .unwrap();
+        std::fs::write(charters.join("done.actions"), "").unwrap();
+        let data_root = root.join(".clearhead");
+        let _lock = WorkspaceLock::try_acquire(&data_root).unwrap().unwrap();
+
+        let error = archive_charter(&root, "done", &ArchiveCharterOptions::default()).unwrap_err();
+
+        assert!(matches!(
+            error,
+            ArchiveCharterError::Workspace(WorkspaceError::WorkspaceLocked(_))
+        ));
+        assert!(charters.join("done.md").exists());
     }
 
     #[test]
@@ -681,11 +805,21 @@ mod tests {
         let archived: std::collections::HashSet<_> =
             results.iter().map(|r| r.charter_name.clone()).collect();
 
-        assert_eq!(archived.len(), 2, "closed child charter should ride with its parent: {archived:?}");
+        assert_eq!(
+            archived.len(),
+            2,
+            "closed child charter should ride with its parent: {archived:?}"
+        );
         assert!(archived.contains("done"));
         assert!(archived.contains("work"));
-        assert!(!work_dir.exists(), "closed subtree should be archived once at the root");
-        assert!(charters_dir.join("live.md").exists(), "Active charter is left alone");
+        assert!(
+            !work_dir.exists(),
+            "closed subtree should be archived once at the root"
+        );
+        assert!(
+            charters_dir.join("live.md").exists(),
+            "Active charter is left alone"
+        );
     }
 
     #[test]

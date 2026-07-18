@@ -7,10 +7,12 @@
 //!   `.pending` journal, rename in order, fsync, unlink journal. A present
 //!   `.pending` on startup means an interrupted batch; [`recover_pending`]
 //!   replays it forward to completion.
-//! - [`WorkspaceLock`] — advisory PID lock that serializes concurrent
-//!   ClearHead writers. Best-effort: acquiring it can fail without data loss.
+//! - [`WorkspaceLock`] — an OS-backed exclusive lock that serializes
+//!   ClearHead writers and is released by the kernel after a crash.
 
-use std::io::{self, Write};
+use fs2::FileExt;
+use std::fs::File;
+use std::io::{self, Seek, Write};
 use std::path::{Path, PathBuf};
 
 // ============================================================================
@@ -74,7 +76,10 @@ pub struct PendingBatch {
 
 impl PendingBatch {
     pub fn new(journal_dir: PathBuf) -> Self {
-        Self { journal_dir, entries: Vec::new() }
+        Self {
+            journal_dir,
+            entries: Vec::new(),
+        }
     }
 
     /// Write `content` to a temp file and record it as a pending rename to
@@ -88,7 +93,10 @@ impl PendingBatch {
         f.write_all(content)?;
         f.sync_all()?;
 
-        self.entries.push(BatchEntry { source_path: tmp_path, final_path });
+        self.entries.push(BatchEntry {
+            source_path: tmp_path,
+            final_path,
+        });
         Ok(())
     }
 
@@ -108,7 +116,10 @@ impl PendingBatch {
         if let Some(parent) = final_path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        self.entries.push(BatchEntry { source_path: src, final_path });
+        self.entries.push(BatchEntry {
+            source_path: src,
+            final_path,
+        });
         Ok(())
     }
 
@@ -126,9 +137,7 @@ impl PendingBatch {
             let journal_content: String = self
                 .entries
                 .iter()
-                .map(|e| {
-                    format!("{}\t{}\n", e.source_path.display(), e.final_path.display())
-                })
+                .map(|e| format!("{}\t{}\n", e.source_path.display(), e.final_path.display()))
                 .collect();
             let mut jf = std::fs::File::create(&journal_path)?;
             jf.write_all(journal_content.as_bytes())?;
@@ -141,8 +150,11 @@ impl PendingBatch {
             std::fs::rename(&entry.source_path, &entry.final_path)?;
         }
 
-        std::fs::File::open(&self.journal_dir)?.sync_all()?;
+        sync_batch_directories(&self.entries, &self.journal_dir)?;
         std::fs::remove_file(&journal_path)?;
+        // Persist removal of the recovery intent only after every rename and
+        // affected directory entry is durable.
+        std::fs::File::open(&self.journal_dir)?.sync_all()?;
         Ok(())
     }
 }
@@ -164,57 +176,92 @@ pub fn recover_pending(journal_dir: &Path) -> io::Result<()> {
     }
 
     let content = std::fs::read_to_string(&journal_path)?;
+    let mut entries = Vec::new();
     for line in content.lines() {
-        let mut parts = line.splitn(2, '\t');
-        let (Some(tmp_str), Some(final_str)) = (parts.next(), parts.next()) else {
-            continue;
+        let Some((source, final_path)) = line.split_once('\t') else {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("malformed pending journal entry: {line:?}"),
+            ));
         };
-        let tmp_path = Path::new(tmp_str);
-        let final_path = Path::new(final_str);
-        if tmp_path.exists() {
-            std::fs::rename(tmp_path, final_path)?;
+        entries.push(BatchEntry {
+            source_path: PathBuf::from(source),
+            final_path: PathBuf::from(final_path),
+        });
+    }
+
+    for entry in &entries {
+        if entry.source_path.exists() {
+            std::fs::rename(&entry.source_path, &entry.final_path)?;
         }
     }
 
+    sync_batch_directories(&entries, journal_dir)?;
     std::fs::remove_file(&journal_path)?;
+    std::fs::File::open(journal_dir)?.sync_all()?;
+    Ok(())
+}
+
+fn sync_batch_directories(entries: &[BatchEntry], journal_dir: &Path) -> io::Result<()> {
+    let mut directories = std::collections::BTreeSet::from([journal_dir.to_path_buf()]);
+    for entry in entries {
+        if let Some(parent) = entry.source_path.parent() {
+            directories.insert(parent.to_path_buf());
+        }
+        if let Some(parent) = entry.final_path.parent() {
+            directories.insert(parent.to_path_buf());
+        }
+    }
+    for directory in directories {
+        std::fs::File::open(directory)?.sync_all()?;
+    }
     Ok(())
 }
 
 // ============================================================================
-// Advisory workspace lock
+// Exclusive workspace lock
 // ============================================================================
 
-/// Advisory PID-based workspace lock.
+/// OS-backed exclusive workspace lock.
 ///
-/// Acquired via [`WorkspaceLock::try_acquire`]; released on `Drop`.
-/// If acquisition fails (another ClearHead process holds the lock), callers
-/// should decide whether to wait/retry or proceed without exclusion.
+/// The lock file is persistent and only carries the current owner's PID for
+/// diagnostics. Ownership itself is held by the kernel on the open file, so a
+/// killed process cannot leave a stale lock behind. The file must not be
+/// unlinked on release: removing it would let a new writer lock a different
+/// inode while an existing writer still owns the old one.
 pub struct WorkspaceLock {
-    path: PathBuf,
+    file: File,
 }
 
 impl WorkspaceLock {
-    /// Try to acquire the lock. Returns `None` if already held.
+    /// Try to acquire the lock. Returns `None` while another writer owns it.
     pub fn try_acquire(data_root: &Path) -> io::Result<Option<Self>> {
+        std::fs::create_dir_all(data_root)?;
         let path = data_root.join(".clearhead.lock");
-        match std::fs::OpenOptions::new()
+        let mut file = std::fs::OpenOptions::new()
+            .read(true)
             .write(true)
-            .create_new(true)
-            .open(&path)
-        {
-            Ok(mut f) => {
-                write!(f, "{}", std::process::id())?;
-                Ok(Some(Self { path }))
+            .create(true)
+            .truncate(false)
+            .open(path)?;
+
+        match file.try_lock_exclusive() {
+            Ok(()) => {
+                file.set_len(0)?;
+                file.seek(std::io::SeekFrom::Start(0))?;
+                writeln!(file, "{}", std::process::id())?;
+                file.sync_all()?;
+                Ok(Some(Self { file }))
             }
-            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => Ok(None),
-            Err(e) => Err(e),
+            Err(error) if error.kind() == io::ErrorKind::WouldBlock => Ok(None),
+            Err(error) => Err(error),
         }
     }
 }
 
 impl Drop for WorkspaceLock {
     fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.path);
+        let _ = self.file.unlock();
     }
 }
 
@@ -265,15 +312,23 @@ mod tests {
         batch.stage(root.join("b.actions"), b"[ ] B\n").unwrap();
         batch.commit().unwrap();
 
-        assert_eq!(std::fs::read_to_string(root.join("a.actions")).unwrap(), "[ ] A\n");
-        assert_eq!(std::fs::read_to_string(root.join("b.actions")).unwrap(), "[ ] B\n");
+        assert_eq!(
+            std::fs::read_to_string(root.join("a.actions")).unwrap(),
+            "[ ] A\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(root.join("b.actions")).unwrap(),
+            "[ ] B\n"
+        );
         assert!(!root.join(".pending").exists());
     }
 
     #[test]
     fn empty_batch_commit_is_noop() {
         let dir = tempfile::tempdir().unwrap();
-        PendingBatch::new(dir.path().to_path_buf()).commit().unwrap();
+        PendingBatch::new(dir.path().to_path_buf())
+            .commit()
+            .unwrap();
         assert!(!dir.path().join(".pending").exists());
     }
 
@@ -341,7 +396,10 @@ mod tests {
         recover_pending(root).unwrap();
 
         // Prior content untouched.
-        assert_eq!(std::fs::read_to_string(root.join("a.actions")).unwrap(), "old A");
+        assert_eq!(
+            std::fs::read_to_string(root.join("a.actions")).unwrap(),
+            "old A"
+        );
     }
 
     /// The A+B seam: action file (A) and sidecar (B) staged together.
@@ -391,8 +449,10 @@ mod tests {
 
         let journal = format!(
             "{}\t{}\n{}\t{}\n",
-            tmp_a.display(), root.join("a.actions").display(),
-            tmp_b.display(), root.join("b.actions").display(),
+            tmp_a.display(),
+            root.join("a.actions").display(),
+            tmp_b.display(),
+            root.join("b.actions").display(),
         );
         std::fs::write(root.join(".pending"), &journal).unwrap();
 
@@ -402,8 +462,14 @@ mod tests {
         // Recovery replays remaining renames.
         recover_pending(root).unwrap();
 
-        assert_eq!(std::fs::read_to_string(root.join("a.actions")).unwrap(), "new A");
-        assert_eq!(std::fs::read_to_string(root.join("b.actions")).unwrap(), "new B");
+        assert_eq!(
+            std::fs::read_to_string(root.join("a.actions")).unwrap(),
+            "new A"
+        );
+        assert_eq!(
+            std::fs::read_to_string(root.join("b.actions")).unwrap(),
+            "new B"
+        );
         assert!(!root.join(".pending").exists());
     }
 
@@ -411,6 +477,21 @@ mod tests {
     fn recover_pending_noop_when_no_journal() {
         let dir = tempfile::tempdir().unwrap();
         recover_pending(dir.path()).unwrap();
+    }
+
+    #[test]
+    fn malformed_journal_is_preserved_for_diagnosis() {
+        let dir = tempfile::tempdir().unwrap();
+        let journal = dir.path().join(".pending");
+        std::fs::write(&journal, "not-a-valid-entry\n").unwrap();
+
+        let error = recover_pending(dir.path()).unwrap_err();
+
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        assert!(
+            journal.exists(),
+            "unreadable recovery intent must not be discarded"
+        );
     }
 
     // ── WorkspaceLock ─────────────────────────────────────────────────────────
@@ -425,7 +506,19 @@ mod tests {
         assert!(lock_path.exists());
 
         drop(lock);
-        assert!(!lock_path.exists());
+        assert!(
+            lock_path.exists(),
+            "lock inode remains stable between owners"
+        );
+        assert!(WorkspaceLock::try_acquire(dir.path()).unwrap().is_some());
+    }
+
+    #[test]
+    fn stale_pid_file_does_not_block_acquisition() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join(".clearhead.lock"), "999999\n").unwrap();
+
+        assert!(WorkspaceLock::try_acquire(dir.path()).unwrap().is_some());
     }
 
     #[test]

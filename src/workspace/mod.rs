@@ -29,7 +29,8 @@ pub use actions::{
 };
 pub use action_files::{ActionsFile, completed_actions_path, upcoming_actions_path, read_action_file, read_actions, write_actions};
 pub use archive_actions::{
-    ActionArchivePlan, ActionArchiveResult, archive_actions, plan_action_archive,
+    ActionArchivePlan, ActionArchiveResult, CloseActionResult, CloseActionSelector,
+    archive_actions, close_action_subtree, plan_action_archive,
 };
 pub use sidecar::{ActionMeta, CharterMeta, CharterMetadata, PlanMeta, hydrate_actions, read_sidecar, sidecar_path, write_sidecar};
 pub use charter::{MarkdownCharter, format_charter, implicit_charter, parse_charter};

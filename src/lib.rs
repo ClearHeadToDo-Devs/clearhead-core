@@ -41,11 +41,13 @@ pub mod config;
 pub use config::WorkspaceConfig;
 #[doc(inline)]
 pub use workspace::{
-    Action, ActionArchivePlan, ActionArchiveResult, ActionList, AppliedSync, Diff, Workspace,
+    Action, ActionArchivePlan, ActionArchiveResult, ActionList, AppliedSync, CloseActionResult,
+    CloseActionSelector, Diff, Workspace,
     ICSPlan, MarkdownCharter, OutputFormat,
     ParseFailure, ParseMode, ParseOutcome, ParsedDocument, RecoveryReport, SourceMetadata,
     SourceRange, collect_plan_files, collect_plan_files_with_plans,
-    archive_actions, collect_workspace_manifest, completed_actions_path, diff_actions, format,
+    archive_actions, close_action_subtree, collect_workspace_manifest, completed_actions_path,
+    diff_actions, format,
     format_charter,
     implicit_charter, infer_charter_name, infer_parent_charter_name,
     infer_plan_charter_name, infer_plan_parent, action_mirror_path, charter_plans_dir_relative,

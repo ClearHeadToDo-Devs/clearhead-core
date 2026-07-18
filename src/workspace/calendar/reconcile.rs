@@ -280,7 +280,8 @@ pub fn apply_sync(
     let layout = resolve_workspace_layout(root);
     std::fs::create_dir_all(&layout.charter_root)?;
 
-    let _lock = WorkspaceLock::try_acquire(&layout.data_root).ok();
+    let _lock = WorkspaceLock::try_acquire(&layout.data_root)?
+        .ok_or_else(|| WorkspaceError::WorkspaceLocked(layout.data_root.clone()))?;
     recover_pending(&layout.charter_root)?;
 
     let mut workspace = Workspace::load_with_plans(root, plan_override)?;
