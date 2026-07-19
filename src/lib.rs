@@ -93,6 +93,7 @@ pub use reference::{
 
 pub mod telemetry;
 #[doc(inline)]
+pub use telemetry::ndjson::NdjsonEmitter;
 pub use telemetry::{
     NoopEmitter, TelemetryEmitter, TelemetryEvent, TelemetryRecord, Tool, event_from_field_change,
     event_from_state_change, noop_emitter,

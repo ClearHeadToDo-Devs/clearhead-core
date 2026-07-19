@@ -3,15 +3,15 @@
 //! [`WorkspaceConfig`] carries the settings that have semantic meaning — they
 //! affect the data model and graph behaviour, not presentation or UI.
 //!
-//! **Core defines this struct. Tools own loading it.**
-//!
-//! `clearhead-core` never reads `config.json` from disk. Each tool
-//! (CLI, nvim, etc.) loads configuration from the appropriate source,
-//! constructs a `WorkspaceConfig` from the shared fields, and passes it
-//! into core functions that need it. Tool-specific settings (`cli_*`,
-//! `nvim_*`) never enter core.
+//! **Core owns the shared config: the fields *and* the loading.** The
+//! source-and-precedence stack lives in [`loader`]; every tool resolves
+//! configuration through it and deserializes its own struct, extending with
+//! tool-specific fields (`cli_*`, etc.) that never enter core.
 
+use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
+
+pub mod loader;
 
 /// Semantic workspace configuration shared across all ClearHead tools.
 ///
@@ -25,7 +25,13 @@ use std::collections::{HashMap, HashSet};
 /// through the config precedence chain, so it lives in the
 /// [`WorkspaceManifest`](crate::workspace::manifest::WorkspaceManifest)
 /// (`.clearhead/workspace.json`) and is read from the workspace itself.
-#[derive(Debug, Clone)]
+///
+/// Deserializable directly from [`loader::config_sources`]: `#[serde(default)]`
+/// means any field absent from the config files falls back to [`Default`], so a
+/// tool that only needs the semantic fields (e.g. graphd) can read this struct
+/// straight from the shared source stack.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
 pub struct WorkspaceConfig {
     /// Tag parent→children relationships for implicit context inheritance.
     ///

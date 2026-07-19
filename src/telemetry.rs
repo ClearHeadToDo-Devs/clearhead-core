@@ -1,9 +1,10 @@
 //! Telemetry trait and domain types for semantic event logging.
 //!
 //! This module defines the *interface* for telemetry — the domain event types,
-//! the envelope record, and the `TelemetryEmitter` trait. It deliberately
-//! contains no I/O. Concrete implementations (NDJSON files, RDF triples,
-//! network transport) live in downstream crates.
+//! the envelope record, and the `TelemetryEmitter` trait. The interface module
+//! itself stays I/O-free; the default concrete NDJSON file emitter lives in the
+//! [`ndjson`] submodule, and other implementations (RDF triples, network
+//! transport) may live in downstream crates.
 //!
 //! # Design
 //!
@@ -11,6 +12,7 @@
 //! - `TelemetryRecord` — envelope: event + timestamp + tool + action UUID
 //! - `TelemetryEmitter` — trait any consumer implements to receive events
 //! - `NoopEmitter` — zero-cost stub for tests or consumers that don't need telemetry
+//! - [`ndjson::NdjsonEmitter`] — default emitter, writes rotating NDJSON files
 //!
 //! # Why `Arc<dyn TelemetryEmitter>`?
 //!
@@ -24,6 +26,8 @@ use std::sync::Arc;
 
 use crate::ActionState;
 use crate::workspace::actions::FieldChange;
+
+pub mod ndjson;
 
 // =============================================================================
 // Domain Types
