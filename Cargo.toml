@@ -37,7 +37,6 @@ features = [
 ]
 
 [dev-dependencies]
-jsonschema = "0.18"
 ron = "0.8"
 
 [dependencies.tempfile]

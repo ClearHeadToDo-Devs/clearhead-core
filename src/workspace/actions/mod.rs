@@ -3,7 +3,6 @@
 //! This module provides the tools to work with the ClearHead Action DSL:
 //! - [`Action`] - The core unit of work in a `.actions` file.
 //! - [`ActionList`] - A collection of actions, often representing a full document.
-//! - [`ActionRepository`] - High-level abstraction for managing action sources.
 //! - Parsing, formatting, and linting logic for the DSL.
 
 pub mod convert;
