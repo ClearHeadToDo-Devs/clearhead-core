@@ -39,7 +39,7 @@ pub use archive_charter::{
     ArchiveCharterError, ArchiveCharterOptions, ArchiveCharterResult,
     archive_charter, archive_terminal_charters, find_charter as find_markdown_charter,
 };
-pub use calendar::ics::{ICSPlan, action_to_vevent, actions_to_icalendar, occurrence_action_id};
+pub use calendar::ics::{ICSPlan, action_to_vtodo, actions_to_icalendar, occurrence_action_id};
 pub use calendar::plans::{
     PlanFileEntry, action_mirror_path, charter_plans_dir_relative, collect_plan_files,
     collect_plan_files_with_plans, infer_plan_charter_name, infer_plan_parent, plan_file_name,

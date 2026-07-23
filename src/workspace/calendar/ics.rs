@@ -7,15 +7,15 @@
 //! side migrates to VTODO — see the platform's VTODO integration charter.
 //!
 //! **Export direction** (`domain → ics`): converts a slice of [`Action`]s into
-//! an iCalendar string. Each action with `scheduled_at` becomes one VEVENT —
-//! no RRULE master events; every occurrence is its own discrete event.
+//! an iCalendar string. Every standalone action becomes one VTODO; DTSTART and
+//! DUE remain optional, and action projections never carry RRULE.
 
 use crate::domain::{Action, ActionState, Plan, Recurrence};
 use crate::workspace::store::WorkspaceError;
 use chrono::{DateTime, Local, TimeZone, Utc};
 use icalendar::{
-    Calendar, CalendarComponent, CalendarDateTime, Component, DatePerhapsTime, Event, EventLike,
-    EventStatus,
+    Calendar, CalendarComponent, CalendarDateTime, Component, DatePerhapsTime, EventLike, Todo,
+    TodoStatus,
 };
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -184,14 +184,16 @@ fn parse_dtstart<T: Component>(component: &T) -> Option<DateTime<Local>> {
 // Export direction: Action slice → iCalendar string
 // ============================================================================
 
-/// Map [`ActionState`] to iCalendar [`EventStatus`].
-fn action_state_to_event_status(state: ActionState) -> EventStatus {
+/// Map [`ActionState`] to the closest standard iCalendar [`TodoStatus`].
+///
+/// RFC 5545 has no blocked state. We expose blocked actions as actionable to
+/// generic clients and preserve the exact state in `X-CLEARHEAD-STATUS`.
+fn action_state_to_todo_status(state: ActionState) -> TodoStatus {
     match state {
-        ActionState::NotStarted => EventStatus::Tentative,
-        ActionState::InProgress => EventStatus::Confirmed,
-        ActionState::Completed => EventStatus::Confirmed,
-        ActionState::BlockedOrAwaiting => EventStatus::Tentative,
-        ActionState::Cancelled => EventStatus::Cancelled,
+        ActionState::NotStarted | ActionState::BlockedOrAwaiting => TodoStatus::NeedsAction,
+        ActionState::InProgress => TodoStatus::InProcess,
+        ActionState::Completed => TodoStatus::Completed,
+        ActionState::Cancelled => TodoStatus::Cancelled,
     }
 }
 
@@ -206,44 +208,48 @@ fn map_priority(p: u32) -> u32 {
     }
 }
 
-/// Convert one [`Action`] to a VEVENT. Returns `None` if `scheduled_at` is absent.
+/// Convert one [`Action`] to a standalone VTODO projection.
 ///
-/// Each occurrence is emitted as a discrete event — no RRULE.
-pub fn action_to_vevent(action: &Action) -> Option<Event> {
-    let scheduled_at = action.scheduled_at?;
-    let start = scheduled_at.with_timezone(&Utc);
-    let duration_mins = action.duration.unwrap_or(15) as i64;
-    let end = start + chrono::Duration::minutes(duration_mins);
+/// The Action UUID is the VTODO UID. Unlike VEVENT, VTODO needs no DTSTART, so
+/// unscheduled and due-only actions retain a complete calendar representation.
+/// Recurrence remains exclusively a [`Plan`] concern and is never emitted here.
+pub fn action_to_vtodo(action: &Action) -> Todo {
+    let mut todo = Todo::new();
+    todo.uid(&action.id.to_string());
+    todo.summary(&action.name);
+    todo.status(action_state_to_todo_status(action.state));
 
-    let mut event = Event::new();
-    event.uid(&action.id.to_string());
-    event.summary(&action.name);
-    event.starts(start);
-    event.ends(end);
-    event.status(action_state_to_event_status(action.state));
-
-    if let Some(desc) = &action.description {
-        event.description(desc);
+    if action.state == ActionState::BlockedOrAwaiting {
+        todo.add_property("X-CLEARHEAD-STATUS", "blocked");
     }
-    if action.state == ActionState::Completed {
-        if let Some(completed_at) = action.completed_at {
-            event.timestamp(completed_at.with_timezone(&Utc));
-        }
+    if let Some(scheduled_at) = action.scheduled_at {
+        todo.starts(scheduled_at.with_timezone(&Utc));
+    }
+    if let Some(due_date) = action.due_date {
+        todo.due(due_date.with_timezone(&Utc));
+    }
+    if let Some(desc) = &action.description {
+        todo.description(desc);
+    }
+    if action.state == ActionState::Completed
+        && let Some(completed_at) = action.completed_at
+    {
+        todo.completed(completed_at.with_timezone(&Utc));
     }
     if let Some(p) = action.priority {
-        event.priority(map_priority(p));
+        todo.priority(map_priority(p));
     }
     if let Some(contexts) = &action.contexts {
-        event.add_property("CATEGORIES", &contexts.join(","));
+        todo.add_property("CATEGORIES", &contexts.join(","));
     }
 
-    Some(event.done())
+    todo.done()
 }
 
 /// Convert a slice of [`Action`]s to an iCalendar string.
 ///
-/// Only actions with `scheduled_at` produce VEVENTs. Pass `open_only = true` to
-/// exclude `Completed` and `Cancelled` actions.
+/// Every action produces a VTODO, including unscheduled actions. Pass
+/// `open_only = true` to exclude `Completed` and `Cancelled` actions.
 pub fn actions_to_icalendar(actions: &[Action], open_only: bool) -> String {
     let mut calendar = Calendar::new()
         .name("ClearHead Actions")
@@ -251,9 +257,6 @@ pub fn actions_to_icalendar(actions: &[Action], open_only: bool) -> String {
         .done();
 
     for action in actions {
-        if action.scheduled_at.is_none() {
-            continue;
-        }
         if open_only
             && matches!(
                 action.state,
@@ -262,9 +265,7 @@ pub fn actions_to_icalendar(actions: &[Action], open_only: bool) -> String {
         {
             continue;
         }
-        if let Some(event) = action_to_vevent(action) {
-            calendar.push(event);
-        }
+        calendar.push(action_to_vtodo(action));
     }
 
     calendar.to_string()
@@ -547,68 +548,81 @@ mod tests {
     }
 
     #[test]
-    fn action_to_vevent_requires_scheduled_at() {
+    fn action_to_vtodo_represents_unscheduled_action() {
         let action = Action {
             id: Uuid::new_v4(),
             name: "Unscheduled".to_string(),
             ..Default::default()
         };
-        assert!(action_to_vevent(&action).is_none());
+        let todo = action_to_vtodo(&action).to_string();
+        assert!(todo.contains("BEGIN:VTODO"));
+        assert!(!todo.contains("DTSTART"));
+        assert!(!todo.contains("DUE"));
     }
 
     #[test]
-    fn action_to_vevent_uses_action_name_as_summary() {
-        let action = scheduled_action("Write spec", ActionState::NotStarted);
-        let event = action_to_vevent(&action).unwrap();
-        assert!(event.to_string().contains("Write spec"));
+    fn action_to_vtodo_maps_identity_and_content() {
+        let due = Local.with_ymd_and_hms(2026, 6, 2, 17, 0, 0).unwrap();
+        let mut action = scheduled_action("Write spec", ActionState::InProgress);
+        action.description = Some("Describe the simpler projection".into());
+        action.due_date = Some(due);
+        action.priority = Some(2);
+        action.contexts = Some(vec!["work".into(), "writing".into()]);
+
+        let todo = action_to_vtodo(&action).to_string();
+        assert!(todo.contains(&format!("UID:{}", action.id)));
+        assert!(todo.contains("SUMMARY:Write spec"));
+        assert!(todo.contains("DESCRIPTION:Describe the simpler projection"));
+        assert!(todo.contains("STATUS:IN-PROCESS"));
+        assert!(todo.contains("DTSTART"));
+        assert!(todo.contains("DUE"));
+        assert!(todo.contains("PRIORITY:3"));
+        assert!(todo.contains("CATEGORIES:work\\,writing"));
+        assert!(!todo.contains("RRULE"));
     }
 
     #[test]
-    fn action_to_vevent_emits_no_rrule() {
-        let action = scheduled_action("Daily task", ActionState::NotStarted);
-        let event = action_to_vevent(&action).unwrap();
-        assert!(!event.to_string().contains("RRULE"));
+    fn action_to_vtodo_preserves_blocked_state_extension() {
+        let action = scheduled_action("Waiting", ActionState::BlockedOrAwaiting);
+        let todo = action_to_vtodo(&action).to_string();
+        assert!(todo.contains("STATUS:NEEDS-ACTION"));
+        assert!(todo.contains("X-CLEARHEAD-STATUS:blocked"));
     }
 
     #[test]
-    fn action_to_vevent_uses_action_id_as_uid() {
-        let action = scheduled_action("Task", ActionState::NotStarted);
-        let event_str = action_to_vevent(&action).unwrap().to_string();
-        assert!(event_str.contains(&action.id.to_string()));
-    }
-
-    #[test]
-    fn action_to_vevent_default_duration_is_15_min() {
-        let action = scheduled_action("Quick task", ActionState::NotStarted);
-        let event_str = action_to_vevent(&action).unwrap().to_string();
-        // DTEND should be 15 minutes after DTSTART
-        assert!(event_str.contains("DTEND"));
+    fn action_to_vtodo_maps_completion() {
+        let completed_at = Local.with_ymd_and_hms(2026, 6, 1, 10, 0, 0).unwrap();
+        let mut action = scheduled_action("Done", ActionState::Completed);
+        action.completed_at = Some(completed_at);
+        let todo = action_to_vtodo(&action).to_string();
+        assert!(todo.contains("STATUS:COMPLETED"));
+        assert!(todo.contains("COMPLETED:"));
     }
 
     #[test]
     fn actions_to_icalendar_empty_slice_produces_valid_vcalendar() {
         let ics = actions_to_icalendar(&[], false);
         assert!(ics.contains("BEGIN:VCALENDAR"));
-        assert!(!ics.contains("BEGIN:VEVENT"));
+        assert!(!ics.contains("BEGIN:VTODO"));
     }
 
     #[test]
-    fn actions_to_icalendar_skips_unscheduled_actions() {
+    fn actions_to_icalendar_includes_unscheduled_actions() {
         let unscheduled = Action {
             id: Uuid::new_v4(),
             name: "No date".to_string(),
             ..Default::default()
         };
         let ics = actions_to_icalendar(&[unscheduled], false);
-        assert!(!ics.contains("BEGIN:VEVENT"));
+        assert!(ics.contains("BEGIN:VTODO"));
     }
 
     #[test]
-    fn actions_to_icalendar_includes_each_scheduled_action() {
+    fn actions_to_icalendar_includes_each_action() {
         let a = scheduled_action("First", ActionState::NotStarted);
         let b = scheduled_action("Second", ActionState::InProgress);
         let ics = actions_to_icalendar(&[a, b], false);
-        assert_eq!(ics.matches("BEGIN:VEVENT").count(), 2);
+        assert_eq!(ics.matches("BEGIN:VTODO").count(), 2);
     }
 
     #[test]
@@ -617,7 +631,7 @@ mod tests {
         let completed = scheduled_action("Done", ActionState::Completed);
         let cancelled = scheduled_action("Dropped", ActionState::Cancelled);
         let ics = actions_to_icalendar(&[open, completed, cancelled], true);
-        assert_eq!(ics.matches("BEGIN:VEVENT").count(), 1);
+        assert_eq!(ics.matches("BEGIN:VTODO").count(), 1);
         assert!(ics.contains("Open task"));
     }
 }

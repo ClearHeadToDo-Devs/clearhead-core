@@ -6,7 +6,7 @@
 //! reconciling an action's schedule against its calendar event:
 //!
 //! - [`ics`] — parse `.ics` into [`Plan`](crate::Plan)s; emit an
-//!   [`Action`](crate::Action) as a VEVENT.
+//!   [`Action`](crate::Action) as a VTODO.
 //! - [`expand`] — expand a recurring plan into concrete actions.
 //! - [`plans`] — discover `.ics` plan files under a plans root.
 //! - [`reconcile`] — the three-way (action / merge-base / `.ics`) sync decision.
@@ -18,7 +18,7 @@ pub mod reconcile;
 pub mod sync_store;
 
 pub use expand::{ExpandResult, ExpansionConfig, expand_plans_into_actions};
-pub use ics::{ICSPlan, action_to_vevent, actions_to_icalendar, occurrence_action_id};
+pub use ics::{ICSPlan, action_to_vtodo, actions_to_icalendar, occurrence_action_id};
 pub use plans::{
     PlanFileEntry, action_mirror_path, charter_plans_dir_relative, collect_plan_files,
     collect_plan_files_with_plans, infer_plan_charter_name, infer_plan_parent, plan_file_name,
