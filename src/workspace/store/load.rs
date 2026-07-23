@@ -345,6 +345,21 @@ pub fn read_workspace_with_plans(
             }
         };
 
+        // Filesystem nesting is the default hierarchy for canonical Markdown
+        // charter files too: directory-form `README.md` files and flat named
+        // charters at the charter root. Other Markdown inside a directory-form
+        // charter may be supporting material and must not become a child merely
+        // because it was discovered. Action-backed named charters already entered
+        // `path_for_name` through their `.actions` file above. An explicit
+        // `parent:` key remains authoritative below.
+        let is_readme = relative.file_name().and_then(|name| name.to_str()) == Some("README.md");
+        let is_root_named_charter = relative.components().count() == 1;
+        if is_readme || is_root_named_charter {
+            path_for_name
+                .entry(name.clone())
+                .or_insert(relative.clone());
+        }
+
         let md_relative = relative.clone();
         charters
             .entry(name)

@@ -136,6 +136,66 @@ fn load_infers_parent_charter_from_directory_structure() {
 }
 
 #[test]
+fn load_infers_parent_for_markdown_only_charters_from_directory_structure() {
+    let dir = tempfile::tempdir().expect("failed to create temp dir");
+    let charters = dir.path().join(".clearhead").join("charters");
+    fs::create_dir_all(charters.join("someday").join("agent-surface"))
+        .expect("failed to create nested charter dirs");
+    fs::write(
+        charters.join("someday").join("README.md"),
+        "---\nalias: someday\n---\n# Someday\n",
+    )
+    .expect("failed to write parent charter");
+    fs::write(
+        charters
+            .join("someday")
+            .join("agent-surface")
+            .join("README.md"),
+        "---\nalias: agent-surface\n---\n# Agent Surface\n",
+    )
+    .expect("failed to write child charter");
+
+    let model = load_domain_model(dir.path()).expect("load failed");
+    let child = model
+        .charters
+        .iter()
+        .find(|charter| charter.alias.as_deref() == Some("agent-surface"))
+        .expect("child charter not found");
+    assert_eq!(child.parent.as_deref(), Some("someday"));
+}
+
+#[test]
+fn explicit_markdown_parent_overrides_directory_hierarchy() {
+    let dir = tempfile::tempdir().expect("failed to create temp dir");
+    let charters = dir.path().join(".clearhead").join("charters");
+    fs::create_dir_all(charters.join("directory-parent").join("child"))
+        .expect("failed to create nested charter dirs");
+    fs::create_dir_all(charters.join("declared-parent"))
+        .expect("failed to create declared parent dir");
+    fs::write(
+        charters
+            .join("directory-parent")
+            .join("child")
+            .join("README.md"),
+        "---\nalias: child\nparent: declared-parent\n---\n# Child\n",
+    )
+    .expect("failed to write child charter");
+    fs::write(
+        charters.join("declared-parent").join("README.md"),
+        "---\nalias: declared-parent\n---\n# Declared Parent\n",
+    )
+    .expect("failed to write declared parent charter");
+
+    let model = load_domain_model(dir.path()).expect("load failed");
+    let child = model
+        .charters
+        .iter()
+        .find(|charter| charter.alias.as_deref() == Some("child"))
+        .expect("child charter not found");
+    assert_eq!(child.parent.as_deref(), Some("declared-parent"));
+}
+
+#[test]
 fn project_layout_next_actions_uses_project_name_as_charter() {
     // In project layout, `next.actions` at the root of `.clearhead/` is the
     // "primary" file — its charter name becomes the project directory name,

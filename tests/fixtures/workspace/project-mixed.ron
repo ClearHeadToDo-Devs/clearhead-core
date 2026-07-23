@@ -6,7 +6,7 @@
             title: "Health & Fitness",
             description: None,
             alias: Some("health"),
-            parent: None,
+            parent: Some("project-mixed"),
             objectives: None,
             plans: [
                 (
