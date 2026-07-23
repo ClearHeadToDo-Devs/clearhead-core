@@ -3,9 +3,9 @@
 //! These tests exercise the full path: `.actions` files on disk → `DomainModel` → back to disk.
 //! Each test creates an isolated temp workspace so there are no shared-state concerns.
 
-use clearhead_core::sync::domain_semantically_equal;
 use clearhead_core::{
-    ManifestSourceType, collect_workspace_manifest, load_domain_model, save_domain_model,
+    ManifestSourceType, collect_workspace_manifest, diff_domain_models, load_domain_model,
+    save_domain_model,
 };
 use std::fs;
 use std::path::Path;
@@ -83,7 +83,7 @@ fn roundtrip_preserves_model() {
     let model_b = load_domain_model(workspace.path()).expect("second load failed");
 
     assert!(
-        domain_semantically_equal(&model_a, &model_b),
+        diff_domain_models(&model_a, &model_b).is_empty(),
         "model changed across a save/reload cycle"
     );
 }
@@ -296,7 +296,7 @@ fn roundtrip_is_stable_across_multiple_cycles() {
     let model_c = load_domain_model(workspace.path()).expect("third load failed");
 
     assert!(
-        domain_semantically_equal(&model_b, &model_c),
+        diff_domain_models(&model_b, &model_c).is_empty(),
         "model drifted between save cycles"
     );
 }

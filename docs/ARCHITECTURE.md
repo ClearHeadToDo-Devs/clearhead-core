@@ -12,11 +12,11 @@ These are the core domain objects and everything we do speaks in terms of these 
 
 the rest is various formats that are able to leverage the core domain model to provide different functionality and to keep the domain model separated from the various needs of our usecases
 
-There are three primary modules:
+There are two primary modules:
 - domain: the in-memory representation of the domain model, including the core structs and the various algorithms that operate on them
 - workspace: the various formats that we use to interact with the domain model, including the actions files and the markdown files for charters and objectives
-- crdt: the CRDT layer for syncing changes, which is responsible for converting the domain
-  - currently deferred in leu of getting the others done first but the skeleton is still there for future contributors if the need for a mobile app arises
+
+Distributed synchronization is deferred and does not live in core. If it is pursued later, it should be implemented as a separate integration over the public domain and workspace APIs so local file workflows do not pay its dependency or build cost.
 
 ## Workspaces
 
@@ -39,12 +39,6 @@ In particular the actions DSL has a few pieces of extra functionality that are w
 ### Markdown files
 
 Charters and Objectives are assumed to be markdown files that follow the specifications defined in the specifications repo. this library is responsible for parsing those markdown files into the domain model and for converting the domain model back into markdown when needed.
-## CRDT for syncing
-
-automerge serves as the CRDT layer for syncing changes. again, a new layer was created to ensure that the requirements of the CRDT are met without polluting the core library with concerns around syncing and merging. and again this layer does not concern itself with file reading and writing, that is the responsibility of the sync servers that will be responsible for implementing the actual syncing functionality.
-
-instead, this library is responsible for converting the domain model into a format that can be easily synced and merged by automerge, and for applying changes from the CRDT back into the domain model.
-
 ## RDF and SPARQL
 
 RDF translation, SPARQL execution, graph validation, and linked-data export live
@@ -63,7 +57,6 @@ core's parsed representation.
 graph TD
     DSL[Actions DSL] -->|parse file| actions[ActionList]
     actions -->|Transform| domain[Domain Structs]
-    domain -->|autosurgeon| crdt[CRDT State]
     domain -->|JSON/library API| graphd[clearhead-graphd]
     graphd -->|oxigraph| graph[Graph Store]
     domain -->|format| output[Formatted Output]

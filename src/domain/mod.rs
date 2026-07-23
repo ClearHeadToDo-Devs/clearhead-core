@@ -389,7 +389,7 @@ pub enum ActionState {
 ///
 /// Carries both the raw text from the DSL (`raw_ref`) and the resolved UUID
 /// after workspace loading. The raw form is required for file round-trips;
-/// the graph and CRDT layers use only `resolved_uuid`.
+/// integrations use only `resolved_uuid`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PredecessorRef {
     /// The raw reference text from the source (e.g., "build core" or a UUID).
@@ -607,17 +607,17 @@ pub fn charter_from_plans_and_name(name: String, plans: Vec<Plan>) -> Charter {
     }
 }
 
-/// The single unified action type across file I/O, graph, and CRDT layers.
+/// The single unified action type across file I/O and integration layers.
 ///
 /// Parsed directly from `.actions` files by the workspace parser and used
-/// unchanged by the graph, CRDT, and display layers. No conversion needed.
+/// unchanged by graph and display integrations. No conversion needed.
 ///
 /// Fields set to `None` by the parser (no DSL syntax exists for them) are
 /// populated from the JSON sidecar or by the expansion workflow:
 /// - `plan_id`, `external_schedule_id`, `external_occurrence_key`
 ///
 /// `predecessors` carries raw DSL references for file round-trips;
-/// call [`Action::depends_on`] to get resolved UUIDs for graph/CRDT work.
+/// call [`Action::depends_on`] to get resolved UUIDs for integration work.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Action {
     pub id: Uuid,
@@ -688,7 +688,7 @@ impl Action {
         Self { name: name.into(), ..Default::default() }
     }
 
-    /// Resolved predecessor UUIDs. Used by graph and CRDT layers.
+    /// Resolved predecessor UUIDs. Used by integration layers.
     /// Unresolved references (name-only) are silently skipped.
     pub fn depends_on(&self) -> Vec<Uuid> {
         self.predecessors

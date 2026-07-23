@@ -11,7 +11,6 @@ ClearHead Core is the foundational library for the ClearHead ecosystem. It provi
 - **Domain Models**: Plans, PlannedActs (action processes), Actions, and Act phases
 - **Tree-sitter Parser Integration**: Parse `.actions` DSL files into structured data
 - **Format Conversions**: Convert between DSL, JSON, calendar, and table formats
-- **CRDT Synchronization**: Conflict-free replicated data types for distributed sync
 - **Integration Surface**: Serde domain/workspace types consumed by external integrations such as `clearhead-graphd`
 - **Document Pipeline**: Save orchestration with diff detection and sync decisions
 - **Validation & Linting**: Comprehensive linting rules for action files
