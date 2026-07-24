@@ -67,11 +67,7 @@ pub struct ActionMeta {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub created: Option<DateTime<Local>>,
     /// Recurring Plan UID this action was generated from.
-    #[serde(
-        default,
-        alias = "source_vevent",
-        skip_serializing_if = "Option::is_none"
-    )]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub external_schedule_id: Option<String>,
 }
 
@@ -601,7 +597,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(
             dir.path().join(".aaa.json"),
-            r#"{"actions": {"dup": {"created": "2024-01-01T00:00:00+00:00", "source_vevent": "vevent-7"}}}"#,
+            r#"{"actions": {"dup": {"created": "2024-01-01T00:00:00+00:00", "external_schedule_id": "plan-7"}}}"#,
         )
         .unwrap();
         std::fs::write(
@@ -614,7 +610,7 @@ mod tests {
         let entry = &union["dup"];
         assert_eq!(
             entry.external_schedule_id.as_deref(),
-            Some("vevent-7"),
+            Some("plan-7"),
             "the external_schedule_id must survive an empty re-stamp under the same uuid",
         );
         assert!(entry.created.is_some());

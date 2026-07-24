@@ -1,8 +1,7 @@
 //! ICS schedule file parser and exporter.
 //!
 //! **Parse direction** (`ics → domain`): recurring VTODO components become
-//! [`Plan`]s; standalone VTODOs become [`VTodoAction`] projections. VEVENTs
-//! are accepted only by the explicit external import parser.
+//! [`Plan`]s; standalone VTODOs become [`VTodoAction`] projections.
 //! Component kind and RRULE semantics, rather than server-specific metadata or
 //! filenames, determine which domain projection is read.
 //!
@@ -46,8 +45,8 @@ pub fn plan_id_from_ics_uid(uid: &str) -> uuid::Uuid {
 ///
 /// Per the ICS schedule spec: UUID v5 from `(externalScheduleId, externalOccurrenceKey)`.
 /// Running expansion multiple times with the same inputs always yields the same UUID.
-pub fn occurrence_action_id(vevent_uid: &str, occurrence_rfc3339: &str) -> uuid::Uuid {
-    let key = format!("{}:{}", vevent_uid, occurrence_rfc3339);
+pub fn occurrence_action_id(plan_uid: &str, occurrence_rfc3339: &str) -> uuid::Uuid {
+    let key = format!("{}:{}", plan_uid, occurrence_rfc3339);
     uuid::Uuid::new_v5(&ICS_NAMESPACE, key.as_bytes())
 }
 
@@ -93,30 +92,8 @@ pub fn parse_ics_file(path: &Path) -> Result<Vec<ICSPlan>, WorkspaceError> {
     Ok(plans)
 }
 
-/// Read recurring VEVENT schedules from an explicit external import source.
-/// Normal workspace loading never calls this function, one-off VEVENTs remain
-/// external context, and ClearHead never authors VEVENT resources.
-pub fn parse_vevent_plans_for_import(path: &Path) -> Result<Vec<ICSPlan>, WorkspaceError> {
-    let content = fs::read_to_string(path).map_err(WorkspaceError::Io)?;
-    let calendar: Calendar = content
-        .parse()
-        .map_err(|e: String| WorkspaceError::Parse(e))?;
-    Ok(calendar
-        .components
-        .into_iter()
-        .filter_map(|component| match component {
-            CalendarComponent::Event(event) if event.property_value("RRULE").is_some() => {
-                component_to_plan(&event, path)
-            }
-            _ => None,
-        })
-        .collect())
-}
-
-/// Build an [`ICSPlan`] from any component that carries the fields a plan
-/// needs (UID, SUMMARY, DTSTART, RRULE, DESCRIPTION) — legacy VEVENT and VTODO both
-/// qualify via the shared [`Component`] trait. Returns `None` if UID or
-/// SUMMARY is missing.
+/// Build an [`ICSPlan`] from a recurring VTODO's shared component fields.
+/// Returns `None` if UID or SUMMARY is missing.
 fn component_to_plan<T: Component>(component: &T, path: &Path) -> Option<ICSPlan> {
     let uid = component.get_uid()?;
     let summary = component.get_summary()?;
@@ -246,9 +223,8 @@ pub struct VTodoAction {
 
 /// Read standalone (non-RRULE) VTODOs from one vdir resource.
 ///
-/// VEVENTs and recurring VTODO masters are not Action projections. Components
-/// without a UUID UID or SUMMARY are ignored: ClearHead cannot safely attach
-/// them to an existing Action.
+/// Recurring VTODO masters are not Action projections. Components without UID
+/// or SUMMARY are ignored because they cannot form a stable Action.
 pub fn parse_vtodo_actions(path: &Path) -> Result<Vec<VTodoAction>, WorkspaceError> {
     let content = fs::read_to_string(path).map_err(WorkspaceError::Io)?;
     let calendar: Calendar = content
@@ -374,8 +350,8 @@ fn action_state_to_todo_status(state: ActionState) -> TodoStatus {
 
 /// Convert one [`Action`] to a standalone VTODO projection.
 ///
-/// The Action UUID is the VTODO UID. Unlike VEVENT, VTODO needs no DTSTART, so
-/// unscheduled and due-only actions retain a complete calendar representation.
+/// The Action UUID is the VTODO UID. VTODO needs no DTSTART, so unscheduled and
+/// due-only actions retain a complete calendar representation.
 /// Recurrence remains exclusively a [`Plan`] concern and is never emitted here.
 pub fn action_to_vtodo(action: &Action) -> Todo {
     let mut todo = Todo::new();
@@ -447,203 +423,6 @@ mod tests {
         let mut f = NamedTempFile::new().unwrap();
         f.write_all(content.as_bytes()).unwrap();
         f
-    }
-
-    #[test]
-    fn one_off_vevent_is_not_imported_as_a_plan() {
-        let f = write_ics(
-            "BEGIN:VCALENDAR\r\n\
-             BEGIN:VEVENT\r\n\
-             UID:test-uid-001@example.com\r\n\
-             SUMMARY:One-off meeting\r\n\
-             DTSTART:20260427T100000\r\n\
-             END:VEVENT\r\n\
-             END:VCALENDAR\r\n",
-        );
-
-        assert!(parse_vevent_plans_for_import(f.path()).unwrap().is_empty());
-    }
-
-    #[test]
-    fn parse_vevent_with_rrule() {
-        let f = write_ics(
-            "BEGIN:VCALENDAR\r\n\
-             BEGIN:VEVENT\r\n\
-             UID:daily-standup@example.com\r\n\
-             SUMMARY:Daily Standup\r\n\
-             DTSTART:20260420T090000\r\n\
-             RRULE:FREQ=DAILY;BYDAY=MO,TU,WE,TH,FR\r\n\
-             END:VEVENT\r\n\
-             END:VCALENDAR\r\n",
-        );
-
-        let plans = parse_vevent_plans_for_import(f.path()).unwrap();
-        assert_eq!(plans.len(), 1);
-        let r = plans[0].plan.recurrence.as_ref().unwrap();
-        assert_eq!(r.frequency, "daily");
-        let expected: Vec<String> = ["MO", "TU", "WE", "TH", "FR"]
-            .iter()
-            .map(|s| s.to_string())
-            .collect();
-        assert_eq!(r.by_day.as_deref(), Some(expected.as_slice()));
-    }
-
-    #[test]
-    fn parse_vevent_with_template_in_description() {
-        let f = write_ics(
-            "BEGIN:VCALENDAR\r\n\
-             BEGIN:VEVENT\r\n\
-             UID:weekly-review@example.com\r\n\
-             SUMMARY:Weekly Review\r\n\
-             DTSTART:20260427T100000\r\n\
-             RRULE:FREQ=WEEKLY;BYDAY=SU\r\n\
-             DESCRIPTION:template: weekly-review\\nReflect on the past week\r\n\
-             END:VEVENT\r\n\
-             END:VCALENDAR\r\n",
-        );
-
-        let plans = parse_vevent_plans_for_import(f.path()).unwrap();
-        assert_eq!(plans.len(), 1);
-        assert_eq!(
-            plans[0].plan.template_name.as_deref(),
-            Some("weekly-review")
-        );
-        assert_eq!(
-            plans[0].plan.description.as_deref(),
-            Some("Reflect on the past week")
-        );
-        assert!(plans[0].plan.recurrence.is_some());
-        assert!(plans[0].plan.primary_instances.is_none());
-    }
-
-    #[test]
-    fn parse_vevent_with_upcoming_directive() {
-        let f = write_ics(
-            "BEGIN:VCALENDAR\r\n\
-             BEGIN:VEVENT\r\n\
-             UID:quarterly-review@example.com\r\n\
-             SUMMARY:Quarterly Review\r\n\
-             DTSTART:20260427T100000\r\n\
-             RRULE:FREQ=MONTHLY;INTERVAL=3\r\n\
-             DESCRIPTION:upcoming: 2\r\n\
-             END:VEVENT\r\n\
-             END:VCALENDAR\r\n",
-        );
-
-        let plans = parse_vevent_plans_for_import(f.path()).unwrap();
-        assert_eq!(plans.len(), 1);
-        assert_eq!(plans[0].plan.primary_instances, Some(2));
-        assert!(plans[0].plan.template_name.is_none());
-    }
-
-    #[test]
-    fn parse_vevent_with_template_and_upcoming_directives() {
-        let f = write_ics(
-            "BEGIN:VCALENDAR\r\n\
-             BEGIN:VEVENT\r\n\
-             UID:weekly-review-2@example.com\r\n\
-             SUMMARY:Weekly Review\r\n\
-             DTSTART:20260427T100000\r\n\
-             RRULE:FREQ=WEEKLY;BYDAY=SU\r\n\
-             DESCRIPTION:template: weekly-review\\nupcoming: 3\\nSome notes\r\n\
-             END:VEVENT\r\n\
-             END:VCALENDAR\r\n",
-        );
-
-        let plans = parse_vevent_plans_for_import(f.path()).unwrap();
-        assert_eq!(plans.len(), 1);
-        assert_eq!(
-            plans[0].plan.template_name.as_deref(),
-            Some("weekly-review")
-        );
-        assert_eq!(plans[0].plan.primary_instances, Some(3));
-        assert_eq!(plans[0].plan.description.as_deref(), Some("Some notes"));
-    }
-
-    #[test]
-    fn template_only_description_has_no_remaining_text() {
-        let f = write_ics(
-            "BEGIN:VCALENDAR\r\n\
-             BEGIN:VEVENT\r\n\
-             UID:tpl-only@example.com\r\n\
-             SUMMARY:Just Template\r\n\
-             DTSTART:20260427T100000\r\n\
-             RRULE:FREQ=WEEKLY\r\n\
-             DESCRIPTION:template: release-checklist\r\n\
-             END:VEVENT\r\n\
-             END:VCALENDAR\r\n",
-        );
-
-        let plans = parse_vevent_plans_for_import(f.path()).unwrap();
-        assert_eq!(
-            plans[0].plan.template_name.as_deref(),
-            Some("release-checklist")
-        );
-        assert!(plans[0].plan.description.is_none());
-    }
-
-    #[test]
-    fn description_without_template_prefix_is_plain_description() {
-        let f = write_ics(
-            "BEGIN:VCALENDAR\r\n\
-             BEGIN:VEVENT\r\n\
-             UID:no-tpl@example.com\r\n\
-             SUMMARY:Normal Event\r\n\
-             DTSTART:20260427T100000\r\n\
-             RRULE:FREQ=WEEKLY\r\n\
-             DESCRIPTION:Just a regular event description\r\n\
-             END:VEVENT\r\n\
-             END:VCALENDAR\r\n",
-        );
-
-        let plans = parse_vevent_plans_for_import(f.path()).unwrap();
-        assert!(plans[0].plan.template_name.is_none());
-        assert_eq!(
-            plans[0].plan.description.as_deref(),
-            Some("Just a regular event description")
-        );
-    }
-
-    #[test]
-    fn parse_multiple_vevents() {
-        let f = write_ics(
-            "BEGIN:VCALENDAR\r\n\
-             BEGIN:VEVENT\r\n\
-             UID:event-one@example.com\r\n\
-             SUMMARY:Event One\r\n\
-             DTSTART:20260420T090000\r\n\
-             RRULE:FREQ=WEEKLY\r\n\
-             END:VEVENT\r\n\
-             BEGIN:VEVENT\r\n\
-             UID:event-two@example.com\r\n\
-             SUMMARY:Event Two\r\n\
-             DTSTART:20260421T100000\r\n\
-             RRULE:FREQ=WEEKLY\r\n\
-             END:VEVENT\r\n\
-             END:VCALENDAR\r\n",
-        );
-
-        let plans = parse_vevent_plans_for_import(f.path()).unwrap();
-        assert_eq!(plans.len(), 2);
-        let names: Vec<&str> = plans.iter().map(|p| p.plan.name.as_str()).collect();
-        assert!(names.contains(&"Event One"));
-        assert!(names.contains(&"Event Two"));
-    }
-
-    #[test]
-    fn vevent_without_uid_is_skipped() {
-        let f = write_ics(
-            "BEGIN:VCALENDAR\r\n\
-             BEGIN:VEVENT\r\n\
-             SUMMARY:No UID Event\r\n\
-             DTSTART:20260420T090000\r\n\
-             RRULE:FREQ=WEEKLY\r\n\
-             END:VEVENT\r\n\
-             END:VCALENDAR\r\n",
-        );
-
-        let plans = parse_vevent_plans_for_import(f.path()).unwrap();
-        assert_eq!(plans.len(), 0);
     }
 
     #[test]

@@ -523,11 +523,11 @@ mod tests {
         std::fs::write(
             &ics_path,
             "BEGIN:VCALENDAR\r\n\
-             BEGIN:VEVENT\r\n\
-             UID:evt@example.com\r\n\
-             SUMMARY:Lingering Event\r\n\
+             BEGIN:VTODO\r\n\
+             UID:task@example.com\r\n\
+             SUMMARY:Lingering Task\r\n\
              DTSTART:20260427T100000\r\n\
-             END:VEVENT\r\n\
+             END:VTODO\r\n\
              END:VCALENDAR\r\n",
         )
         .expect("write ics");

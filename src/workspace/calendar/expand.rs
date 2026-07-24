@@ -88,7 +88,7 @@ pub fn expand_plans_into_actions(
     let mut result = ExpandResult::default();
 
     for plan in plans {
-        let vevent_uid = match &plan.external_id {
+        let plan_uid = match &plan.external_id {
             Some(uid) => uid.as_str(),
             None => continue,
         };
@@ -130,7 +130,7 @@ pub fn expand_plans_into_actions(
             }
 
             let occ_key = occ_local.to_rfc3339();
-            let action_id = occurrence_action_id(vevent_uid, &occ_key);
+            let action_id = occurrence_action_id(plan_uid, &occ_key);
 
             // Check if this occurrence is already represented in either file.
             if let Some(state) = primary_by_id.get(&action_id) {

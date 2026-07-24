@@ -859,7 +859,7 @@ fn orphaned_sidecar_hydrates_acts_by_uuid() {
     // external_schedule_id (a merge base that cannot be recomputed).
     let uuid = "01951111-0000-7000-0000-000000000030";
     let sidecar_json = format!(
-        r#"{{"acts": {{"{uuid}": {{"created": "2024-01-15T08:00:00+00:00", "external_schedule_id": "vevent-42"}}}}}}"#
+        r#"{{"acts": {{"{uuid}": {{"created": "2024-01-15T08:00:00+00:00", "external_schedule_id": "plan-42"}}}}}}"#
     );
     let workspace = make_workspace(&[
         ("work.actions", &format!("[ ] Task one #{uuid}\n")),
@@ -880,7 +880,7 @@ fn orphaned_sidecar_hydrates_acts_by_uuid() {
     );
     assert_eq!(
         action.external_schedule_id.as_deref(),
-        Some("vevent-42"),
+        Some("plan-42"),
         "the irreplaceable external_schedule_id must survive the sidecar being orphaned"
     );
 }
