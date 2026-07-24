@@ -25,7 +25,7 @@
 //!    - `<charter>.md` (if present)
 //!    - `.<charter>.json` sidecar (if present) — moved *with* the files rather
 //!      than folded into the lines, so its `created_at` / `external_schedule_id`
-//!      / VEVENT linkage survive intact.
+//!      / recurring Plan linkage survive intact.
 //!    Each lands at `<data_root>/archive/<path-under-charters>`.
 //! 4. Collapse the now-empty charter subdirectory (directory-form charters
 //!    only; silently skipped when non-empty so sub-charters survive).
@@ -567,7 +567,7 @@ mod tests {
 
     #[test]
     fn archive_moves_sidecar_with_files() {
-        // The sidecar carries data (VEVENT linkage) that has no DSL form at
+        // The sidecar carries data (recurring Plan linkage) that has no DSL form at
         // all — it only ever lives in the sidecar. Archival moves it *with* the
         // files rather than folding it into the lines, so the linkage survives
         // intact and byte-identical, no lossy translation.
@@ -593,7 +593,7 @@ mod tests {
         meta.actions.insert(
             action_id.to_string(),
             ActionMeta {
-                source_vevent: Some("weekly-review@example.com".to_string()),
+                external_schedule_id: Some("weekly-review@example.com".to_string()),
                 ..Default::default()
             },
         );
@@ -605,7 +605,7 @@ mod tests {
 
         // The sidecar left `charters/` …
         assert!(!sc_path.exists(), "sidecar must move out of charters/");
-        // … and its VEVENT linkage now lives in the archived sidecar, intact.
+        // … and its recurring Plan linkage now lives in the archived sidecar, intact.
         let archived_sc = sidecar_path(&root.join(".clearhead/archive/done.actions"));
         let moved =
             std::fs::read_to_string(&archived_sc).expect("sidecar must be moved into archive/");

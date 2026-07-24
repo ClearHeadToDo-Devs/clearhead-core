@@ -39,15 +39,18 @@ pub use archive_charter::{
     ArchiveCharterError, ArchiveCharterOptions, ArchiveCharterResult,
     archive_charter, archive_terminal_charters, find_charter as find_markdown_charter,
 };
-pub use calendar::ics::{ICSPlan, VTodoAction, action_to_vtodo, actions_to_icalendar, occurrence_action_id, parse_vtodo_actions};
+pub use calendar::ics::{
+    ICSPlan, VTodoAction, action_id_from_vtodo_uid, action_to_vtodo, actions_to_icalendar,
+    occurrence_action_id, parse_legacy_vevent_plans, parse_vtodo_actions,
+};
 pub use calendar::plans::{
     PlanFileEntry, action_mirror_path, charter_plans_dir_relative, collect_plan_files,
     collect_plan_files_with_plans, infer_plan_charter_name, infer_plan_parent, plan_file_name,
     plan_output_path,
 };
 pub use calendar::reconcile::{
-    AppliedSync, OutcomeKind, Reconcile, SyncEntry, SyncField, SyncReport, SyncTally, apply_sync,
-    plan_sync, read_ics_dates, read_vtodo_actions, reconcile,
+    AppliedSync, OutcomeKind, Reconcile, SyncEntry, SyncField, SyncImport, SyncReport, SyncTally,
+    VTodoResource, apply_sync, plan_sync, read_ics_dates, read_vtodo_actions, reconcile,
 };
 pub use calendar::sync_store::{
     PlansSyncStore, plans_sync_store_path, read_plans_sync_store,

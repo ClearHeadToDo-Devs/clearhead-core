@@ -18,6 +18,9 @@ pub const DUE_DATE_FIELD: &str = "due_date";
 pub const STATE_FIELD: &str = "state";
 pub const TITLE_FIELD: &str = "title";
 pub const DESCRIPTION_FIELD: &str = "description";
+pub const PRIORITY_FIELD: &str = "priority";
+pub const CONTEXTS_FIELD: &str = "contexts";
+pub const UID_FIELD: &str = "uid";
 const STORE_VERSION: u32 = 1;
 
 type Time = Option<DateTime<Local>>;

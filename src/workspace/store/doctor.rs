@@ -79,7 +79,7 @@ pub fn diagnose_read(
     check_sidecar_coherence(&layout.charter_root, charters, &completed, &mut findings);
     check_sidecar_created_sanity(&layout.charter_root, charters, &mut findings);
     check_orphaned_sidecars(&layout.charter_root, &mut findings);
-    check_dangling_vevent_links(charters, &mut findings);
+    check_dangling_plan_links(charters, &mut findings);
     check_charterless_plans(charters, &mut findings);
     check_durability_residue(&layout.charter_root, &layout.plans_root, &mut findings);
 
@@ -482,9 +482,9 @@ fn check_orphaned_sidecars(charter_root: &Path, findings: &mut Vec<Finding>) {
     }
 }
 
-/// An action recorded as generated from a VEVENT that no longer exists in
+/// An action recorded as generated from a recurring Plan that no longer exists in
 /// `plans/` — the calendar side of the link was deleted or moved.
-fn check_dangling_vevent_links(charters: &[MarkdownCharter], findings: &mut Vec<Finding>) {
+fn check_dangling_plan_links(charters: &[MarkdownCharter], findings: &mut Vec<Finding>) {
     let known_uids: HashSet<&str> = charters
         .iter()
         .flat_map(|c| c.plans.iter())
@@ -497,10 +497,10 @@ fn check_dangling_vevent_links(charters: &[MarkdownCharter], findings: &mut Vec<
                 && !known_uids.contains(uid)
             {
                 findings.push(Finding::warning(
-                    "dangling-vevent-link",
+                    "dangling-plan-link",
                     file,
                     format!(
-                        "action '{}' was generated from VEVENT '{}' which no longer exists in plans/",
+                        "action '{}' was generated from recurring Plan '{}' which no longer exists in plans/",
                         sa.action.name, uid
                     ),
                 ));

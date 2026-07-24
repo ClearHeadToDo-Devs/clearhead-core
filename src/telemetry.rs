@@ -89,7 +89,7 @@ pub enum TelemetryEvent {
     ActionDeleted { name: String },
 
     // =========================================================================
-    // Plan (ICS VEVENT) Lifecycle
+    // Plan (recurring iCalendar VTODO) Lifecycle
     // =========================================================================
     #[serde(rename = "plan_created")]
     PlanCreated { name: String, file_path: String },

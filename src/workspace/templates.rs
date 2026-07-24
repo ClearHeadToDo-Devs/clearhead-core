@@ -34,7 +34,7 @@ pub fn resolve_template(
 /// `id_for(template_id)` maps each original action UUID to a new instance UUID.
 /// `parent_override` sets `parent_id` on template root actions (those with no parent in
 /// the template) — used by `expand actions` to attach template children under a
-/// VEVENT-generated root action.
+/// recurring-Plan-generated root action.
 pub fn instantiate_template(
     template: &ActionList,
     id_for: impl Fn(Uuid) -> Uuid,

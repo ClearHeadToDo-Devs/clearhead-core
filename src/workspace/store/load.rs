@@ -467,7 +467,7 @@ pub fn read_workspace_with_plans(
 
     let mut charters_by_name = charters;
 
-    // Load ICS schedules: each .ics VEVENT becomes a Plan in the matching charter.
+    // Load ICS schedules: each recurring component becomes a Plan in the matching charter.
     // entry.relative_path is relative to plans_root (e.g. "inbox/uid.ics").
     // entry.charter_name is the slug used as the directory name (e.g. "work-feature").
     // Match against charters via computed slug: parent-alias + "-" + alias.

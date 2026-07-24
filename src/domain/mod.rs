@@ -414,15 +414,15 @@ pub struct Plan {
     pub recurrence: Option<Recurrence>,
     /// Independent due-date recurrence rule (R: following :-syntax)
     pub due_recurrence: Option<Recurrence>,
-    /// Raw VEVENT UID when this plan was loaded from an ICS file (null for .actions-sourced plans)
+    /// Raw recurring iCalendar UID when this plan was loaded from an ICS file
     pub external_id: Option<String>,
-    /// Template name extracted from VEVENT DESCRIPTION (null for .actions-sourced plans)
+    /// Template name extracted from recurring VTODO DESCRIPTION
     pub template_name: Option<String>,
     /// Per-schedule override for how many instances land in the primary `.actions` file.
-    /// Sourced from the `upcoming:` directive in VEVENT DESCRIPTION.
+    /// Sourced from the `upcoming:` directive in recurring VTODO DESCRIPTION.
     /// When absent, the workspace `expansion_primary_instances` config value applies.
     pub primary_instances: Option<u32>,
-    /// Recurrence anchor (DTSTART from VEVENT); None for .actions-sourced plans
+    /// Recurrence anchor (DTSTART from the Plan VTODO)
     pub dtstart: Option<DateTime<Local>>,
 }
 
@@ -650,7 +650,7 @@ pub struct Action {
     pub is_sequential: Option<bool>,
     /// The [`Plan`] that prescribed this action (populated from sidecar, not DSL).
     pub plan_id: Option<Uuid>,
-    /// External schedule-series identifier (from ICS VEVENT.UID via sidecar).
+    /// Recurring Plan UID (hydrated from sidecar for generated instances).
     pub external_schedule_id: Option<String>,
     /// External occurrence identifier within a schedule series (from sidecar).
     pub external_occurrence_key: Option<String>,

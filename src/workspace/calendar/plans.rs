@@ -31,7 +31,7 @@ fn slug(value: &str) -> String {
 
 /// File name for a plan's `.ics` mirror.
 ///
-/// Uses `Plan.external_id` when present (the stable VEVENT UID), otherwise the
+/// Uses `Plan.external_id` when present (the stable iCalendar UID), otherwise the
 /// plan's own id. Matches the CLI's historical `<uid>.ics` naming.
 pub fn plan_file_name(plan: &Plan) -> String {
     let uid = plan
@@ -81,7 +81,7 @@ pub fn plan_output_path(plans_root: &Path, charter: &MarkdownCharter, plan: &Pla
 
 /// Absolute output path for a standalone action's mirrored `.ics` file.
 ///
-/// The mirror is keyed by the action's id (`UID == action.id`), one VEVENT per
+/// The mirror is keyed by the action's id (`UID == action.id`), one VTODO per
 /// file, under the same per-charter directory policy as plans.
 pub fn action_mirror_path(
     plans_root: &Path,

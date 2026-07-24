@@ -14,7 +14,7 @@ use super::ics::occurrence_action_id;
 /// Instance-count bounds for schedule expansion.
 ///
 /// Both values are resolved per-plan: if the plan carries a `primary_instances`
-/// override (from the `upcoming:` VEVENT DESCRIPTION directive), that overrides
+/// override (from the `upcoming:` recurring VTODO DESCRIPTION directive), that overrides
 /// `primary_instances` here. `total_instances` is global-only for now.
 #[derive(Debug, Clone)]
 pub struct ExpansionConfig {

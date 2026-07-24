@@ -412,13 +412,13 @@ fn check_completion_date_without_state(
     }
 }
 
-/// Check if priority is in valid range 1-5 (I003)
+/// Check if priority is in RFC 5545's defined range 1-9 (I003)
 fn check_priority_range(action: &Action, metadata: &SourceMetadata) -> Option<LintDiagnostic> {
     action.priority.and_then(|priority| {
-        if priority == 0 || priority > 5 {
+        if priority == 0 || priority > 9 {
             Some(LintDiagnostic::info(
                 "I003",
-                format!("Priority must be 1-5 (got {}) (I003).", priority),
+                format!("Priority must be 1-9 (got {}) (I003).", priority),
                 metadata.root,
             ))
         } else {
@@ -736,7 +736,7 @@ mod tests {
 
     #[test]
     fn test_check_priority_range_invalid_high() {
-        let text = "[ ] Task with priority 6 !6 #01942d99-4c27-77f6-9316-107024843939";
+        let text = "[ ] Task with priority 10 !10 #01942d99-4c27-77f6-9316-107024843939";
         let parsed = get_parsed_document(text).unwrap();
 
         let results = lint_document(&parsed);
@@ -745,7 +745,7 @@ mod tests {
 
     #[test]
     fn test_check_priority_range_valid() {
-        let text = "[ ] Task with priority 3 !3 #01942d99-4c27-77f6-9316-107024843939";
+        let text = "[ ] Task with priority 9 !9 #01942d99-4c27-77f6-9316-107024843939";
         let parsed = get_parsed_document(text).unwrap();
 
         let results = lint_document(&parsed);

@@ -8,17 +8,18 @@
 use chrono::{DateTime, Local, Utc};
 use icalendar::{Calendar, CalendarComponent, Component, EventLike, Todo, TodoStatus};
 use std::collections::{HashMap, HashSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
 use super::ics::{VTodoAction, action_to_vtodo, parse_vtodo_actions};
-use super::plans::{action_mirror_path, collect_plan_files_in};
+use super::plans::{action_mirror_path, charter_plans_dir_relative, collect_plan_files_in};
 use super::sync_store::{
-    DESCRIPTION_FIELD, DUE_DATE_FIELD, PlansSyncStore, SCHEDULED_AT_FIELD, STATE_FIELD,
-    TITLE_FIELD, plans_sync_store_path, read_plans_sync_store, serialize_plans_sync_store,
+    CONTEXTS_FIELD, DESCRIPTION_FIELD, DUE_DATE_FIELD, PRIORITY_FIELD, PlansSyncStore,
+    SCHEDULED_AT_FIELD, STATE_FIELD, TITLE_FIELD, UID_FIELD, plans_sync_store_path,
+    read_plans_sync_store, serialize_plans_sync_store,
 };
 use crate::domain::{Action, ActionState, DomainModel};
-use crate::workspace::charter::MarkdownCharter;
+use crate::workspace::charter::{MarkdownCharter, implicit_charter};
 use crate::workspace::durability::{PendingBatch, WorkspaceLock, atomic_write, recover_pending};
 use crate::workspace::store::{Workspace, WorkspaceError, resolve_workspace_layout};
 use crate::workspace::{OutputFormat, SourcedAction, format};
@@ -78,29 +79,37 @@ pub enum SyncField {
     State,
     Title,
     Description,
+    Priority,
+    Contexts,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SyncEntry {
     pub action_id: Uuid,
+    /// Original interoperable UID, which may not itself be a UUID.
+    pub uid: String,
     pub name: String,
     pub scheduled_at: Reconcile<Time>,
     pub due_date: Reconcile<Time>,
     pub state: Reconcile<ActionState>,
     pub title: Reconcile<String>,
     pub description: Reconcile<Option<String>>,
+    pub priority: Reconcile<Option<u32>>,
+    pub contexts: Reconcile<Option<Vec<String>>>,
     /// Auxiliary RFC 5545 completion timestamp used when calendar STATUS wins.
     pub calendar_completed_at: Time,
 }
 
 impl SyncEntry {
-    pub fn outcomes(&self) -> [(SyncField, OutcomeKind); 5] {
+    pub fn outcomes(&self) -> [(SyncField, OutcomeKind); 7] {
         [
             (SyncField::ScheduledAt, kind(&self.scheduled_at)),
             (SyncField::DueDate, kind(&self.due_date)),
             (SyncField::State, kind(&self.state)),
             (SyncField::Title, kind(&self.title)),
             (SyncField::Description, kind(&self.description)),
+            (SyncField::Priority, kind(&self.priority)),
+            (SyncField::Contexts, kind(&self.contexts)),
         ]
     }
 
@@ -139,19 +148,40 @@ pub struct SyncTally {
     pub conflict: usize,
 }
 
+/// A calendar-created VTODO that will become a new Action in the charter
+/// selected by its containing vdir directory.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SyncImport {
+    pub action: VTodoAction,
+    pub plans_dir: PathBuf,
+    pub charter_name: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VTodoResource {
+    pub action: VTodoAction,
+    pub path: PathBuf,
+    pub plans_dir: PathBuf,
+    pub charter_name: String,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SyncReport {
     pub entries: Vec<SyncEntry>,
+    pub imports: Vec<SyncImport>,
     pub warnings: Vec<String>,
 }
 
 impl SyncReport {
     pub fn is_empty(&self) -> bool {
-        self.entries.is_empty() && self.warnings.is_empty()
+        self.entries.is_empty() && self.imports.is_empty() && self.warnings.is_empty()
     }
 
     pub fn tally(&self) -> SyncTally {
-        let mut tally = SyncTally::default();
+        let mut tally = SyncTally {
+            take_calendar: self.imports.len(),
+            ..SyncTally::default()
+        };
         for entry in &self.entries {
             let outcomes = entry.outcomes();
             tally.take_action += usize::from(
@@ -186,25 +216,26 @@ impl SyncReport {
 /// Read all standalone VTODO projections in the vdir, keyed by RFC 5545 UID.
 /// File names and vendor properties are irrelevant. Duplicate UIDs are rejected
 /// rather than resolved by traversal order.
-pub fn read_vtodo_actions(plans_root: &Path) -> Result<HashMap<Uuid, VTodoAction>, WorkspaceError> {
-    Ok(read_vtodo_resources(plans_root)?
-        .into_iter()
-        .map(|(id, (action, _))| (id, action))
-        .collect())
-}
-
-fn read_vtodo_resources(
+pub fn read_vtodo_actions(
     plans_root: &Path,
-) -> Result<HashMap<Uuid, (VTodoAction, std::path::PathBuf)>, WorkspaceError> {
+) -> Result<HashMap<Uuid, VTodoResource>, WorkspaceError> {
     let mut actions = HashMap::new();
     for entry in collect_plan_files_in(plans_root, None)? {
+        let plans_dir = entry
+            .relative_path
+            .parent()
+            .map(Path::to_path_buf)
+            .ok_or_else(|| WorkspaceError::InvalidPath(entry.relative_path.clone()))?;
         for action in parse_vtodo_actions(&entry.path)? {
-            if actions
-                .insert(action.id, (action.clone(), entry.path.clone()))
-                .is_some()
-            {
+            let resource = VTodoResource {
+                action: action.clone(),
+                path: entry.path.clone(),
+                plans_dir: plans_dir.clone(),
+                charter_name: entry.charter_name.clone(),
+            };
+            if actions.insert(action.id, resource).is_some() {
                 return Err(WorkspaceError::Parse(format!(
-                    "duplicate standalone VTODO UID {} in configured plans vdir",
+                    "duplicate standalone VTODO Action identity {} in configured plans vdir",
                     action.id
                 )));
             }
@@ -217,7 +248,7 @@ fn read_vtodo_resources(
 pub fn read_ics_dates(plans_root: &Path) -> Result<HashMap<Uuid, Time>, WorkspaceError> {
     Ok(read_vtodo_actions(plans_root)?
         .into_iter()
-        .map(|(id, action)| (id, action.scheduled_at))
+        .map(|(id, resource)| (id, resource.action.scheduled_at))
         .collect())
 }
 
@@ -225,22 +256,35 @@ pub fn read_ics_dates(plans_root: &Path) -> Result<HashMap<Uuid, Time>, Workspac
 pub fn plan_sync(
     model: &DomainModel,
     store: &PlansSyncStore,
-    calendar: &HashMap<Uuid, VTodoAction>,
+    calendar: &HashMap<Uuid, VTodoResource>,
 ) -> Result<SyncReport, WorkspaceError> {
     let scheduled_bases: HashMap<Uuid, Time> = store.field_bases(SCHEDULED_AT_FIELD)?;
     let due_bases: HashMap<Uuid, Time> = store.field_bases(DUE_DATE_FIELD)?;
     let state_bases: HashMap<Uuid, ActionState> = store.field_bases(STATE_FIELD)?;
     let title_bases: HashMap<Uuid, String> = store.field_bases(TITLE_FIELD)?;
     let description_bases: HashMap<Uuid, Option<String>> = store.field_bases(DESCRIPTION_FIELD)?;
+    let priority_bases: HashMap<Uuid, Option<u32>> = store.field_bases(PRIORITY_FIELD)?;
+    let contexts_bases: HashMap<Uuid, Option<Vec<String>>> = store.field_bases(CONTEXTS_FIELD)?;
+    let uid_bases: HashMap<Uuid, String> = store.field_bases(UID_FIELD)?;
 
     let mut report = SyncReport::default();
+    let existing_ids: HashSet<_> = model
+        .all_actions()
+        .into_iter()
+        .map(|action| action.id)
+        .collect();
     for action in model.all_actions() {
         if action.external_schedule_id.is_some() {
             continue;
         }
-        let calendar_action = calendar.get(&action.id);
+        let calendar_action = calendar.get(&action.id).map(|resource| &resource.action);
+        let action_contexts = normalized_contexts(action.contexts.clone());
         let entry = SyncEntry {
             action_id: action.id,
+            uid: calendar_action
+                .map(|value| value.uid.clone())
+                .or_else(|| uid_bases.get(&action.id).cloned())
+                .unwrap_or_else(|| action.id.to_string()),
             name: action.name.clone(),
             scheduled_at: reconcile(
                 &action.scheduled_at,
@@ -267,13 +311,46 @@ pub fn plan_sync(
                 description_bases.get(&action.id),
                 calendar_action.map(|value| &value.description),
             ),
+            priority: reconcile(
+                &action.priority,
+                priority_bases.get(&action.id),
+                calendar_action.map(|value| &value.priority),
+            ),
+            contexts: reconcile(
+                &action_contexts,
+                contexts_bases.get(&action.id),
+                calendar_action.map(|value| &value.contexts),
+            ),
             calendar_completed_at: calendar_action.and_then(|value| value.completed_at),
         };
         if !entry.is_noop() {
             report.entries.push(entry);
         }
     }
+
+    for resource in calendar.values() {
+        if !existing_ids.contains(&resource.action.id) {
+            report.imports.push(SyncImport {
+                action: resource.action.clone(),
+                plans_dir: resource.plans_dir.clone(),
+                charter_name: resource.charter_name.clone(),
+            });
+        }
+    }
+    report.imports.sort_by_key(|import| import.action.id);
     Ok(report)
+}
+
+fn normalized_contexts(mut contexts: Option<Vec<String>>) -> Option<Vec<String>> {
+    if let Some(values) = &mut contexts {
+        values.retain(|value| !value.is_empty());
+        values.sort();
+        values.dedup();
+        if values.is_empty() {
+            return None;
+        }
+    }
+    contexts
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -301,14 +378,24 @@ pub fn apply_sync(
     let mut workspace = Workspace::load_with_plans(root, plan_override)?;
     let plans_root = plan_override.unwrap_or(&layout.plans_root);
     let mut store = read_plans_sync_store(root, plans_root)?;
-    // Preserve the actual vdir resource path chosen by external sync tooling;
-    // only newly emitted resources use ClearHead's canonical UUID filename.
-    let resource_paths: HashMap<Uuid, _> = read_vtodo_resources(plans_root)?
-        .into_iter()
-        .map(|(id, (_, path))| (id, path))
-        .collect();
+    // Preserve the actual vdir resource path and UID chosen by external tools;
+    // only newly emitted resources use ClearHead's canonical UUID identity.
+    let resources = read_vtodo_actions(plans_root)?;
     let mut dirty_actions = HashSet::new();
     let mut applied = AppliedSync::default();
+
+    for import in &report.imports {
+        let charter_idx = locate_or_create_import_charter(&mut workspace.charters, import);
+        let actions_relative = import_actions_file(&mut workspace.charters[charter_idx], import);
+        let action = action_from_vtodo(&import.action);
+        workspace.charters[charter_idx].actions.push(SourcedAction {
+            action,
+            source_metadata: None,
+        });
+        dirty_actions.insert(layout.charter_root.join(actions_relative));
+        stamp_projection(&mut store, &import.action)?;
+        applied.take_calendar += 1;
+    }
 
     for entry in &report.entries {
         let Some((charter_idx, action_idx)) = locate_action(&workspace.charters, entry.action_id)
@@ -318,6 +405,7 @@ pub fn apply_sync(
                 entry.action_id
             )));
         };
+        store.stamp(entry.action_id, UID_FIELD, &entry.uid)?;
         let actions_relative = workspace.charters[charter_idx]
             .actions_file
             .clone()
@@ -380,6 +468,26 @@ pub fn apply_sync(
                 &mut store,
                 &mut applied,
             )?;
+            apply_value_outcome(
+                &entry.priority,
+                &mut action.priority,
+                entry.action_id,
+                PRIORITY_FIELD,
+                SyncField::Priority,
+                &mut push_fields,
+                &mut store,
+                &mut applied,
+            )?;
+            apply_value_outcome(
+                &entry.contexts,
+                &mut action.contexts,
+                entry.action_id,
+                CONTEXTS_FIELD,
+                SyncField::Contexts,
+                &mut push_fields,
+                &mut store,
+                &mut applied,
+            )?;
             (push_fields, action.clone())
         };
 
@@ -391,9 +499,9 @@ pub fn apply_sync(
             dirty_actions.insert(layout.charter_root.join(&actions_relative));
         }
         if !push_fields.is_empty() {
-            let path = resource_paths
-                .get(&entry.action_id)
-                .cloned()
+            let resource = resources.get(&entry.action_id);
+            let path = resource
+                .map(|resource| resource.path.clone())
                 .unwrap_or_else(|| {
                     action_mirror_path(
                         plans_root,
@@ -401,7 +509,7 @@ pub fn apply_sync(
                         &action_for_calendar,
                     )
                 });
-            patch_action_mirror(&path, &action_for_calendar, &push_fields)?;
+            patch_action_mirror(&path, &entry.uid, &action_for_calendar, &push_fields)?;
         }
     }
 
@@ -435,6 +543,79 @@ pub fn apply_sync(
         converged: tally.converged,
         conflict: tally.conflict,
     })
+}
+
+fn locate_or_create_import_charter(
+    charters: &mut Vec<MarkdownCharter>,
+    import: &SyncImport,
+) -> usize {
+    if let Some(index) = charters.iter().position(|charter| {
+        charter_plans_dir_relative(charter) == import.plans_dir
+            || charter.alias.as_deref() == Some(&import.charter_name)
+            || charter.title == import.charter_name
+    }) {
+        return index;
+    }
+
+    let mut charter = MarkdownCharter::from(implicit_charter(&import.charter_name));
+    charter.plans_dir = Some(import.plans_dir.clone());
+    charters.push(charter);
+    charters.len() - 1
+}
+
+fn import_actions_file(charter: &mut MarkdownCharter, import: &SyncImport) -> PathBuf {
+    if let Some(path) = &charter.actions_file {
+        return path.clone();
+    }
+    let path = charter
+        .md_file
+        .as_ref()
+        .map(|path| path.with_extension("actions"))
+        .unwrap_or_else(|| {
+            if import.plans_dir == Path::new("next") {
+                PathBuf::from("next.actions")
+            } else {
+                PathBuf::from(format!("{}.actions", import.charter_name))
+            }
+        });
+    charter.actions_file = Some(path.clone());
+    path
+}
+
+fn action_from_vtodo(source: &VTodoAction) -> Action {
+    Action {
+        id: source.id,
+        state: source.state,
+        name: source.title.clone(),
+        description: source.description.clone(),
+        priority: source.priority,
+        contexts: normalized_contexts(source.contexts.clone()),
+        scheduled_at: source.scheduled_at,
+        due_date: source.due_date,
+        completed_at: (source.state == ActionState::Completed)
+            .then_some(source.completed_at)
+            .flatten(),
+        ..Action::default()
+    }
+}
+
+fn stamp_projection(
+    store: &mut PlansSyncStore,
+    source: &VTodoAction,
+) -> Result<(), WorkspaceError> {
+    store.stamp(source.id, UID_FIELD, &source.uid)?;
+    store.stamp(source.id, SCHEDULED_AT_FIELD, &source.scheduled_at)?;
+    store.stamp(source.id, DUE_DATE_FIELD, &source.due_date)?;
+    store.stamp(source.id, STATE_FIELD, &source.state)?;
+    store.stamp(source.id, TITLE_FIELD, &source.title)?;
+    store.stamp(source.id, DESCRIPTION_FIELD, &source.description)?;
+    store.stamp(source.id, PRIORITY_FIELD, &source.priority)?;
+    store.stamp(
+        source.id,
+        CONTEXTS_FIELD,
+        &normalized_contexts(source.contexts.clone()),
+    )?;
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -519,12 +700,15 @@ fn apply_state_outcome(
 
 fn patch_action_mirror(
     path: &Path,
+    uid: &str,
     action: &Action,
     fields: &[SyncField],
 ) -> Result<(), WorkspaceError> {
     if !path.exists() {
         let mut calendar = Calendar::new().name("ClearHead Actions").done();
-        calendar.push(action_to_vtodo(action));
+        let mut todo = action_to_vtodo(action);
+        todo.uid(uid);
+        calendar.push(todo);
         return atomic_write(path, calendar.to_string().as_bytes()).map_err(WorkspaceError::Io);
     }
 
@@ -537,9 +721,7 @@ fn patch_action_mirror(
         let CalendarComponent::Todo(todo) = component else {
             continue;
         };
-        if todo.get_uid() == Some(action.id.to_string().as_str())
-            && todo.property_value("RRULE").is_none()
-        {
+        if todo.get_uid() == Some(uid) && todo.property_value("RRULE").is_none() {
             patch_todo(todo, action, fields);
             found = true;
             break;
@@ -549,7 +731,7 @@ fn patch_action_mirror(
         return Err(WorkspaceError::Parse(format!(
             "action mirror {} does not contain standalone VTODO UID {}",
             path.display(),
-            action.id
+            uid
         )));
     }
     atomic_write(path, calendar.to_string().as_bytes()).map_err(WorkspaceError::Io)
@@ -595,6 +777,21 @@ fn patch_todo(todo: &mut Todo, action: &Action, fields: &[SyncField]) {
         todo.remove_description();
         if let Some(value) = &action.description {
             todo.description(value);
+        }
+    }
+    if fields.contains(&SyncField::Priority) {
+        todo.remove_priority();
+        if let Some(value) = action.priority {
+            todo.priority(value);
+        }
+    }
+    if fields.contains(&SyncField::Contexts) {
+        todo.remove_property("CATEGORIES")
+            .remove_multi_property("CATEGORIES");
+        if let Some(contexts) = &action.contexts {
+            for context in contexts {
+                todo.add_multi_property("CATEGORIES", context);
+            }
         }
     }
 }
@@ -682,14 +879,22 @@ mod tests {
         store.stamp(id, TITLE_FIELD, &"base title").unwrap();
         let calendar = HashMap::from([(
             id,
-            VTodoAction {
-                id,
-                scheduled_at: Some(t(27)),
-                due_date: None,
-                state: ActionState::NotStarted,
-                title: "calendar title".into(),
-                description: None,
-                completed_at: None,
+            VTodoResource {
+                action: VTodoAction {
+                    id,
+                    uid: id.to_string(),
+                    scheduled_at: Some(t(27)),
+                    due_date: None,
+                    state: ActionState::NotStarted,
+                    title: "calendar title".into(),
+                    description: None,
+                    priority: None,
+                    contexts: None,
+                    completed_at: None,
+                },
+                path: PathBuf::from("/tmp/plans/work/item.ics"),
+                plans_dir: PathBuf::from("work"),
+                charter_name: "work".into(),
             },
         )]);
         let report = plan_sync(&model, &store, &calendar).unwrap();

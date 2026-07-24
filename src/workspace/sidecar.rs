@@ -2,7 +2,7 @@
 //!
 //! Hidden JSON files that live alongside `.actions` files, holding data
 //! that tooling needs but humans don't want cluttering the DSL:
-//! created timestamps, VEVENT linkage, etc.
+//! created timestamps, recurring Plan linkage, etc.
 
 use chrono::{DateTime, Local};
 use serde::{Deserialize, Serialize};
@@ -66,9 +66,13 @@ pub struct ActionMeta {
     /// When this action was first created by tooling.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub created: Option<DateTime<Local>>,
-    /// VEVENT UID this action was generated from (links back to the ICS source).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub source_vevent: Option<String>,
+    /// Recurring Plan UID this action was generated from.
+    #[serde(
+        default,
+        alias = "source_vevent",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub external_schedule_id: Option<String>,
 }
 
 /// Per-plan sidecar metadata.
@@ -125,7 +129,7 @@ pub fn collect_sidecar_actions(charter_root: &Path) -> BTreeMap<String, ActionMe
 /// duplicate.
 fn merge_action(to: &mut ActionMeta, from: ActionMeta) {
     to.created = to.created.or(from.created);
-    to.source_vevent = to.source_vevent.take().or(from.source_vevent);
+    to.external_schedule_id = to.external_schedule_id.take().or(from.external_schedule_id);
 }
 
 /// Every hidden `.json` file under `dir`, recursively, sorted for determinism.
@@ -187,7 +191,7 @@ pub fn hydrate_actions_map(
                 action.created_at = meta.created;
             }
             if action.external_schedule_id.is_none() {
-                action.external_schedule_id = meta.source_vevent.clone();
+                action.external_schedule_id = meta.external_schedule_id.clone();
             }
         }
     }
@@ -314,7 +318,7 @@ mod tests {
             "019dad29-c05d-7781-a92c-40d71adfb88e".to_string(),
             ActionMeta {
                 created: Some(Local::now()),
-                source_vevent: Some("weekly-review@clearhead.us".to_string()),
+                external_schedule_id: Some("weekly-review@clearhead.us".to_string()),
             },
         );
         let json = serde_json::to_string_pretty(&meta).unwrap();
@@ -323,7 +327,7 @@ mod tests {
         let action = &parsed.actions["019dad29-c05d-7781-a92c-40d71adfb88e"];
         assert!(action.created.is_some());
         assert_eq!(
-            action.source_vevent.as_deref(),
+            action.external_schedule_id.as_deref(),
             Some("weekly-review@clearhead.us")
         );
     }
@@ -449,7 +453,7 @@ mod tests {
         let mut meta = CharterMetadata::default();
         meta.actions.insert(
             id.to_string(),
-            ActionMeta { created: None, source_vevent: Some("weekly-review@clearhead.us".to_string()), ..Default::default() },
+            ActionMeta { created: None, external_schedule_id: Some("weekly-review@clearhead.us".to_string()), ..Default::default() },
         );
 
         hydrate_actions(&mut actions, &meta);
@@ -609,9 +613,9 @@ mod tests {
         let union = collect_sidecar_actions(dir.path());
         let entry = &union["dup"];
         assert_eq!(
-            entry.source_vevent.as_deref(),
+            entry.external_schedule_id.as_deref(),
             Some("vevent-7"),
-            "the source_vevent must survive an empty re-stamp under the same uuid",
+            "the external_schedule_id must survive an empty re-stamp under the same uuid",
         );
         assert!(entry.created.is_some());
     }

@@ -231,11 +231,12 @@ fn project_layout_root_plans_dir_uses_project_name_as_charter() {
         "BEGIN:VCALENDAR\n\
 VERSION:2.0\n\
 PRODID:-//clearhead//NONSGML v1.0//EN\n\
-BEGIN:VEVENT\n\
+BEGIN:VTODO\n\
 UID:root-plan-1\n\
 DTSTART:20260101T080000Z\n\
+RRULE:FREQ=WEEKLY\n\
 SUMMARY:Project root plan\n\
-END:VEVENT\n\
+END:VTODO\n\
 END:VCALENDAR\n",
     )
     .expect("write plan ics");
@@ -855,10 +856,10 @@ fn orphaned_sidecar_hydrates_acts_by_uuid() {
     // The action lives in work.actions, but its sidecar sits at a path matching
     // no .actions file — as if work.actions had been renamed and the sidecar left
     // behind. Hydration must still reach it by UUID, including the irreplaceable
-    // source_vevent (a merge base that cannot be recomputed).
+    // external_schedule_id (a merge base that cannot be recomputed).
     let uuid = "01951111-0000-7000-0000-000000000030";
     let sidecar_json = format!(
-        r#"{{"acts": {{"{uuid}": {{"created": "2024-01-15T08:00:00+00:00", "source_vevent": "vevent-42"}}}}}}"#
+        r#"{{"acts": {{"{uuid}": {{"created": "2024-01-15T08:00:00+00:00", "external_schedule_id": "vevent-42"}}}}}}"#
     );
     let workspace = make_workspace(&[
         ("work.actions", &format!("[ ] Task one #{uuid}\n")),
@@ -880,7 +881,7 @@ fn orphaned_sidecar_hydrates_acts_by_uuid() {
     assert_eq!(
         action.external_schedule_id.as_deref(),
         Some("vevent-42"),
-        "the irreplaceable source_vevent must survive the sidecar being orphaned"
+        "the irreplaceable external_schedule_id must survive the sidecar being orphaned"
     );
 }
 

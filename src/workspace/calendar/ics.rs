@@ -1,7 +1,8 @@
 //! ICS schedule file parser and exporter.
 //!
-//! **Parse direction** (`ics → domain`): recurring VEVENT/VTODO components
-//! become [`Plan`]s; standalone VTODOs become [`VTodoAction`] projections.
+//! **Parse direction** (`ics → domain`): recurring VTODO components become
+//! [`Plan`]s; standalone VTODOs become [`VTodoAction`] projections. Retired
+//! VEVENT plans are available only through explicit migration parsing.
 //! Component kind and RRULE semantics, rather than server-specific metadata or
 //! filenames, determine which domain projection is read.
 //!
@@ -30,10 +31,13 @@ pub struct ICSPlan {
     pub plan: Plan,
 }
 
-/// Namespace UUID for deriving deterministic Plan IDs from VEVENT UIDs.
+/// Namespace UUID for deriving deterministic Plan and occurrence identities.
 const ICS_NAMESPACE: Uuid = uuid!("6ba7b810-9dad-11d1-80b4-00c04fd430c8");
+/// Separate namespace for adopting calendar-created standalone VTODOs whose
+/// RFC 5545 UID is valid text but not itself a UUID.
+const VTODO_ACTION_NAMESPACE: Uuid = uuid!("87ca0d84-1793-5b27-91f4-607bf8d38f87");
 
-/// Derive the stable domain Plan ID for a VEVENT UID.
+/// Derive the stable domain Plan ID for an iCalendar UID.
 pub fn plan_id_from_ics_uid(uid: &str) -> uuid::Uuid {
     Uuid::new_v5(&ICS_NAMESPACE, uid.as_bytes())
 }
@@ -47,8 +51,16 @@ pub fn occurrence_action_id(vevent_uid: &str, occurrence_rfc3339: &str) -> uuid:
     uuid::Uuid::new_v5(&ICS_NAMESPACE, key.as_bytes())
 }
 
-/// Parse VEVENTs and recurring VTODOs in an `.ics` file into [`Plan`] structs.
-/// Standalone VTODOs are read by [`parse_vtodo_actions`] instead.
+/// Resolve a standalone VTODO UID to its Action identity. ClearHead-authored
+/// UUID UIDs remain unchanged; arbitrary client-generated UIDs get a stable
+/// UUIDv5 without rewriting the interoperable UID.
+pub fn action_id_from_vtodo_uid(uid: &str) -> Uuid {
+    Uuid::parse_str(uid).unwrap_or_else(|_| Uuid::new_v5(&VTODO_ACTION_NAMESPACE, uid.as_bytes()))
+}
+
+/// Parse recurring VTODOs in an `.ics` file into [`Plan`] structs.
+/// Standalone VTODOs are read by [`parse_vtodo_actions`] instead; VEVENT plans
+/// require explicit [`parse_legacy_vevent_plans`] migration.
 ///
 /// Each accepted component becomes one Plan:
 /// - `Plan.id` — UUID v5 from the component's UID (deterministic across reloads)
@@ -68,7 +80,6 @@ pub fn parse_ics_file(path: &Path) -> Result<Vec<ICSPlan>, WorkspaceError> {
 
     for component in calendar.components {
         let plan = match component {
-            CalendarComponent::Event(event) => component_to_plan(&event, path),
             // A non-recurring VTODO is an Action projection, not a Plan.
             CalendarComponent::Todo(todo) if todo.property_value("RRULE").is_some() => {
                 component_to_plan(&todo, path)
@@ -83,8 +94,25 @@ pub fn parse_ics_file(path: &Path) -> Result<Vec<ICSPlan>, WorkspaceError> {
     Ok(plans)
 }
 
+/// Read the retired VEVENT Plan representation for explicit import/migration.
+/// Normal workspace loading never calls this function.
+pub fn parse_legacy_vevent_plans(path: &Path) -> Result<Vec<ICSPlan>, WorkspaceError> {
+    let content = fs::read_to_string(path).map_err(WorkspaceError::Io)?;
+    let calendar: Calendar = content
+        .parse()
+        .map_err(|e: String| WorkspaceError::Parse(e))?;
+    Ok(calendar
+        .components
+        .into_iter()
+        .filter_map(|component| match component {
+            CalendarComponent::Event(event) => component_to_plan(&event, path),
+            _ => None,
+        })
+        .collect())
+}
+
 /// Build an [`ICSPlan`] from any component that carries the fields a plan
-/// needs (UID, SUMMARY, DTSTART, RRULE, DESCRIPTION) — VEVENT and VTODO both
+/// needs (UID, SUMMARY, DTSTART, RRULE, DESCRIPTION) — legacy VEVENT and VTODO both
 /// qualify via the shared [`Component`] trait. Returns `None` if UID or
 /// SUMMARY is missing.
 fn component_to_plan<T: Component>(component: &T, path: &Path) -> Option<ICSPlan> {
@@ -118,7 +146,7 @@ fn component_to_plan<T: Component>(component: &T, path: &Path) -> Option<ICSPlan
     })
 }
 
-/// Parse directives and description body from a VEVENT DESCRIPTION.
+/// Parse directives and description body from a Plan component DESCRIPTION.
 ///
 /// Leading `key: value` lines are consumed as directives until a blank line
 /// or a non-matching line is encountered. The remainder is the description body.
@@ -199,12 +227,18 @@ fn date_perhaps_time_to_local(value: DatePerhapsTime) -> Option<DateTime<Local>>
 /// this value and are preserved when an existing file is updated.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VTodoAction {
+    /// ClearHead Action identity, equal to `uid` when the UID is a UUID and
+    /// deterministically derived otherwise.
     pub id: Uuid,
+    /// Original RFC 5545 identity. Never rewritten merely to fit Action's UUID.
+    pub uid: String,
     pub scheduled_at: Option<DateTime<Local>>,
     pub due_date: Option<DateTime<Local>>,
     pub state: ActionState,
     pub title: String,
     pub description: Option<String>,
+    pub priority: Option<u32>,
+    pub contexts: Option<Vec<String>>,
     pub completed_at: Option<DateTime<Local>>,
 }
 
@@ -227,9 +261,10 @@ pub fn parse_vtodo_actions(path: &Path) -> Result<Vec<VTodoAction>, WorkspaceErr
         if todo.property_value("RRULE").is_some() {
             continue;
         }
-        let Some(id) = todo.get_uid().and_then(|uid| Uuid::parse_str(uid).ok()) else {
+        let Some(uid) = todo.get_uid() else {
             continue;
         };
+        let id = action_id_from_vtodo_uid(uid);
         let Some(title) = todo.get_summary() else {
             continue;
         };
@@ -258,6 +293,7 @@ pub fn parse_vtodo_actions(path: &Path) -> Result<Vec<VTodoAction>, WorkspaceErr
 
         actions.push(VTodoAction {
             id,
+            uid: uid.to_string(),
             scheduled_at: todo.get_start().and_then(date_perhaps_time_to_local),
             due_date: todo.get_due().and_then(date_perhaps_time_to_local),
             state,
@@ -266,6 +302,8 @@ pub fn parse_vtodo_actions(path: &Path) -> Result<Vec<VTodoAction>, WorkspaceErr
                 .get_description()
                 .filter(|value| !value.is_empty())
                 .map(str::to_string),
+            priority: todo.get_priority().filter(|value| (1..=9).contains(value)),
+            contexts: parse_categories(&todo),
             completed_at: todo
                 .get_completed()
                 .map(|value| value.with_timezone(&Local)),
@@ -273,6 +311,46 @@ pub fn parse_vtodo_actions(path: &Path) -> Result<Vec<VTodoAction>, WorkspaceErr
     }
 
     Ok(actions)
+}
+
+fn parse_categories(todo: &Todo) -> Option<Vec<String>> {
+    let single = todo.properties().get("CATEGORIES").into_iter();
+    let multiple = todo
+        .multi_properties()
+        .get("CATEGORIES")
+        .into_iter()
+        .flatten();
+    let mut categories = single
+        .chain(multiple)
+        .flat_map(|property| split_text_list(property.value()))
+        .filter(|value| !value.is_empty())
+        .collect::<Vec<_>>();
+    categories.sort();
+    categories.dedup();
+    (!categories.is_empty()).then_some(categories)
+}
+
+/// Split an RFC 5545 comma-separated TEXT list and decode standard TEXT
+/// escapes. ClearHead context names use commas as separators and therefore do
+/// not represent a literal comma inside one category.
+fn split_text_list(value: &str) -> Vec<String> {
+    let mut values = vec![String::new()];
+    let mut chars = value.chars();
+    while let Some(ch) = chars.next() {
+        match ch {
+            '\\' => match chars.next() {
+                Some('n' | 'N') => values.last_mut().unwrap().push('\n'),
+                Some(next) => values.last_mut().unwrap().push(next),
+                None => values.last_mut().unwrap().push('\\'),
+            },
+            ',' => values.push(String::new()),
+            other => values.last_mut().unwrap().push(other),
+        }
+    }
+    values
+        .into_iter()
+        .map(|value| value.trim().to_string())
+        .collect()
 }
 
 // ============================================================================
@@ -289,17 +367,6 @@ fn action_state_to_todo_status(state: ActionState) -> TodoStatus {
         ActionState::InProgress => TodoStatus::InProcess,
         ActionState::Completed => TodoStatus::Completed,
         ActionState::Cancelled => TodoStatus::Cancelled,
-    }
-}
-
-/// Map ClearHead priority (1–5) to iCalendar PRIORITY (1–9).
-fn map_priority(p: u32) -> u32 {
-    match p {
-        1 => 1,
-        2 => 3,
-        3 => 5,
-        4 => 7,
-        _ => 5,
     }
 }
 
@@ -331,11 +398,13 @@ pub fn action_to_vtodo(action: &Action) -> Todo {
     {
         todo.completed(completed_at.with_timezone(&Utc));
     }
-    if let Some(p) = action.priority {
-        todo.priority(map_priority(p));
+    if let Some(priority) = action.priority {
+        todo.priority(priority);
     }
     if let Some(contexts) = &action.contexts {
-        todo.add_property("CATEGORIES", contexts.join(","));
+        for context in contexts {
+            todo.add_multi_property("CATEGORIES", context);
+        }
     }
 
     todo.done()
@@ -390,7 +459,7 @@ mod tests {
              END:VCALENDAR\r\n",
         );
 
-        let plans = parse_ics_file(f.path()).unwrap();
+        let plans = parse_legacy_vevent_plans(f.path()).unwrap();
         assert_eq!(plans.len(), 1);
         assert_eq!(plans[0].plan.name, "Weekly Review");
         assert_eq!(
@@ -418,7 +487,7 @@ mod tests {
              END:VCALENDAR\r\n",
         );
 
-        let plans = parse_ics_file(f.path()).unwrap();
+        let plans = parse_legacy_vevent_plans(f.path()).unwrap();
         assert_eq!(plans.len(), 1);
         let r = plans[0].plan.recurrence.as_ref().unwrap();
         assert_eq!(r.frequency, "daily");
@@ -443,7 +512,7 @@ mod tests {
              END:VCALENDAR\r\n",
         );
 
-        let plans = parse_ics_file(f.path()).unwrap();
+        let plans = parse_legacy_vevent_plans(f.path()).unwrap();
         assert_eq!(plans.len(), 1);
         assert_eq!(
             plans[0].plan.template_name.as_deref(),
@@ -471,7 +540,7 @@ mod tests {
              END:VCALENDAR\r\n",
         );
 
-        let plans = parse_ics_file(f.path()).unwrap();
+        let plans = parse_legacy_vevent_plans(f.path()).unwrap();
         assert_eq!(plans.len(), 1);
         assert_eq!(plans[0].plan.primary_instances, Some(2));
         assert!(plans[0].plan.template_name.is_none());
@@ -491,7 +560,7 @@ mod tests {
              END:VCALENDAR\r\n",
         );
 
-        let plans = parse_ics_file(f.path()).unwrap();
+        let plans = parse_legacy_vevent_plans(f.path()).unwrap();
         assert_eq!(plans.len(), 1);
         assert_eq!(
             plans[0].plan.template_name.as_deref(),
@@ -514,7 +583,7 @@ mod tests {
              END:VCALENDAR\r\n",
         );
 
-        let plans = parse_ics_file(f.path()).unwrap();
+        let plans = parse_legacy_vevent_plans(f.path()).unwrap();
         assert_eq!(
             plans[0].plan.template_name.as_deref(),
             Some("release-checklist")
@@ -535,7 +604,7 @@ mod tests {
              END:VCALENDAR\r\n",
         );
 
-        let plans = parse_ics_file(f.path()).unwrap();
+        let plans = parse_legacy_vevent_plans(f.path()).unwrap();
         assert!(plans[0].plan.template_name.is_none());
         assert_eq!(
             plans[0].plan.description.as_deref(),
@@ -560,7 +629,7 @@ mod tests {
              END:VCALENDAR\r\n",
         );
 
-        let plans = parse_ics_file(f.path()).unwrap();
+        let plans = parse_legacy_vevent_plans(f.path()).unwrap();
         assert_eq!(plans.len(), 2);
         let names: Vec<&str> = plans.iter().map(|p| p.plan.name.as_str()).collect();
         assert!(names.contains(&"Event One"));
@@ -578,7 +647,7 @@ mod tests {
              END:VCALENDAR\r\n",
         );
 
-        let plans = parse_ics_file(f.path()).unwrap();
+        let plans = parse_legacy_vevent_plans(f.path()).unwrap();
         assert_eq!(plans.len(), 0);
     }
 
@@ -658,13 +727,26 @@ mod tests {
     fn parse_standalone_vtodo_fields_and_iana_timezone() {
         let id = Uuid::new_v4();
         let f = write_ics(&format!(
-            "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VTODO\r\nUID:{id}\r\nSUMMARY:Edited elsewhere\r\nDESCRIPTION:portable task\r\nSTATUS:COMPLETED\r\nDTSTART;TZID=America/New_York:20260427T100000\r\nDUE;VALUE=DATE:20260428\r\nCOMPLETED:20260427T150000Z\r\nEND:VTODO\r\nEND:VCALENDAR\r\n"
+            "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VTODO\r\nUID:{id}\r\nSUMMARY:Edited elsewhere\r\nDESCRIPTION:portable task\r\nSTATUS:COMPLETED\r\nPRIORITY:8\r\nCATEGORIES:home,deep\\,focus\r\nCATEGORIES:errands\r\nDTSTART;TZID=America/New_York:20260427T100000\r\nDUE;VALUE=DATE:20260428\r\nCOMPLETED:20260427T150000Z\r\nEND:VTODO\r\nEND:VCALENDAR\r\n"
         ));
         let actions = parse_vtodo_actions(f.path()).unwrap();
         assert_eq!(actions.len(), 1);
         assert_eq!(actions[0].id, id);
         assert_eq!(actions[0].state, ActionState::Completed);
         assert_eq!(actions[0].description.as_deref(), Some("portable task"));
+        assert_eq!(actions[0].priority, Some(8));
+        assert_eq!(
+            actions[0].contexts.as_deref(),
+            Some(
+                [
+                    "deep".into(),
+                    "errands".into(),
+                    "focus".into(),
+                    "home".into()
+                ]
+                .as_slice()
+            )
+        );
         assert_eq!(
             actions[0].scheduled_at.unwrap().with_timezone(&Utc).hour(),
             14
@@ -672,6 +754,16 @@ mod tests {
         assert!(actions[0].due_date.is_some());
         assert!(actions[0].completed_at.is_some());
         assert!(parse_ics_file(f.path()).unwrap().is_empty());
+    }
+
+    #[test]
+    fn arbitrary_vtodo_uid_derives_stable_action_uuid() {
+        let uid = "client-generated-uid@example.test";
+        let first = action_id_from_vtodo_uid(uid);
+        assert_eq!(first, action_id_from_vtodo_uid(uid));
+        assert_ne!(first, action_id_from_vtodo_uid("other@example.test"));
+        let uuid = Uuid::new_v4();
+        assert_eq!(action_id_from_vtodo_uid(&uuid.to_string()), uuid);
     }
 
     #[test]
@@ -712,8 +804,9 @@ mod tests {
         assert!(todo.contains("STATUS:IN-PROCESS"));
         assert!(todo.contains("DTSTART"));
         assert!(todo.contains("DUE"));
-        assert!(todo.contains("PRIORITY:3"));
-        assert!(todo.contains("CATEGORIES:work\\,writing"));
+        assert!(todo.contains("PRIORITY:2"));
+        assert!(todo.contains("CATEGORIES:work"));
+        assert!(todo.contains("CATEGORIES:writing"));
         assert!(!todo.contains("RRULE"));
     }
 
