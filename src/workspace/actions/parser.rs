@@ -13,10 +13,10 @@ pub type ActionList = Vec<Action>;
 
 /// Sigils the formatter escapes inside a freeform `safe_text` field (name,
 /// story/charter ref, predecessor ref) so they read back as literal text
-/// rather than starting a metadata field. Brackets are absent — they belong to
-/// `[[link]]` syntax, which [`escape_field`] copies verbatim.
+/// rather than starting a metadata field. [`escape_field`] copies complete
+/// `[[link]]` spans verbatim while escaping standalone brackets.
 const NAME_ESCAPE: &[char] = &[
-    '\\', '$', '!', '*', '+', '@', '%', '^', '#', '>', '<', '~', '=', ':',
+    '\\', '$', '!', '*', '+', '@', '%', '^', '#', '>', '<', '~', '=', ':', '[', ']',
 ];
 
 /// Sigils a description body escapes: only `$` (its block delimiter) and the
@@ -636,6 +636,7 @@ mod tests {
             r"path C:\temp\logs",
             "see [[docs|http://example.com/a?x=1]] and $5",
             "plain title, no sigils",
+            "calendar task [CalDAV verified]",
         ] {
             assert_eq!(
                 unescape_field(&escape_name(name)),
@@ -669,6 +670,7 @@ mod tests {
             "review PR #42 before <friday",
             "ratio 3:1 and 50% off",
             r"path C:\temp\logs",
+            "calendar task [CalDAV verified]",
         ] {
             let action = Action::new(raw);
             let text = format(&vec![action.clone()], OutputFormat::Actions, None, None)
