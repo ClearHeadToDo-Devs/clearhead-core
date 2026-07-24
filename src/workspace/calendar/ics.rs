@@ -1,10 +1,9 @@
 //! ICS schedule file parser and exporter.
 //!
-//! **Parse direction** (`ics → domain`): reads `.ics` files and converts each
-//! VEVENT *or* VTODO into a [`Plan`], populating `recurrence`, `dtstart`,
-//! `external_id`, and `template_name`. Both component kinds are accepted on
-//! read so existing VEVENT plan/mirror files keep working while the write
-//! side migrates to VTODO — see the platform's VTODO integration charter.
+//! **Parse direction** (`ics → domain`): recurring VEVENT/VTODO components
+//! become [`Plan`]s; standalone VTODOs become [`VTodoAction`] projections.
+//! Component kind and RRULE semantics, rather than server-specific metadata or
+//! filenames, determine which domain projection is read.
 //!
 //! **Export direction** (`domain → ics`): converts a slice of [`Action`]s into
 //! an iCalendar string. Every standalone action becomes one VTODO; DTSTART and
@@ -48,9 +47,10 @@ pub fn occurrence_action_id(vevent_uid: &str, occurrence_rfc3339: &str) -> uuid:
     uuid::Uuid::new_v5(&ICS_NAMESPACE, key.as_bytes())
 }
 
-/// Parse all VEVENTs and VTODOs in an `.ics` file into [`Plan`] structs.
+/// Parse VEVENTs and recurring VTODOs in an `.ics` file into [`Plan`] structs.
+/// Standalone VTODOs are read by [`parse_vtodo_actions`] instead.
 ///
-/// Each component becomes one Plan:
+/// Each accepted component becomes one Plan:
 /// - `Plan.id` — UUID v5 from the component's UID (deterministic across reloads)
 /// - `Plan.name` — SUMMARY
 /// - `Plan.recurrence` — parsed from RRULE
@@ -69,7 +69,10 @@ pub fn parse_ics_file(path: &Path) -> Result<Vec<ICSPlan>, WorkspaceError> {
     for component in calendar.components {
         let plan = match component {
             CalendarComponent::Event(event) => component_to_plan(&event, path),
-            CalendarComponent::Todo(todo) => component_to_plan(&todo, path),
+            // A non-recurring VTODO is an Action projection, not a Plan.
+            CalendarComponent::Todo(todo) if todo.property_value("RRULE").is_some() => {
+                component_to_plan(&todo, path)
+            }
             _ => None,
         };
         if let Some(plan) = plan {
@@ -155,7 +158,11 @@ fn parse_description_directives(desc: &str) -> (Option<String>, Option<u32>, Opt
 
     let rest = if body_start < desc.len() {
         let s = desc[body_start..].trim();
-        if s.is_empty() { None } else { Some(s.to_string()) }
+        if s.is_empty() {
+            None
+        } else {
+            Some(s.to_string())
+        }
     } else {
         None
     };
@@ -164,20 +171,108 @@ fn parse_description_directives(desc: &str) -> (Option<String>, Option<u32>, Opt
 }
 
 fn parse_dtstart<T: Component>(component: &T) -> Option<DateTime<Local>> {
-    let dpt = component.get_start()?;
-    match dpt {
+    date_perhaps_time_to_local(component.get_start()?)
+}
+
+/// Convert every RFC 5545 date form accepted by the parser into ClearHead's
+/// local-time domain representation. UTC instants remain exact; floating and
+/// all-day values intentionally use the machine's local zone; IANA TZIDs are
+/// resolved in their declared zone before conversion. Unknown/custom TZIDs
+/// are rejected rather than silently interpreted in the wrong zone.
+fn date_perhaps_time_to_local(value: DatePerhapsTime) -> Option<DateTime<Local>> {
+    match value {
         DatePerhapsTime::DateTime(CalendarDateTime::Floating(naive)) => {
             Local.from_local_datetime(&naive).earliest()
         }
         DatePerhapsTime::DateTime(CalendarDateTime::Utc(utc)) => Some(utc.with_timezone(&Local)),
-        DatePerhapsTime::DateTime(CalendarDateTime::WithTimezone { date_time, .. }) => {
-            Local.from_local_datetime(&date_time).earliest()
+        DatePerhapsTime::DateTime(value @ CalendarDateTime::WithTimezone { .. }) => {
+            value.try_into_utc().map(|utc| utc.with_timezone(&Local))
         }
-        DatePerhapsTime::Date(naive_date) => {
-            let naive = naive_date.and_hms_opt(0, 0, 0)?;
-            Local.from_local_datetime(&naive).earliest()
-        }
+        DatePerhapsTime::Date(naive_date) => Local
+            .from_local_datetime(&naive_date.and_hms_opt(0, 0, 0)?)
+            .earliest(),
     }
+}
+
+/// The interoperable fields ClearHead owns in a standalone VTODO projection.
+/// Transport metadata, alarms, and vendor extensions deliberately stay out of
+/// this value and are preserved when an existing file is updated.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VTodoAction {
+    pub id: Uuid,
+    pub scheduled_at: Option<DateTime<Local>>,
+    pub due_date: Option<DateTime<Local>>,
+    pub state: ActionState,
+    pub title: String,
+    pub description: Option<String>,
+    pub completed_at: Option<DateTime<Local>>,
+}
+
+/// Read standalone (non-RRULE) VTODOs from one vdir resource.
+///
+/// VEVENTs and recurring VTODO masters are not Action projections. Components
+/// without a UUID UID or SUMMARY are ignored: ClearHead cannot safely attach
+/// them to an existing Action.
+pub fn parse_vtodo_actions(path: &Path) -> Result<Vec<VTodoAction>, WorkspaceError> {
+    let content = fs::read_to_string(path).map_err(WorkspaceError::Io)?;
+    let calendar: Calendar = content
+        .parse()
+        .map_err(|e: String| WorkspaceError::Parse(e))?;
+    let mut actions = Vec::new();
+
+    for component in calendar.components {
+        let CalendarComponent::Todo(todo) = component else {
+            continue;
+        };
+        if todo.property_value("RRULE").is_some() {
+            continue;
+        }
+        let Some(id) = todo.get_uid().and_then(|uid| Uuid::parse_str(uid).ok()) else {
+            continue;
+        };
+        let Some(title) = todo.get_summary() else {
+            continue;
+        };
+
+        let standard_status = todo.get_status();
+        let blocked = matches!(standard_status, Some(TodoStatus::NeedsAction) | None)
+            && todo
+                .property_value("X-CLEARHEAD-STATUS")
+                .is_some_and(|value| value.eq_ignore_ascii_case("blocked"));
+        let state = if blocked {
+            ActionState::BlockedOrAwaiting
+        } else {
+            match standard_status {
+                Some(TodoStatus::InProcess) => ActionState::InProgress,
+                Some(TodoStatus::Completed) => ActionState::Completed,
+                Some(TodoStatus::Cancelled) => ActionState::Cancelled,
+                Some(TodoStatus::NeedsAction) | None => {
+                    if todo.get_percent_complete() == Some(100) || todo.get_completed().is_some() {
+                        ActionState::Completed
+                    } else {
+                        ActionState::NotStarted
+                    }
+                }
+            }
+        };
+
+        actions.push(VTodoAction {
+            id,
+            scheduled_at: todo.get_start().and_then(date_perhaps_time_to_local),
+            due_date: todo.get_due().and_then(date_perhaps_time_to_local),
+            state,
+            title: title.to_string(),
+            description: todo
+                .get_description()
+                .filter(|value| !value.is_empty())
+                .map(str::to_string),
+            completed_at: todo
+                .get_completed()
+                .map(|value| value.with_timezone(&Local)),
+        });
+    }
+
+    Ok(actions)
 }
 
 // ============================================================================
@@ -240,7 +335,7 @@ pub fn action_to_vtodo(action: &Action) -> Todo {
         todo.priority(map_priority(p));
     }
     if let Some(contexts) = &action.contexts {
-        todo.add_property("CATEGORIES", &contexts.join(","));
+        todo.add_property("CATEGORIES", contexts.join(","));
     }
 
     todo.done()
@@ -350,7 +445,10 @@ mod tests {
 
         let plans = parse_ics_file(f.path()).unwrap();
         assert_eq!(plans.len(), 1);
-        assert_eq!(plans[0].plan.template_name.as_deref(), Some("weekly-review"));
+        assert_eq!(
+            plans[0].plan.template_name.as_deref(),
+            Some("weekly-review")
+        );
         assert_eq!(
             plans[0].plan.description.as_deref(),
             Some("Reflect on the past week")
@@ -395,7 +493,10 @@ mod tests {
 
         let plans = parse_ics_file(f.path()).unwrap();
         assert_eq!(plans.len(), 1);
-        assert_eq!(plans[0].plan.template_name.as_deref(), Some("weekly-review"));
+        assert_eq!(
+            plans[0].plan.template_name.as_deref(),
+            Some("weekly-review")
+        );
         assert_eq!(plans[0].plan.primary_instances, Some(3));
         assert_eq!(plans[0].plan.description.as_deref(), Some("Some notes"));
     }
@@ -414,7 +515,10 @@ mod tests {
         );
 
         let plans = parse_ics_file(f.path()).unwrap();
-        assert_eq!(plans[0].plan.template_name.as_deref(), Some("release-checklist"));
+        assert_eq!(
+            plans[0].plan.template_name.as_deref(),
+            Some("release-checklist")
+        );
         assert!(plans[0].plan.description.is_none());
     }
 
@@ -481,7 +585,8 @@ mod tests {
     #[test]
     fn parse_description_directives_cases() {
         // template only
-        let (tpl, upcoming, desc) = parse_description_directives("template: weekly-review\nSome notes");
+        let (tpl, upcoming, desc) =
+            parse_description_directives("template: weekly-review\nSome notes");
         assert_eq!(tpl.as_deref(), Some("weekly-review"));
         assert!(upcoming.is_none());
         assert_eq!(desc.as_deref(), Some("Some notes"));
@@ -499,7 +604,8 @@ mod tests {
         assert!(desc.is_none());
 
         // both directives with body
-        let (tpl, upcoming, desc) = parse_description_directives("template: weekly-review\nupcoming: 2\nSome notes");
+        let (tpl, upcoming, desc) =
+            parse_description_directives("template: weekly-review\nupcoming: 2\nSome notes");
         assert_eq!(tpl.as_deref(), Some("weekly-review"));
         assert_eq!(upcoming, Some(2));
         assert_eq!(desc.as_deref(), Some("Some notes"));
@@ -536,6 +642,7 @@ mod tests {
     // -------------------------------------------------------------------------
 
     use crate::domain::{Action, ActionState};
+    use chrono::Timelike;
 
     fn scheduled_action(name: &str, state: ActionState) -> Action {
         Action {
@@ -545,6 +652,35 @@ mod tests {
             scheduled_at: Some(Local.with_ymd_and_hms(2026, 6, 1, 9, 0, 0).unwrap()),
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn parse_standalone_vtodo_fields_and_iana_timezone() {
+        let id = Uuid::new_v4();
+        let f = write_ics(&format!(
+            "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VTODO\r\nUID:{id}\r\nSUMMARY:Edited elsewhere\r\nDESCRIPTION:portable task\r\nSTATUS:COMPLETED\r\nDTSTART;TZID=America/New_York:20260427T100000\r\nDUE;VALUE=DATE:20260428\r\nCOMPLETED:20260427T150000Z\r\nEND:VTODO\r\nEND:VCALENDAR\r\n"
+        ));
+        let actions = parse_vtodo_actions(f.path()).unwrap();
+        assert_eq!(actions.len(), 1);
+        assert_eq!(actions[0].id, id);
+        assert_eq!(actions[0].state, ActionState::Completed);
+        assert_eq!(actions[0].description.as_deref(), Some("portable task"));
+        assert_eq!(
+            actions[0].scheduled_at.unwrap().with_timezone(&Utc).hour(),
+            14
+        );
+        assert!(actions[0].due_date.is_some());
+        assert!(actions[0].completed_at.is_some());
+        assert!(parse_ics_file(f.path()).unwrap().is_empty());
+    }
+
+    #[test]
+    fn recurring_vtodo_is_a_plan_not_an_action() {
+        let f = write_ics(
+            "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VTODO\r\nUID:weekly\r\nSUMMARY:Weekly\r\nDTSTART:20260427T100000Z\r\nRRULE:FREQ=WEEKLY\r\nEND:VTODO\r\nEND:VCALENDAR\r\n",
+        );
+        assert!(parse_vtodo_actions(f.path()).unwrap().is_empty());
+        assert_eq!(parse_ics_file(f.path()).unwrap().len(), 1);
     }
 
     #[test]

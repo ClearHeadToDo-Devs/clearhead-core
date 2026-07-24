@@ -5,7 +5,7 @@
 //! projections. It is machine-local bookkeeping, not action or sidecar metadata.
 
 use chrono::{DateTime, Local};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
@@ -14,6 +14,10 @@ use uuid::Uuid;
 use crate::workspace::store::{WorkspaceError, resolve_workspace_layout};
 
 pub const SCHEDULED_AT_FIELD: &str = "scheduled_at";
+pub const DUE_DATE_FIELD: &str = "due_date";
+pub const STATE_FIELD: &str = "state";
+pub const TITLE_FIELD: &str = "title";
+pub const DESCRIPTION_FIELD: &str = "description";
 const STORE_VERSION: u32 = 1;
 
 type Time = Option<DateTime<Local>>;
@@ -38,29 +42,49 @@ impl PlansSyncStore {
         }
     }
 
-    /// Return the scheduled-time merge bases used by `plan_sync`.
-    pub fn scheduled_at_bases(&self) -> Result<HashMap<Uuid, Time>, WorkspaceError> {
+    /// Decode one independently reconciled field's merge bases.
+    pub fn field_bases<T: DeserializeOwned>(
+        &self,
+        field: &str,
+    ) -> Result<HashMap<Uuid, T>, WorkspaceError> {
         let mut bases = HashMap::new();
         for (id, fields) in &self.actions {
-            let Some(value) = fields.get(SCHEDULED_AT_FIELD) else {
+            let Some(value) = fields.get(field) else {
                 continue;
             };
-            let time = serde_json::from_value(value.clone()).map_err(|error| {
+            let value = serde_json::from_value(value.clone()).map_err(|error| {
                 WorkspaceError::Parse(format!(
-                    "plans sync store: invalid {SCHEDULED_AT_FIELD} for {id}: {error}"
+                    "plans sync store: invalid {field} for {id}: {error}"
                 ))
             })?;
-            bases.insert(*id, time);
+            bases.insert(*id, value);
         }
         Ok(bases)
     }
 
-    /// Stamp a field's resolved value after a successful reconcile.
+    pub fn scheduled_at_bases(&self) -> Result<HashMap<Uuid, Time>, WorkspaceError> {
+        self.field_bases(SCHEDULED_AT_FIELD)
+    }
+
+    /// Stamp any field's resolved value after a successful reconcile.
+    pub fn stamp<T: Serialize>(
+        &mut self,
+        action_id: Uuid,
+        field: &str,
+        value: &T,
+    ) -> Result<(), WorkspaceError> {
+        let value = serde_json::to_value(value)
+            .map_err(|error| WorkspaceError::Parse(error.to_string()))?;
+        self.actions
+            .entry(action_id)
+            .or_default()
+            .insert(field.to_string(), value);
+        Ok(())
+    }
+
     pub fn stamp_scheduled_at(&mut self, action_id: Uuid, time: Time) {
-        self.actions.entry(action_id).or_default().insert(
-            SCHEDULED_AT_FIELD.to_string(),
-            serde_json::to_value(time).expect("datetime serializes"),
-        );
+        self.stamp(action_id, SCHEDULED_AT_FIELD, &time)
+            .expect("datetime serializes");
     }
 }
 
@@ -98,9 +122,7 @@ pub fn read_plans_sync_store(
     Ok(store)
 }
 
-pub(crate) fn serialize_plans_sync_store(
-    store: &PlansSyncStore,
-) -> Result<String, WorkspaceError> {
+pub(crate) fn serialize_plans_sync_store(store: &PlansSyncStore) -> Result<String, WorkspaceError> {
     serde_json::to_string_pretty(store).map_err(|error| WorkspaceError::Parse(error.to_string()))
 }
 

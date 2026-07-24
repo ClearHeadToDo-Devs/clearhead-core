@@ -1,139 +1,147 @@
-//! Three-way reconcile between actions and the configured plans vdir ([decision 31]).
+//! Field-wise three-way reconciliation between Actions and the configured plans vdir.
 //!
-//! Edits to a scheduled action can originate on either side — in ClearHead or
-//! in the calendar app — and we honor both without knowing *when* anything
-//! changed. The trick is a stored merge base: the action's `scheduled_at` as of
-//! the last sync. That gives three observable times for one action:
-//!
-//! - **A** — the action's current `scheduled_at`.
-//! - **B** — the merge base in the plans projection's machine-local store.
-//! - **C** — the `DTSTART` in the `.ics`.
-//!
-//! Each is an [`Option`]: `None` is "no scheduled time", a first-class value
-//! here — an unscheduled action, a deleted event, or (for B) "never synced".
-//!
-//! Comparing A and C *each against B* tells us who moved, with no timestamps.
-//! The eight rows of decision 31's table collapse to four branches once `None`
-//! is treated as an ordinary value:
-//!
-//! | `A != B` | `C != B` | outcome                                    |
-//! |----------|----------|--------------------------------------------|
-//! | no       | no       | [`NoOp`] — nothing moved                    |
-//! | yes      | no       | [`TakeAction`] — push A to the `.ics`       |
-//! | no       | yes      | [`TakeCalendar`] — pull C into the action   |
-//! | yes      | yes      | both moved (see below)                      |
-//!
-//! [`NoOp`]: Reconcile::NoOp
-//! [`TakeAction`]: Reconcile::TakeAction
-//! [`TakeCalendar`]: Reconcile::TakeCalendar
-//!
-//! When both sides moved we look once more: if they moved to the **same** time
-//! the change is a clean convergence ([`Converged`]) — no payload to write, only
-//! the stale merge base to restamp. Only genuinely divergent moves are a
-//! [`Conflict`]. This refines decision 31's literal `changed/changed → conflict`
-//! row to `changed/changed & A != C`, matching how a 3-way merge treats two
-//! identical edits.
-//!
-//! [`Converged`]: Reconcile::Converged
-//! [`Conflict`]: Reconcile::Conflict
-//!
-//! The decision layer in this module is **pure** — [`reconcile`] and
-//! [`plan_sync`] classify without writing. The same module also hosts the file
-//! shell ([`apply_sync`]) that performs the ordered writes the charter requires.
-//!
-//! [decision 31]: ../../../DECISIONS.md
+//! The plans vdir is the complete integration boundary. No server, account,
+//! href, ETag, or transport-specific metadata enters this module. Each owned
+//! VTODO field is merged independently against its last-agreed value so a
+//! conflict in one field never blocks safe changes in another.
 
-use chrono::{DateTime, Local};
+use chrono::{DateTime, Local, Utc};
+use icalendar::{Calendar, CalendarComponent, Component, EventLike, Todo, TodoStatus};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use uuid::Uuid;
 
-use super::ics::{actions_to_icalendar, parse_ics_file};
+use super::ics::{VTodoAction, action_to_vtodo, parse_vtodo_actions};
 use super::plans::{action_mirror_path, collect_plan_files_in};
 use super::sync_store::{
-    plans_sync_store_path, read_plans_sync_store, serialize_plans_sync_store,
+    DESCRIPTION_FIELD, DUE_DATE_FIELD, PlansSyncStore, SCHEDULED_AT_FIELD, STATE_FIELD,
+    TITLE_FIELD, plans_sync_store_path, read_plans_sync_store, serialize_plans_sync_store,
 };
-use crate::domain::DomainModel;
+use crate::domain::{Action, ActionState, DomainModel};
 use crate::workspace::charter::MarkdownCharter;
 use crate::workspace::durability::{PendingBatch, WorkspaceLock, atomic_write, recover_pending};
 use crate::workspace::store::{Workspace, WorkspaceError, resolve_workspace_layout};
 use crate::workspace::{OutputFormat, SourcedAction, format};
 
-/// A nullable scheduled time — `None` means "no scheduled time".
 type Time = Option<DateTime<Local>>;
 
-/// The outcome of reconciling one action's scheduled time across the three
-/// sources. Each variant carries the resolved value so the shell can act
-/// without re-deriving it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Reconcile {
-    /// A == B == C. Nothing moved; nothing to write.
+/// A conventional three-way merge result for one field.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Reconcile<T> {
     NoOp,
-    /// Only the action moved — it wins. Write its time to the `.ics` and
-    /// restamp the merge base. `None` means the action was unscheduled: remove
-    /// the `.ics`.
-    TakeAction(Time),
-    /// Only the calendar moved — it wins. Write its time into the action and
-    /// restamp the merge base. `None` means the event was deleted: clear the
-    /// action's `scheduled_at`.
-    TakeCalendar(Time),
-    /// Both sides moved, but to the *same* time. No payload change — only the
-    /// stale merge base needs restamping to the agreed value.
-    Converged(Time),
-    /// Both sides moved to *different* times. We cannot pick safely — defer to
-    /// the human.
-    Conflict { action: Time, calendar: Time },
+    TakeAction(T),
+    TakeCalendar(T),
+    Converged(T),
+    Conflict { action: T, calendar: T },
 }
 
-/// Decide how to reconcile one action's scheduled time from the three sources.
-///
-/// `action` is A, `base` is B (the merge base), `ics` is C. See the module docs
-/// for the full table.
-pub fn reconcile(action: Time, base: Time, ics: Time) -> Reconcile {
-    let action_moved = action != base;
-    let calendar_moved = ics != base;
+/// Merge one field. A missing base means first sync. A missing calendar value
+/// means the complete VTODO resource is absent, so ClearHead recreates its
+/// projection rather than treating deletion as an instruction to erase Action
+/// data. Nullable fields use `T = Option<_>`, preserving the distinction
+/// between an absent resource and an explicitly absent DTSTART/DUE/DESCRIPTION.
+pub fn reconcile<T: PartialEq + Clone>(
+    action: &T,
+    base: Option<&T>,
+    calendar: Option<&T>,
+) -> Reconcile<T> {
+    let Some(calendar) = calendar else {
+        return Reconcile::TakeAction(action.clone());
+    };
+    let Some(base) = base else {
+        return if action == calendar {
+            Reconcile::Converged(action.clone())
+        } else {
+            Reconcile::Conflict {
+                action: action.clone(),
+                calendar: calendar.clone(),
+            }
+        };
+    };
 
-    match (action_moved, calendar_moved) {
+    match (action != base, calendar != base) {
         (false, false) => Reconcile::NoOp,
-        (true, false) => Reconcile::TakeAction(action),
-        (false, true) => Reconcile::TakeCalendar(ics),
-        (true, true) if action == ics => Reconcile::Converged(action),
+        (true, false) => Reconcile::TakeAction(action.clone()),
+        (false, true) => Reconcile::TakeCalendar(calendar.clone()),
+        (true, true) if action == calendar => Reconcile::Converged(action.clone()),
         (true, true) => Reconcile::Conflict {
-            action,
-            calendar: ics,
+            action: action.clone(),
+            calendar: calendar.clone(),
         },
     }
 }
 
-// ============================================================================
-// Sync planning — the read-only shell
-// ============================================================================
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SyncField {
+    ScheduledAt,
+    DueDate,
+    State,
+    Title,
+    Description,
+}
 
-/// One standalone action's place in a planned sync.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SyncEntry {
     pub action_id: Uuid,
     pub name: String,
-    pub outcome: Reconcile,
+    pub scheduled_at: Reconcile<Time>,
+    pub due_date: Reconcile<Time>,
+    pub state: Reconcile<ActionState>,
+    pub title: Reconcile<String>,
+    pub description: Reconcile<Option<String>>,
+    /// Auxiliary RFC 5545 completion timestamp used when calendar STATUS wins.
+    pub calendar_completed_at: Time,
 }
 
-/// Tally of planned outcomes by kind — the at-a-glance summary of a run.
+impl SyncEntry {
+    pub fn outcomes(&self) -> [(SyncField, OutcomeKind); 5] {
+        [
+            (SyncField::ScheduledAt, kind(&self.scheduled_at)),
+            (SyncField::DueDate, kind(&self.due_date)),
+            (SyncField::State, kind(&self.state)),
+            (SyncField::Title, kind(&self.title)),
+            (SyncField::Description, kind(&self.description)),
+        ]
+    }
+
+    fn is_noop(&self) -> bool {
+        self.outcomes()
+            .iter()
+            .all(|(_, outcome)| *outcome == OutcomeKind::NoOp)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OutcomeKind {
+    NoOp,
+    TakeAction,
+    TakeCalendar,
+    Converged,
+    Conflict,
+}
+
+fn kind<T>(outcome: &Reconcile<T>) -> OutcomeKind {
+    match outcome {
+        Reconcile::NoOp => OutcomeKind::NoOp,
+        Reconcile::TakeAction(_) => OutcomeKind::TakeAction,
+        Reconcile::TakeCalendar(_) => OutcomeKind::TakeCalendar,
+        Reconcile::Converged(_) => OutcomeKind::Converged,
+        Reconcile::Conflict { .. } => OutcomeKind::Conflict,
+    }
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct SyncTally {
+    /// Actions with at least one field in this outcome category.
     pub take_action: usize,
     pub take_calendar: usize,
     pub converged: usize,
     pub conflict: usize,
 }
 
-/// What a sync run *would* do, computed without touching disk.
-///
-/// Only actionable entries are kept — `NoOp` actions (already in sync, or never
-/// scheduled) are omitted. This is the dry-run; applying it is a separate step.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SyncReport {
     pub entries: Vec<SyncEntry>,
-    /// Suspicious merge-base states that should be surfaced loudly to the user.
     pub warnings: Vec<String>,
 }
 
@@ -142,123 +150,132 @@ impl SyncReport {
         self.entries.is_empty() && self.warnings.is_empty()
     }
 
-    /// Count planned outcomes by kind.
     pub fn tally(&self) -> SyncTally {
-        let mut t = SyncTally::default();
+        let mut tally = SyncTally::default();
         for entry in &self.entries {
-            match entry.outcome {
-                Reconcile::NoOp => {}
-                Reconcile::TakeAction(_) => t.take_action += 1,
-                Reconcile::TakeCalendar(_) => t.take_calendar += 1,
-                Reconcile::Converged(_) => t.converged += 1,
-                Reconcile::Conflict { .. } => t.conflict += 1,
-            }
+            let outcomes = entry.outcomes();
+            tally.take_action += usize::from(
+                outcomes
+                    .iter()
+                    .any(|(_, value)| *value == OutcomeKind::TakeAction),
+            );
+            tally.take_calendar += usize::from(
+                outcomes
+                    .iter()
+                    .any(|(_, value)| *value == OutcomeKind::TakeCalendar),
+            );
+            let has_conflict = outcomes
+                .iter()
+                .any(|(_, value)| *value == OutcomeKind::Conflict);
+            let has_transfer = outcomes.iter().any(|(_, value)| {
+                matches!(value, OutcomeKind::TakeAction | OutcomeKind::TakeCalendar)
+            });
+            tally.converged += usize::from(
+                !has_transfer
+                    && !has_conflict
+                    && outcomes
+                        .iter()
+                        .any(|(_, value)| *value == OutcomeKind::Converged),
+            );
+            tally.conflict += usize::from(has_conflict);
         }
-        t
-    }
-
-    /// The conflict entries — the ones a human must resolve.
-    pub fn conflicts(&self) -> impl Iterator<Item = &SyncEntry> {
-        self.entries
-            .iter()
-            .filter(|e| matches!(e.outcome, Reconcile::Conflict { .. }))
+        tally
     }
 }
 
-/// Classify every standalone scheduled action against the calendar, with no
-/// writes. `ics_dates` maps an action's id to the `DTSTART` in its `.ics` (`C`);
-/// a missing key means no `.ics` exists for that action.
-///
-/// Plan-generated actions (`external_schedule_id` set) are skipped — they are
-/// represented by their plan's recurring master, never individually mirrored.
+/// Read all standalone VTODO projections in the vdir, keyed by RFC 5545 UID.
+/// File names and vendor properties are irrelevant. Duplicate UIDs are rejected
+/// rather than resolved by traversal order.
+pub fn read_vtodo_actions(plans_root: &Path) -> Result<HashMap<Uuid, VTodoAction>, WorkspaceError> {
+    Ok(read_vtodo_resources(plans_root)?
+        .into_iter()
+        .map(|(id, (action, _))| (id, action))
+        .collect())
+}
+
+fn read_vtodo_resources(
+    plans_root: &Path,
+) -> Result<HashMap<Uuid, (VTodoAction, std::path::PathBuf)>, WorkspaceError> {
+    let mut actions = HashMap::new();
+    for entry in collect_plan_files_in(plans_root, None)? {
+        for action in parse_vtodo_actions(&entry.path)? {
+            if actions
+                .insert(action.id, (action.clone(), entry.path.clone()))
+                .is_some()
+            {
+                return Err(WorkspaceError::Parse(format!(
+                    "duplicate standalone VTODO UID {} in configured plans vdir",
+                    action.id
+                )));
+            }
+        }
+    }
+    Ok(actions)
+}
+
+/// Compatibility helper for callers interested only in DTSTART.
+pub fn read_ics_dates(plans_root: &Path) -> Result<HashMap<Uuid, Time>, WorkspaceError> {
+    Ok(read_vtodo_actions(plans_root)?
+        .into_iter()
+        .map(|(id, action)| (id, action.scheduled_at))
+        .collect())
+}
+
+/// Plan a field-wise sync without touching disk.
 pub fn plan_sync(
     model: &DomainModel,
-    base_map: &HashMap<Uuid, Time>,
-    ics_dates: &HashMap<Uuid, Time>,
-) -> SyncReport {
-    let mut entries = Vec::new();
-    let mut warnings = Vec::new();
+    store: &PlansSyncStore,
+    calendar: &HashMap<Uuid, VTodoAction>,
+) -> Result<SyncReport, WorkspaceError> {
+    let scheduled_bases: HashMap<Uuid, Time> = store.field_bases(SCHEDULED_AT_FIELD)?;
+    let due_bases: HashMap<Uuid, Time> = store.field_bases(DUE_DATE_FIELD)?;
+    let state_bases: HashMap<Uuid, ActionState> = store.field_bases(STATE_FIELD)?;
+    let title_bases: HashMap<Uuid, String> = store.field_bases(TITLE_FIELD)?;
+    let description_bases: HashMap<Uuid, Option<String>> = store.field_bases(DESCRIPTION_FIELD)?;
 
-    for charter in &model.charters {
-        for action in &charter.actions {
-            if action.external_schedule_id.is_some() {
-                continue;
-            }
-
-            let a = action.scheduled_at;
-            let b = base_map.get(&action.id).copied().flatten();
-            let c = ics_dates.get(&action.id).copied().flatten();
-
-            if let Some(warning) = detect_merge_base_drift(&action.name, action.id, a, b, c) {
-                warnings.push(warning);
-            }
-
-            let outcome = reconcile(a, b, c);
-            if outcome != Reconcile::NoOp {
-                entries.push(SyncEntry {
-                    action_id: action.id,
-                    name: action.name.clone(),
-                    outcome,
-                });
-            }
+    let mut report = SyncReport::default();
+    for action in model.all_actions() {
+        if action.external_schedule_id.is_some() {
+            continue;
+        }
+        let calendar_action = calendar.get(&action.id);
+        let entry = SyncEntry {
+            action_id: action.id,
+            name: action.name.clone(),
+            scheduled_at: reconcile(
+                &action.scheduled_at,
+                scheduled_bases.get(&action.id),
+                calendar_action.map(|value| &value.scheduled_at),
+            ),
+            due_date: reconcile(
+                &action.due_date,
+                due_bases.get(&action.id),
+                calendar_action.map(|value| &value.due_date),
+            ),
+            state: reconcile(
+                &action.state,
+                state_bases.get(&action.id),
+                calendar_action.map(|value| &value.state),
+            ),
+            title: reconcile(
+                &action.name,
+                title_bases.get(&action.id),
+                calendar_action.map(|value| &value.title),
+            ),
+            description: reconcile(
+                &action.description,
+                description_bases.get(&action.id),
+                calendar_action.map(|value| &value.description),
+            ),
+            calendar_completed_at: calendar_action.and_then(|value| value.completed_at),
+        };
+        if !entry.is_noop() {
+            report.entries.push(entry);
         }
     }
-
-    SyncReport { entries, warnings }
+    Ok(report)
 }
 
-fn detect_merge_base_drift(
-    name: &str,
-    action_id: Uuid,
-    action: Time,
-    base: Time,
-    ics: Time,
-) -> Option<String> {
-    if base.is_none() && ics.is_some() {
-        return Some(format!(
-            "warning: merge base missing for '{}' #{} while a calendar mirror exists; this may be interrupted sync recovery or sidecar drift",
-            name, action_id
-        ));
-    }
-
-    if action == ics && action != base {
-        return Some(format!(
-            "warning: merge base drift for '{}' #{} — action and calendar already agree while the stored sync copy differs; restamping B",
-            name, action_id
-        ));
-    }
-
-    None
-}
-
-/// Read the calendar side (`C`) for a sync: parse every `.ics` under
-/// `plans_root` and map each action-mirror's id to its `DTSTART`.
-///
-/// Only VEVENT UIDs that parse as a UUID are kept — recurring-plan files, whose
-/// UIDs are plan identities, are ignored here. This is the only filesystem touch
-/// in the read path; [`plan_sync`] stays pure on top of the returned map.
-pub fn read_ics_dates(plans_root: &Path) -> Result<HashMap<Uuid, Time>, WorkspaceError> {
-    let mut dates = HashMap::new();
-
-    for entry in collect_plan_files_in(plans_root, None)? {
-        for ics_plan in parse_ics_file(&entry.path)? {
-            let Some(uid) = &ics_plan.plan.external_id else {
-                continue;
-            };
-            if let Ok(id) = Uuid::parse_str(uid) {
-                dates.insert(id, ics_plan.plan.dtstart);
-            }
-        }
-    }
-
-    Ok(dates)
-}
-
-// ============================================================================
-// Sync application — the write shell
-// ============================================================================
-
-/// Summary of an applied sync run.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct AppliedSync {
     pub take_action: usize,
@@ -267,16 +284,9 @@ pub struct AppliedSync {
     pub conflict: usize,
 }
 
-/// Apply a planned sync report to disk.
-///
-/// Ordering is load-bearing:
-/// - `TakeAction` writes the `.ics` first, then stamps B in the sync-store batch.
-/// - `TakeCalendar` stages `.actions` + sync store together in one pending batch.
-/// - `Converged` stamps B only.
-/// - `Conflict` is surfaced by the caller and skipped here.
-///
-/// The store is staged even for an otherwise empty report so it records which
-/// configured plans vdir subsequent reconciliations belong to.
+/// Apply a report under the workspace lock. Action files and merge bases share
+/// one pending batch. VTODO files are updated first, preserving properties and
+/// child components not owned by ClearHead.
 pub fn apply_sync(
     root: &Path,
     plan_override: Option<&Path>,
@@ -284,15 +294,19 @@ pub fn apply_sync(
 ) -> Result<AppliedSync, WorkspaceError> {
     let layout = resolve_workspace_layout(root);
     std::fs::create_dir_all(&layout.charter_root)?;
-
     let _lock = WorkspaceLock::try_acquire(&layout.data_root)?
         .ok_or_else(|| WorkspaceError::WorkspaceLocked(layout.data_root.clone()))?;
     recover_pending(&layout.charter_root)?;
 
     let mut workspace = Workspace::load_with_plans(root, plan_override)?;
     let plans_root = plan_override.unwrap_or(&layout.plans_root);
-    let mut sync_store = read_plans_sync_store(root, plans_root)?;
-
+    let mut store = read_plans_sync_store(root, plans_root)?;
+    // Preserve the actual vdir resource path chosen by external sync tooling;
+    // only newly emitted resources use ClearHead's canonical UUID filename.
+    let resource_paths: HashMap<Uuid, _> = read_vtodo_resources(plans_root)?
+        .into_iter()
+        .map(|(id, (_, path))| (id, path))
+        .collect();
     let mut dirty_actions = HashSet::new();
     let mut applied = AppliedSync::default();
 
@@ -304,7 +318,6 @@ pub fn apply_sync(
                 entry.action_id
             )));
         };
-
         let actions_relative = workspace.charters[charter_idx]
             .actions_file
             .clone()
@@ -314,48 +327,88 @@ pub fn apply_sync(
                     entry.action_id
                 ))
             })?;
-        match entry.outcome {
-            Reconcile::NoOp => {}
-            Reconcile::Conflict { .. } => {
-                applied.conflict += 1;
-            }
-            Reconcile::TakeAction(time) => {
-                let ics_path = {
-                    let charter = &workspace.charters[charter_idx];
-                    let action = &charter.actions[action_idx].action;
-                    action_mirror_path(plans_root, charter, action)
-                };
 
-                let mut action_for_ics = workspace.charters[charter_idx].actions[action_idx]
-                    .action
-                    .clone();
-                action_for_ics.scheduled_at = time;
-                write_action_mirror(&ics_path, &action_for_ics)?;
+        let (push_fields, action_for_calendar) = {
+            let mut push_fields = Vec::new();
+            let action = &mut workspace.charters[charter_idx].actions[action_idx].action;
+            apply_time_outcome(
+                &entry.scheduled_at,
+                &mut action.scheduled_at,
+                entry.action_id,
+                SCHEDULED_AT_FIELD,
+                SyncField::ScheduledAt,
+                &mut push_fields,
+                &mut store,
+                &mut applied,
+            )?;
+            apply_time_outcome(
+                &entry.due_date,
+                &mut action.due_date,
+                entry.action_id,
+                DUE_DATE_FIELD,
+                SyncField::DueDate,
+                &mut push_fields,
+                &mut store,
+                &mut applied,
+            )?;
+            apply_state_outcome(
+                &entry.state,
+                entry.calendar_completed_at,
+                action,
+                entry.action_id,
+                &mut push_fields,
+                &mut store,
+                &mut applied,
+            )?;
+            apply_value_outcome(
+                &entry.title,
+                &mut action.name,
+                entry.action_id,
+                TITLE_FIELD,
+                SyncField::Title,
+                &mut push_fields,
+                &mut store,
+                &mut applied,
+            )?;
+            apply_value_outcome(
+                &entry.description,
+                &mut action.description,
+                entry.action_id,
+                DESCRIPTION_FIELD,
+                SyncField::Description,
+                &mut push_fields,
+                &mut store,
+                &mut applied,
+            )?;
+            (push_fields, action.clone())
+        };
 
-                sync_store.stamp_scheduled_at(entry.action_id, time);
-                applied.take_action += 1;
-            }
-            Reconcile::TakeCalendar(time) => {
-                workspace.charters[charter_idx].actions[action_idx]
-                    .action
-                    .scheduled_at = time;
-                sync_store.stamp_scheduled_at(entry.action_id, time);
-
-                dirty_actions.insert(layout.charter_root.join(&actions_relative));
-                applied.take_calendar += 1;
-            }
-            Reconcile::Converged(time) => {
-                sync_store.stamp_scheduled_at(entry.action_id, time);
-                applied.converged += 1;
-            }
+        if entry
+            .outcomes()
+            .iter()
+            .any(|(_, outcome)| *outcome == OutcomeKind::TakeCalendar)
+        {
+            dirty_actions.insert(layout.charter_root.join(&actions_relative));
+        }
+        if !push_fields.is_empty() {
+            let path = resource_paths
+                .get(&entry.action_id)
+                .cloned()
+                .unwrap_or_else(|| {
+                    action_mirror_path(
+                        plans_root,
+                        &workspace.charters[charter_idx],
+                        &action_for_calendar,
+                    )
+                });
+            patch_action_mirror(&path, &action_for_calendar, &push_fields)?;
         }
     }
 
     let mut batch = PendingBatch::new(layout.charter_root.clone());
-
-    let mut action_paths: Vec<_> = dirty_actions.into_iter().collect();
-    action_paths.sort();
-    for action_path in action_paths {
+    let mut paths: Vec<_> = dirty_actions.into_iter().collect();
+    paths.sort();
+    for action_path in paths {
         let relative = action_path
             .strip_prefix(&layout.charter_root)
             .unwrap_or(&action_path);
@@ -372,44 +425,199 @@ pub fn apply_sync(
         let content = render_actions(&charter.actions)?;
         batch.stage(action_path, content.as_bytes())?;
     }
-
-    let sync_content = serialize_plans_sync_store(&sync_store)?;
+    let sync_content = serialize_plans_sync_store(&store)?;
     batch.stage(plans_sync_store_path(root), sync_content.as_bytes())?;
-
     batch.commit()?;
-    Ok(applied)
+    let tally = report.tally();
+    Ok(AppliedSync {
+        take_action: tally.take_action,
+        take_calendar: tally.take_calendar,
+        converged: tally.converged,
+        conflict: tally.conflict,
+    })
 }
 
-fn locate_action(charters: &[MarkdownCharter], action_id: Uuid) -> Option<(usize, usize)> {
-    for (charter_idx, charter) in charters.iter().enumerate() {
-        for (action_idx, sourced) in charter.actions.iter().enumerate() {
-            if sourced.action.id == action_id {
-                return Some((charter_idx, action_idx));
-            }
+#[allow(clippy::too_many_arguments)]
+fn apply_value_outcome<T: Clone + serde::Serialize>(
+    outcome: &Reconcile<T>,
+    target: &mut T,
+    id: Uuid,
+    field_name: &str,
+    field: SyncField,
+    pushes: &mut Vec<SyncField>,
+    store: &mut PlansSyncStore,
+    applied: &mut AppliedSync,
+) -> Result<(), WorkspaceError> {
+    match outcome {
+        Reconcile::NoOp => {}
+        Reconcile::TakeAction(value) => {
+            pushes.push(field);
+            store.stamp(id, field_name, value)?;
+            applied.take_action += 1;
+        }
+        Reconcile::TakeCalendar(value) => {
+            *target = value.clone();
+            store.stamp(id, field_name, value)?;
+            applied.take_calendar += 1;
+        }
+        Reconcile::Converged(value) => {
+            store.stamp(id, field_name, value)?;
+            applied.converged += 1;
+        }
+        Reconcile::Conflict { .. } => applied.conflict += 1,
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn apply_time_outcome(
+    outcome: &Reconcile<Time>,
+    target: &mut Time,
+    id: Uuid,
+    field_name: &str,
+    field: SyncField,
+    pushes: &mut Vec<SyncField>,
+    store: &mut PlansSyncStore,
+    applied: &mut AppliedSync,
+) -> Result<(), WorkspaceError> {
+    apply_value_outcome(
+        outcome, target, id, field_name, field, pushes, store, applied,
+    )
+}
+
+fn apply_state_outcome(
+    outcome: &Reconcile<ActionState>,
+    calendar_completed_at: Time,
+    action: &mut Action,
+    id: Uuid,
+    pushes: &mut Vec<SyncField>,
+    store: &mut PlansSyncStore,
+    applied: &mut AppliedSync,
+) -> Result<(), WorkspaceError> {
+    apply_value_outcome(
+        outcome,
+        &mut action.state,
+        id,
+        STATE_FIELD,
+        SyncField::State,
+        pushes,
+        store,
+        applied,
+    )?;
+    if matches!(outcome, Reconcile::TakeCalendar(_)) {
+        // COMPLETED is auxiliary VTODO lifecycle data, not an independent
+        // ClearHead sync field. Preserve the client's timestamp when present;
+        // never invent one merely because sync happened now.
+        action.completed_at = if action.state == ActionState::Completed {
+            calendar_completed_at
+        } else {
+            None
+        };
+    }
+    Ok(())
+}
+
+fn patch_action_mirror(
+    path: &Path,
+    action: &Action,
+    fields: &[SyncField],
+) -> Result<(), WorkspaceError> {
+    if !path.exists() {
+        let mut calendar = Calendar::new().name("ClearHead Actions").done();
+        calendar.push(action_to_vtodo(action));
+        return atomic_write(path, calendar.to_string().as_bytes()).map_err(WorkspaceError::Io);
+    }
+
+    let content = std::fs::read_to_string(path)?;
+    let mut calendar: Calendar = content
+        .parse()
+        .map_err(|error: String| WorkspaceError::Parse(error))?;
+    let mut found = false;
+    for component in &mut calendar.components {
+        let CalendarComponent::Todo(todo) = component else {
+            continue;
+        };
+        if todo.get_uid() == Some(action.id.to_string().as_str())
+            && todo.property_value("RRULE").is_none()
+        {
+            patch_todo(todo, action, fields);
+            found = true;
+            break;
         }
     }
-    None
+    if !found {
+        return Err(WorkspaceError::Parse(format!(
+            "action mirror {} does not contain standalone VTODO UID {}",
+            path.display(),
+            action.id
+        )));
+    }
+    atomic_write(path, calendar.to_string().as_bytes()).map_err(WorkspaceError::Io)
+}
+
+fn patch_todo(todo: &mut Todo, action: &Action, fields: &[SyncField]) {
+    let fields: HashSet<_> = fields.iter().copied().collect();
+    if fields.contains(&SyncField::ScheduledAt) {
+        todo.remove_starts();
+        if let Some(value) = action.scheduled_at {
+            todo.starts(value.with_timezone(&Utc));
+        }
+    }
+    if fields.contains(&SyncField::DueDate) {
+        todo.remove_due();
+        if let Some(value) = action.due_date {
+            todo.due(value.with_timezone(&Utc));
+        }
+    }
+    if fields.contains(&SyncField::State) {
+        todo.remove_status().remove_property("X-CLEARHEAD-STATUS");
+        let status = match action.state {
+            ActionState::NotStarted | ActionState::BlockedOrAwaiting => TodoStatus::NeedsAction,
+            ActionState::InProgress => TodoStatus::InProcess,
+            ActionState::Completed => TodoStatus::Completed,
+            ActionState::Cancelled => TodoStatus::Cancelled,
+        };
+        todo.status(status);
+        if action.state == ActionState::BlockedOrAwaiting {
+            todo.add_property("X-CLEARHEAD-STATUS", "blocked");
+        }
+        todo.remove_completed();
+        if action.state == ActionState::Completed
+            && let Some(value) = action.completed_at
+        {
+            todo.completed(value.with_timezone(&Utc));
+        }
+    }
+    if fields.contains(&SyncField::Title) {
+        todo.summary(&action.name);
+    }
+    if fields.contains(&SyncField::Description) {
+        todo.remove_description();
+        if let Some(value) = &action.description {
+            todo.description(value);
+        }
+    }
+}
+
+fn locate_action(charters: &[MarkdownCharter], id: Uuid) -> Option<(usize, usize)> {
+    charters
+        .iter()
+        .enumerate()
+        .find_map(|(charter_idx, charter)| {
+            charter
+                .actions
+                .iter()
+                .position(|action| action.action.id == id)
+                .map(|action_idx| (charter_idx, action_idx))
+        })
 }
 
 fn render_actions(actions: &[SourcedAction]) -> Result<String, WorkspaceError> {
-    let list = actions
+    let actions = actions
         .iter()
-        .map(|sa| sa.action.clone())
+        .map(|action| action.action.clone())
         .collect::<Vec<_>>();
-    format(&list, OutputFormat::Actions, None, None).map_err(WorkspaceError::Actions)
-}
-
-fn write_action_mirror(path: &Path, action: &crate::domain::Action) -> Result<(), WorkspaceError> {
-    if action.scheduled_at.is_some() {
-        let content = actions_to_icalendar(std::slice::from_ref(action), false);
-        atomic_write(path, content.as_bytes()).map_err(WorkspaceError::Io)
-    } else {
-        match std::fs::remove_file(path) {
-            Ok(()) => Ok(()),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-            Err(e) => Err(WorkspaceError::Io(e)),
-        }
-    }
+    format(&actions, OutputFormat::Actions, None, None).map_err(WorkspaceError::Actions)
 }
 
 #[cfg(test)]
@@ -417,318 +625,102 @@ mod tests {
     use super::*;
     use chrono::TimeZone;
 
-    /// Three distinct, fixed local times for table construction.
-    fn t1() -> DateTime<Local> {
-        Local.with_ymd_and_hms(2026, 4, 27, 10, 0, 0).unwrap()
+    fn t(day: u32) -> DateTime<Local> {
+        Local.with_ymd_and_hms(2026, 4, day, 10, 0, 0).unwrap()
     }
-    fn t2() -> DateTime<Local> {
-        Local.with_ymd_and_hms(2026, 4, 28, 14, 30, 0).unwrap()
-    }
-    fn t3() -> DateTime<Local> {
-        Local.with_ymd_and_hms(2026, 5, 1, 9, 0, 0).unwrap()
-    }
-
-    // --- the synced table: B is set (a prior sync established a merge base) ---
 
     #[test]
-    fn all_equal_is_noop() {
+    fn generic_three_way_table_and_first_sync() {
+        assert_eq!(reconcile(&"a", Some(&"a"), Some(&"a")), Reconcile::NoOp);
         assert_eq!(
-            reconcile(Some(t1()), Some(t1()), Some(t1())),
-            Reconcile::NoOp
+            reconcile(&"b", Some(&"a"), Some(&"a")),
+            Reconcile::TakeAction("b")
         );
-    }
-
-    #[test]
-    fn action_moved_calendar_still_takes_action() {
-        // A changed, C still at base → the action wins.
         assert_eq!(
-            reconcile(Some(t2()), Some(t1()), Some(t1())),
-            Reconcile::TakeAction(Some(t2()))
+            reconcile(&"a", Some(&"a"), Some(&"b")),
+            Reconcile::TakeCalendar("b")
         );
-    }
-
-    #[test]
-    fn calendar_moved_action_still_takes_calendar() {
-        // C changed, A still at base → the calendar wins.
         assert_eq!(
-            reconcile(Some(t1()), Some(t1()), Some(t2())),
-            Reconcile::TakeCalendar(Some(t2()))
+            reconcile(&"b", Some(&"a"), Some(&"b")),
+            Reconcile::Converged("b")
         );
+        assert!(matches!(
+            reconcile(&"b", Some(&"a"), Some(&"c")),
+            Reconcile::Conflict { .. }
+        ));
+        assert_eq!(reconcile(&"a", None, None), Reconcile::TakeAction("a"));
     }
 
     #[test]
-    fn both_moved_differently_is_conflict() {
+    fn nullable_field_distinguishes_resource_absence_from_missing_value() {
+        let none: Time = None;
         assert_eq!(
-            reconcile(Some(t2()), Some(t1()), Some(t3())),
-            Reconcile::Conflict {
-                action: Some(t2()),
-                calendar: Some(t3())
-            }
+            reconcile(&none, None, Some(&none)),
+            Reconcile::Converged(None)
         );
+        assert_eq!(reconcile(&none, None, None), Reconcile::TakeAction(None));
     }
 
     #[test]
-    fn both_moved_to_same_time_is_converged() {
-        // The refinement: identical edits on both sides are not a conflict.
-        assert_eq!(
-            reconcile(Some(t2()), Some(t1()), Some(t2())),
-            Reconcile::Converged(Some(t2()))
-        );
-    }
-
-    // --- removal rows: the moved value is None ---
-
-    #[test]
-    fn action_unscheduled_removes_ics() {
-        // A removed, C still at base → take the action's removal: drop the .ics.
-        assert_eq!(
-            reconcile(None, Some(t1()), Some(t1())),
-            Reconcile::TakeAction(None)
-        );
-    }
-
-    #[test]
-    fn event_deleted_clears_action() {
-        // C removed, A still at base → take the calendar's removal: clear the action.
-        assert_eq!(
-            reconcile(Some(t1()), Some(t1()), None),
-            Reconcile::TakeCalendar(None)
-        );
-    }
-
-    #[test]
-    fn action_removed_calendar_moved_is_conflict() {
-        assert_eq!(
-            reconcile(None, Some(t1()), Some(t2())),
-            Reconcile::Conflict {
-                action: None,
-                calendar: Some(t2())
-            }
-        );
-    }
-
-    #[test]
-    fn action_moved_calendar_removed_is_conflict() {
-        assert_eq!(
-            reconcile(Some(t2()), Some(t1()), None),
-            Reconcile::Conflict {
-                action: Some(t2()),
-                calendar: None
-            }
-        );
-    }
-
-    // --- first sync: B is None ("never synced") — None is just another value ---
-
-    #[test]
-    fn never_synced_unscheduled_is_noop() {
-        assert_eq!(reconcile(None, None, None), Reconcile::NoOp);
-    }
-
-    #[test]
-    fn first_sync_of_new_action_creates_ics() {
-        // A scheduled, never synced, no .ics yet → push A out (create the .ics).
-        assert_eq!(
-            reconcile(Some(t1()), None, None),
-            Reconcile::TakeAction(Some(t1()))
-        );
-    }
-
-    #[test]
-    fn calendar_created_event_imports_into_action() {
-        // An event exists for an unscheduled, never-synced action → pull it in.
-        assert_eq!(
-            reconcile(None, None, Some(t1())),
-            Reconcile::TakeCalendar(Some(t1()))
-        );
-    }
-
-    #[test]
-    fn never_synced_but_both_agree_is_converged() {
-        // Both sides independently hold the same time, no merge base yet:
-        // a clean convergence, not a conflict.
-        assert_eq!(
-            reconcile(Some(t1()), None, Some(t1())),
-            Reconcile::Converged(Some(t1()))
-        );
-    }
-
-    #[test]
-    fn never_synced_and_both_differ_is_conflict() {
-        assert_eq!(
-            reconcile(Some(t1()), None, Some(t2())),
-            Reconcile::Conflict {
-                action: Some(t1()),
-                calendar: Some(t2())
-            }
-        );
-    }
-}
-
-#[cfg(test)]
-mod shell_tests {
-    use super::*;
-    use crate::domain::{Action, Charter};
-    use chrono::TimeZone;
-
-    fn t1() -> DateTime<Local> {
-        Local.with_ymd_and_hms(2026, 4, 27, 10, 0, 0).unwrap()
-    }
-    fn t2() -> DateTime<Local> {
-        Local.with_ymd_and_hms(2026, 4, 28, 14, 30, 0).unwrap()
-    }
-    fn t3() -> DateTime<Local> {
-        Local.with_ymd_and_hms(2026, 5, 1, 9, 0, 0).unwrap()
-    }
-
-    fn action(name: &str, scheduled: Time) -> Action {
-        Action {
-            id: Uuid::new_v4(),
-            name: name.to_string(),
-            scheduled_at: scheduled,
+    fn fields_reconcile_independently() {
+        let id = Uuid::new_v4();
+        let action = Action {
+            id,
+            name: "base title".into(),
+            scheduled_at: Some(t(28)),
             ..Default::default()
-        }
-    }
-
-    fn model(actions: Vec<Action>) -> DomainModel {
-        DomainModel {
+        };
+        let model = DomainModel {
             objectives: vec![],
-            charters: vec![Charter {
-                actions,
+            charters: vec![crate::domain::Charter {
+                actions: vec![action],
                 ..Default::default()
             }],
-        }
-    }
-
-    #[test]
-    fn empty_model_plans_nothing() {
-        let report = plan_sync(&model(vec![]), &HashMap::new(), &HashMap::new());
-        assert!(report.is_empty());
-    }
-
-    #[test]
-    fn already_synced_action_is_noop_and_omitted() {
-        let a = action("synced", Some(t1()));
-        let bases = HashMap::from([(a.id, Some(t1()))]);
-        let ics = HashMap::from([(a.id, Some(t1()))]);
-        let report = plan_sync(&model(vec![a]), &bases, &ics);
-        assert!(report.is_empty());
-    }
-
-    #[test]
-    fn first_sync_of_new_action_plans_take_action() {
-        let a = action("new", Some(t1()));
-        let id = a.id;
-        let report = plan_sync(&model(vec![a]), &HashMap::new(), &HashMap::new());
-        assert_eq!(report.entries.len(), 1);
-        assert_eq!(report.entries[0].action_id, id);
-        assert_eq!(report.entries[0].outcome, Reconcile::TakeAction(Some(t1())));
-        assert_eq!(report.tally().take_action, 1);
-    }
-
-    #[test]
-    fn calendar_edit_plans_take_calendar() {
-        let a = action("cal-edit", Some(t1()));
-        let bases = HashMap::from([(a.id, Some(t1()))]);
-        let ics = HashMap::from([(a.id, Some(t2()))]);
-        let report = plan_sync(&model(vec![a]), &bases, &ics);
+        };
+        let mut store = PlansSyncStore::new(Path::new("/tmp/plans"));
+        store.stamp(id, SCHEDULED_AT_FIELD, &Some(t(27))).unwrap();
+        store.stamp(id, TITLE_FIELD, &"base title").unwrap();
+        let calendar = HashMap::from([(
+            id,
+            VTodoAction {
+                id,
+                scheduled_at: Some(t(27)),
+                due_date: None,
+                state: ActionState::NotStarted,
+                title: "calendar title".into(),
+                description: None,
+                completed_at: None,
+            },
+        )]);
+        let report = plan_sync(&model, &store, &calendar).unwrap();
         assert_eq!(
-            report.entries[0].outcome,
-            Reconcile::TakeCalendar(Some(t2()))
+            report.entries[0].scheduled_at,
+            Reconcile::TakeAction(Some(t(28)))
         );
-        assert_eq!(report.tally().take_calendar, 1);
-    }
-
-    #[test]
-    fn both_moved_differently_plans_conflict() {
-        let a = action("clash", Some(t2()));
-        let bases = HashMap::from([(a.id, Some(t1()))]);
-        let ics = HashMap::from([(a.id, Some(t3()))]);
-        let report = plan_sync(&model(vec![a]), &bases, &ics);
-        assert_eq!(report.tally().conflict, 1);
-        assert_eq!(report.conflicts().count(), 1);
-    }
-
-    #[test]
-    fn plan_generated_action_is_skipped() {
-        let mut a = action("recurring-occurrence", Some(t2()));
-        a.external_schedule_id = Some("some-plan-uid".to_string());
-        let report = plan_sync(&model(vec![a]), &HashMap::new(), &HashMap::new());
-        assert!(
-            report.is_empty(),
-            "plan-generated actions must not be mirrored"
-        );
-    }
-
-    #[test]
-    fn mixed_batch_tallies_each_kind_and_omits_noops() {
-        let new = action("new", Some(t1()));
-        let cal = action("cal", Some(t1()));
-        let noop = action("noop", Some(t1()));
-        let bases = HashMap::from([(cal.id, Some(t1())), (noop.id, Some(t1()))]);
-        let ics = HashMap::from([(cal.id, Some(t2())), (noop.id, Some(t1()))]);
-        let report = plan_sync(&model(vec![new, cal, noop]), &bases, &ics);
-        let tally = report.tally();
-        assert_eq!(tally.take_action, 1);
-        assert_eq!(tally.take_calendar, 1);
-        assert_eq!(report.entries.len(), 2, "the no-op must be omitted");
-    }
-
-    #[test]
-    fn converged_sync_reports_merge_base_drift_warning() {
-        let a = action("recovered", Some(t2()));
-        let bases = HashMap::from([(a.id, Some(t1()))]);
-        let ics = HashMap::from([(a.id, Some(t2()))]);
-        let report = plan_sync(&model(vec![a]), &bases, &ics);
-        assert_eq!(report.entries[0].outcome, Reconcile::Converged(Some(t2())));
-        assert_eq!(report.warnings.len(), 1);
-        assert!(report.warnings[0].contains("merge base drift"));
-    }
-
-    #[test]
-    fn missing_merge_base_with_existing_calendar_mirror_warns_loudly() {
-        let a = action("missing-b", Some(t1()));
-        let ics = HashMap::from([(a.id, Some(t2()))]);
-        let report = plan_sync(&model(vec![a]), &HashMap::new(), &ics);
         assert_eq!(
-            report.entries[0].outcome,
-            Reconcile::Conflict {
-                action: Some(t1()),
-                calendar: Some(t2())
-            }
+            report.entries[0].title,
+            Reconcile::TakeCalendar("calendar title".into())
         );
-        assert_eq!(report.warnings.len(), 1);
-        assert!(report.warnings[0].contains("merge base missing"));
     }
 
     #[test]
-    fn read_ics_dates_maps_uuid_uid_to_dtstart() {
-        let dir = tempfile::tempdir().unwrap();
-        let charter_dir = dir.path().join("work");
-        std::fs::create_dir_all(&charter_dir).unwrap();
+    fn patch_preserves_vendor_properties_and_alarms() {
         let id = Uuid::new_v4();
-        let ics = format!(
-            "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:{}\r\n\
-             SUMMARY:Test\r\nDTSTART:20260427T100000\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n",
-            id
-        );
-        std::fs::write(charter_dir.join(format!("{}.ics", id)), ics).unwrap();
-
-        let dates = read_ics_dates(dir.path()).unwrap();
-        assert!(dates.get(&id).expect("uuid uid mapped").is_some());
-    }
-
-    #[test]
-    fn read_ics_dates_ignores_non_uuid_uids() {
-        // A recurring-plan-style .ics whose UID is a plan identity, not a UUID.
-        let dir = tempfile::tempdir().unwrap();
-        let charter_dir = dir.path().join("work");
-        std::fs::create_dir_all(&charter_dir).unwrap();
-        let ics = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:weekly-standup\r\n\
-                   SUMMARY:Standup\r\nDTSTART:20260427T100000\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
-        std::fs::write(charter_dir.join("weekly-standup.ics"), ics).unwrap();
-
-        let dates = read_ics_dates(dir.path()).unwrap();
-        assert!(dates.is_empty(), "non-UUID UIDs are not action mirrors");
+        let mut calendar: Calendar = format!(
+            "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VTODO\r\nUID:{id}\r\nSUMMARY:Old\r\nX-APPLE-SORT-ORDER:7\r\nBEGIN:VALARM\r\nACTION:DISPLAY\r\nTRIGGER:-PT5M\r\nDESCRIPTION:Alarm\r\nEND:VALARM\r\nEND:VTODO\r\nEND:VCALENDAR\r\n"
+        ).parse().unwrap();
+        let action = Action {
+            id,
+            name: "New".into(),
+            ..Default::default()
+        };
+        let CalendarComponent::Todo(todo) = &mut calendar.components[0] else {
+            panic!()
+        };
+        patch_todo(todo, &action, &[SyncField::Title]);
+        let output = calendar.to_string();
+        assert!(output.contains("SUMMARY:New"));
+        assert!(output.contains("X-APPLE-SORT-ORDER:7"));
+        assert!(output.contains("BEGIN:VALARM"));
     }
 }
