@@ -1,8 +1,8 @@
 //! ICS schedule file parser and exporter.
 //!
 //! **Parse direction** (`ics → domain`): recurring VTODO components become
-//! [`Plan`]s; standalone VTODOs become [`VTodoAction`] projections. Retired
-//! VEVENT plans are available only through explicit migration parsing.
+//! [`Plan`]s; standalone VTODOs become [`VTodoAction`] projections. VEVENTs
+//! are accepted only by the explicit external import parser.
 //! Component kind and RRULE semantics, rather than server-specific metadata or
 //! filenames, determine which domain projection is read.
 //!
@@ -59,8 +59,7 @@ pub fn action_id_from_vtodo_uid(uid: &str) -> Uuid {
 }
 
 /// Parse recurring VTODOs in an `.ics` file into [`Plan`] structs.
-/// Standalone VTODOs are read by [`parse_vtodo_actions`] instead; VEVENT plans
-/// require explicit [`parse_legacy_vevent_plans`] migration.
+/// Standalone VTODOs are read by [`parse_vtodo_actions`] instead.
 ///
 /// Each accepted component becomes one Plan:
 /// - `Plan.id` — UUID v5 from the component's UID (deterministic across reloads)
@@ -94,9 +93,10 @@ pub fn parse_ics_file(path: &Path) -> Result<Vec<ICSPlan>, WorkspaceError> {
     Ok(plans)
 }
 
-/// Read the retired VEVENT Plan representation for explicit import/migration.
-/// Normal workspace loading never calls this function.
-pub fn parse_legacy_vevent_plans(path: &Path) -> Result<Vec<ICSPlan>, WorkspaceError> {
+/// Read recurring VEVENT schedules from an explicit external import source.
+/// Normal workspace loading never calls this function, one-off VEVENTs remain
+/// external context, and ClearHead never authors VEVENT resources.
+pub fn parse_vevent_plans_for_import(path: &Path) -> Result<Vec<ICSPlan>, WorkspaceError> {
     let content = fs::read_to_string(path).map_err(WorkspaceError::Io)?;
     let calendar: Calendar = content
         .parse()
@@ -105,7 +105,9 @@ pub fn parse_legacy_vevent_plans(path: &Path) -> Result<Vec<ICSPlan>, WorkspaceE
         .components
         .into_iter()
         .filter_map(|component| match component {
-            CalendarComponent::Event(event) => component_to_plan(&event, path),
+            CalendarComponent::Event(event) if event.property_value("RRULE").is_some() => {
+                component_to_plan(&event, path)
+            }
             _ => None,
         })
         .collect())
@@ -448,30 +450,18 @@ mod tests {
     }
 
     #[test]
-    fn parse_minimal_vevent() {
+    fn one_off_vevent_is_not_imported_as_a_plan() {
         let f = write_ics(
             "BEGIN:VCALENDAR\r\n\
              BEGIN:VEVENT\r\n\
              UID:test-uid-001@example.com\r\n\
-             SUMMARY:Weekly Review\r\n\
+             SUMMARY:One-off meeting\r\n\
              DTSTART:20260427T100000\r\n\
              END:VEVENT\r\n\
              END:VCALENDAR\r\n",
         );
 
-        let plans = parse_legacy_vevent_plans(f.path()).unwrap();
-        assert_eq!(plans.len(), 1);
-        assert_eq!(plans[0].plan.name, "Weekly Review");
-        assert_eq!(
-            plans[0].plan.external_id.as_deref(),
-            Some("test-uid-001@example.com")
-        );
-        assert!(plans[0].plan.dtstart.is_some());
-        assert!(plans[0].plan.recurrence.is_none());
-        assert!(plans[0].plan.template_name.is_none());
-        // ID is deterministic
-        let expected_id = Uuid::new_v5(&ICS_NAMESPACE, b"test-uid-001@example.com");
-        assert_eq!(plans[0].plan.id, expected_id);
+        assert!(parse_vevent_plans_for_import(f.path()).unwrap().is_empty());
     }
 
     #[test]
@@ -487,7 +477,7 @@ mod tests {
              END:VCALENDAR\r\n",
         );
 
-        let plans = parse_legacy_vevent_plans(f.path()).unwrap();
+        let plans = parse_vevent_plans_for_import(f.path()).unwrap();
         assert_eq!(plans.len(), 1);
         let r = plans[0].plan.recurrence.as_ref().unwrap();
         assert_eq!(r.frequency, "daily");
@@ -512,7 +502,7 @@ mod tests {
              END:VCALENDAR\r\n",
         );
 
-        let plans = parse_legacy_vevent_plans(f.path()).unwrap();
+        let plans = parse_vevent_plans_for_import(f.path()).unwrap();
         assert_eq!(plans.len(), 1);
         assert_eq!(
             plans[0].plan.template_name.as_deref(),
@@ -540,7 +530,7 @@ mod tests {
              END:VCALENDAR\r\n",
         );
 
-        let plans = parse_legacy_vevent_plans(f.path()).unwrap();
+        let plans = parse_vevent_plans_for_import(f.path()).unwrap();
         assert_eq!(plans.len(), 1);
         assert_eq!(plans[0].plan.primary_instances, Some(2));
         assert!(plans[0].plan.template_name.is_none());
@@ -560,7 +550,7 @@ mod tests {
              END:VCALENDAR\r\n",
         );
 
-        let plans = parse_legacy_vevent_plans(f.path()).unwrap();
+        let plans = parse_vevent_plans_for_import(f.path()).unwrap();
         assert_eq!(plans.len(), 1);
         assert_eq!(
             plans[0].plan.template_name.as_deref(),
@@ -578,12 +568,13 @@ mod tests {
              UID:tpl-only@example.com\r\n\
              SUMMARY:Just Template\r\n\
              DTSTART:20260427T100000\r\n\
+             RRULE:FREQ=WEEKLY\r\n\
              DESCRIPTION:template: release-checklist\r\n\
              END:VEVENT\r\n\
              END:VCALENDAR\r\n",
         );
 
-        let plans = parse_legacy_vevent_plans(f.path()).unwrap();
+        let plans = parse_vevent_plans_for_import(f.path()).unwrap();
         assert_eq!(
             plans[0].plan.template_name.as_deref(),
             Some("release-checklist")
@@ -599,12 +590,13 @@ mod tests {
              UID:no-tpl@example.com\r\n\
              SUMMARY:Normal Event\r\n\
              DTSTART:20260427T100000\r\n\
+             RRULE:FREQ=WEEKLY\r\n\
              DESCRIPTION:Just a regular event description\r\n\
              END:VEVENT\r\n\
              END:VCALENDAR\r\n",
         );
 
-        let plans = parse_legacy_vevent_plans(f.path()).unwrap();
+        let plans = parse_vevent_plans_for_import(f.path()).unwrap();
         assert!(plans[0].plan.template_name.is_none());
         assert_eq!(
             plans[0].plan.description.as_deref(),
@@ -620,16 +612,18 @@ mod tests {
              UID:event-one@example.com\r\n\
              SUMMARY:Event One\r\n\
              DTSTART:20260420T090000\r\n\
+             RRULE:FREQ=WEEKLY\r\n\
              END:VEVENT\r\n\
              BEGIN:VEVENT\r\n\
              UID:event-two@example.com\r\n\
              SUMMARY:Event Two\r\n\
              DTSTART:20260421T100000\r\n\
+             RRULE:FREQ=WEEKLY\r\n\
              END:VEVENT\r\n\
              END:VCALENDAR\r\n",
         );
 
-        let plans = parse_legacy_vevent_plans(f.path()).unwrap();
+        let plans = parse_vevent_plans_for_import(f.path()).unwrap();
         assert_eq!(plans.len(), 2);
         let names: Vec<&str> = plans.iter().map(|p| p.plan.name.as_str()).collect();
         assert!(names.contains(&"Event One"));
@@ -643,11 +637,12 @@ mod tests {
              BEGIN:VEVENT\r\n\
              SUMMARY:No UID Event\r\n\
              DTSTART:20260420T090000\r\n\
+             RRULE:FREQ=WEEKLY\r\n\
              END:VEVENT\r\n\
              END:VCALENDAR\r\n",
         );
 
-        let plans = parse_legacy_vevent_plans(f.path()).unwrap();
+        let plans = parse_vevent_plans_for_import(f.path()).unwrap();
         assert_eq!(plans.len(), 0);
     }
 

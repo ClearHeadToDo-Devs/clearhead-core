@@ -53,7 +53,7 @@ pub use workspace::{
     expand_plans_into_actions, upcoming_actions_path, list_action_files, load_domain_model,
     load_domain_model_with_plans, load_workspace, load_workspace_with_plans, load_workspaces,
     action_id_from_vtodo_uid, action_to_vtodo, actions_to_icalendar, occurrence_action_id,
-    parse_legacy_vevent_plans, parse_vtodo_actions, parse_actions,
+    parse_vevent_plans_for_import, parse_vtodo_actions, parse_actions,
     parse_actions_with_mode, parse_charter, parse_document, parse_tree, patch_action_list,
     plan_action_archive, charter_root, plans_root, read_action_file, read_actions, save_domain_model,
     apply_sync, plan_sync, plans_sync_store_path, read_ics_dates, read_vtodo_actions,

@@ -20,7 +20,7 @@ pub mod sync_store;
 pub use expand::{ExpandResult, ExpansionConfig, expand_plans_into_actions};
 pub use ics::{
     ICSPlan, VTodoAction, action_id_from_vtodo_uid, action_to_vtodo, actions_to_icalendar,
-    occurrence_action_id, parse_legacy_vevent_plans, parse_vtodo_actions,
+    occurrence_action_id, parse_vevent_plans_for_import, parse_vtodo_actions,
 };
 pub use plans::{
     PlanFileEntry, action_mirror_path, charter_plans_dir_relative, collect_plan_files,
