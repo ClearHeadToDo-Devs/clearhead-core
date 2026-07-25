@@ -17,10 +17,10 @@ pub mod plans;
 pub mod reconcile;
 pub mod sync_store;
 
-pub use expand::{ExpandResult, ExpansionConfig, expand_plans_into_actions};
+pub use expand::{ExpandResult, ExpansionConfig, expand_plans_into_actions, render_occurrences};
 pub use ics::{
-    ICSPlan, VTodoAction, action_id_from_vtodo_uid, action_to_vtodo, actions_to_icalendar,
-    occurrence_action_id, parse_vtodo_actions,
+    ICSPlan, OccurrenceOverride, VTodoAction, action_id_from_vtodo_uid, action_to_vtodo,
+    actions_to_icalendar, canonical_occurrence_key, occurrence_action_id, parse_vtodo_actions,
 };
 pub use plans::{
     PlanFileEntry, action_mirror_path, charter_plans_dir_relative, collect_plan_files,

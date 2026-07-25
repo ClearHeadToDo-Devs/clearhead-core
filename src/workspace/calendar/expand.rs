@@ -5,7 +5,7 @@ use uuid::Uuid;
 
 use crate::domain::Plan;
 use crate::workspace::actions::{Action, ActionState};
-use super::ics::occurrence_action_id;
+use super::ics::{ICSPlan, OccurrenceOverride, canonical_occurrence_key, occurrence_action_id};
 
 // ============================================================================
 // Public types
@@ -129,7 +129,7 @@ pub fn expand_plans_into_actions(
                 break;
             }
 
-            let occ_key = occ_local.to_rfc3339();
+            let occ_key = canonical_occurrence_key(occ_local);
             let action_id = occurrence_action_id(plan_uid, &occ_key);
 
             // Check if this occurrence is already represented in either file.
@@ -167,6 +167,89 @@ pub fn expand_plans_into_actions(
     }
 
     result
+}
+
+// ============================================================================
+// Occurrence projection (render, don't file)
+// ============================================================================
+
+/// Render a recurring (or one-shot) Plan's next `window` future occurrences as
+/// [`Action`]s, applying its deviations.
+///
+/// Pure and filesystem-free — this is the projection that *replaces* materialized
+/// expansion for the client surface: occurrences exist only as returned Actions,
+/// never as `.actions` lines. `EXDATE` slots are skipped (and do not consume a
+/// window slot); a `RECURRENCE-ID` override overlays the occurrence at its slot.
+/// Each occurrence's identity is the deterministic [`occurrence_action_id`] over
+/// the [`canonical_occurrence_key`], so it is stable across reloads and peers,
+/// and its `plan_id` links it back to the master in memory.
+pub fn render_occurrences(ics_plan: &ICSPlan, now: DateTime<Local>, window: u32) -> Vec<Action> {
+    let Some(plan_uid) = ics_plan.plan.external_id.as_deref() else {
+        return Vec::new();
+    };
+    let Some(dtstart) = ics_plan.plan.dtstart else {
+        return Vec::new();
+    };
+    if window == 0 {
+        return Vec::new();
+    }
+
+    let slots: Vec<DateTime<Local>> = if ics_plan.plan.recurrence.is_some() {
+        ics_plan
+            .plan
+            .expand_occurrences(dtstart, 1000)
+            .into_iter()
+            .map(|dt| dt.with_timezone(&Local))
+            .filter(|&dt| dt >= now)
+            .collect()
+    } else if dtstart >= now {
+        vec![dtstart]
+    } else {
+        vec![]
+    };
+
+    let mut out = Vec::new();
+    for slot in slots {
+        if out.len() as u32 >= window {
+            break;
+        }
+        let key = canonical_occurrence_key(slot);
+        if ics_plan.exdates.contains(&key) {
+            continue; // excluded slot — does not occupy a window position
+        }
+        let mut action = Action {
+            id: occurrence_action_id(plan_uid, &key),
+            state: ActionState::NotStarted,
+            name: ics_plan.plan.name.clone(),
+            scheduled_at: Some(slot),
+            plan_id: Some(ics_plan.plan.id),
+            ..Default::default()
+        };
+        if let Some(over) = ics_plan.overrides.get(&key) {
+            apply_override(&mut action, over);
+        }
+        out.push(action);
+    }
+    out
+}
+
+/// Overlay a `RECURRENCE-ID` override onto its rendered occurrence. `None`
+/// fields inherit the value already rendered from the master.
+fn apply_override(action: &mut Action, over: &OccurrenceOverride) {
+    action.state = over.state.clone();
+    if over.scheduled_at.is_some() {
+        action.scheduled_at = over.scheduled_at;
+    }
+    if over.due_date.is_some() {
+        action.due_date = over.due_date;
+    }
+    action.completed_at = over.completed_at;
+    if let Some(title) = &over.title {
+        action.name = title.clone();
+    }
+    if over.description.is_some() {
+        action.description = over.description.clone();
+    }
 }
 
 // ============================================================================
@@ -272,7 +355,7 @@ mod tests {
     fn existing_open_primary_occupies_its_slot() {
         let dtstart = Local.with_ymd_and_hms(2026, 5, 3, 10, 0, 0).unwrap();
         let uid = "uid-idem";
-        let action_id = occurrence_action_id(uid, &dtstart.to_rfc3339());
+        let action_id = occurrence_action_id(uid, &canonical_occurrence_key(dtstart));
 
         let existing = Action {
             id: action_id,
@@ -293,7 +376,7 @@ mod tests {
     fn completed_primary_vacates_slot_for_next_occurrence() {
         let dtstart = Local.with_ymd_and_hms(2026, 5, 4, 9, 0, 0).unwrap();
         let uid = "uid-completed";
-        let action_id = occurrence_action_id(uid, &dtstart.to_rfc3339());
+        let action_id = occurrence_action_id(uid, &canonical_occurrence_key(dtstart));
 
         // Completed action in primary — does not count as open
         let completed = Action {
@@ -321,7 +404,7 @@ mod tests {
         // second occurrence goes to upcoming
         let second_occ =
             Local.with_ymd_and_hms(2026, 5, 5, 9, 0, 0).unwrap();
-        let cancelled_id = occurrence_action_id(uid, &second_occ.to_rfc3339());
+        let cancelled_id = occurrence_action_id(uid, &canonical_occurrence_key(second_occ));
 
         let cancelled = Action {
             id: cancelled_id,

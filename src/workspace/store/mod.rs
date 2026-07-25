@@ -33,8 +33,9 @@ use std::path::{Path, PathBuf};
 pub use doctor::{Diagnosis, diagnose, diagnose_read};
 pub use findings::{Finding, FindingSeverity};
 pub use load::{
-    Workspace, WorkspaceRead, load_domain_model, load_domain_model_with_plans, load_workspace,
-    load_workspace_with_plans, load_workspaces, read_workspace, read_workspace_with_plans,
+    Projection, Workspace, WorkspaceRead, load_domain_model, load_domain_model_with_plans,
+    load_domain_model_with_projection, load_workspace, load_workspace_with_plans, load_workspaces,
+    read_workspace, read_workspace_with_plans,
 };
 pub use manifest::{ManifestSourceType, WorkspaceManifestEntry, collect_workspace_manifest};
 pub use pathing::{infer_charter_name, infer_parent_charter_name};

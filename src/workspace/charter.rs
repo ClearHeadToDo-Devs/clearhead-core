@@ -73,7 +73,12 @@ impl From<Charter> for MarkdownCharter {
             parent: c.parent,
             objectives: c.objectives,
             state: c.state,
-            plans: c.plans.into_iter().map(|plan| ICSPlan { path: PathBuf::new(), plan }).collect(),
+            plans: c.plans.into_iter().map(|plan| ICSPlan {
+                path: PathBuf::new(),
+                plan,
+                exdates: Default::default(),
+                overrides: Default::default(),
+            }).collect(),
             actions: c.actions.into_iter().map(|action| SourcedAction {
                 action,
                 source_metadata: None,

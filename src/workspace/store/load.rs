@@ -14,7 +14,10 @@ use crate::workspace::calendar::ics::parse_ics_file;
 use crate::workspace::calendar::plans::collect_plan_files_in;
 use crate::workspace::sidecar::{collect_sidecar_actions, hydrate_actions_map, read_sidecar, sidecar_path};
 use crate::workspace::manifest::WorkspaceManifest;
-use std::collections::HashMap;
+use crate::domain::Action;
+use crate::workspace::calendar::expand::render_occurrences;
+use chrono::{DateTime, Local};
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
@@ -37,7 +40,30 @@ pub struct Workspace {
     /// and never derived from the root path — a workspace without a durable id
     /// stays queryable, but its graph URI is not stable across sessions.
     ephemeral_id: String,
+    /// Parameters the `From<Workspace>` lowering projects recurring plans under.
+    /// Captured at load so the lowering is a pure, deterministic function of the
+    /// struct (I/O and the clock read happen here; projection stays pure).
+    pub projection: Projection,
     pub charters: Vec<MarkdownCharter>,
+}
+
+/// The parameters a [`Workspace`] lowers to a [`DomainModel`] under: the instant
+/// to window recurring occurrences from, and how many to project per plan.
+///
+/// Carrying these on the source aggregate (rather than passing them to the
+/// lowering) is deliberate — it keeps `From<Workspace> for DomainModel` a
+/// context-free `From` while still rendering time-windowed occurrences.
+#[derive(Debug, Clone)]
+pub struct Projection {
+    pub now: DateTime<Local>,
+    /// Occurrences projected per plan (the retired `expansion_total_instances`).
+    pub window: u32,
+}
+
+impl Default for Projection {
+    fn default() -> Self {
+        Self { now: Local::now(), window: 2 }
+    }
 }
 
 impl Workspace {
@@ -58,6 +84,7 @@ impl Workspace {
             id: manifest.workspace_id,
             name: manifest.workspace_name,
             ephemeral_id: Uuid::now_v7().to_string(),
+            projection: Projection::default(),
             charters,
         })
     }
@@ -107,10 +134,30 @@ pub fn load_workspaces(
 
 impl From<Workspace> for DomainModel {
     fn from(ws: Workspace) -> DomainModel {
-        DomainModel {
-            objectives: vec![],
-            charters: ws.charters.into_iter().map(Charter::from).collect(),
-        }
+        let Projection { now, window } = ws.projection;
+        let charters = ws
+            .charters
+            .into_iter()
+            .map(|charter| {
+                // Project each recurring plan's windowed occurrences before the
+                // ICSPlan deviations are flattened away. This is the single union
+                // address: materialized actions ∪ rendered occurrences.
+                let occurrences: Vec<Action> = charter
+                    .plans
+                    .iter()
+                    .flat_map(|ics_plan| render_occurrences(ics_plan, now, window))
+                    .collect();
+                let mut charter = Charter::from(charter);
+                // A materialized line for an occurrence wins over its projection —
+                // same occurrence UUID, and the file remains the editable truth.
+                let materialized: HashSet<Uuid> = charter.actions.iter().map(|a| a.id).collect();
+                charter
+                    .actions
+                    .extend(occurrences.into_iter().filter(|o| !materialized.contains(&o.id)));
+                charter
+            })
+            .collect();
+        DomainModel { objectives: vec![], charters }
     }
 }
 
@@ -127,6 +174,24 @@ pub fn load_domain_model_with_plans(
     plan_override: Option<&Path>,
 ) -> Result<DomainModel, WorkspaceError> {
     Ok(Workspace::load_with_plans(root, plan_override)?.into())
+}
+
+/// Load a [`DomainModel`] under an explicit [`Projection`] rather than the
+/// wall-clock default.
+///
+/// This is the deterministic entry point: any caller that must fix `now` and the
+/// occurrence `window` (tests, a pinned agenda range) uses it instead of
+/// [`load_domain_model`], whose default projection reads the live clock. A
+/// `window` of `0` disables occurrence projection entirely, yielding only the
+/// model read from disk.
+pub fn load_domain_model_with_projection(
+    root: &Path,
+    plan_override: Option<&Path>,
+    projection: Projection,
+) -> Result<DomainModel, WorkspaceError> {
+    let mut workspace = Workspace::load_with_plans(root, plan_override)?;
+    workspace.projection = projection;
+    Ok(workspace.into())
 }
 
 /// Load the workspace as a [`FileSystemWorkspace`], preserving file-layer metadata.

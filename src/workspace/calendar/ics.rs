@@ -11,23 +11,48 @@
 
 use crate::domain::{Action, ActionState, Plan, Recurrence};
 use crate::workspace::store::WorkspaceError;
-use chrono::{DateTime, Local, TimeZone, Utc};
+use chrono::{DateTime, Local, NaiveDate, NaiveDateTime, TimeZone, Utc};
 use icalendar::{
     Calendar, CalendarComponent, CalendarDateTime, Component, DatePerhapsTime, EventLike, Todo,
     TodoStatus,
 };
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use uuid::{Uuid, uuid};
 
 /// A parsed `.ics` file entry — the workspace-layer representation of a scheduled plan.
 ///
-/// Carries the source file path alongside the domain [`Plan`].
-/// Convert to a plain [`Plan`] via `.plan` at the workspace boundary.
+/// Carries the source file path and the RFC 5545 deviations (`EXDATE`,
+/// `RECURRENCE-ID` overrides) alongside the domain [`Plan`]. Deviations are an
+/// iCalendar *projection* concern and deliberately live here, not on the pure
+/// domain [`Plan`]: occurrences are rendered as `master + deviations` at the
+/// workspace boundary, and `.plan` alone stays iCalendar-ignorant.
 #[derive(Debug, Clone)]
 pub struct ICSPlan {
     pub path: PathBuf,
     pub plan: Plan,
+    /// Canonical keys of occurrence slots excluded from the series (`EXDATE`).
+    pub exdates: BTreeSet<String>,
+    /// Per-occurrence overrides (`RECURRENCE-ID` VTODOs), keyed by the same
+    /// canonical occurrence key as [`exdates`](Self::exdates) and the
+    /// occurrence UUIDv5 — see [`canonical_occurrence_key`].
+    pub overrides: BTreeMap<String, OccurrenceOverride>,
+}
+
+/// One materialized deviation of a recurring [`Plan`] occurrence: the renderable
+/// fields carried by a `RECURRENCE-ID` VTODO that replaces the occurrence at a
+/// single slot. `None` fields inherit from the master when the occurrence is
+/// rendered. Predecessors, hierarchy, and other ClearHead-only structure have no
+/// per-occurrence meaning and are intentionally absent.
+#[derive(Debug, Clone, PartialEq)]
+pub struct OccurrenceOverride {
+    pub scheduled_at: Option<DateTime<Local>>,
+    pub due_date: Option<DateTime<Local>>,
+    pub state: ActionState,
+    pub completed_at: Option<DateTime<Local>>,
+    pub title: Option<String>,
+    pub description: Option<String>,
 }
 
 /// Namespace UUID for deriving deterministic Plan and occurrence identities.
@@ -45,9 +70,24 @@ pub fn plan_id_from_ics_uid(uid: &str) -> uuid::Uuid {
 ///
 /// Per the ICS schedule spec: UUID v5 from `(externalScheduleId, externalOccurrenceKey)`.
 /// Running expansion multiple times with the same inputs always yields the same UUID.
-pub fn occurrence_action_id(plan_uid: &str, occurrence_rfc3339: &str) -> uuid::Uuid {
-    let key = format!("{}:{}", plan_uid, occurrence_rfc3339);
+pub fn occurrence_action_id(plan_uid: &str, occurrence_key: &str) -> uuid::Uuid {
+    let key = format!("{}:{}", plan_uid, occurrence_key);
     uuid::Uuid::new_v5(&ICS_NAMESPACE, key.as_bytes())
+}
+
+/// Canonical, peer-stable key for one recurrence occurrence slot.
+///
+/// This is the single seam that occurrence identity ([`occurrence_action_id`])
+/// and every deviation lookup ([`ICSPlan::exdates`] / [`ICSPlan::overrides`])
+/// share, so a slot maps to one handle no matter which peer formed it. RFC 5545
+/// lets peers emit the same slot as UTC, TZID-local, or floating; collapsing to
+/// a single absolute-instant frame (UTC) makes the UTC and TZID forms agree.
+/// Floating values — which name no fixed instant — are the acknowledged edge.
+///
+/// Hashing the immutable *slot* (never the occurrence's mutable DUE) is the
+/// invariant: a reschedule must not mint a new identity.
+pub fn canonical_occurrence_key(slot: DateTime<Local>) -> String {
+    slot.with_timezone(&Utc).format("%Y%m%dT%H%M%SZ").to_string()
 }
 
 /// Resolve a standalone VTODO UID to its Action identity. ClearHead-authored
@@ -76,17 +116,37 @@ pub fn parse_ics_file(path: &Path) -> Result<Vec<ICSPlan>, WorkspaceError> {
 
     let mut plans = Vec::new();
 
-    for component in calendar.components {
-        let plan = match component {
-            // A non-recurring VTODO is an Action projection, not a Plan.
-            CalendarComponent::Todo(todo) if todo.property_value("RRULE").is_some() => {
-                component_to_plan(&todo, path)
-            }
+    // Collect todos once: a recurring master and its `RECURRENCE-ID` overrides
+    // are separate components that share one UID within the file.
+    let todos: Vec<&Todo> = calendar
+        .components
+        .iter()
+        .filter_map(|component| match component {
+            CalendarComponent::Todo(todo) => Some(todo),
             _ => None,
-        };
-        if let Some(plan) = plan {
-            plans.push(plan);
+        })
+        .collect();
+
+    for todo in todos.iter().copied() {
+        // A non-recurring VTODO is an Action projection, not a Plan; a
+        // `RECURRENCE-ID` VTODO is an override of its master, attached below.
+        if todo.property_value("RRULE").is_none() {
+            continue;
         }
+        let Some(mut ics_plan) = component_to_plan(todo, path) else {
+            continue;
+        };
+        let master_uid = todo.get_uid();
+        ics_plan.exdates = parse_exdates(todo);
+        ics_plan.overrides = todos
+            .iter()
+            .copied()
+            .filter(|other| {
+                other.property_value("RECURRENCE-ID").is_some() && other.get_uid() == master_uid
+            })
+            .filter_map(override_from_todo)
+            .collect();
+        plans.push(ics_plan);
     }
 
     Ok(plans)
@@ -111,6 +171,8 @@ fn component_to_plan<T: Component>(component: &T, path: &Path) -> Option<ICSPlan
 
     Some(ICSPlan {
         path: path.to_path_buf(),
+        exdates: BTreeSet::new(),
+        overrides: BTreeMap::new(),
         plan: Plan {
             id: plan_id,
             name: summary.to_string(),
@@ -201,6 +263,85 @@ fn date_perhaps_time_to_local(value: DatePerhapsTime) -> Option<DateTime<Local>>
     }
 }
 
+/// Parse one raw RFC 5545 date-time token (as found in an `EXDATE` or
+/// `RECURRENCE-ID` value) into local time. Handles UTC (`…Z`), floating
+/// date-time, and all-day `DATE` forms; a `TZID` parameter on the property is
+/// not yet resolved here (our own emit uses UTC) and is left for the
+/// interoperability-hardening pass.
+fn parse_ics_datetime_token(token: &str) -> Option<DateTime<Local>> {
+    let token = token.trim();
+    if let Some(utc) = token.strip_suffix('Z') {
+        return NaiveDateTime::parse_from_str(utc, "%Y%m%dT%H%M%S")
+            .ok()
+            .map(|naive| Utc.from_utc_datetime(&naive).with_timezone(&Local));
+    }
+    if let Ok(naive) = NaiveDateTime::parse_from_str(token, "%Y%m%dT%H%M%S") {
+        return Local.from_local_datetime(&naive).earliest();
+    }
+    let date = NaiveDate::parse_from_str(token, "%Y%m%d").ok()?;
+    Local
+        .from_local_datetime(&date.and_hms_opt(0, 0, 0)?)
+        .earliest()
+}
+
+/// Read a master's `EXDATE` slots as canonical occurrence keys. `EXDATE` may be
+/// a single comma-joined property or repeated; both are unioned.
+fn parse_exdates(todo: &Todo) -> BTreeSet<String> {
+    let single = todo.properties().get("EXDATE").into_iter();
+    let repeated = todo.multi_properties().get("EXDATE").into_iter().flatten();
+    single
+        .chain(repeated)
+        .flat_map(|property| property.value().split(','))
+        .filter_map(parse_ics_datetime_token)
+        .map(canonical_occurrence_key)
+        .collect()
+}
+
+/// Build one occurrence override from a `RECURRENCE-ID` VTODO. Returns `None`
+/// when the component carries no parseable `RECURRENCE-ID` — without a slot it
+/// cannot be keyed to an occurrence.
+fn override_from_todo(todo: &Todo) -> Option<(String, OccurrenceOverride)> {
+    let slot = parse_ics_datetime_token(todo.property_value("RECURRENCE-ID")?)?;
+    let over = OccurrenceOverride {
+        scheduled_at: todo.get_start().and_then(date_perhaps_time_to_local),
+        due_date: todo.get_due().and_then(date_perhaps_time_to_local),
+        state: vtodo_state(todo),
+        completed_at: todo.get_completed().map(|value| value.with_timezone(&Local)),
+        title: todo.get_summary().map(str::to_string),
+        description: todo
+            .get_description()
+            .filter(|value| !value.is_empty())
+            .map(str::to_string),
+    };
+    Some((canonical_occurrence_key(slot), over))
+}
+
+/// Derive [`ActionState`] from a VTODO's status, honoring ClearHead's
+/// `X-CLEARHEAD-STATUS:blocked` extension and the percent-complete / `COMPLETED`
+/// fallbacks. Shared by standalone-action and occurrence-override parsing.
+fn vtodo_state(todo: &Todo) -> ActionState {
+    let standard_status = todo.get_status();
+    let blocked = matches!(standard_status, Some(TodoStatus::NeedsAction) | None)
+        && todo
+            .property_value("X-CLEARHEAD-STATUS")
+            .is_some_and(|value| value.eq_ignore_ascii_case("blocked"));
+    if blocked {
+        return ActionState::BlockedOrAwaiting;
+    }
+    match standard_status {
+        Some(TodoStatus::InProcess) => ActionState::InProgress,
+        Some(TodoStatus::Completed) => ActionState::Completed,
+        Some(TodoStatus::Cancelled) => ActionState::Cancelled,
+        Some(TodoStatus::NeedsAction) | None => {
+            if todo.get_percent_complete() == Some(100) || todo.get_completed().is_some() {
+                ActionState::Completed
+            } else {
+                ActionState::NotStarted
+            }
+        }
+    }
+}
+
 /// The interoperable fields ClearHead owns in a standalone VTODO projection.
 /// Transport metadata, alarms, and vendor extensions deliberately stay out of
 /// this value and are preserved when an existing file is updated.
@@ -247,34 +388,12 @@ pub fn parse_vtodo_actions(path: &Path) -> Result<Vec<VTodoAction>, WorkspaceErr
             continue;
         };
 
-        let standard_status = todo.get_status();
-        let blocked = matches!(standard_status, Some(TodoStatus::NeedsAction) | None)
-            && todo
-                .property_value("X-CLEARHEAD-STATUS")
-                .is_some_and(|value| value.eq_ignore_ascii_case("blocked"));
-        let state = if blocked {
-            ActionState::BlockedOrAwaiting
-        } else {
-            match standard_status {
-                Some(TodoStatus::InProcess) => ActionState::InProgress,
-                Some(TodoStatus::Completed) => ActionState::Completed,
-                Some(TodoStatus::Cancelled) => ActionState::Cancelled,
-                Some(TodoStatus::NeedsAction) | None => {
-                    if todo.get_percent_complete() == Some(100) || todo.get_completed().is_some() {
-                        ActionState::Completed
-                    } else {
-                        ActionState::NotStarted
-                    }
-                }
-            }
-        };
-
         actions.push(VTodoAction {
             id,
             uid: uid.to_string(),
             scheduled_at: todo.get_start().and_then(date_perhaps_time_to_local),
             due_date: todo.get_due().and_then(date_perhaps_time_to_local),
-            state,
+            state: vtodo_state(&todo),
             title: title.to_string(),
             description: todo
                 .get_description()
@@ -478,6 +597,53 @@ mod tests {
 
         let other = occurrence_action_id(uid, "2026-05-04T10:00:00+00:00");
         assert_ne!(id1, other, "different occurrence must yield different UUID");
+    }
+
+    #[test]
+    fn canonical_occurrence_key_collapses_to_one_utc_frame() {
+        // A UTC-emitted slot round-trips to its own compact UTC form: the frame
+        // every peer agrees on, independent of how the slot was written.
+        let slot = parse_ics_datetime_token("20260427T140000Z").unwrap();
+        assert_eq!(canonical_occurrence_key(slot), "20260427T140000Z");
+        // Two DateTime<Local> naming the same instant hash to the same key.
+        let same_instant = slot + chrono::Duration::hours(1) - chrono::Duration::hours(1);
+        assert_eq!(canonical_occurrence_key(same_instant), "20260427T140000Z");
+    }
+
+    #[test]
+    fn parse_ics_file_attaches_exdate_and_recurrence_overrides() {
+        let uid = "standup@example.com";
+        let f = write_ics(&format!(
+            "BEGIN:VCALENDAR\r\nVERSION:2.0\r\n\
+             BEGIN:VTODO\r\nUID:{uid}\r\nSUMMARY:Standup\r\n\
+             DTSTART:20260504T090000Z\r\nRRULE:FREQ=DAILY\r\n\
+             EXDATE:20260505T090000Z\r\nEND:VTODO\r\n\
+             BEGIN:VTODO\r\nUID:{uid}\r\nSUMMARY:Standup (moved)\r\n\
+             RECURRENCE-ID:20260506T090000Z\r\nDTSTART:20260506T110000Z\r\n\
+             STATUS:COMPLETED\r\nCOMPLETED:20260506T113000Z\r\nEND:VTODO\r\n\
+             END:VCALENDAR\r\n"
+        ));
+
+        let plans = parse_ics_file(f.path()).unwrap();
+        assert_eq!(plans.len(), 1, "the RECURRENCE-ID VTODO is a deviation, not a second plan");
+        let plan = &plans[0];
+
+        assert!(
+            plan.exdates.contains("20260505T090000Z"),
+            "EXDATE slot is stored as its canonical key: {:?}",
+            plan.exdates
+        );
+
+        let over = plan
+            .overrides
+            .get("20260506T090000Z")
+            .expect("override keyed by the canonical slot it replaces");
+        assert_eq!(over.state, ActionState::Completed);
+        assert_eq!(over.title.as_deref(), Some("Standup (moved)"));
+        // The override's own DTSTART (11:00Z) is the moved time, distinct from
+        // the 09:00Z slot key — proving we hash the slot, not the new value.
+        assert_eq!(over.scheduled_at.unwrap().with_timezone(&Utc).hour(), 11);
+        assert!(over.completed_at.is_some());
     }
 
     // -------------------------------------------------------------------------

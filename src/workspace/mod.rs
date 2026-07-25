@@ -40,8 +40,8 @@ pub use archive_charter::{
     archive_charter, archive_terminal_charters, find_charter as find_markdown_charter,
 };
 pub use calendar::ics::{
-    ICSPlan, VTodoAction, action_id_from_vtodo_uid, action_to_vtodo, actions_to_icalendar,
-    occurrence_action_id, parse_vtodo_actions,
+    ICSPlan, OccurrenceOverride, VTodoAction, action_id_from_vtodo_uid, action_to_vtodo,
+    actions_to_icalendar, canonical_occurrence_key, occurrence_action_id, parse_vtodo_actions,
 };
 pub use calendar::plans::{
     PlanFileEntry, action_mirror_path, charter_plans_dir_relative, collect_plan_files,
@@ -62,7 +62,8 @@ pub use store::{
     Diagnosis, diagnose, diagnose_read, Finding, FindingSeverity, Workspace, WorkspaceRead, ManifestSourceType, WorkspaceError,
     WorkspaceManifestEntry, collect_workspace_manifest, infer_charter_name,
     infer_parent_charter_name, list_action_files, load_domain_model,
-    load_domain_model_with_plans, load_workspaces, charter_root, plans_root, load_workspace,
+    load_domain_model_with_plans, load_domain_model_with_projection, Projection,
+    load_workspaces, charter_root, plans_root, load_workspace,
     load_workspace_with_plans, read_workspace, read_workspace_with_plans,
     save_domain_model, workspace_data_root,
 };

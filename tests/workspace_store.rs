@@ -4,9 +4,16 @@
 //! Each test creates an isolated temp workspace so there are no shared-state concerns.
 
 use clearhead_core::{
-    ManifestSourceType, collect_workspace_manifest, diff_domain_models, load_domain_model,
-    save_domain_model,
+    ManifestSourceType, Projection, collect_workspace_manifest, diff_domain_models,
+    load_domain_model, load_domain_model_with_projection, save_domain_model,
 };
+
+/// A projection that reads the model from disk without projecting any recurring
+/// occurrences (`window: 0`) — for tests asserting the on-disk model itself,
+/// which must not depend on the wall clock.
+fn no_projection() -> Projection {
+    Projection { now: chrono::Local::now(), window: 0 }
+}
 use std::fs;
 use std::path::Path;
 use tempfile::TempDir;
@@ -241,7 +248,10 @@ END:VCALENDAR\n",
     )
     .expect("write plan ics");
 
-    let model = load_domain_model(&project).expect("load failed");
+    // Projection off: this test is about plan-to-charter attachment, not
+    // occurrence rendering, so it must not depend on today's date.
+    let model = load_domain_model_with_projection(&project, None, no_projection())
+        .expect("load failed");
 
     assert_eq!(model.charters.len(), 1);
     assert_eq!(model.charters[0].alias.as_deref(), Some("my-project"));
@@ -816,13 +826,54 @@ fn mixed_workspace_loads_actions_and_ics_plans() {
 #[test]
 fn mixed_workspace_ron_snapshots() {
     let root = fixture_path("project-mixed");
-    let model = load_domain_model(&root).expect("load failed");
+    // Snapshot the on-disk model only (projection off) so the golden file stays
+    // deterministic; occurrence projection has its own dedicated test below.
+    let model = load_domain_model_with_projection(&root, None, no_projection()).expect("load failed");
     let ron = model_to_ron(&model);
     assert_snapshot(&fixture_path("project-mixed.ron"), &ron);
 
     let manifest = collect_workspace_manifest(&root).expect("manifest failed");
     let manifest_ron = manifest_to_ron(&manifest);
     assert_snapshot(&fixture_path("project-mixed-manifest.ron"), &manifest_ron);
+}
+
+#[test]
+fn recurring_plan_projects_windowed_occurrences_into_model() {
+    // project-mixed carries one recurring plan (health-workout, weekly MWF from
+    // 2026-01-01). Under a fixed `now` it must project exactly `window`
+    // occurrences into the loaded model — the end-to-end proof that the
+    // Workspace → DomainModel union renders occurrences from ICSPlan deviations.
+    let root = fixture_path("project-mixed");
+    let now = chrono::DateTime::parse_from_rfc3339("2026-06-15T00:00:00Z")
+        .unwrap()
+        .with_timezone(&chrono::Local);
+
+    let base = load_domain_model_with_projection(&root, None, Projection { now, window: 0 })
+        .expect("load failed")
+        .all_actions()
+        .len();
+
+    let model = load_domain_model_with_projection(&root, None, Projection { now, window: 2 })
+        .expect("load failed");
+    assert_eq!(
+        model.all_actions().len(),
+        base + 2,
+        "window=2 projects two occurrences for the one recurring plan"
+    );
+
+    let projected: Vec<_> = model
+        .all_actions()
+        .into_iter()
+        .filter(|a| a.plan_id.is_some() && a.scheduled_at.map(|dt| dt >= now).unwrap_or(false))
+        .collect();
+    assert_eq!(projected.len(), 2, "each projected occurrence carries plan linkage and a future slot");
+
+    // Deterministic across reloads for a fixed `now`.
+    let reload = load_domain_model_with_projection(&root, None, Projection { now, window: 2 })
+        .expect("load failed");
+    let ids1: std::collections::BTreeSet<_> = model.all_actions().iter().map(|a| a.id).collect();
+    let ids2: std::collections::BTreeSet<_> = reload.all_actions().iter().map(|a| a.id).collect();
+    assert_eq!(ids1, ids2, "projection is stable across reloads");
 }
 
 #[test]
