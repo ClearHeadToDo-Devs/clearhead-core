@@ -79,7 +79,6 @@ pub fn diagnose_read(
     check_sidecar_coherence(&layout.charter_root, charters, &completed, &mut findings);
     check_sidecar_created_sanity(&layout.charter_root, charters, &mut findings);
     check_orphaned_sidecars(&layout.charter_root, &mut findings);
-    check_dangling_plan_links(charters, &mut findings);
     check_charterless_plans(charters, &mut findings);
     check_durability_residue(&layout.charter_root, &layout.plans_root, &mut findings);
 
@@ -482,32 +481,6 @@ fn check_orphaned_sidecars(charter_root: &Path, findings: &mut Vec<Finding>) {
     }
 }
 
-/// An action recorded as generated from a recurring Plan that no longer exists in
-/// `plans/` — the calendar side of the link was deleted or moved.
-fn check_dangling_plan_links(charters: &[MarkdownCharter], findings: &mut Vec<Finding>) {
-    let known_uids: HashSet<&str> = charters
-        .iter()
-        .flat_map(|c| c.plans.iter())
-        .filter_map(|p| p.plan.external_id.as_deref())
-        .collect();
-    for charter in charters {
-        let Some(file) = &charter.actions_file else { continue };
-        for sa in &charter.actions {
-            if let Some(uid) = sa.action.external_schedule_id.as_deref()
-                && !known_uids.contains(uid)
-            {
-                findings.push(Finding::warning(
-                    "dangling-plan-link",
-                    file,
-                    format!(
-                        "action '{}' was generated from recurring Plan '{}' which no longer exists in plans/",
-                        sa.action.name, uid
-                    ),
-                ));
-            }
-        }
-    }
-}
 
 /// A `plans/<slug>/` directory that matched no charter — the loader invents
 /// an implicit charter for it rather than telling anyone (load.rs).

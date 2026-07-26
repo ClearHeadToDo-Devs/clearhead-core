@@ -418,10 +418,6 @@ pub struct Plan {
     pub external_id: Option<String>,
     /// Template name extracted from recurring VTODO DESCRIPTION
     pub template_name: Option<String>,
-    /// Per-schedule override for how many instances land in the primary `.actions` file.
-    /// Sourced from the `upcoming:` directive in recurring VTODO DESCRIPTION.
-    /// When absent, the workspace `expansion_primary_instances` config value applies.
-    pub primary_instances: Option<u32>,
     /// Recurrence anchor (DTSTART from the Plan VTODO)
     pub dtstart: Option<DateTime<Local>>,
 }
@@ -448,7 +444,7 @@ impl Plan {
     ///     id: Uuid::new_v4(),
     ///     name: "Daily".to_string(),
     ///     recurrence: Some(Recurrence { frequency: "daily".to_string(), count: Some(2), ..Default::default() }),
-    ///     description: None, due_recurrence: None, external_id: None, template_name: None, primary_instances: None, dtstart: None,
+    ///     description: None, due_recurrence: None, external_id: None, template_name: None, dtstart: None,
     /// };
     ///
     /// let occurrences = plan.expand_occurrences(dt_start, 10);
@@ -501,7 +497,6 @@ impl Default for Plan {
             due_recurrence: None,
             external_id: None,
             template_name: None,
-            primary_instances: None,
             dtstart: None,
         }
     }
@@ -621,8 +616,8 @@ pub fn charter_from_plans_and_name(name: String, plans: Vec<Plan>) -> Charter {
 /// unchanged by graph and display integrations. No conversion needed.
 ///
 /// Fields set to `None` by the parser (no DSL syntax exists for them) are
-/// populated from the JSON sidecar or by the expansion workflow:
-/// - `plan_id`, `external_schedule_id`, `external_occurrence_key`
+/// populated from the JSON sidecar (`plan_id`) or, for projected recurring
+/// occurrences, stamped in memory (`plan_id` + `external_occurrence_key`).
 ///
 /// `predecessors` carries raw DSL references for file round-trips;
 /// call [`Action::depends_on`] to get resolved UUIDs for integration work.
@@ -658,9 +653,9 @@ pub struct Action {
     pub is_sequential: Option<bool>,
     /// The [`Plan`] that prescribed this action (populated from sidecar, not DSL).
     pub plan_id: Option<Uuid>,
-    /// Recurring Plan UID (hydrated from sidecar for generated instances).
-    pub external_schedule_id: Option<String>,
-    /// External occurrence identifier within a schedule series (from sidecar).
+    /// Canonical occurrence-slot key, stamped in memory on a *projected* recurring
+    /// occurrence. With [`plan_id`](Self::plan_id) it is the handle a deviation
+    /// write targets. Never filed — occurrences have no `.actions` line.
     pub external_occurrence_key: Option<String>,
 }
 
@@ -684,7 +679,6 @@ impl Default for Action {
             alias: None,
             is_sequential: None,
             plan_id: None,
-            external_schedule_id: None,
             external_occurrence_key: None,
         }
     }

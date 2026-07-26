@@ -28,7 +28,6 @@
                     alias: None,
                     is_sequential: None,
                     plan_id: None,
-                    external_schedule_id: None,
                     external_occurrence_key: None,
                 ),
                 (
@@ -49,7 +48,6 @@
                     alias: None,
                     is_sequential: None,
                     plan_id: None,
-                    external_schedule_id: None,
                     external_occurrence_key: None,
                 ),
             ],
@@ -81,7 +79,6 @@
                     alias: None,
                     is_sequential: None,
                     plan_id: None,
-                    external_schedule_id: None,
                     external_occurrence_key: None,
                 ),
                 (
@@ -102,7 +99,6 @@
                     alias: None,
                     is_sequential: None,
                     plan_id: None,
-                    external_schedule_id: None,
                     external_occurrence_key: None,
                 ),
             ],
@@ -134,7 +130,6 @@
                     alias: None,
                     is_sequential: None,
                     plan_id: None,
-                    external_schedule_id: None,
                     external_occurrence_key: None,
                 ),
                 (
@@ -155,7 +150,6 @@
                     alias: None,
                     is_sequential: None,
                     plan_id: None,
-                    external_schedule_id: None,
                     external_occurrence_key: None,
                 ),
             ],

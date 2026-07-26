@@ -21,11 +21,9 @@
 //! 3. Move the source files, all-or-none, through the batch transaction:
 //!    - `<charter>.actions`
 //!    - `<charter>.completed.actions`
-//!    - `<charter>.upcoming.actions`
 //!    - `<charter>.md` (if present)
 //!    - `.<charter>.json` sidecar (if present) — moved *with* the files rather
-//!      than folded into the lines, so its `created_at` / `external_schedule_id`
-//!      / recurring Plan linkage survive intact.
+//!      than folded into the lines, so its `created_at` provenance survives intact.
 //!    Each lands at `<data_root>/archive/<path-under-charters>`.
 //! 4. Collapse the now-empty charter subdirectory (directory-form charters
 //!    only; silently skipped when non-empty so sub-charters survive).
@@ -43,7 +41,7 @@ use uuid::Uuid;
 
 use crate::domain::{ActionState, Charter};
 use crate::workspace::MarkdownCharter;
-use crate::workspace::action_files::{completed_actions_path, read_actions, upcoming_actions_path};
+use crate::workspace::action_files::{completed_actions_path, read_actions};
 use crate::workspace::durability::{PendingBatch, WorkspaceLock, recover_pending};
 use crate::workspace::sidecar::sidecar_path;
 use crate::workspace::store::load_workspace;
@@ -205,9 +203,8 @@ fn archive_many(
             .as_ref()
             .map(|rel| layout.charter_root.join(rel));
 
-        // Completed / upcoming paths derived from the primary path
+        // Completed path derived from the primary path
         let completed_abs: Option<PathBuf> = acts_abs.as_ref().map(|p| completed_actions_path(p));
-        let upcoming_abs: Option<PathBuf> = acts_abs.as_ref().map(|p| upcoming_actions_path(p));
 
         // Charter .md path
         let md_abs: Option<PathBuf> = mc.md_file.as_ref().map(|rel| layout.charter_root.join(rel));
@@ -244,7 +241,7 @@ fn archive_many(
 
         // The `.ics` plans are intentionally excluded: the server owns them and
         // they stay on disk. Everything else moves all-or-none.
-        for src in [acts_abs, completed_abs, upcoming_abs, md_abs, sidecar_abs]
+        for src in [acts_abs, completed_abs, md_abs, sidecar_abs]
             .into_iter()
             .flatten()
             .filter(|p| p.exists())
@@ -593,8 +590,11 @@ mod tests {
         meta.actions.insert(
             action_id.to_string(),
             ActionMeta {
-                external_schedule_id: Some("weekly-review@example.com".to_string()),
-                ..Default::default()
+                created: Some(
+                    chrono::DateTime::parse_from_rfc3339("2024-06-01T12:00:00Z")
+                        .unwrap()
+                        .with_timezone(&chrono::Local),
+                ),
             },
         );
         write_sidecar(&sc_path, &meta).expect("write sidecar");
@@ -605,12 +605,12 @@ mod tests {
 
         // The sidecar left `charters/` …
         assert!(!sc_path.exists(), "sidecar must move out of charters/");
-        // … and its recurring Plan linkage now lives in the archived sidecar, intact.
+        // … and its provenance now lives in the archived sidecar, intact.
         let archived_sc = sidecar_path(&root.join(".clearhead/archive/done.actions"));
         let moved =
             std::fs::read_to_string(&archived_sc).expect("sidecar must be moved into archive/");
         assert!(
-            moved.contains("weekly-review@example.com"),
+            moved.contains("2024-06-01"),
             "sidecar-only data must survive the move verbatim:\n{moved}"
         );
     }

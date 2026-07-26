@@ -14,10 +14,9 @@ use crate::workspace::calendar::ics::parse_ics_file;
 use crate::workspace::calendar::plans::collect_plan_files_in;
 use crate::workspace::sidecar::{collect_sidecar_actions, hydrate_actions_map, read_sidecar, sidecar_path};
 use crate::workspace::manifest::WorkspaceManifest;
-use crate::domain::Action;
-use crate::workspace::calendar::expand::render_occurrences;
+use crate::workspace::calendar::expand::extend_with_projected_occurrences;
 use chrono::{DateTime, Local};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
@@ -154,21 +153,13 @@ impl From<Workspace> for DomainModel {
             .charters
             .into_iter()
             .map(|charter| {
-                // Project each recurring plan's windowed occurrences before the
-                // ICSPlan deviations are flattened away. This is the single union
+                // Project each recurring plan's occurrences before `Charter::from`
+                // flattens the ICSPlan deviations away, then union via the one
+                // shared rule (materialized wins by id). This is the single union
                 // address: materialized actions ∪ rendered occurrences.
-                let occurrences: Vec<Action> = charter
-                    .plans
-                    .iter()
-                    .flat_map(|ics_plan| render_occurrences(ics_plan, now, window))
-                    .collect();
+                let plans = charter.plans.clone();
                 let mut charter = Charter::from(charter);
-                // A materialized line for an occurrence wins over its projection —
-                // same occurrence UUID, and the file remains the editable truth.
-                let materialized: HashSet<Uuid> = charter.actions.iter().map(|a| a.id).collect();
-                charter
-                    .actions
-                    .extend(occurrences.into_iter().filter(|o| !materialized.contains(&o.id)));
+                extend_with_projected_occurrences(&mut charter.actions, &plans, now, window);
                 charter
             })
             .collect();

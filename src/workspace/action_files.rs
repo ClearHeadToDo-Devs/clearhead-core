@@ -1,8 +1,8 @@
-//! Per-charter `.actions` / `.completed.actions` / `.upcoming.actions` read/write.
+//! Per-charter `.actions` / `.completed.actions` read/write.
 //!
-//! Each charter's actions are stored across three DSL files:
-//! - `<charter>.actions`           — active actions (within primary instance cap)
-//! - `<charter>.upcoming.actions`  — future generated instances beyond the primary cap
+//! Each charter's actions are stored across two DSL files:
+//! - `<charter>.actions`           — active actions (recurring occurrences are
+//!   projected on read, never filed)
 //! - `<charter>.completed.actions` — completed/cancelled actions
 //!
 //! Charter stem derivation mostly uses the file stem. Primary files like
@@ -107,17 +107,6 @@ pub fn completed_actions_path(actions_path: &Path) -> PathBuf {
     dir.join(format!("{}.completed.actions", stem))
 }
 
-/// Derive the upcoming actions path for a `.actions` file.
-///
-/// - `health.actions`               → `health.upcoming.actions`
-/// - `next.actions`                 → `next.upcoming.actions`
-/// - `build_clearhead/next.actions` → `build_clearhead/build_clearhead.upcoming.actions`
-/// - `build_clearhead/obs.actions`  → `build_clearhead/obs.upcoming.actions`
-pub fn upcoming_actions_path(actions_path: &Path) -> PathBuf {
-    let stem = charter_stem(actions_path);
-    let dir = actions_path.parent().unwrap_or(Path::new(""));
-    dir.join(format!("{}.upcoming.actions", stem))
-}
 
 // ============================================================================
 // Public API
@@ -199,34 +188,6 @@ mod tests {
         assert_eq!(
             completed_actions_path(Path::new("build_clearhead/obs.actions")),
             PathBuf::from("build_clearhead/obs.completed.actions")
-        );
-    }
-
-    #[test]
-    fn test_upcoming_actions_path() {
-        assert_eq!(
-            upcoming_actions_path(Path::new("/data/health.actions")),
-            PathBuf::from("/data/health.upcoming.actions")
-        );
-        assert_eq!(
-            upcoming_actions_path(Path::new("inbox.actions")),
-            PathBuf::from("inbox.upcoming.actions")
-        );
-        assert_eq!(
-            upcoming_actions_path(Path::new("build_clearhead/next.actions")),
-            PathBuf::from("build_clearhead/build_clearhead.upcoming.actions")
-        );
-        assert_eq!(
-            upcoming_actions_path(Path::new("/repo/.clearhead/charters/next.actions")),
-            PathBuf::from("/repo/.clearhead/charters/repo.upcoming.actions")
-        );
-        assert_eq!(
-            upcoming_actions_path(Path::new("/data/clearhead/charters/next.actions")),
-            PathBuf::from("/data/clearhead/charters/next.upcoming.actions")
-        );
-        assert_eq!(
-            upcoming_actions_path(Path::new("build_clearhead/obs.actions")),
-            PathBuf::from("build_clearhead/obs.upcoming.actions")
         );
     }
 

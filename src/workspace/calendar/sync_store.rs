@@ -21,6 +21,10 @@ pub const DESCRIPTION_FIELD: &str = "description";
 pub const PRIORITY_FIELD: &str = "priority";
 pub const CONTEXTS_FIELD: &str = "contexts";
 pub const UID_FIELD: &str = "uid";
+/// A recurring master's canonical-origin `DTSTART`, keyed by the plan's id.
+/// Holds the anchor fixed across syncs so a foreign roll-forward (an advanced
+/// `DTSTART`) can be detected against it.
+pub const MASTER_DTSTART_FIELD: &str = "master_dtstart";
 const STORE_VERSION: u32 = 1;
 
 type Time = Option<DateTime<Local>>;

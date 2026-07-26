@@ -17,11 +17,11 @@ pub mod plans;
 pub mod reconcile;
 pub mod sync_store;
 
-pub use expand::{ExpandResult, ExpansionConfig, expand_plans_into_actions, render_occurrences};
+pub use expand::{extend_with_projected_occurrences, render_occurrences};
 pub use ics::{
     ICSPlan, OccurrenceOp, OccurrenceOverride, VTodoAction, action_id_from_vtodo_uid,
     action_to_vtodo, actions_to_icalendar, canonical_occurrence_key, occurrence_action_id,
-    parse_vtodo_actions, write_occurrence_deviation,
+    parse_vtodo_actions, write_master_rollforward, write_occurrence_deviation,
 };
 pub use plans::{
     PlanFileEntry, action_mirror_path, apply_occurrence_op, charter_plans_dir_relative,
@@ -31,6 +31,7 @@ pub use plans::{
 pub use reconcile::{
     AppliedSync, OutcomeKind, Reconcile, SyncEntry, SyncField, SyncImport, SyncReport, SyncTally,
     VTodoResource, apply_sync, plan_sync, read_ics_dates, read_vtodo_actions, reconcile,
+    sync_master_rollforwards,
 };
 pub use sync_store::{
     PlansSyncStore, plans_sync_store_path, read_plans_sync_store,

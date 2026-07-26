@@ -39,10 +39,6 @@ pub struct CharterMetadata {
     /// the next time anything touches them.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty", alias = "acts")]
     pub actions: BTreeMap<String, ActionMeta>,
-    /// Per-plan metadata keyed by UUID string. `BTreeMap` for the same
-    /// stable-ordering reason as `actions`.
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub plans: BTreeMap<String, PlanMeta>,
 }
 
 /// Charter-level sidecar metadata.
@@ -66,17 +62,6 @@ pub struct ActionMeta {
     /// When this action was first created by tooling.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub created: Option<DateTime<Local>>,
-    /// Recurring Plan UID this action was generated from.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub external_schedule_id: Option<String>,
-}
-
-/// Per-plan sidecar metadata.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct PlanMeta {
-    /// When `expand actions` last ran for this plan.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub last_expanded: Option<DateTime<Local>>,
 }
 
 /// Derive the sidecar path from an `.actions` file path.
@@ -125,7 +110,6 @@ pub fn collect_sidecar_actions(charter_root: &Path) -> BTreeMap<String, ActionMe
 /// duplicate.
 fn merge_action(to: &mut ActionMeta, from: ActionMeta) {
     to.created = to.created.or(from.created);
-    to.external_schedule_id = to.external_schedule_id.take().or(from.external_schedule_id);
 }
 
 /// Every hidden `.json` file under `dir`, recursively, sorted for determinism.
@@ -160,8 +144,8 @@ fn sidecar_files(dir: &Path) -> Vec<PathBuf> {
 /// Hydrate actions with metadata from the sidecar.
 ///
 /// For each action, if the sidecar has a matching entry (by UUID string key),
-/// fills in `created_at` and `external_schedule_id` where the action doesn't
-/// already have them (DSL values are authoritative).
+/// fills in `created_at` where the action doesn't already have it (DSL values
+/// are authoritative).
 pub fn hydrate_actions(actions: &mut [crate::workspace::actions::repository::SourcedAction], metadata: &CharterMetadata) {
     hydrate_actions_map(actions, &metadata.actions);
 }
@@ -185,9 +169,6 @@ pub fn hydrate_actions_map(
         if let Some(meta) = actions_meta.get(&key) {
             if action.created_at.is_none() {
                 action.created_at = meta.created;
-            }
-            if action.external_schedule_id.is_none() {
-                action.external_schedule_id = meta.external_schedule_id.clone();
             }
         }
     }
@@ -304,7 +285,6 @@ mod tests {
         let parsed: CharterMetadata = serde_json::from_str(&json).unwrap();
         assert!(parsed.charter.is_none());
         assert!(parsed.actions.is_empty());
-        assert!(parsed.plans.is_empty());
     }
 
     #[test]
@@ -314,7 +294,6 @@ mod tests {
             "019dad29-c05d-7781-a92c-40d71adfb88e".to_string(),
             ActionMeta {
                 created: Some(Local::now()),
-                external_schedule_id: Some("weekly-review@clearhead.us".to_string()),
             },
         );
         let json = serde_json::to_string_pretty(&meta).unwrap();
@@ -322,30 +301,19 @@ mod tests {
         assert_eq!(parsed.actions.len(), 1);
         let action = &parsed.actions["019dad29-c05d-7781-a92c-40d71adfb88e"];
         assert!(action.created.is_some());
-        assert_eq!(
-            action.external_schedule_id.as_deref(),
-            Some("weekly-review@clearhead.us")
-        );
     }
 
     #[test]
-    fn metadata_with_charter_and_plan_roundtrips() {
+    fn metadata_with_charter_roundtrips() {
         let charter_id = uuid::Uuid::new_v4();
         let mut meta = CharterMetadata::default();
         meta.charter = Some(CharterMeta {
             id: Some(charter_id),
             created: Some(Local::now()),
         });
-        meta.plans.insert(
-            "weekly-review".to_string(),
-            PlanMeta {
-                last_expanded: Some(Local::now()),
-            },
-        );
         let json = serde_json::to_string_pretty(&meta).unwrap();
         let parsed: CharterMetadata = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed.charter.and_then(|c| c.id), Some(charter_id));
-        assert_eq!(parsed.plans.len(), 1);
     }
 
     #[test]
@@ -437,23 +405,6 @@ mod tests {
 
         hydrate_actions(&mut actions, &meta);
         assert_eq!(actions[0].action.created_at, Some(dsl_created));
-    }
-
-    #[test]
-    fn hydrate_fills_external_schedule_id() {
-        use crate::domain::Action;
-        use uuid::Uuid;
-
-        let id = Uuid::now_v7();
-        let mut actions = vec![make_sourced(Action { id, ..Default::default() })];
-        let mut meta = CharterMetadata::default();
-        meta.actions.insert(
-            id.to_string(),
-            ActionMeta { created: None, external_schedule_id: Some("weekly-review@clearhead.us".to_string()), ..Default::default() },
-        );
-
-        hydrate_actions(&mut actions, &meta);
-        assert_eq!(actions[0].action.external_schedule_id.as_deref(), Some("weekly-review@clearhead.us"));
     }
 
     #[test]
@@ -590,29 +541,27 @@ mod tests {
     }
 
     #[test]
-    fn merge_action_never_clobbers_source_linkage() {
-        // Same uuid in two sidecars: one carries source linkage that cannot be
-        // recomputed, the other only a created stamp. The union must keep the
-        // linkage regardless of which file is seen first.
+    fn merge_action_keeps_first_created_across_sidecars() {
+        // Same uuid in two sidecars with different `created` stamps. Walking in
+        // sorted path order, the first present value wins deterministically.
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(
             dir.path().join(".aaa.json"),
-            r#"{"actions": {"dup": {"created": "2024-01-01T00:00:00+00:00", "external_schedule_id": "plan-7"}}}"#,
+            r#"{"actions": {"dup": {"created": "2024-06-01T12:00:00+00:00"}}}"#,
         )
         .unwrap();
         std::fs::write(
             dir.path().join(".zzz.json"),
-            r#"{"actions": {"dup": {"created": "2025-05-05T00:00:00+00:00"}}}"#,
+            r#"{"actions": {"dup": {"created": "2025-06-01T12:00:00+00:00"}}}"#,
         )
         .unwrap();
 
         let union = collect_sidecar_actions(dir.path());
         let entry = &union["dup"];
         assert_eq!(
-            entry.external_schedule_id.as_deref(),
-            Some("plan-7"),
-            "the external_schedule_id must survive an empty re-stamp under the same uuid",
+            entry.created.map(|c| c.format("%Y").to_string()).as_deref(),
+            Some("2024"),
+            "the first sidecar in sorted order wins on a duplicate uuid",
         );
-        assert!(entry.created.is_some());
     }
 }

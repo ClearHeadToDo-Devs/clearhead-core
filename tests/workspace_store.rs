@@ -1029,6 +1029,124 @@ fn occurrence_skip_removes_it_from_the_projection() {
 }
 
 #[test]
+fn occurrence_reschedule_moves_the_slot_in_the_projection() {
+    use clearhead_core::{OccurrenceOp, apply_occurrence_op};
+
+    let ws = recurring_plan_workspace();
+    let root = ws.path();
+    let now = fixed_now();
+
+    let (occ_id, plan_id, key) = first_occurrence(root, now);
+    let moved = now + chrono::Duration::hours(30); // a distinct new time
+    apply_occurrence_op(
+        root,
+        None,
+        plan_id,
+        &key,
+        &OccurrenceOp::Reschedule { scheduled_at: Some(moved), due_date: None },
+    )
+    .unwrap();
+
+    // Same occurrence identity (keyed by the immutable slot), new scheduled time.
+    let model = load_domain_model_with_projection(root, None, Projection { now, window: 2 }).unwrap();
+    let occ = model
+        .all_actions()
+        .into_iter()
+        .find(|a| a.id == occ_id)
+        .expect("the rescheduled occurrence keeps its slot identity");
+    assert_eq!(
+        occ.scheduled_at.map(|t| t.with_timezone(&chrono::Utc)),
+        Some(moved.with_timezone(&chrono::Utc)),
+        "reschedule moves the value, not the identity"
+    );
+}
+
+/// Rewrite the master's `DTSTART` in place — simulates a camp-B client (Apple
+/// Reminders, etc.) completing an occurrence by advancing the anchor.
+fn advance_master(root: &Path, from: &str, to: &str) {
+    let ics = root.join(".clearhead/plans/health/run.ics");
+    let content = fs::read_to_string(&ics).unwrap();
+    let advanced = content.replace(&format!("DTSTART:{from}"), &format!("DTSTART:{to}"));
+    assert_ne!(content, advanced, "DTSTART replacement must match");
+    fs::write(&ics, advanced).unwrap();
+}
+
+#[test]
+fn foreign_rollforward_is_ingested_as_completion() {
+    use clearhead_core::{ActionState, occurrence_action_id, sync_master_rollforwards};
+
+    let ws = recurring_plan_workspace(); // daily from 2026-01-01T08:00Z, uid run@example.com
+    let root = ws.path();
+    let ics = root.join(".clearhead/plans/health/run.ics");
+
+    // First sight establishes the origin; nothing is recorded.
+    assert_eq!(sync_master_rollforwards(root, None).unwrap(), 0);
+
+    // Camp-B completes the 01-01 occurrence by advancing the anchor one day.
+    advance_master(root, "20260101T080000Z", "20260102T080000Z");
+    assert_eq!(sync_master_rollforwards(root, None).unwrap(), 1);
+
+    // The anchor is reset to the origin and the 01-01 slot is a completed override.
+    let content = fs::read_to_string(&ics).unwrap();
+    assert!(content.contains("DTSTART:20260101T080000Z"), "anchor reset to origin");
+    assert!(content.contains("RECURRENCE-ID:20260101T080000Z"));
+    assert!(content.contains("STATUS:COMPLETED"));
+
+    // It projects as completed at its slot.
+    let now = chrono::DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z")
+        .unwrap()
+        .with_timezone(&chrono::Local);
+    let model = load_domain_model_with_projection(root, None, Projection { now, window: 2 }).unwrap();
+    let occ_id = occurrence_action_id("run@example.com", "20260101T080000Z");
+    let occ = model
+        .all_actions()
+        .into_iter()
+        .find(|a| a.id == occ_id)
+        .expect("the origin slot still projects");
+    assert_eq!(occ.state, ActionState::Completed, "roll-forward recorded as completion");
+
+    // A camp-B client that ignores overrides and re-advances records nothing new
+    // (idempotent by slot) — only the anchor churns, history is stable.
+    advance_master(root, "20260101T080000Z", "20260102T080000Z");
+    assert_eq!(sync_master_rollforwards(root, None).unwrap(), 0);
+    let content = fs::read_to_string(&ics).unwrap();
+    assert_eq!(
+        content.matches("RECURRENCE-ID:20260101T080000Z").count(),
+        1,
+        "the completion override is not duplicated under re-advance"
+    );
+}
+
+#[test]
+fn multi_period_rollforward_records_each_passed_occurrence() {
+    use clearhead_core::sync_master_rollforwards;
+
+    let ws = recurring_plan_workspace();
+    let root = ws.path();
+    let ics = root.join(".clearhead/plans/health/run.ics");
+
+    assert_eq!(sync_master_rollforwards(root, None).unwrap(), 0); // establish origin
+
+    // Sync gap: the client completed three occurrences (01-01, 01-02, 01-03),
+    // advancing the anchor to 01-04 before we next sync.
+    advance_master(root, "20260101T080000Z", "20260104T080000Z");
+    assert_eq!(
+        sync_master_rollforwards(root, None).unwrap(),
+        3,
+        "every passed occurrence is recorded, not just the last"
+    );
+
+    let content = fs::read_to_string(&ics).unwrap();
+    assert!(content.contains("DTSTART:20260101T080000Z"), "anchor reset to origin");
+    for day in ["20260101T080000Z", "20260102T080000Z", "20260103T080000Z"] {
+        assert!(
+            content.contains(&format!("RECURRENCE-ID:{day}")),
+            "missing completion override for {day}"
+        );
+    }
+}
+
+#[test]
 fn sidecar_hydrates_acts_on_load() {
     use uuid::Uuid;
 
@@ -1058,11 +1176,10 @@ fn orphaned_sidecar_hydrates_acts_by_uuid() {
 
     // The action lives in work.actions, but its sidecar sits at a path matching
     // no .actions file — as if work.actions had been renamed and the sidecar left
-    // behind. Hydration must still reach it by UUID, including the irreplaceable
-    // external_schedule_id (a merge base that cannot be recomputed).
+    // behind. Hydration must still reach it by UUID.
     let uuid = "01951111-0000-7000-0000-000000000030";
     let sidecar_json = format!(
-        r#"{{"acts": {{"{uuid}": {{"created": "2024-01-15T08:00:00+00:00", "external_schedule_id": "plan-42"}}}}}}"#
+        r#"{{"acts": {{"{uuid}": {{"created": "2024-01-15T08:00:00+00:00"}}}}}}"#
     );
     let workspace = make_workspace(&[
         ("work.actions", &format!("[ ] Task one #{uuid}\n")),
@@ -1080,11 +1197,6 @@ fn orphaned_sidecar_hydrates_acts_by_uuid() {
     assert!(
         action.created_at.is_some(),
         "an orphaned sidecar's created should still hydrate by UUID"
-    );
-    assert_eq!(
-        action.external_schedule_id.as_deref(),
-        Some("plan-42"),
-        "the irreplaceable external_schedule_id must survive the sidecar being orphaned"
     );
 }
 

@@ -11,11 +11,14 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
-use super::ics::{VTodoAction, action_to_vtodo, parse_vtodo_actions};
+use super::ics::{
+    VTodoAction, action_to_vtodo, canonical_occurrence_key, parse_ics_file, parse_vtodo_actions,
+    write_master_rollforward,
+};
 use super::plans::{action_mirror_path, charter_plans_dir_relative, collect_plan_files_in};
 use super::sync_store::{
-    CONTEXTS_FIELD, DESCRIPTION_FIELD, DUE_DATE_FIELD, PRIORITY_FIELD, PlansSyncStore,
-    SCHEDULED_AT_FIELD, STATE_FIELD, TITLE_FIELD, UID_FIELD, plans_sync_store_path,
+    CONTEXTS_FIELD, DESCRIPTION_FIELD, DUE_DATE_FIELD, MASTER_DTSTART_FIELD, PRIORITY_FIELD,
+    PlansSyncStore, SCHEDULED_AT_FIELD, STATE_FIELD, TITLE_FIELD, UID_FIELD, plans_sync_store_path,
     read_plans_sync_store, serialize_plans_sync_store,
 };
 use crate::domain::{Action, ActionState, DomainModel};
@@ -274,9 +277,6 @@ pub fn plan_sync(
         .map(|action| action.id)
         .collect();
     for action in model.all_actions() {
-        if action.external_schedule_id.is_some() {
-            continue;
-        }
         let calendar_action = calendar.get(&action.id).map(|resource| &resource.action);
         let action_contexts = normalized_contexts(action.contexts.clone());
         let entry = SyncEntry {
@@ -815,6 +815,93 @@ fn render_actions(actions: &[SourcedAction]) -> Result<String, WorkspaceError> {
         .map(|action| action.action.clone())
         .collect::<Vec<_>>();
     format(&actions, OutputFormat::Actions, None, None).map_err(WorkspaceError::Actions)
+}
+
+/// Ingest foreign roll-forwards on recurring masters in the configured plans vdir.
+///
+/// Camp-B clients (Apple Reminders, etc.) complete a recurring VTODO by *advancing
+/// the master `DTSTART`* with no override. This pass detects that — the master's
+/// `DTSTART` moved forward onto a later point of its own recurrence grid, relative
+/// to the origin we hold in [`MASTER_DTSTART_FIELD`] — and translates it into
+/// ClearHead's canonical form: reset the anchor to the origin and record each
+/// passed slot as a completed occurrence (a `RECURRENCE-ID` override). See
+/// [`write_master_rollforward`] for the idempotency/spec rationale.
+///
+/// - **First sight** of a master establishes its origin; nothing is recorded.
+/// - An **off-grid** new `DTSTART` is a genuine series reschedule, not a
+///   roll-forward: the origin is updated and no completions are recorded.
+/// - Runs under the workspace lock. Returns the number of occurrences recorded.
+pub fn sync_master_rollforwards(
+    root: &Path,
+    plan_override: Option<&Path>,
+) -> Result<usize, WorkspaceError> {
+    let layout = resolve_workspace_layout(root);
+    let _lock = WorkspaceLock::try_acquire(&layout.data_root)?
+        .ok_or_else(|| WorkspaceError::WorkspaceLocked(layout.data_root.clone()))?;
+
+    let plans_root = plan_override.unwrap_or(&layout.plans_root);
+    let mut store = read_plans_sync_store(root, plans_root)?;
+    let bases: HashMap<Uuid, DateTime<Local>> = store.field_bases(MASTER_DTSTART_FIELD)?;
+
+    let mut recorded = 0usize;
+    let mut store_dirty = false;
+
+    for entry in collect_plan_files_in(plans_root, None)? {
+        for ics in parse_ics_file(&entry.path)? {
+            let (Some(plan_uid), Some(current)) =
+                (ics.plan.external_id.as_deref(), ics.plan.dtstart)
+            else {
+                continue;
+            };
+            if ics.plan.recurrence.is_none() {
+                continue;
+            }
+            let plan_id = ics.plan.id;
+
+            let Some(&base) = bases.get(&plan_id) else {
+                // First sight: establish the canonical origin, detect nothing.
+                store.stamp(plan_id, MASTER_DTSTART_FIELD, &current)?;
+                store_dirty = true;
+                continue;
+            };
+            if current == base {
+                continue;
+            }
+
+            // Is `current` a later point on the recurrence grid anchored at the
+            // origin? If not, it's a genuine reschedule — accept the new origin.
+            let grid: Vec<DateTime<Local>> = ics
+                .plan
+                .expand_occurrences(base, 1000)
+                .into_iter()
+                .map(|dt| dt.with_timezone(&Local))
+                .collect();
+            let Some(k) = grid.iter().position(|&d| d == current).filter(|&k| k >= 1) else {
+                store.stamp(plan_id, MASTER_DTSTART_FIELD, &current)?;
+                store_dirty = true;
+                continue;
+            };
+
+            // The passed slots grid[0..k] were completed by the advance. Skip any
+            // already excluded or overridden — recording stays idempotent.
+            let completed_slots: Vec<(String, DateTime<Local>)> = grid[..k]
+                .iter()
+                .map(|&slot| (canonical_occurrence_key(slot), slot))
+                .filter(|(key, _)| !ics.exdates.contains(key) && !ics.overrides.contains_key(key))
+                .collect();
+
+            // Reset the anchor to the origin (always) and record completions. The
+            // origin itself is unchanged, so the stored base is not restamped.
+            write_master_rollforward(&ics.path, plan_uid, base, &completed_slots)?;
+            recorded += completed_slots.len();
+        }
+    }
+
+    if store_dirty {
+        let content = serialize_plans_sync_store(&store)?;
+        atomic_write(&plans_sync_store_path(root), content.as_bytes()).map_err(WorkspaceError::Io)?;
+    }
+    Ok(recorded)
 }
 
 #[cfg(test)]

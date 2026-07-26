@@ -165,10 +165,10 @@ fn component_to_plan<T: Component>(component: &T, path: &Path) -> Option<ICSPlan
         .property_value("RRULE")
         .and_then(Recurrence::from_rrule_str);
 
-    let (template_name, primary_instances, description) = component
+    let (template_name, description) = component
         .get_description()
         .map(parse_description_directives)
-        .unwrap_or((None, None, None));
+        .unwrap_or((None, None));
 
     Some(ICSPlan {
         path: path.to_path_buf(),
@@ -182,7 +182,6 @@ fn component_to_plan<T: Component>(component: &T, path: &Path) -> Option<ICSPlan
             dtstart,
             external_id: Some(uid.to_string()),
             template_name,
-            primary_instances,
             ..Default::default()
         },
     })
@@ -195,13 +194,10 @@ fn component_to_plan<T: Component>(component: &T, path: &Path) -> Option<ICSPlan
 ///
 /// Supported directives:
 /// - `template: <name>` — binds a template for structural instantiation
-/// - `upcoming: <n>`   — per-schedule override for how many instances land in
-///                       the primary `.actions` file
 ///
-/// Returns `(template_name, primary_instances, description)`.
-fn parse_description_directives(desc: &str) -> (Option<String>, Option<u32>, Option<String>) {
+/// Returns `(template_name, description)`.
+fn parse_description_directives(desc: &str) -> (Option<String>, Option<String>) {
     let mut template: Option<String> = None;
-    let mut primary_instances: Option<u32> = None;
     let mut body_start = 0usize;
 
     for line in desc.lines() {
@@ -213,11 +209,6 @@ fn parse_description_directives(desc: &str) -> (Option<String>, Option<u32>, Opt
             let val = val.trim();
             if !val.is_empty() {
                 template = Some(val.to_string());
-            }
-            body_start += line.len() + 1;
-        } else if let Some(val) = line.strip_prefix("upcoming: ") {
-            if let Ok(n) = val.trim().parse::<u32>() {
-                primary_instances = Some(n);
             }
             body_start += line.len() + 1;
         } else {
@@ -237,7 +228,7 @@ fn parse_description_directives(desc: &str) -> (Option<String>, Option<u32>, Opt
         None
     };
 
-    (template, primary_instances, rest)
+    (template, rest)
 }
 
 fn parse_dtstart<T: Component>(component: &T) -> Option<DateTime<Local>> {
@@ -410,6 +401,60 @@ pub fn write_occurrence_deviation(
     atomic_write(master_path, calendar.to_string().as_bytes()).map_err(WorkspaceError::Io)
 }
 
+/// Ingest a foreign roll-forward: reset the recurring master `master_uid` back to
+/// its canonical origin `base_dtstart`, and record each passed slot as a completed
+/// occurrence (a `RECURRENCE-ID` override with `STATUS:COMPLETED` + `COMPLETED`).
+///
+/// This translates a camp-B "advance the master to complete an occurrence"
+/// mutation into ClearHead's canonical fixed-anchor + deviation form (per RFC 5545
+/// a `RECURRENCE-ID` is only valid when its slot is on the series grid, so the
+/// anchor must sit at/before every override). Recording is **idempotent**: a slot
+/// that already carries any override is left untouched, so a client that re-advances
+/// forever churns only the anchor value, never the completion history. Preserves
+/// all other components/properties; atomic. Each tuple is `(canonical key, completed-at)`.
+pub fn write_master_rollforward(
+    master_path: &Path,
+    master_uid: &str,
+    base_dtstart: DateTime<Local>,
+    completed_slots: &[(String, DateTime<Local>)],
+) -> Result<(), WorkspaceError> {
+    let content = fs::read_to_string(master_path).map_err(WorkspaceError::Io)?;
+    let mut calendar: Calendar = content.parse().map_err(WorkspaceError::Parse)?;
+
+    // Reset the master anchor to the canonical origin.
+    let index = master_index(&calendar, master_uid)
+        .ok_or_else(|| WorkspaceError::Parse(format!("recurring master VTODO {master_uid} not found")))?;
+    if let CalendarComponent::Todo(master) = &mut calendar.components[index] {
+        master.remove_starts();
+        master.starts(base_dtstart.with_timezone(&Utc));
+    }
+
+    // Record each passed slot as completed, skipping any slot that already carries
+    // an override so re-detecting the same advance records nothing new.
+    for (key, completed_at) in completed_slots {
+        let already = calendar.components.iter().any(|component| {
+            matches!(component, CalendarComponent::Todo(todo)
+                if todo.get_uid() == Some(master_uid)
+                    && todo
+                        .property_value("RECURRENCE-ID")
+                        .and_then(parse_ics_datetime_token)
+                        .map(canonical_occurrence_key)
+                        .as_deref()
+                        == Some(key.as_str()))
+        });
+        if already {
+            continue;
+        }
+        let completed_at = *completed_at;
+        upsert_override(&mut calendar, master_uid, key, |todo| {
+            todo.status(TodoStatus::Completed);
+            todo.completed(completed_at.with_timezone(&Utc));
+        })?;
+    }
+
+    atomic_write(master_path, calendar.to_string().as_bytes()).map_err(WorkspaceError::Io)
+}
+
 /// Index of the recurring master VTODO for `uid` — the one carrying `RRULE` and
 /// no `RECURRENCE-ID` (which would make it an override, not the master).
 fn master_index(calendar: &Calendar, uid: &str) -> Option<usize> {
@@ -521,7 +566,9 @@ pub fn parse_vtodo_actions(path: &Path) -> Result<Vec<VTodoAction>, WorkspaceErr
         let CalendarComponent::Todo(todo) = component else {
             continue;
         };
-        if todo.property_value("RRULE").is_some() {
+        // A recurring master (RRULE) is a Plan, and a RECURRENCE-ID component is an
+        // occurrence override *of* its master — neither is a standalone Action.
+        if todo.property_value("RRULE").is_some() || todo.property_value("RECURRENCE-ID").is_some() {
             continue;
         }
         let Some(uid) = todo.get_uid() else {
@@ -691,41 +738,28 @@ mod tests {
     #[test]
     fn parse_description_directives_cases() {
         // template only
-        let (tpl, upcoming, desc) =
-            parse_description_directives("template: weekly-review\nSome notes");
+        let (tpl, desc) = parse_description_directives("template: weekly-review\nSome notes");
         assert_eq!(tpl.as_deref(), Some("weekly-review"));
-        assert!(upcoming.is_none());
         assert_eq!(desc.as_deref(), Some("Some notes"));
 
         // template only, no body
-        let (tpl, upcoming, desc) = parse_description_directives("template: weekly-review");
+        let (tpl, desc) = parse_description_directives("template: weekly-review");
         assert_eq!(tpl.as_deref(), Some("weekly-review"));
-        assert!(upcoming.is_none());
         assert!(desc.is_none());
 
-        // upcoming only
-        let (tpl, upcoming, desc) = parse_description_directives("upcoming: 3");
+        // a retired `upcoming:` directive is no longer special — it degrades to body text
+        let (tpl, desc) = parse_description_directives("upcoming: 3");
         assert!(tpl.is_none());
-        assert_eq!(upcoming, Some(3));
-        assert!(desc.is_none());
-
-        // both directives with body
-        let (tpl, upcoming, desc) =
-            parse_description_directives("template: weekly-review\nupcoming: 2\nSome notes");
-        assert_eq!(tpl.as_deref(), Some("weekly-review"));
-        assert_eq!(upcoming, Some(2));
-        assert_eq!(desc.as_deref(), Some("Some notes"));
+        assert_eq!(desc.as_deref(), Some("upcoming: 3"));
 
         // no directives — whole string is body
-        let (tpl, upcoming, desc) = parse_description_directives("No template here");
+        let (tpl, desc) = parse_description_directives("No template here");
         assert!(tpl.is_none());
-        assert!(upcoming.is_none());
         assert_eq!(desc.as_deref(), Some("No template here"));
 
         // empty template value falls through to body
-        let (tpl, upcoming, desc) = parse_description_directives("template: ");
+        let (tpl, desc) = parse_description_directives("template: ");
         assert!(tpl.is_none());
-        assert!(upcoming.is_none());
         // "template: " line is consumed as a directive attempt but template is None;
         // nothing left for body
         assert!(desc.is_none());
@@ -860,6 +894,26 @@ mod tests {
         // The reschedule (moved time) and the completion coexist on one override.
         assert_eq!(over.scheduled_at.unwrap().with_timezone(&Utc).hour(), 14);
         assert_eq!(over.state, ActionState::Completed);
+    }
+
+    #[test]
+    fn standalone_parse_ignores_masters_and_overrides() {
+        // A recurring master and its RECURRENCE-ID override are Plan/deviation, not
+        // standalone Actions — the standalone reader must skip both, or the sync
+        // path would pull an override VTODO in as a spurious new action.
+        let uid = "standup@example.com";
+        let f = write_ics(&format!(
+            "BEGIN:VCALENDAR\r\nVERSION:2.0\r\n\
+             BEGIN:VTODO\r\nUID:{uid}\r\nSUMMARY:Standup\r\n\
+             DTSTART:20260504T090000Z\r\nRRULE:FREQ=DAILY\r\nEND:VTODO\r\n\
+             BEGIN:VTODO\r\nUID:{uid}\r\nSUMMARY:Standup\r\n\
+             RECURRENCE-ID:20260505T090000Z\r\nDTSTART:20260505T090000Z\r\n\
+             STATUS:COMPLETED\r\nEND:VTODO\r\nEND:VCALENDAR\r\n"
+        ));
+        assert!(
+            parse_vtodo_actions(f.path()).unwrap().is_empty(),
+            "neither the master nor its override is a standalone action"
+        );
     }
 
     #[test]

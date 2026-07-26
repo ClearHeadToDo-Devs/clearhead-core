@@ -51,16 +51,10 @@ pub struct WorkspaceConfig {
     /// Each path should follow the `.clearhead` directory layout.
     pub additional_workspaces: Vec<String>,
 
-    /// Total instances generated per schedule across both `<charter>.actions`
-    /// and `<charter>.upcoming.actions`. Must be greater than
-    /// `expansion_primary_instances`. Defaults to `2`.
+    /// Number of occurrences projected per recurring plan into the action
+    /// surface (the projection window). Occurrences are rendered on read, never
+    /// filed. Defaults to `2`.
     pub expansion_total_instances: u32,
-
-    /// Instances placed in the primary `<charter>.actions` file per schedule.
-    /// Remaining instances (up to `expansion_total_instances`) go to
-    /// `<charter>.upcoming.actions`. Must be less than
-    /// `expansion_total_instances`. Defaults to `1`.
-    pub expansion_primary_instances: u32,
 
     /// Configured vdir where plan `.ics` files are written, laid out as
     /// `<plan_path>/<charter>/<uid>.ics`. ClearHead's integration boundary is
@@ -79,7 +73,6 @@ impl Default for WorkspaceConfig {
             default_to_user_scope: false,
             additional_workspaces: Vec::new(),
             expansion_total_instances: 2,
-            expansion_primary_instances: 1,
             plan_path: None,
         }
     }

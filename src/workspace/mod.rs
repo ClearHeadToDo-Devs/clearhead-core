@@ -27,12 +27,12 @@ pub use actions::{
     SourceRange, SourcedAction, diff_actions, format, parse_actions, parse_actions_with_mode,
     parse_document, parse_tree, patch_action_list,
 };
-pub use action_files::{ActionsFile, completed_actions_path, upcoming_actions_path, read_action_file, read_actions, write_actions};
+pub use action_files::{ActionsFile, completed_actions_path, read_action_file, read_actions, write_actions};
 pub use archive_actions::{
     ActionArchivePlan, ActionArchiveResult, CloseActionResult, CloseActionSelector,
     archive_actions, close_action_subtree, plan_action_archive,
 };
-pub use sidecar::{ActionMeta, CharterMeta, CharterMetadata, PlanMeta, hydrate_actions, read_sidecar, sidecar_path, write_sidecar};
+pub use sidecar::{ActionMeta, CharterMeta, CharterMetadata, hydrate_actions, read_sidecar, sidecar_path, write_sidecar};
 pub use charter::{MarkdownCharter, format_charter, implicit_charter, parse_charter};
 pub use manifest::WorkspaceManifest;
 pub use archive_charter::{
@@ -42,7 +42,7 @@ pub use archive_charter::{
 pub use calendar::ics::{
     ICSPlan, OccurrenceOp, OccurrenceOverride, VTodoAction, action_id_from_vtodo_uid,
     action_to_vtodo, actions_to_icalendar, canonical_occurrence_key, occurrence_action_id,
-    parse_vtodo_actions, write_occurrence_deviation,
+    parse_vtodo_actions, write_master_rollforward, write_occurrence_deviation,
 };
 pub use calendar::plans::{
     PlanFileEntry, action_mirror_path, apply_occurrence_op, charter_plans_dir_relative,
@@ -52,13 +52,14 @@ pub use calendar::plans::{
 pub use calendar::reconcile::{
     AppliedSync, OutcomeKind, Reconcile, SyncEntry, SyncField, SyncImport, SyncReport, SyncTally,
     VTodoResource, apply_sync, plan_sync, read_ics_dates, read_vtodo_actions, reconcile,
+    sync_master_rollforwards,
 };
 pub use calendar::sync_store::{
     PlansSyncStore, plans_sync_store_path, read_plans_sync_store,
 };
 
 pub use detection::check_for_workspace;
-pub use calendar::expand::expand_plans_into_actions;
+pub use calendar::expand::extend_with_projected_occurrences;
 pub use store::{
     Diagnosis, diagnose, diagnose_read, Finding, FindingSeverity, Workspace, WorkspaceRead, ManifestSourceType, WorkspaceError,
     WorkspaceManifestEntry, collect_workspace_manifest, infer_charter_name,
