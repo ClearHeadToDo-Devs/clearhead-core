@@ -54,7 +54,7 @@ pub use workspace::{
     load_domain_model_with_plans, load_domain_model_with_projection, Projection,
     load_workspace, load_workspace_with_plans, load_workspaces,
     action_id_from_vtodo_uid, action_to_vtodo, actions_to_icalendar, canonical_occurrence_key,
-    occurrence_action_id,
+    occurrence_action_id, OccurrenceOp, write_occurrence_deviation, apply_occurrence_op,
     parse_vtodo_actions, parse_actions,
     parse_actions_with_mode, parse_charter, parse_document, parse_tree, patch_action_list,
     plan_action_archive, charter_root, plans_root, read_action_file, read_actions, save_domain_model,

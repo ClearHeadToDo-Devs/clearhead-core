@@ -40,13 +40,14 @@ pub use archive_charter::{
     archive_charter, archive_terminal_charters, find_charter as find_markdown_charter,
 };
 pub use calendar::ics::{
-    ICSPlan, OccurrenceOverride, VTodoAction, action_id_from_vtodo_uid, action_to_vtodo,
-    actions_to_icalendar, canonical_occurrence_key, occurrence_action_id, parse_vtodo_actions,
+    ICSPlan, OccurrenceOp, OccurrenceOverride, VTodoAction, action_id_from_vtodo_uid,
+    action_to_vtodo, actions_to_icalendar, canonical_occurrence_key, occurrence_action_id,
+    parse_vtodo_actions, write_occurrence_deviation,
 };
 pub use calendar::plans::{
-    PlanFileEntry, action_mirror_path, charter_plans_dir_relative, collect_plan_files,
-    collect_plan_files_with_plans, infer_plan_charter_name, infer_plan_parent, plan_file_name,
-    plan_output_path,
+    PlanFileEntry, action_mirror_path, apply_occurrence_op, charter_plans_dir_relative,
+    collect_plan_files, collect_plan_files_with_plans, infer_plan_charter_name, infer_plan_parent,
+    plan_file_name, plan_output_path,
 };
 pub use calendar::reconcile::{
     AppliedSync, OutcomeKind, Reconcile, SyncEntry, SyncField, SyncImport, SyncReport, SyncTally,

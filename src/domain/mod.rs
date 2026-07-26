@@ -13,7 +13,7 @@
 pub mod diff;
 pub mod filter;
 
-use chrono::{DateTime, Local};
+use chrono::{DateTime, Local, Utc};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use uuid::Uuid;
@@ -467,9 +467,17 @@ impl Plan {
         let recurrence_str = recurrence.to_string();
         let clean_recurrence = recurrence_str.strip_prefix("R:").unwrap_or(&recurrence_str);
 
+        // Anchor expansion in UTC so occurrences are fixed absolute instants that
+        // round-trip exactly through `canonical_occurrence_key` (also UTC). Emitting
+        // the Local wall-clock with no zone would let `rrule` re-read it as floating
+        // and hold the wall-clock constant across DST, drifting the instant by the
+        // DST offset and breaking EXDATE/RECURRENCE-ID key agreement. This is lossless
+        // for every DTSTART form ClearHead authors (always UTC) and for UTC/floating
+        // foreign masters; a foreign TZID-anchored series across a DST boundary is the
+        // one shape this does not preserve, and is deferred with the frame carried.
         let rrule_str = format!(
             "DTSTART:{}\nRRULE:{}",
-            dtstart.format("%Y%m%dT%H%M%S"),
+            dtstart.with_timezone(&Utc).format("%Y%m%dT%H%M%SZ"),
             clean_recurrence
         );
 

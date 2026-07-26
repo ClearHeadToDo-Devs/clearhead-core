@@ -10,6 +10,7 @@
 //! DUE remain optional, and action projections never carry RRULE.
 
 use crate::domain::{Action, ActionState, Plan, Recurrence};
+use crate::workspace::durability::atomic_write;
 use crate::workspace::store::WorkspaceError;
 use chrono::{DateTime, Local, NaiveDate, NaiveDateTime, TimeZone, Utc};
 use icalendar::{
@@ -342,6 +343,149 @@ fn vtodo_state(todo: &Todo) -> ActionState {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Deviation write path (the mirror of parse_exdates / override_from_todo)
+// ---------------------------------------------------------------------------
+
+/// An operation recorded against one occurrence slot of a recurring master, as
+/// an RFC 5545 deviation. This is how a *projected* occurrence — which has no
+/// `.actions` line to edit — is acted on: the change lands in the single master
+/// resource, never as a materialized instance.
+#[derive(Debug, Clone, PartialEq)]
+pub enum OccurrenceOp {
+    /// Drop the slot from the series (`EXDATE`). It stops rendering entirely.
+    Skip,
+    /// Mark the slot completed at `at` (a `RECURRENCE-ID` override carrying
+    /// `STATUS:COMPLETED` + `COMPLETED`).
+    Complete { at: DateTime<Local> },
+    /// Move the slot to new times (a `RECURRENCE-ID` override). `None` clears
+    /// that field on the override, inheriting nothing further from the master.
+    Reschedule {
+        scheduled_at: Option<DateTime<Local>>,
+        due_date: Option<DateTime<Local>>,
+    },
+}
+
+/// Record `op` against the `occurrence_key` slot of recurring master
+/// `master_uid`, mutating `master_path` in place.
+///
+/// `Skip` adds a deduplicated `EXDATE`; `Complete`/`Reschedule` add or update
+/// the slot's `RECURRENCE-ID` override VTODO. Every other component and property
+/// in the file is preserved, and the write is atomic. The produced deviation
+/// round-trips through [`parse_exdates`] / [`override_from_todo`], so the next
+/// projection reflects it. `occurrence_key` must be a [`canonical_occurrence_key`].
+pub fn write_occurrence_deviation(
+    master_path: &Path,
+    master_uid: &str,
+    occurrence_key: &str,
+    op: &OccurrenceOp,
+) -> Result<(), WorkspaceError> {
+    let content = fs::read_to_string(master_path).map_err(WorkspaceError::Io)?;
+    let mut calendar: Calendar = content.parse().map_err(WorkspaceError::Parse)?;
+
+    match op {
+        OccurrenceOp::Skip => add_exdate(&mut calendar, master_uid, occurrence_key)?,
+        OccurrenceOp::Complete { at } => {
+            let at = *at;
+            upsert_override(&mut calendar, master_uid, occurrence_key, |todo| {
+                todo.status(TodoStatus::Completed);
+                todo.completed(at.with_timezone(&Utc));
+            })?
+        }
+        OccurrenceOp::Reschedule { scheduled_at, due_date } => {
+            let (scheduled_at, due_date) = (*scheduled_at, *due_date);
+            upsert_override(&mut calendar, master_uid, occurrence_key, |todo| {
+                todo.remove_starts();
+                if let Some(value) = scheduled_at {
+                    todo.starts(value.with_timezone(&Utc));
+                }
+                todo.remove_due();
+                if let Some(value) = due_date {
+                    todo.due(value.with_timezone(&Utc));
+                }
+            })?
+        }
+    }
+
+    atomic_write(master_path, calendar.to_string().as_bytes()).map_err(WorkspaceError::Io)
+}
+
+/// Index of the recurring master VTODO for `uid` — the one carrying `RRULE` and
+/// no `RECURRENCE-ID` (which would make it an override, not the master).
+fn master_index(calendar: &Calendar, uid: &str) -> Option<usize> {
+    calendar.components.iter().position(|component| {
+        matches!(component, CalendarComponent::Todo(todo)
+            if todo.get_uid() == Some(uid)
+                && todo.property_value("RRULE").is_some()
+                && todo.property_value("RECURRENCE-ID").is_none())
+    })
+}
+
+fn add_exdate(calendar: &mut Calendar, uid: &str, key: &str) -> Result<(), WorkspaceError> {
+    let index = master_index(calendar, uid)
+        .ok_or_else(|| WorkspaceError::Parse(format!("recurring master VTODO {uid} not found")))?;
+    let CalendarComponent::Todo(master) = &mut calendar.components[index] else {
+        unreachable!("master_index only matches Todo components")
+    };
+    if parse_exdates(master).contains(key) {
+        return Ok(()); // already excluded — writing is idempotent
+    }
+    master.add_multi_property("EXDATE", key);
+    Ok(())
+}
+
+/// Find the `RECURRENCE-ID` override for `key` and patch it, or create one seeded
+/// from the master (UID, the slot as DTSTART, the master SUMMARY) and patch that.
+fn upsert_override(
+    calendar: &mut Calendar,
+    uid: &str,
+    key: &str,
+    patch: impl FnOnce(&mut Todo),
+) -> Result<(), WorkspaceError> {
+    let master_summary = {
+        let index = master_index(calendar, uid).ok_or_else(|| {
+            WorkspaceError::Parse(format!("recurring master VTODO {uid} not found"))
+        })?;
+        let CalendarComponent::Todo(master) = &calendar.components[index] else {
+            unreachable!("master_index only matches Todo components")
+        };
+        master.get_summary().map(str::to_string)
+    };
+
+    let existing = calendar.components.iter().position(|component| {
+        let CalendarComponent::Todo(todo) = component else {
+            return false;
+        };
+        todo.get_uid() == Some(uid)
+            && todo
+                .property_value("RECURRENCE-ID")
+                .and_then(parse_ics_datetime_token)
+                .map(canonical_occurrence_key)
+                .as_deref()
+                == Some(key)
+    });
+
+    if let Some(index) = existing {
+        let CalendarComponent::Todo(todo) = &mut calendar.components[index] else {
+            unreachable!()
+        };
+        patch(todo);
+    } else {
+        let slot = parse_ics_datetime_token(key)
+            .ok_or_else(|| WorkspaceError::Parse(format!("invalid occurrence key {key}")))?;
+        let mut todo = Todo::new();
+        todo.uid(uid);
+        todo.add_property("RECURRENCE-ID", key);
+        todo.starts(slot.with_timezone(&Utc));
+        if let Some(summary) = master_summary {
+            todo.summary(&summary);
+        }
+        patch(&mut todo);
+        calendar.push(todo);
+    }
+    Ok(())
+}
+
 /// The interoperable fields ClearHead owns in a standalone VTODO projection.
 /// Transport metadata, alarms, and vendor extensions deliberately stay out of
 /// this value and are preserved when an existing file is updated.
@@ -644,6 +788,90 @@ mod tests {
         // the 09:00Z slot key — proving we hash the slot, not the new value.
         assert_eq!(over.scheduled_at.unwrap().with_timezone(&Utc).hour(), 11);
         assert!(over.completed_at.is_some());
+    }
+
+    // -------------------------------------------------------------------------
+    // Deviation write path — round-trips through the readers above
+    // -------------------------------------------------------------------------
+
+    /// A bare recurring master with no deviations, for the write tests to mutate.
+    fn master_ics(uid: &str) -> NamedTempFile {
+        write_ics(&format!(
+            "BEGIN:VCALENDAR\r\nVERSION:2.0\r\n\
+             BEGIN:VTODO\r\nUID:{uid}\r\nSUMMARY:Standup\r\n\
+             X-APPLE-SORT-ORDER:7\r\n\
+             DTSTART:20260504T090000Z\r\nRRULE:FREQ=DAILY\r\nEND:VTODO\r\n\
+             END:VCALENDAR\r\n"
+        ))
+    }
+
+    #[test]
+    fn skip_writes_deduplicated_exdate() {
+        let uid = "standup@example.com";
+        let key = "20260505T090000Z";
+        let f = master_ics(uid);
+
+        write_occurrence_deviation(f.path(), uid, key, &OccurrenceOp::Skip).unwrap();
+        write_occurrence_deviation(f.path(), uid, key, &OccurrenceOp::Skip).unwrap();
+
+        let plan = &parse_ics_file(f.path()).unwrap()[0];
+        assert!(plan.exdates.contains(key), "EXDATE round-trips into the read model");
+        assert_eq!(plan.exdates.len(), 1, "writing the same skip twice is idempotent");
+        // Unrelated properties survive the mutation.
+        let raw = std::fs::read_to_string(f.path()).unwrap();
+        assert!(raw.contains("X-APPLE-SORT-ORDER:7"));
+    }
+
+    #[test]
+    fn complete_writes_recurrence_id_override() {
+        let uid = "standup@example.com";
+        let key = "20260505T090000Z";
+        let at = Utc.with_ymd_and_hms(2026, 5, 5, 9, 30, 0).unwrap().with_timezone(&Local);
+        let f = master_ics(uid);
+
+        write_occurrence_deviation(f.path(), uid, key, &OccurrenceOp::Complete { at }).unwrap();
+
+        let plan = &parse_ics_file(f.path()).unwrap()[0];
+        let over = plan.overrides.get(key).expect("override keyed by the completed slot");
+        assert_eq!(over.state, ActionState::Completed);
+        assert!(over.completed_at.is_some());
+    }
+
+    #[test]
+    fn reschedule_then_complete_updates_one_override() {
+        let uid = "standup@example.com";
+        let key = "20260505T090000Z";
+        let moved = Utc.with_ymd_and_hms(2026, 5, 5, 14, 0, 0).unwrap().with_timezone(&Local);
+        let at = Utc.with_ymd_and_hms(2026, 5, 5, 14, 15, 0).unwrap().with_timezone(&Local);
+        let f = master_ics(uid);
+
+        write_occurrence_deviation(
+            f.path(),
+            uid,
+            key,
+            &OccurrenceOp::Reschedule { scheduled_at: Some(moved), due_date: None },
+        )
+        .unwrap();
+        write_occurrence_deviation(f.path(), uid, key, &OccurrenceOp::Complete { at }).unwrap();
+
+        let plan = &parse_ics_file(f.path()).unwrap()[0];
+        assert_eq!(plan.overrides.len(), 1, "second op updates the same override, not a new one");
+        let over = plan.overrides.get(key).unwrap();
+        // The reschedule (moved time) and the completion coexist on one override.
+        assert_eq!(over.scheduled_at.unwrap().with_timezone(&Utc).hour(), 14);
+        assert_eq!(over.state, ActionState::Completed);
+    }
+
+    #[test]
+    fn write_to_absent_master_errors() {
+        let f = master_ics("standup@example.com");
+        let result = write_occurrence_deviation(
+            f.path(),
+            "nonexistent@example.com",
+            "20260505T090000Z",
+            &OccurrenceOp::Skip,
+        );
+        assert!(result.is_err(), "a missing master is an error, not a silent no-op");
     }
 
     // -------------------------------------------------------------------------

@@ -223,6 +223,11 @@ pub fn render_occurrences(ics_plan: &ICSPlan, now: DateTime<Local>, window: u32)
             name: ics_plan.plan.name.clone(),
             scheduled_at: Some(slot),
             plan_id: Some(ics_plan.plan.id),
+            // The occurrence handle: `plan_id` locates the master (and its UID and
+            // file), and this canonical slot key names the slot a deviation write
+            // targets. Carry the key rather than re-deriving it from `scheduled_at`,
+            // which an override may move.
+            external_occurrence_key: Some(key.clone()),
             ..Default::default()
         };
         if let Some(over) = ics_plan.overrides.get(&key) {
@@ -434,6 +439,47 @@ mod tests {
 
         assert!(result.primary.is_empty());
         assert_eq!(result.upcoming.len(), 2);
+    }
+
+    // ---- render_occurrences: frame-preserving EXDATE agreement ----
+
+    /// Regression for the DST-drift bug: a UTC-anchored winter master whose
+    /// EXDATE lands on a *summer-side* slot (across a DST boundary) must skip
+    /// that slot. Before the frame fix, expansion re-read the master as floating
+    /// Local wall-clock and drifted the summer occurrence by the DST offset, so
+    /// its canonical key (07:00Z on Pacific) never matched the EXDATE key
+    /// (08:00Z) and the excluded occurrence still rendered. Anchoring expansion
+    /// in UTC makes both paths agree on any machine timezone.
+    #[test]
+    fn exdate_across_dst_boundary_skips_the_occurrence() {
+        use chrono::Utc;
+        use std::collections::{BTreeMap, BTreeSet};
+
+        let uid = "weekly@example.com";
+        // 08:00Z every Wednesday, starting before US/Pacific DST (2026-03-08)…
+        let dtstart = Utc.with_ymd_and_hms(2026, 2, 25, 8, 0, 0).unwrap().with_timezone(&Local);
+        // …and the excluded slot is on the summer side of that boundary.
+        let excluded = Utc.with_ymd_and_hms(2026, 3, 11, 8, 0, 0).unwrap().with_timezone(&Local);
+        let present = Utc.with_ymd_and_hms(2026, 3, 18, 8, 0, 0).unwrap().with_timezone(&Local);
+
+        let plan = make_plan("weekly review", uid, dtstart, Some("weekly"));
+        let ics_plan = ICSPlan {
+            path: std::path::PathBuf::from("weekly.ics"),
+            exdates: BTreeSet::from([canonical_occurrence_key(excluded)]),
+            overrides: BTreeMap::new(),
+            plan,
+        };
+
+        let now = Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap().with_timezone(&Local);
+        let ids: Vec<Uuid> = render_occurrences(&ics_plan, now, 6)
+            .into_iter()
+            .map(|a| a.id)
+            .collect();
+
+        let excluded_id = occurrence_action_id(uid, &canonical_occurrence_key(excluded));
+        let present_id = occurrence_action_id(uid, &canonical_occurrence_key(present));
+        assert!(!ids.contains(&excluded_id), "post-DST EXDATE slot must be skipped");
+        assert!(ids.contains(&present_id), "the following slot must still render");
     }
 
     // ---- plan without external_id is skipped ----

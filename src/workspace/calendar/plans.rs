@@ -145,6 +145,55 @@ pub(crate) fn collect_plan_files_in(
     Ok(entries)
 }
 
+/// Apply an [`OccurrenceOp`] to one projected occurrence by recording a deviation
+/// on its recurring master.
+///
+/// This is the write channel for *projected* occurrences — the ones with no
+/// `.actions` line. The caller resolves an occurrence to its `plan_id` (which
+/// master) and `occurrence_key` (which slot, a [`canonical_occurrence_key`]);
+/// this locates that master's `.ics` in the plans vdir and writes the deviation
+/// via [`write_occurrence_deviation`]. Materialized actions never reach here —
+/// they are edited in place through the ordinary `.actions` path.
+///
+/// [`canonical_occurrence_key`]: super::ics::canonical_occurrence_key
+pub fn apply_occurrence_op(
+    root: &Path,
+    plan_override: Option<&Path>,
+    plan_id: uuid::Uuid,
+    occurrence_key: &str,
+    op: &super::ics::OccurrenceOp,
+) -> Result<(), WorkspaceError> {
+    let owned_root;
+    let plans_root = match plan_override {
+        Some(path) => path,
+        None => {
+            owned_root = resolve_workspace_layout(root).plans_root;
+            &owned_root
+        }
+    };
+
+    for entry in collect_plan_files_in(plans_root, None)? {
+        for ics_plan in super::ics::parse_ics_file(&entry.path)? {
+            if ics_plan.plan.id != plan_id {
+                continue;
+            }
+            let uid = ics_plan.plan.external_id.ok_or_else(|| {
+                WorkspaceError::Parse(format!("recurring plan {plan_id} has no UID to key on"))
+            })?;
+            return super::ics::write_occurrence_deviation(
+                &ics_plan.path,
+                &uid,
+                occurrence_key,
+                op,
+            );
+        }
+    }
+
+    Err(WorkspaceError::Parse(format!(
+        "recurring plan {plan_id} not found in the configured plans vdir"
+    )))
+}
+
 /// Infer charter name for an `.ics` path relative to `plans_root`, with project-root support.
 ///
 /// The slug `next` maps to `project_root_charter` when in a project workspace.

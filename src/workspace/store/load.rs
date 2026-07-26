@@ -66,6 +66,21 @@ impl Default for Projection {
     }
 }
 
+impl Projection {
+    /// A projection that renders **no** occurrences (`window: 0`), yielding a
+    /// model of owned, materialized artifacts only.
+    ///
+    /// This is the frame the *write* paths load under. Sync reconciles owned
+    /// artifacts against the vdir; a projected occurrence is not one — it has no
+    /// standalone resource to reconcile and no line to locate — so it must never
+    /// reach [`plan_sync`](crate::workspace::calendar::plan_sync). Occurrences
+    /// sync through their own channel: deviations (`EXDATE`/`RECURRENCE-ID`) on
+    /// the master. `now` is irrelevant when nothing is projected.
+    pub fn without_occurrences() -> Self {
+        Self { now: Local::now(), window: 0 }
+    }
+}
+
 impl Workspace {
     pub fn load(root: &Path) -> Result<Self, WorkspaceError> {
         Self::load_with_plans(root, None)

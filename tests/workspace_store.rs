@@ -877,6 +877,158 @@ fn recurring_plan_projects_windowed_occurrences_into_model() {
 }
 
 #[test]
+fn sync_reconciles_owned_artifacts_not_projected_occurrences() {
+    // Regression for the projection→sync leak. Sync reconciles owned artifacts;
+    // a projected occurrence has no standalone VTODO to reconcile and no line
+    // for apply_sync to locate, so if it reaches plan_sync it becomes a spurious
+    // TakeAction entry that later fails. The write path defends against this by
+    // loading the model WITHOUT occurrence projection (Projection::without_
+    // occurrences / window 0). This locks: the materialized model produces sync
+    // entries only for owned ids, while the projected model provably leaks
+    // occurrence entries — the reason sync must not use the read-time model.
+    use clearhead_core::{plan_sync, read_plans_sync_store, read_vtodo_actions};
+    use std::collections::BTreeSet;
+
+    let root = fixture_path("project-mixed");
+    let plans_root = root.join(".clearhead").join("plans");
+    let now = chrono::DateTime::parse_from_rfc3339("2026-06-15T00:00:00Z")
+        .unwrap()
+        .with_timezone(&chrono::Local);
+
+    let materialized_ids: BTreeSet<_> =
+        load_domain_model_with_projection(&root, None, Projection { now, window: 0 })
+            .unwrap()
+            .all_actions()
+            .iter()
+            .map(|a| a.id)
+            .collect();
+    let projected_ids: BTreeSet<_> =
+        load_domain_model_with_projection(&root, None, Projection { now, window: 2 })
+            .unwrap()
+            .all_actions()
+            .iter()
+            .map(|a| a.id)
+            .collect();
+    assert!(
+        projected_ids.len() > materialized_ids.len(),
+        "fixture must project at least one occurrence for this test to mean anything"
+    );
+
+    let store = read_plans_sync_store(&root, &plans_root).unwrap();
+    // The fixture's only .ics is a recurring master (skipped by read_vtodo_actions),
+    // so the standalone-VTODO side is empty and every sync entry originates in the
+    // materialized model — exactly the surface under test.
+    let calendar = read_vtodo_actions(&plans_root).unwrap();
+
+    let materialized_model =
+        load_domain_model_with_projection(&root, None, Projection::without_occurrences()).unwrap();
+    let report = plan_sync(&materialized_model, &store, &calendar).unwrap();
+    for entry in &report.entries {
+        assert!(
+            materialized_ids.contains(&entry.action_id),
+            "sync produced an entry for a non-materialized id: {}",
+            entry.action_id
+        );
+    }
+
+    // And the read-time projected model would leak occurrence entries — proving
+    // the window-0 loader is load-bearing, not incidental.
+    let projected_model =
+        load_domain_model_with_projection(&root, None, Projection { now, window: 2 }).unwrap();
+    let leaky = plan_sync(&projected_model, &store, &calendar).unwrap();
+    assert!(
+        leaky
+            .entries
+            .iter()
+            .any(|entry| !materialized_ids.contains(&entry.action_id)),
+        "projected model must leak occurrence entries into sync; if not, this guard is untested"
+    );
+}
+
+/// An isolated temp workspace with one daily recurring master (never the
+/// committed fixture — these tests mutate the plan file).
+fn recurring_plan_workspace() -> TempDir {
+    let dir = tempfile::tempdir().unwrap();
+    let charters = dir.path().join(".clearhead").join("charters");
+    let plans = dir.path().join(".clearhead").join("plans").join("health");
+    fs::create_dir_all(&charters).unwrap();
+    fs::create_dir_all(&plans).unwrap();
+    fs::write(charters.join("health.actions"), "").unwrap();
+    fs::write(
+        plans.join("run.ics"),
+        "BEGIN:VCALENDAR\r\nVERSION:2.0\r\n\
+         BEGIN:VTODO\r\nUID:run@example.com\r\nSUMMARY:Run\r\n\
+         DTSTART:20260101T080000Z\r\nRRULE:FREQ=DAILY\r\nEND:VTODO\r\nEND:VCALENDAR\r\n",
+    )
+    .unwrap();
+    dir
+}
+
+fn fixed_now() -> chrono::DateTime<chrono::Local> {
+    chrono::DateTime::parse_from_rfc3339("2026-06-15T00:00:00Z")
+        .unwrap()
+        .with_timezone(&chrono::Local)
+}
+
+/// Grab the first projected occurrence's handle: (id, plan_id, occurrence_key).
+fn first_occurrence(root: &Path, now: chrono::DateTime<chrono::Local>) -> (uuid::Uuid, uuid::Uuid, String) {
+    let model = load_domain_model_with_projection(root, None, Projection { now, window: 2 }).unwrap();
+    let occ = model
+        .all_actions()
+        .into_iter()
+        .find(|a| a.external_occurrence_key.is_some())
+        .cloned()
+        .expect("a projected occurrence");
+    (occ.id, occ.plan_id.unwrap(), occ.external_occurrence_key.unwrap())
+}
+
+#[test]
+fn occurrence_complete_writes_deviation_that_reprojects() {
+    // The whole occurrence-ops loop: resolve a projected occurrence's handle,
+    // write a Complete deviation to the master, and prove reprojection reflects
+    // it. This exercises the frame fix end to end — the RECURRENCE-ID key must
+    // match the occurrence slot key for the override to bind.
+    use clearhead_core::{ActionState, OccurrenceOp, apply_occurrence_op};
+
+    let ws = recurring_plan_workspace();
+    let root = ws.path();
+    let now = fixed_now();
+
+    let (occ_id, plan_id, key) = first_occurrence(root, now);
+    apply_occurrence_op(root, None, plan_id, &key, &OccurrenceOp::Complete { at: now }).unwrap();
+
+    let model = load_domain_model_with_projection(root, None, Projection { now, window: 2 }).unwrap();
+    let reprojected = model
+        .all_actions()
+        .into_iter()
+        .find(|a| a.id == occ_id)
+        .expect("the completed occurrence still projects at its slot");
+    assert_eq!(
+        reprojected.state,
+        ActionState::Completed,
+        "completion deviation binds on reprojection (RECURRENCE-ID key == occurrence key)"
+    );
+}
+
+#[test]
+fn occurrence_skip_removes_it_from_the_projection() {
+    use clearhead_core::{OccurrenceOp, apply_occurrence_op};
+
+    let ws = recurring_plan_workspace();
+    let root = ws.path();
+    let now = fixed_now();
+
+    let (occ_id, plan_id, key) = first_occurrence(root, now);
+    apply_occurrence_op(root, None, plan_id, &key, &OccurrenceOp::Skip).unwrap();
+
+    let model = load_domain_model_with_projection(root, None, Projection { now, window: 2 }).unwrap();
+    assert!(
+        model.all_actions().iter().all(|a| a.id != occ_id),
+        "the EXDATE'd slot no longer projects"
+    );
+}
+
+#[test]
 fn sidecar_hydrates_acts_on_load() {
     use uuid::Uuid;
 
