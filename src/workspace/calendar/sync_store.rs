@@ -25,6 +25,14 @@ pub const UID_FIELD: &str = "uid";
 /// Holds the anchor fixed across syncs so a foreign roll-forward (an advanced
 /// `DTSTART`) can be detected against it.
 pub const MASTER_DTSTART_FIELD: &str = "master_dtstart";
+/// A materialized occurrence's link back to its recurring master, keyed by the
+/// occurrence's action id: which plan (`OCCURRENCE_PLAN_FIELD`) and which slot
+/// (`OCCURRENCE_SLOT_FIELD`, a `canonical_occurrence_key`). Neither the `.actions`
+/// DSL nor the sidecar persists an action's `plan_id`/`external_occurrence_key`,
+/// so the stamper records the link here; the completion hook reads it to target
+/// the master deviation, then clears it.
+pub const OCCURRENCE_PLAN_FIELD: &str = "occurrence_plan";
+pub const OCCURRENCE_SLOT_FIELD: &str = "occurrence_slot";
 const STORE_VERSION: u32 = 1;
 
 type Time = Option<DateTime<Local>>;
@@ -93,6 +101,47 @@ impl PlansSyncStore {
         self.stamp(action_id, SCHEDULED_AT_FIELD, &time)
             .expect("datetime serializes");
     }
+
+    /// Record a materialized occurrence's link to its master `(plan_id, slot)`.
+    pub fn stamp_occurrence_link(
+        &mut self,
+        occurrence_id: Uuid,
+        plan_id: Uuid,
+        slot_key: &str,
+    ) -> Result<(), WorkspaceError> {
+        self.stamp(occurrence_id, OCCURRENCE_PLAN_FIELD, &plan_id)?;
+        self.stamp(occurrence_id, OCCURRENCE_SLOT_FIELD, &slot_key)?;
+        Ok(())
+    }
+
+    /// The `(plan_id, slot key)` a materialized occurrence links to, if recorded.
+    pub fn occurrence_link(&self, occurrence_id: Uuid) -> Option<(Uuid, String)> {
+        let fields = self.actions.get(&occurrence_id)?;
+        let plan = serde_json::from_value(fields.get(OCCURRENCE_PLAN_FIELD)?.clone()).ok()?;
+        let slot = serde_json::from_value(fields.get(OCCURRENCE_SLOT_FIELD)?.clone()).ok()?;
+        Some((plan, slot))
+    }
+
+    /// All recorded occurrence links, as `occurrence_id -> (plan_id, slot)`.
+    /// The stamper uses this to tell whether a plan already has a live token.
+    pub fn occurrence_links(&self) -> HashMap<Uuid, (Uuid, String)> {
+        self.actions
+            .keys()
+            .filter_map(|id| self.occurrence_link(*id).map(|link| (*id, link)))
+            .collect()
+    }
+
+    /// Drop an occurrence's linkage once its deviation has landed. Removes the
+    /// whole entry if no other merge bases remain under that id.
+    pub fn clear_occurrence_link(&mut self, occurrence_id: Uuid) {
+        if let Some(fields) = self.actions.get_mut(&occurrence_id) {
+            fields.remove(OCCURRENCE_PLAN_FIELD);
+            fields.remove(OCCURRENCE_SLOT_FIELD);
+            if fields.is_empty() {
+                self.actions.remove(&occurrence_id);
+            }
+        }
+    }
 }
 
 /// Resolve the one local state file for the configured plans projection.
@@ -156,6 +205,41 @@ mod tests {
         let decoded: PlansSyncStore =
             serde_json::from_str(&serialize_plans_sync_store(&store).unwrap()).unwrap();
         assert_eq!(decoded.scheduled_at_bases().unwrap().get(&id), Some(&None));
+    }
+
+    #[test]
+    fn occurrence_link_roundtrips_and_clears() {
+        let plans_root = Path::new("/tmp/plans");
+        let occ = Uuid::new_v4();
+        let plan = Uuid::new_v4();
+        let mut store = PlansSyncStore::new(plans_root);
+
+        store.stamp_occurrence_link(occ, plan, "20260503T090000Z").unwrap();
+        let decoded: PlansSyncStore =
+            serde_json::from_str(&serialize_plans_sync_store(&store).unwrap()).unwrap();
+        assert_eq!(
+            decoded.occurrence_link(occ),
+            Some((plan, "20260503T090000Z".to_string()))
+        );
+        assert_eq!(decoded.occurrence_links().get(&occ), Some(&(plan, "20260503T090000Z".to_string())));
+
+        // Clearing after the deviation lands drops the (now-empty) entry entirely.
+        store.clear_occurrence_link(occ);
+        assert!(store.occurrence_link(occ).is_none());
+        assert!(store.actions.is_empty(), "empty entry is removed, not left dangling");
+    }
+
+    #[test]
+    fn clearing_occurrence_link_preserves_other_bases() {
+        // An id carrying an unrelated merge base keeps that base when its
+        // occurrence link is cleared.
+        let occ = Uuid::new_v4();
+        let mut store = PlansSyncStore::new(Path::new("/tmp/plans"));
+        store.stamp_occurrence_link(occ, Uuid::new_v4(), "slot").unwrap();
+        store.stamp(occ, UID_FIELD, &"keep-me").unwrap();
+        store.clear_occurrence_link(occ);
+        assert!(store.occurrence_link(occ).is_none());
+        assert!(store.actions.contains_key(&occ), "the surviving base keeps the entry");
     }
 
     #[test]

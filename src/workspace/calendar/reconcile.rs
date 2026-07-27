@@ -15,6 +15,7 @@ use super::ics::{
     VTodoAction, action_to_vtodo, canonical_occurrence_key, parse_ics_file, parse_vtodo_actions,
     write_master_rollforward,
 };
+use super::expand::{next_active_slot, render_occurrence};
 use super::plans::{action_mirror_path, charter_plans_dir_relative, collect_plan_files_in};
 use super::sync_store::{
     CONTEXTS_FIELD, DESCRIPTION_FIELD, DUE_DATE_FIELD, MASTER_DTSTART_FIELD, PRIORITY_FIELD,
@@ -513,6 +514,16 @@ pub fn apply_sync(
         }
     }
 
+    // Single-token stamping rides the same lock and batch: ensure every recurring
+    // plan has one live materialized occurrence before we stage.
+    ensure_active_occurrences(
+        &mut workspace.charters,
+        &mut store,
+        &mut dirty_actions,
+        &layout.charter_root,
+        Local::now(),
+    )?;
+
     let mut batch = PendingBatch::new(layout.charter_root.clone());
     let mut paths: Vec<_> = dirty_actions.into_iter().collect();
     paths.sort();
@@ -543,6 +554,99 @@ pub fn apply_sync(
         converged: tally.converged,
         conflict: tally.conflict,
     })
+}
+
+/// A resolved occurrence no longer holds the token — the next may be stamped.
+fn is_resolved(state: ActionState) -> bool {
+    matches!(state, ActionState::Completed | ActionState::Cancelled)
+}
+
+/// Ensure every recurring plan carries exactly one live (unresolved) materialized
+/// occurrence — the single token.
+///
+/// For a plan with no live token, render its active slot ([`next_active_slot`],
+/// the next upcoming occurrence) and stage it: a real `.actions` line under the
+/// plan's own charter, plus its `(plan_id, slot)` link in `store` so the completion
+/// hook can later target the master deviation. Mutated action files are recorded in
+/// `dirty_actions`; the caller stages them and `store` into one atomic batch.
+///
+/// Idempotent by construction: a plan whose token already exists unresolved is
+/// skipped, and a deterministic occurrence id already present (in any state) is
+/// never duplicated. A token resolved *outside* the completion hook (e.g. a raw
+/// `[x]` edit) reads as not-live, so sync re-stamps the next slot — the safety net
+/// under the eager completion path. Returns the number of tokens stamped.
+fn ensure_active_occurrences(
+    charters: &mut Vec<MarkdownCharter>,
+    store: &mut PlansSyncStore,
+    dirty_actions: &mut HashSet<PathBuf>,
+    charter_root: &Path,
+    now: DateTime<Local>,
+) -> Result<usize, WorkspaceError> {
+    let links = store.occurrence_links();
+    let mut stamped = 0;
+
+    for charter_idx in 0..charters.len() {
+        // Clone the plan list so we can mutate this charter's actions in the loop.
+        let plans = charters[charter_idx].plans.clone();
+        for plan in &plans {
+            let Some(uid) = plan.plan.external_id.as_deref() else {
+                continue;
+            };
+            if plan.plan.recurrence.is_none() {
+                continue; // one-shot plans are scheduled actions, not tokened series
+            }
+
+            // A live token exists if any occurrence linked to this plan is present
+            // in the workspace and still unresolved.
+            let has_live_token = links.iter().any(|(occ_id, (pid, _slot))| {
+                *pid == plan.plan.id
+                    && charters.iter().any(|c| {
+                        c.actions
+                            .iter()
+                            .any(|sa| sa.action.id == *occ_id && !is_resolved(sa.action.state))
+                    })
+            });
+            if has_live_token {
+                continue;
+            }
+
+            let Some(slot) = next_active_slot(plan, None, now) else {
+                continue; // series exhausted or no anchor
+            };
+            let occurrence = render_occurrence(plan, uid, slot);
+            let occ_id = occurrence.id;
+
+            // Never duplicate a slot already materialized anywhere (in any state).
+            if charters
+                .iter()
+                .any(|c| c.actions.iter().any(|sa| sa.action.id == occ_id))
+            {
+                continue;
+            }
+
+            let slot_key = occurrence
+                .external_occurrence_key
+                .clone()
+                .expect("render_occurrence always sets the occurrence key");
+            let actions_relative =
+                charters[charter_idx].actions_file.clone().ok_or_else(|| {
+                    WorkspaceError::Parse(format!(
+                        "charter {} carries plans but has no actions_file to stamp into",
+                        charters[charter_idx].id
+                    ))
+                })?;
+
+            charters[charter_idx].actions.push(SourcedAction {
+                action: occurrence,
+                source_metadata: None,
+            });
+            dirty_actions.insert(charter_root.join(actions_relative));
+            store.stamp_occurrence_link(occ_id, plan.plan.id, &slot_key)?;
+            stamped += 1;
+        }
+    }
+
+    Ok(stamped)
 }
 
 fn locate_or_create_import_charter(
@@ -1014,5 +1118,111 @@ mod tests {
         assert!(output.contains("SUMMARY:New"));
         assert!(output.contains("X-APPLE-SORT-ORDER:7"));
         assert!(output.contains("BEGIN:VALARM"));
+    }
+
+    // ---- ensure_active_occurrences: single-token stamping ----
+
+    /// One charter holding one weekly recurring plan, no materialized actions yet.
+    /// Returns the charters, the plan id, and its UID.
+    fn weekly_charter(dtstart: DateTime<Local>) -> (Vec<MarkdownCharter>, Uuid, String) {
+        use crate::domain::{Plan, Recurrence};
+        use std::collections::{BTreeMap, BTreeSet};
+
+        let plan_id = Uuid::now_v7();
+        let uid = "review@example.com".to_string();
+        let plan = Plan {
+            id: plan_id,
+            name: "weekly review".into(),
+            external_id: Some(uid.clone()),
+            dtstart: Some(dtstart),
+            recurrence: Some(Recurrence {
+                frequency: "weekly".into(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let ics = crate::workspace::calendar::ics::ICSPlan {
+            path: PathBuf::from("review.ics"),
+            plan,
+            exdates: BTreeSet::new(),
+            overrides: BTreeMap::new(),
+        };
+        let charter = MarkdownCharter {
+            id: Uuid::now_v7(),
+            title: "health".into(),
+            description: None,
+            alias: None,
+            parent: None,
+            objectives: None,
+            state: None,
+            plans: vec![ics],
+            actions: Vec::new(),
+            md_file: None,
+            actions_file: Some(PathBuf::from("health.actions")),
+            plans_dir: None,
+        };
+        (vec![charter], plan_id, uid)
+    }
+
+    #[test]
+    fn stamps_one_token_then_is_idempotent() {
+        let dtstart = t(5);
+        let now = t(20);
+        let (mut charters, plan_id, uid) = weekly_charter(dtstart);
+        let mut store = PlansSyncStore::new(Path::new("/tmp/plans"));
+        let mut dirty = HashSet::new();
+        let root = Path::new("/ws/.clearhead/charters");
+
+        let n =
+            ensure_active_occurrences(&mut charters, &mut store, &mut dirty, root, now).unwrap();
+        assert_eq!(n, 1, "a fresh recurring plan gets exactly one token");
+        assert_eq!(charters[0].actions.len(), 1);
+
+        let occ = &charters[0].actions[0].action;
+        assert!(!is_resolved(occ.state));
+        let slot = occ.scheduled_at.unwrap();
+        assert!(slot >= now, "the token is the next upcoming slot, never a past one");
+        let key = canonical_occurrence_key(slot);
+        assert_eq!(occ.id, crate::workspace::calendar::ics::occurrence_action_id(&uid, &key));
+        assert_eq!(store.occurrence_link(occ.id), Some((plan_id, key)));
+        assert!(dirty.contains(&root.join("health.actions")));
+
+        // Second run while the token is live and unresolved → nothing new.
+        let again =
+            ensure_active_occurrences(&mut charters, &mut store, &mut dirty, root, now).unwrap();
+        assert_eq!(again, 0, "idempotent while the token is live");
+        assert_eq!(charters[0].actions.len(), 1);
+    }
+
+    #[test]
+    fn resolved_token_advances_by_jump_forward() {
+        // Safety net: a token resolved outside the completion hook (a raw `[x]`
+        // edit) reads as not-live, so a later sync stamps the next slot >= now,
+        // jumping past whatever was missed. Exactly one live token at all times.
+        let dtstart = t(5);
+        let (mut charters, _plan_id, _uid) = weekly_charter(dtstart);
+        let mut store = PlansSyncStore::new(Path::new("/tmp/plans"));
+        let mut dirty = HashSet::new();
+        let root = Path::new("/ws/.clearhead/charters");
+
+        ensure_active_occurrences(&mut charters, &mut store, &mut dirty, root, t(6)).unwrap();
+        let first_slot = charters[0].actions[0].action.scheduled_at.unwrap();
+        charters[0].actions[0].action.state = ActionState::Completed; // resolved by hand
+
+        let now_later = first_slot + chrono::Duration::days(1);
+        let n = ensure_active_occurrences(&mut charters, &mut store, &mut dirty, root, now_later)
+            .unwrap();
+        assert_eq!(n, 1, "no live token → the next slot is stamped");
+        assert_eq!(charters[0].actions.len(), 2);
+        let live: Vec<_> = charters[0]
+            .actions
+            .iter()
+            .filter(|sa| !is_resolved(sa.action.state))
+            .collect();
+        assert_eq!(live.len(), 1, "exactly one live token at any time");
+        assert!(
+            live[0].action.scheduled_at.unwrap() > first_slot,
+            "advanced forward, not backward"
+        );
     }
 }
