@@ -31,7 +31,7 @@ pub use plans::{
 pub use reconcile::{
     AppliedSync, OutcomeKind, Reconcile, SyncEntry, SyncField, SyncImport, SyncReport, SyncTally,
     VTodoResource, apply_sync, plan_sync, read_ics_dates, read_vtodo_actions, reconcile,
-    sync_master_rollforwards,
+    resolve_materialized_occurrence, sync_master_rollforwards,
 };
 pub use sync_store::{
     PlansSyncStore, plans_sync_store_path, read_plans_sync_store,

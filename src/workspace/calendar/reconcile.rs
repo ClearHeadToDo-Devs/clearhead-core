@@ -524,15 +524,38 @@ pub fn apply_sync(
         Local::now(),
     )?;
 
-    let mut batch = PendingBatch::new(layout.charter_root.clone());
+    commit_actions_and_store(
+        &layout.charter_root,
+        plans_sync_store_path(root),
+        &workspace.charters,
+        &store,
+        dirty_actions,
+    )?;
+    let tally = report.tally();
+    Ok(AppliedSync {
+        take_action: tally.take_action,
+        take_calendar: tally.take_calendar,
+        converged: tally.converged,
+        conflict: tally.conflict,
+    })
+}
+
+/// Stage every dirty `.actions` file (re-rendered from its charter) plus the sync
+/// store into one atomic [`PendingBatch`] and commit. The shared tail of every
+/// write touching both layers, so `.actions` and merge bases never diverge.
+fn commit_actions_and_store(
+    charter_root: &Path,
+    store_path: PathBuf,
+    charters: &[MarkdownCharter],
+    store: &PlansSyncStore,
+    dirty_actions: HashSet<PathBuf>,
+) -> Result<(), WorkspaceError> {
+    let mut batch = PendingBatch::new(charter_root.to_path_buf());
     let mut paths: Vec<_> = dirty_actions.into_iter().collect();
     paths.sort();
     for action_path in paths {
-        let relative = action_path
-            .strip_prefix(&layout.charter_root)
-            .unwrap_or(&action_path);
-        let charter = workspace
-            .charters
+        let relative = action_path.strip_prefix(charter_root).unwrap_or(&action_path);
+        let charter = charters
             .iter()
             .find(|charter| charter.actions_file.as_deref() == Some(relative))
             .ok_or_else(|| {
@@ -544,16 +567,85 @@ pub fn apply_sync(
         let content = render_actions(&charter.actions)?;
         batch.stage(action_path, content.as_bytes())?;
     }
-    let sync_content = serialize_plans_sync_store(&store)?;
-    batch.stage(plans_sync_store_path(root), sync_content.as_bytes())?;
+    batch.stage(store_path, serialize_plans_sync_store(store)?.as_bytes())?;
     batch.commit()?;
-    let tally = report.tally();
-    Ok(AppliedSync {
-        take_action: tally.take_action,
-        take_calendar: tally.take_calendar,
-        converged: tally.converged,
-        conflict: tally.conflict,
-    })
+    Ok(())
+}
+
+/// Resolve a *materialized* recurring occurrence (`complete`/`cancel` on its
+/// `.actions` line): record the deviation on its master, drop its store link, and
+/// eagerly stamp the plan's next token. Returns `Ok(false)` when `occurrence_id`
+/// carries no occurrence link — an ordinary action, so the caller's normal close
+/// was all that was needed.
+///
+/// The line's own state is set by that normal close; this adds only the calendar
+/// round-trip and the single-token advance. Advance reuses
+/// [`ensure_active_occurrences`]: with the link cleared the plan has no live token,
+/// so the stamper produces the next. (One imperfection: completing a *future* slot
+/// early re-selects that same slot, whose `[x]` line already exists, so no token is
+/// stamped until `now` passes it — it self-heals on a later sync.)
+pub fn resolve_materialized_occurrence(
+    root: &Path,
+    plan_override: Option<&Path>,
+    occurrence_id: Uuid,
+    op: &super::ics::OccurrenceOp,
+    now: DateTime<Local>,
+) -> Result<bool, WorkspaceError> {
+    let layout = resolve_workspace_layout(root);
+    let plans_root = plan_override.unwrap_or(&layout.plans_root).to_path_buf();
+
+    let (plan_id, slot_key) =
+        match read_plans_sync_store(root, &plans_root)?.occurrence_link(occurrence_id) {
+            Some(link) => link,
+            None => return Ok(false),
+        };
+
+    // 1. Calendar round-trip: the deviation on the master (the proven write path).
+    super::plans::apply_occurrence_op(root, plan_override, plan_id, &slot_key, op)?;
+
+    // 2. Clear the link and advance the token, atomic with the store. Reload after
+    //    the deviation so the stamper sees the fresh EXDATE / completed override.
+    let _lock = WorkspaceLock::try_acquire(&layout.data_root)?
+        .ok_or_else(|| WorkspaceError::WorkspaceLocked(layout.data_root.clone()))?;
+    recover_pending(&layout.charter_root)?;
+
+    let mut workspace = Workspace::load_with_plans(root, plan_override)?;
+    let mut store = read_plans_sync_store(root, &plans_root)?;
+    store.clear_occurrence_link(occurrence_id);
+
+    // Advance: stamp the plan's next token, using the resolved slot as the floor so
+    // an on-time or early completion advances rather than re-selecting it.
+    let mut dirty_actions = HashSet::new();
+    let floor = parse_occurrence_key(&slot_key);
+    if let Some(charter_idx) = workspace
+        .charters
+        .iter()
+        .position(|c| c.plans.iter().any(|p| p.plan.id == plan_id))
+        && let Some(plan) = workspace.charters[charter_idx]
+            .plans
+            .iter()
+            .find(|p| p.plan.id == plan_id)
+            .cloned()
+        && let Some(path) = stage_plan_token(
+            &mut workspace.charters[charter_idx],
+            &mut store,
+            &plan,
+            floor,
+            now,
+            &layout.charter_root,
+        )?
+    {
+        dirty_actions.insert(path);
+    }
+
+    commit_actions_and_store(
+        &layout.charter_root,
+        plans_sync_store_path(root),
+        &workspace.charters,
+        &store,
+        dirty_actions,
+    )?;
+    Ok(true)
 }
 
 /// A resolved occurrence no longer holds the token — the next may be stamped.
@@ -589,15 +681,11 @@ fn ensure_active_occurrences(
         // Clone the plan list so we can mutate this charter's actions in the loop.
         let plans = charters[charter_idx].plans.clone();
         for plan in &plans {
-            let Some(uid) = plan.plan.external_id.as_deref() else {
-                continue;
-            };
-            if plan.plan.recurrence.is_none() {
-                continue; // one-shot plans are scheduled actions, not tokened series
+            if plan.plan.external_id.is_none() || plan.plan.recurrence.is_none() {
+                continue; // need a UID for identity; one-shots aren't tokened series
             }
 
-            // A live token exists if any occurrence linked to this plan is present
-            // in the workspace and still unresolved.
+            // Skip if this plan already has a live (unresolved) token anywhere.
             let has_live_token = links.iter().any(|(occ_id, (pid, _slot))| {
                 *pid == plan.plan.id
                     && charters.iter().any(|c| {
@@ -610,43 +698,70 @@ fn ensure_active_occurrences(
                 continue;
             }
 
-            let Some(slot) = next_active_slot(plan, None, now) else {
-                continue; // series exhausted or no anchor
-            };
-            let occurrence = render_occurrence(plan, uid, slot);
-            let occ_id = occurrence.id;
-
-            // Never duplicate a slot already materialized anywhere (in any state).
-            if charters
-                .iter()
-                .any(|c| c.actions.iter().any(|sa| sa.action.id == occ_id))
+            // No live token → stamp the next upcoming slot (no floor).
+            if let Some(path) =
+                stage_plan_token(&mut charters[charter_idx], store, plan, None, now, charter_root)?
             {
-                continue;
+                dirty_actions.insert(path);
+                stamped += 1;
             }
-
-            let slot_key = occurrence
-                .external_occurrence_key
-                .clone()
-                .expect("render_occurrence always sets the occurrence key");
-            let actions_relative =
-                charters[charter_idx].actions_file.clone().ok_or_else(|| {
-                    WorkspaceError::Parse(format!(
-                        "charter {} carries plans but has no actions_file to stamp into",
-                        charters[charter_idx].id
-                    ))
-                })?;
-
-            charters[charter_idx].actions.push(SourcedAction {
-                action: occurrence,
-                source_metadata: None,
-            });
-            dirty_actions.insert(charter_root.join(actions_relative));
-            store.stamp_occurrence_link(occ_id, plan.plan.id, &slot_key)?;
-            stamped += 1;
         }
     }
 
     Ok(stamped)
+}
+
+/// Render `plan`'s token at `next_active_slot(plan, floor, now)` and stage it into
+/// `charter`: a real `.actions` line plus its `(plan_id, slot)` link in `store`.
+/// Returns the actions file to mark dirty, or `None` when there is no such slot or
+/// it is already materialized in `charter`.
+///
+/// `floor` is the exclusive lower bound the next slot must exceed: `None` for a
+/// plan's first token, `Some(resolved_slot)` when advancing past a just-resolved
+/// one (so on-time and early completions advance instead of re-selecting it).
+fn stage_plan_token(
+    charter: &mut MarkdownCharter,
+    store: &mut PlansSyncStore,
+    plan: &super::ics::ICSPlan,
+    floor: Option<DateTime<Local>>,
+    now: DateTime<Local>,
+    charter_root: &Path,
+) -> Result<Option<PathBuf>, WorkspaceError> {
+    let Some(uid) = plan.plan.external_id.as_deref() else {
+        return Ok(None);
+    };
+    let Some(slot) = next_active_slot(plan, floor, now) else {
+        return Ok(None); // series exhausted or no anchor
+    };
+    let occurrence = render_occurrence(plan, uid, slot);
+    let occ_id = occurrence.id;
+    if charter.actions.iter().any(|sa| sa.action.id == occ_id) {
+        return Ok(None); // this slot is already materialized
+    }
+    let slot_key = occurrence
+        .external_occurrence_key
+        .clone()
+        .expect("render_occurrence always sets the occurrence key");
+    let actions_relative = charter.actions_file.clone().ok_or_else(|| {
+        WorkspaceError::Parse(format!(
+            "charter {} carries plans but has no actions_file to stamp into",
+            charter.id
+        ))
+    })?;
+    charter.actions.push(SourcedAction {
+        action: occurrence,
+        source_metadata: None,
+    });
+    store.stamp_occurrence_link(occ_id, plan.plan.id, &slot_key)?;
+    Ok(Some(charter_root.join(actions_relative)))
+}
+
+/// Parse a [`canonical_occurrence_key`] (`%Y%m%dT%H%M%SZ`, UTC) back to a local
+/// instant, for use as an advance floor. `None` if it is not our canonical form.
+fn parse_occurrence_key(key: &str) -> Option<DateTime<Local>> {
+    chrono::NaiveDateTime::parse_from_str(key, "%Y%m%dT%H%M%SZ")
+        .ok()
+        .map(|naive| naive.and_utc().with_timezone(&Local))
 }
 
 fn locate_or_create_import_charter(

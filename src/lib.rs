@@ -59,7 +59,7 @@ pub use workspace::{
     parse_vtodo_actions, parse_actions,
     parse_actions_with_mode, parse_charter, parse_document, parse_tree, patch_action_list,
     plan_action_archive, charter_root, plans_root, read_action_file, read_actions, save_domain_model,
-    apply_sync, plan_sync, plans_sync_store_path, read_ics_dates, read_vtodo_actions,
+    apply_sync, resolve_materialized_occurrence, plan_sync, plans_sync_store_path, read_ics_dates, read_vtodo_actions,
     read_plans_sync_store, reconcile, OutcomeKind, SyncField, SyncImport, VTodoAction,
     VTodoResource,
     workspace_data_root, write_actions,

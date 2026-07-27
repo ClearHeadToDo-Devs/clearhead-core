@@ -1061,6 +1061,56 @@ fn occurrence_reschedule_moves_the_slot_in_the_projection() {
     );
 }
 
+#[test]
+fn resolving_a_materialized_occurrence_writes_the_deviation_and_advances() {
+    // The completion hook end to end: a real sync stamps the single token; resolving
+    // it (complete) writes the deviation to the master, clears its link, and stamps
+    // the plan's next token — one live token before and after.
+    use clearhead_core::{
+        OccurrenceOp, apply_sync, plan_sync, read_plans_sync_store, read_vtodo_actions,
+        resolve_materialized_occurrence,
+    };
+
+    let ws = recurring_plan_workspace();
+    let root = ws.path();
+    let plans_root = root.join(".clearhead").join("plans");
+    let now = chrono::Local::now();
+
+    // Stamp the initial token via a real sync (empty report → the stamper runs).
+    let model =
+        load_domain_model_with_projection(root, None, Projection::without_occurrences()).unwrap();
+    let store0 = read_plans_sync_store(root, &plans_root).unwrap();
+    let calendar = read_vtodo_actions(&plans_root).unwrap();
+    let report = plan_sync(&model, &store0, &calendar).unwrap();
+    apply_sync(root, None, &report).unwrap();
+
+    let store1 = read_plans_sync_store(root, &plans_root).unwrap();
+    let links1 = store1.occurrence_links();
+    assert_eq!(links1.len(), 1, "sync stamped exactly one token");
+    let (&occ_id, (plan_id, resolved_slot)) = links1.iter().next().unwrap();
+    let (plan_id, resolved_slot) = (*plan_id, resolved_slot.clone());
+
+    // Resolve it (complete).
+    let handled =
+        resolve_materialized_occurrence(root, None, occ_id, &OccurrenceOp::Complete { at: now }, now)
+            .unwrap();
+    assert!(handled, "a store-linked occurrence is handled by the deviation path");
+
+    // The resolved link is cleared and exactly one new token stands for the plan.
+    let store2 = read_plans_sync_store(root, &plans_root).unwrap();
+    assert!(store2.occurrence_link(occ_id).is_none(), "resolved link is cleared");
+    let links2 = store2.occurrence_links();
+    assert_eq!(links2.len(), 1, "still exactly one live token after advancing");
+    let (&next_id, (next_plan, _next_slot)) = links2.iter().next().unwrap();
+    assert_ne!(next_id, occ_id, "advanced to a new slot, not the resolved one");
+    assert_eq!(*next_plan, plan_id, "the new token belongs to the same plan");
+
+    // The master carries the completed RECURRENCE-ID deviation for the resolved slot.
+    let ics = fs::read_to_string(plans_root.join("health").join("run.ics")).unwrap();
+    assert!(ics.contains("RECURRENCE-ID"), "a deviation was written to the master");
+    assert!(ics.contains(&resolved_slot), "the deviation is keyed on the resolved slot");
+}
+
 /// Rewrite the master's `DTSTART` in place — simulates a camp-B client (Apple
 /// Reminders, etc.) completing an occurrence by advancing the anchor.
 fn advance_master(root: &Path, from: &str, to: &str) {
