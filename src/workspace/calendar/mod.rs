@@ -17,7 +17,7 @@ pub mod plans;
 pub mod reconcile;
 pub mod sync_store;
 
-pub use expand::{extend_with_projected_occurrences, render_occurrences};
+pub use expand::render_occurrences;
 pub use ics::{
     ICSPlan, OccurrenceOp, OccurrenceOverride, VTodoAction, action_id_from_vtodo_uid,
     action_to_vtodo, actions_to_icalendar, canonical_occurrence_key, occurrence_action_id,

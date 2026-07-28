@@ -59,12 +59,11 @@ pub use calendar::sync_store::{
 };
 
 pub use detection::check_for_workspace;
-pub use calendar::expand::extend_with_projected_occurrences;
 pub use store::{
     Diagnosis, diagnose, diagnose_read, Finding, FindingSeverity, Workspace, WorkspaceRead, ManifestSourceType, WorkspaceError,
     WorkspaceManifestEntry, collect_workspace_manifest, infer_charter_name,
     infer_parent_charter_name, list_action_files, load_domain_model,
-    load_domain_model_with_plans, load_domain_model_with_projection, Projection,
+    load_domain_model_with_plans,
     load_workspaces, charter_root, plans_root, load_workspace,
     load_workspace_with_plans, read_workspace, read_workspace_with_plans,
     save_domain_model, workspace_data_root,

@@ -384,7 +384,6 @@ pub enum ActionState {
     Cancelled,
 }
 
-
 /// Reference to a predecessor action.
 ///
 /// Carries both the raw text from the DSL (`raw_ref`) and the resolved UUID
@@ -687,7 +686,10 @@ impl Default for Action {
 impl Action {
     /// Construct a new action with a generated UUIDv7, `NotStarted` state, and all optional fields unset.
     pub fn new(name: impl Into<String>) -> Self {
-        Self { name: name.into(), ..Default::default() }
+        Self {
+            name: name.into(),
+            ..Default::default()
+        }
     }
 
     /// Resolved predecessor UUIDs. Used by integration layers.
@@ -771,7 +773,10 @@ impl DomainModel {
 
     /// Flatten all actions across all charters.
     pub fn all_actions(&self) -> Vec<&Action> {
-        self.charters.iter().flat_map(|c| c.actions.iter()).collect()
+        self.charters
+            .iter()
+            .flat_map(|c| c.actions.iter())
+            .collect()
     }
 
     /// Find a Plan by ID, searching across the hierarchy.
@@ -801,9 +806,7 @@ impl DomainModel {
             .filter(|a| !matches!(a.state, ActionState::Completed | ActionState::Cancelled))
             .collect()
     }
-
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -838,7 +841,12 @@ mod tests {
         let parent = charter_with(Some("root"), None);
         let hex = parent.id.to_string().replace('-', "");
         // Full, and hex prefixes from the 4-char floor up past 8 (disambiguation).
-        for candidate in [parent.id.to_string(), hex[..4].into(), hex[..8].into(), hex[..12].into()] {
+        for candidate in [
+            parent.id.to_string(),
+            hex[..4].into(),
+            hex[..8].into(),
+            hex[..12].into(),
+        ] {
             let child = charter_with(None, Some(&candidate));
             assert!(child.is_child_of(&parent), "should match ref {candidate}");
         }
@@ -899,7 +907,10 @@ mod tests {
     }
 
     fn action_with(name: &str, parent_id: Option<Uuid>) -> Action {
-        Action { parent_id, ..Action::new(name) }
+        Action {
+            parent_id,
+            ..Action::new(name)
+        }
     }
 
     #[test]

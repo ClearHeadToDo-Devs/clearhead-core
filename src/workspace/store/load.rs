@@ -12,10 +12,9 @@ use crate::workspace::charter::{
 };
 use crate::workspace::calendar::ics::parse_ics_file;
 use crate::workspace::calendar::plans::collect_plan_files_in;
+use crate::workspace::calendar::sync_store::read_plans_sync_store;
 use crate::workspace::sidecar::{collect_sidecar_actions, hydrate_actions_map, read_sidecar, sidecar_path};
 use crate::workspace::manifest::WorkspaceManifest;
-use crate::workspace::calendar::expand::extend_with_projected_occurrences;
-use chrono::{DateTime, Local};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
@@ -39,45 +38,7 @@ pub struct Workspace {
     /// and never derived from the root path — a workspace without a durable id
     /// stays queryable, but its graph URI is not stable across sessions.
     ephemeral_id: String,
-    /// Parameters the `From<Workspace>` lowering projects recurring plans under.
-    /// Captured at load so the lowering is a pure, deterministic function of the
-    /// struct (I/O and the clock read happen here; projection stays pure).
-    pub projection: Projection,
     pub charters: Vec<MarkdownCharter>,
-}
-
-/// The parameters a [`Workspace`] lowers to a [`DomainModel`] under: the instant
-/// to window recurring occurrences from, and how many to project per plan.
-///
-/// Carrying these on the source aggregate (rather than passing them to the
-/// lowering) is deliberate — it keeps `From<Workspace> for DomainModel` a
-/// context-free `From` while still rendering time-windowed occurrences.
-#[derive(Debug, Clone)]
-pub struct Projection {
-    pub now: DateTime<Local>,
-    /// Occurrences projected per plan (the retired `expansion_total_instances`).
-    pub window: u32,
-}
-
-impl Default for Projection {
-    fn default() -> Self {
-        Self { now: Local::now(), window: 2 }
-    }
-}
-
-impl Projection {
-    /// A projection that renders **no** occurrences (`window: 0`), yielding a
-    /// model of owned, materialized artifacts only.
-    ///
-    /// This is the frame the *write* paths load under. Sync reconciles owned
-    /// artifacts against the vdir; a projected occurrence is not one — it has no
-    /// standalone resource to reconcile and no line to locate — so it must never
-    /// reach [`plan_sync`](crate::workspace::calendar::plan_sync). Occurrences
-    /// sync through their own channel: deviations (`EXDATE`/`RECURRENCE-ID`) on
-    /// the master. `now` is irrelevant when nothing is projected.
-    pub fn without_occurrences() -> Self {
-        Self { now: Local::now(), window: 0 }
-    }
 }
 
 impl Workspace {
@@ -98,7 +59,6 @@ impl Workspace {
             id: manifest.workspace_id,
             name: manifest.workspace_name,
             ephemeral_id: Uuid::now_v7().to_string(),
-            projection: Projection::default(),
             charters,
         })
     }
@@ -148,21 +108,12 @@ pub fn load_workspaces(
 
 impl From<Workspace> for DomainModel {
     fn from(ws: Workspace) -> DomainModel {
-        let Projection { now, window } = ws.projection;
-        let charters = ws
-            .charters
-            .into_iter()
-            .map(|charter| {
-                // Project each recurring plan's occurrences before `Charter::from`
-                // flattens the ICSPlan deviations away, then union via the one
-                // shared rule (materialized wins by id). This is the single union
-                // address: materialized actions ∪ rendered occurrences.
-                let plans = charter.plans.clone();
-                let mut charter = Charter::from(charter);
-                extend_with_projected_occurrences(&mut charter.actions, &plans, now, window);
-                charter
-            })
-            .collect();
+        // Occurrences are never projected into the action list. The present due
+        // occurrence is *materialized* on the write path (a real `.actions` line,
+        // indistinguishable from a dated action); the future is a read-only
+        // calendar concern, rendered elsewhere from the recurrence engine — not
+        // unioned in here. So the lowering is a straight per-charter flatten.
+        let charters = ws.charters.into_iter().map(Charter::from).collect();
         DomainModel { objectives: vec![], charters }
     }
 }
@@ -180,24 +131,6 @@ pub fn load_domain_model_with_plans(
     plan_override: Option<&Path>,
 ) -> Result<DomainModel, WorkspaceError> {
     Ok(Workspace::load_with_plans(root, plan_override)?.into())
-}
-
-/// Load a [`DomainModel`] under an explicit [`Projection`] rather than the
-/// wall-clock default.
-///
-/// This is the deterministic entry point: any caller that must fix `now` and the
-/// occurrence `window` (tests, a pinned agenda range) uses it instead of
-/// [`load_domain_model`], whose default projection reads the live clock. A
-/// `window` of `0` disables occurrence projection entirely, yielding only the
-/// model read from disk.
-pub fn load_domain_model_with_projection(
-    root: &Path,
-    plan_override: Option<&Path>,
-    projection: Projection,
-) -> Result<DomainModel, WorkspaceError> {
-    let mut workspace = Workspace::load_with_plans(root, plan_override)?;
-    workspace.projection = projection;
-    Ok(workspace.into())
 }
 
 /// Load the workspace as a [`FileSystemWorkspace`], preserving file-layer metadata.
@@ -585,8 +518,41 @@ pub fn read_workspace_with_plans(
 
     let mut charters: Vec<MarkdownCharter> = charters_by_name.into_values().collect();
     resolve_predecessor_aliases(&mut charters);
+    hydrate_occurrence_links(&mut charters, root, plans_root);
 
     Ok(WorkspaceRead { charters, findings })
+}
+
+/// Hydrate the live occurrence→plan linkage onto materialized occurrence tokens.
+///
+/// A stamped occurrence is an ordinary `.actions` line; its link to the master
+/// (`plan_id` + the occurrence slot key) is in neither the DSL nor the sidecar —
+/// it lives in the plans sync store as machine-local live-path state. Reading it
+/// back here derives the occurrence's *live* lineage (per the design: "while an
+/// occurrence is live its lineage is derived from the current rule — the
+/// sync-store cache stands"), so every consumer of the loaded model — query, CLI,
+/// LSP, and graphd's `cco:prescribed_by` edge — sees which plan a token realizes.
+///
+/// Best-effort and non-fatal: a missing or plans-root-mismatched store yields no
+/// links and leaves every action untouched (there is nothing live to hydrate).
+/// The *archived* half of lineage is snapshotted onto the completed instance at
+/// crystallization — a separate concern, not derived here.
+fn hydrate_occurrence_links(charters: &mut [MarkdownCharter], root: &Path, plans_root: &Path) {
+    let Ok(store) = read_plans_sync_store(root, plans_root) else {
+        return;
+    };
+    let links = store.occurrence_links();
+    if links.is_empty() {
+        return;
+    }
+    for charter in charters.iter_mut() {
+        for sa in &mut charter.actions {
+            if let Some((plan_id, slot_key)) = links.get(&sa.action.id) {
+                sa.action.plan_id = Some(*plan_id);
+                sa.action.external_occurrence_key = Some(slot_key.clone());
+            }
+        }
+    }
 }
 
 /// Resolve alias predecessor references (`<alias`) to UUIDs once the whole

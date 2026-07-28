@@ -4,19 +4,32 @@
 //! Each test creates an isolated temp workspace so there are no shared-state concerns.
 
 use clearhead_core::{
-    ManifestSourceType, Projection, collect_workspace_manifest, diff_domain_models,
-    load_domain_model, load_domain_model_with_projection, save_domain_model,
+    ManifestSourceType, collect_workspace_manifest, diff_domain_models, load_domain_model,
+    load_workspace, render_occurrences, save_domain_model,
 };
-
-/// A projection that reads the model from disk without projecting any recurring
-/// occurrences (`window: 0`) — for tests asserting the on-disk model itself,
-/// which must not depend on the wall clock.
-fn no_projection() -> Projection {
-    Projection { now: chrono::Local::now(), window: 0 }
-}
 use std::fs;
 use std::path::Path;
 use tempfile::TempDir;
+
+/// Render every recurring plan's next `window` occurrences from the workspace on
+/// disk, via the surviving recurrence engine.
+///
+/// Occurrences are no longer unioned into the loaded `DomainModel` (they
+/// materialize on the write path; the future is a calendar-view concern). These
+/// engine tests still need occurrence handles to drive deviation writes, so they
+/// render explicitly here — exactly what a future calendar view will do.
+fn render_projection(
+    root: &Path,
+    now: chrono::DateTime<chrono::Local>,
+    window: u32,
+) -> Vec<clearhead_core::Action> {
+    load_workspace(root)
+        .unwrap()
+        .iter()
+        .flat_map(|charter| charter.plans.iter())
+        .flat_map(|plan| render_occurrences(plan, now, window))
+        .collect()
+}
 
 // --- Fixture helpers ---
 
@@ -248,10 +261,9 @@ END:VCALENDAR\n",
     )
     .expect("write plan ics");
 
-    // Projection off: this test is about plan-to-charter attachment, not
-    // occurrence rendering, so it must not depend on today's date.
-    let model = load_domain_model_with_projection(&project, None, no_projection())
-        .expect("load failed");
+    // This test is about plan-to-charter attachment, not occurrence rendering;
+    // the loaded model carries no projected occurrences, so it is clock-independent.
+    let model = load_domain_model(&project).expect("load failed");
 
     assert_eq!(model.charters.len(), 1);
     assert_eq!(model.charters[0].alias.as_deref(), Some("my-project"));
@@ -826,9 +838,9 @@ fn mixed_workspace_loads_actions_and_ics_plans() {
 #[test]
 fn mixed_workspace_ron_snapshots() {
     let root = fixture_path("project-mixed");
-    // Snapshot the on-disk model only (projection off) so the golden file stays
-    // deterministic; occurrence projection has its own dedicated test below.
-    let model = load_domain_model_with_projection(&root, None, no_projection()).expect("load failed");
+    // The on-disk model carries no projected occurrences (they materialize on the
+    // write path), so the golden file is deterministic without a fixed clock.
+    let model = load_domain_model(&root).expect("load failed");
     let ron = model_to_ron(&model);
     assert_snapshot(&fixture_path("project-mixed.ron"), &ron);
 
@@ -837,113 +849,11 @@ fn mixed_workspace_ron_snapshots() {
     assert_snapshot(&fixture_path("project-mixed-manifest.ron"), &manifest_ron);
 }
 
-#[test]
-fn recurring_plan_projects_windowed_occurrences_into_model() {
-    // project-mixed carries one recurring plan (health-workout, weekly MWF from
-    // 2026-01-01). Under a fixed `now` it must project exactly `window`
-    // occurrences into the loaded model — the end-to-end proof that the
-    // Workspace → DomainModel union renders occurrences from ICSPlan deviations.
-    let root = fixture_path("project-mixed");
-    let now = chrono::DateTime::parse_from_rfc3339("2026-06-15T00:00:00Z")
-        .unwrap()
-        .with_timezone(&chrono::Local);
-
-    let base = load_domain_model_with_projection(&root, None, Projection { now, window: 0 })
-        .expect("load failed")
-        .all_actions()
-        .len();
-
-    let model = load_domain_model_with_projection(&root, None, Projection { now, window: 2 })
-        .expect("load failed");
-    assert_eq!(
-        model.all_actions().len(),
-        base + 2,
-        "window=2 projects two occurrences for the one recurring plan"
-    );
-
-    let projected: Vec<_> = model
-        .all_actions()
-        .into_iter()
-        .filter(|a| a.plan_id.is_some() && a.scheduled_at.map(|dt| dt >= now).unwrap_or(false))
-        .collect();
-    assert_eq!(projected.len(), 2, "each projected occurrence carries plan linkage and a future slot");
-
-    // Deterministic across reloads for a fixed `now`.
-    let reload = load_domain_model_with_projection(&root, None, Projection { now, window: 2 })
-        .expect("load failed");
-    let ids1: std::collections::BTreeSet<_> = model.all_actions().iter().map(|a| a.id).collect();
-    let ids2: std::collections::BTreeSet<_> = reload.all_actions().iter().map(|a| a.id).collect();
-    assert_eq!(ids1, ids2, "projection is stable across reloads");
-}
-
-#[test]
-fn sync_reconciles_owned_artifacts_not_projected_occurrences() {
-    // Regression for the projection→sync leak. Sync reconciles owned artifacts;
-    // a projected occurrence has no standalone VTODO to reconcile and no line
-    // for apply_sync to locate, so if it reaches plan_sync it becomes a spurious
-    // TakeAction entry that later fails. The write path defends against this by
-    // loading the model WITHOUT occurrence projection (Projection::without_
-    // occurrences / window 0). This locks: the materialized model produces sync
-    // entries only for owned ids, while the projected model provably leaks
-    // occurrence entries — the reason sync must not use the read-time model.
-    use clearhead_core::{plan_sync, read_plans_sync_store, read_vtodo_actions};
-    use std::collections::BTreeSet;
-
-    let root = fixture_path("project-mixed");
-    let plans_root = root.join(".clearhead").join("plans");
-    let now = chrono::DateTime::parse_from_rfc3339("2026-06-15T00:00:00Z")
-        .unwrap()
-        .with_timezone(&chrono::Local);
-
-    let materialized_ids: BTreeSet<_> =
-        load_domain_model_with_projection(&root, None, Projection { now, window: 0 })
-            .unwrap()
-            .all_actions()
-            .iter()
-            .map(|a| a.id)
-            .collect();
-    let projected_ids: BTreeSet<_> =
-        load_domain_model_with_projection(&root, None, Projection { now, window: 2 })
-            .unwrap()
-            .all_actions()
-            .iter()
-            .map(|a| a.id)
-            .collect();
-    assert!(
-        projected_ids.len() > materialized_ids.len(),
-        "fixture must project at least one occurrence for this test to mean anything"
-    );
-
-    let store = read_plans_sync_store(&root, &plans_root).unwrap();
-    // The fixture's only .ics is a recurring master (skipped by read_vtodo_actions),
-    // so the standalone-VTODO side is empty and every sync entry originates in the
-    // materialized model — exactly the surface under test.
-    let calendar = read_vtodo_actions(&plans_root).unwrap();
-
-    let materialized_model =
-        load_domain_model_with_projection(&root, None, Projection::without_occurrences()).unwrap();
-    let report = plan_sync(&materialized_model, &store, &calendar).unwrap();
-    for entry in &report.entries {
-        assert!(
-            materialized_ids.contains(&entry.action_id),
-            "sync produced an entry for a non-materialized id: {}",
-            entry.action_id
-        );
-    }
-
-    // And the read-time projected model would leak occurrence entries — proving
-    // the window-0 loader is load-bearing, not incidental.
-    let projected_model =
-        load_domain_model_with_projection(&root, None, Projection { now, window: 2 }).unwrap();
-    let leaky = plan_sync(&projected_model, &store, &calendar).unwrap();
-    assert!(
-        leaky
-            .entries
-            .iter()
-            .any(|entry| !materialized_ids.contains(&entry.action_id)),
-        "projected model must leak occurrence entries into sync; if not, this guard is untested"
-    );
-}
+// Note: occurrences are no longer unioned into the loaded `DomainModel`, so the
+// former `recurring_plan_projects_windowed_occurrences_into_model` and
+// `sync_reconciles_owned_artifacts_not_projected_occurrences` tests are retired.
+// Projection is now a query-only concern (see `render_projection`), and the
+// materialized-token sync seal is unit-tested in `reconcile.rs`.
 
 /// An isolated temp workspace with one daily recurring master (never the
 /// committed fixture — these tests mutate the plan file).
@@ -972,12 +882,9 @@ fn fixed_now() -> chrono::DateTime<chrono::Local> {
 
 /// Grab the first projected occurrence's handle: (id, plan_id, occurrence_key).
 fn first_occurrence(root: &Path, now: chrono::DateTime<chrono::Local>) -> (uuid::Uuid, uuid::Uuid, String) {
-    let model = load_domain_model_with_projection(root, None, Projection { now, window: 2 }).unwrap();
-    let occ = model
-        .all_actions()
+    let occ = render_projection(root, now, 2)
         .into_iter()
         .find(|a| a.external_occurrence_key.is_some())
-        .cloned()
         .expect("a projected occurrence");
     (occ.id, occ.plan_id.unwrap(), occ.external_occurrence_key.unwrap())
 }
@@ -997,9 +904,7 @@ fn occurrence_complete_writes_deviation_that_reprojects() {
     let (occ_id, plan_id, key) = first_occurrence(root, now);
     apply_occurrence_op(root, None, plan_id, &key, &OccurrenceOp::Complete { at: now }).unwrap();
 
-    let model = load_domain_model_with_projection(root, None, Projection { now, window: 2 }).unwrap();
-    let reprojected = model
-        .all_actions()
+    let reprojected = render_projection(root, now, 2)
         .into_iter()
         .find(|a| a.id == occ_id)
         .expect("the completed occurrence still projects at its slot");
@@ -1021,9 +926,8 @@ fn occurrence_skip_removes_it_from_the_projection() {
     let (occ_id, plan_id, key) = first_occurrence(root, now);
     apply_occurrence_op(root, None, plan_id, &key, &OccurrenceOp::Skip).unwrap();
 
-    let model = load_domain_model_with_projection(root, None, Projection { now, window: 2 }).unwrap();
     assert!(
-        model.all_actions().iter().all(|a| a.id != occ_id),
+        render_projection(root, now, 2).iter().all(|a| a.id != occ_id),
         "the EXDATE'd slot no longer projects"
     );
 }
@@ -1048,9 +952,7 @@ fn occurrence_reschedule_moves_the_slot_in_the_projection() {
     .unwrap();
 
     // Same occurrence identity (keyed by the immutable slot), new scheduled time.
-    let model = load_domain_model_with_projection(root, None, Projection { now, window: 2 }).unwrap();
-    let occ = model
-        .all_actions()
+    let occ = render_projection(root, now, 2)
         .into_iter()
         .find(|a| a.id == occ_id)
         .expect("the rescheduled occurrence keeps its slot identity");
@@ -1077,8 +979,7 @@ fn resolving_a_materialized_occurrence_writes_the_deviation_and_advances() {
     let now = chrono::Local::now();
 
     // Stamp the initial token via a real sync (empty report → the stamper runs).
-    let model =
-        load_domain_model_with_projection(root, None, Projection::without_occurrences()).unwrap();
+    let model = load_domain_model(root).unwrap();
     let store0 = read_plans_sync_store(root, &plans_root).unwrap();
     let calendar = read_vtodo_actions(&plans_root).unwrap();
     let report = plan_sync(&model, &store0, &calendar).unwrap();
@@ -1109,6 +1010,49 @@ fn resolving_a_materialized_occurrence_writes_the_deviation_and_advances() {
     let ics = fs::read_to_string(plans_root.join("health").join("run.ics")).unwrap();
     assert!(ics.contains("RECURRENCE-ID"), "a deviation was written to the master");
     assert!(ics.contains(&resolved_slot), "the deviation is keyed on the resolved slot");
+}
+
+#[test]
+fn materialized_occurrence_hydrates_its_plan_link_from_the_sync_store() {
+    // After the unwind a stamped occurrence is a plain `.actions` line — no plan_id
+    // in the DSL or sidecar; the linkage lives only in the sync store. The loader
+    // hydrates it back so every model consumer (notably graphd's prescription edge)
+    // knows which plan a token realizes.
+    use clearhead_core::{apply_sync, plan_sync, read_plans_sync_store, read_vtodo_actions};
+
+    let ws = recurring_plan_workspace();
+    let root = ws.path();
+    let plans_root = root.join(".clearhead").join("plans");
+
+    // Stamp the single token via a real sync (empty report → the stamper runs).
+    let model = load_domain_model(root).unwrap();
+    let store0 = read_plans_sync_store(root, &plans_root).unwrap();
+    let calendar = read_vtodo_actions(&plans_root).unwrap();
+    let report = plan_sync(&model, &store0, &calendar).unwrap();
+    apply_sync(root, None, &report).unwrap();
+
+    let links = read_plans_sync_store(root, &plans_root).unwrap().occurrence_links();
+    assert_eq!(links.len(), 1, "sync stamped exactly one token");
+    let (occ_id, (plan_id, slot_key)) = {
+        let (id, link) = links.iter().next().unwrap();
+        (*id, link.clone())
+    };
+
+    // Reload from disk: the token line carries no linkage of its own, yet the
+    // loaded action has both hydrated from the store.
+    let token = load_domain_model(root)
+        .unwrap()
+        .all_actions()
+        .into_iter()
+        .find(|a| a.id == occ_id)
+        .cloned()
+        .expect("the stamped token line is loaded");
+    assert_eq!(token.plan_id, Some(plan_id), "plan_id hydrated from the sync store");
+    assert_eq!(
+        token.external_occurrence_key.as_deref(),
+        Some(slot_key.as_str()),
+        "occurrence slot key hydrated from the sync store"
+    );
 }
 
 /// Rewrite the master's `DTSTART` in place — simulates a camp-B client (Apple
@@ -1146,10 +1090,8 @@ fn foreign_rollforward_is_ingested_as_completion() {
     let now = chrono::DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z")
         .unwrap()
         .with_timezone(&chrono::Local);
-    let model = load_domain_model_with_projection(root, None, Projection { now, window: 2 }).unwrap();
     let occ_id = occurrence_action_id("run@example.com", "20260101T080000Z");
-    let occ = model
-        .all_actions()
+    let occ = render_projection(root, now, 2)
         .into_iter()
         .find(|a| a.id == occ_id)
         .expect("the origin slot still projects");

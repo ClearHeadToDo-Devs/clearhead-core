@@ -1,7 +1,4 @@
-use std::collections::HashSet;
-
 use chrono::{DateTime, Local};
-use uuid::Uuid;
 
 use crate::workspace::actions::{Action, ActionState};
 use super::ics::{ICSPlan, OccurrenceOverride, canonical_occurrence_key, occurrence_action_id};
@@ -86,30 +83,6 @@ pub(crate) fn render_occurrence(ics_plan: &ICSPlan, plan_uid: &str, slot: DateTi
     action
 }
 
-/// The one definition of the action union: append every plan's projected
-/// occurrences to `actions`, skipping any whose id is already present so a
-/// **materialized action always wins** over its projection (same occurrence
-/// UUIDv5).
-///
-/// Every site that needs "materialized ∪ projected" calls this — the
-/// `Workspace → DomainModel` lowering and the CLI read collectors — so the union
-/// rule lives in exactly one place and no consumer can re-derive it differently.
-pub fn extend_with_projected_occurrences(
-    actions: &mut Vec<Action>,
-    plans: &[ICSPlan],
-    now: DateTime<Local>,
-    window: u32,
-) {
-    let materialized: HashSet<Uuid> = actions.iter().map(|a| a.id).collect();
-    for plan in plans {
-        for occurrence in render_occurrences(plan, now, window) {
-            if !materialized.contains(&occurrence.id) {
-                actions.push(occurrence);
-            }
-        }
-    }
-}
-
 /// Overlay a `RECURRENCE-ID` override onto its rendered occurrence. `None`
 /// fields inherit the value already rendered from the master.
 fn apply_override(action: &mut Action, over: &OccurrenceOverride) {
@@ -187,6 +160,7 @@ mod tests {
     use super::*;
     use crate::domain::{Plan, Recurrence};
     use chrono::TimeZone;
+    use uuid::Uuid;
 
     fn make_plan(name: &str, uid: &str, dtstart: DateTime<Local>, rrule: Option<&str>) -> Plan {
         Plan {
@@ -244,39 +218,6 @@ mod tests {
         let present_id = occurrence_action_id(uid, &canonical_occurrence_key(present));
         assert!(!ids.contains(&excluded_id), "post-DST EXDATE slot must be skipped");
         assert!(ids.contains(&present_id), "the following slot must still render");
-    }
-
-    #[test]
-    fn extend_unions_occurrences_and_materialized_wins() {
-        use std::collections::{BTreeMap, BTreeSet};
-
-        let dtstart = Local.with_ymd_and_hms(2026, 5, 4, 9, 0, 0).unwrap();
-        let ics = ICSPlan {
-            path: std::path::PathBuf::from("p.ics"),
-            plan: make_plan("standup", "uid-x", dtstart, Some("daily")),
-            exdates: BTreeSet::new(),
-            overrides: BTreeMap::new(),
-        };
-
-        // Take the first projected occurrence's id, then seed a *materialized*
-        // action with the same id but different content.
-        let occ_id = render_occurrences(&ics, now(), 1)[0].id;
-        let mut actions = vec![Action {
-            id: occ_id,
-            name: "standup (hand-edited)".to_string(),
-            ..Default::default()
-        }];
-
-        extend_with_projected_occurrences(&mut actions, std::slice::from_ref(&ics), now(), 3);
-
-        // The materialized line wins: exactly one action carries that id, unchanged.
-        assert_eq!(actions.iter().filter(|a| a.id == occ_id).count(), 1, "no duplicate slot");
-        assert!(
-            actions.iter().any(|a| a.id == occ_id && a.name == "standup (hand-edited)"),
-            "materialized content is preserved, not overwritten by the projection"
-        );
-        // Later slots still project alongside it.
-        assert!(actions.len() > 1, "further occurrences are unioned in");
     }
 
     // ---- plan without external_id is skipped ----
