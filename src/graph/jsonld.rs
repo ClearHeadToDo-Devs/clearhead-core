@@ -287,9 +287,6 @@ fn action_to_jsonld(action: &Action) -> Value {
     if let Some(duration) = action.duration {
         node.insert("durationMinutes".to_string(), json!(duration));
     }
-    if let Some(external_schedule_id) = &action.external_schedule_id {
-        insert_str(&mut node, "externalScheduleId", external_schedule_id);
-    }
     if let Some(external_occurrence_key) = &action.external_occurrence_key {
         insert_str(&mut node, "externalOccurrenceKey", external_occurrence_key);
     }
@@ -433,7 +430,6 @@ mod tests {
                     alias: Some("graph_tests".to_string()),
                     is_sequential: Some(true),
                     plan_id: Some(plan_id),
-                    external_schedule_id: Some("weekly-review@example.com".to_string()),
                     external_occurrence_key: Some("2026-04-09T10:00:00-07:00".to_string()),
                     state: ActionState::InProgress,
                     scheduled_at: Some(
@@ -528,7 +524,6 @@ mod tests {
         assert!(action.get("status").is_some());
         assert!(action.get("scheduledAt").is_some());
         assert!(action.get("durationMinutes").is_some());
-        assert!(action.get("externalScheduleId").is_some());
         assert!(action.get("externalOccurrenceKey").is_some());
         assert_eq!(action.get("status"), Some(&json!("InProgress")));
     }

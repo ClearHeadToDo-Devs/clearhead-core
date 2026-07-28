@@ -175,9 +175,6 @@
           "type": "string",
           "format": "date-time"
         },
-        "externalScheduleId": {
-          "type": "string"
-        },
         "externalOccurrenceKey": {
           "type": "string"
         },

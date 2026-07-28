@@ -510,13 +510,10 @@ fn insert_action(store: &Store, action: &Action, graph_name: &GraphName) -> Resu
         add(cco_node(CCO_PRESCRIBED_BY), Term::NamedNode(plan_uri))?;
     }
 
-    if let Some(external_schedule_id) = &action.external_schedule_id {
-        add(
-            actions_pred("hasExternalScheduleId"),
-            Term::Literal(Literal::new_simple_literal(external_schedule_id)),
-        )?;
-    }
-
+    // An occurrence's link to its plan is carried by `plan_id` (→ cco:prescribed_by,
+    // above) and this slot key. The former per-action `external_schedule_id` (a
+    // plan-UID mirror on the generated line) is retired; the plan's own UID is
+    // projected on the Plan node via `hasExternalScheduleId`.
     if let Some(external_occurrence_key) = &action.external_occurrence_key {
         add(
             actions_pred("hasExternalOccurrenceKey"),
@@ -709,7 +706,6 @@ mod tests {
                         ),
                     }]),
                     plan_id: Some(plan_id),
-                    external_schedule_id: Some("weekly-review@example.com".to_string()),
                     external_occurrence_key: Some("2026-04-09T10:00:00-07:00".to_string()),
                     state: ActionState::InProgress,
                     scheduled_at: Some(
@@ -812,12 +808,6 @@ mod tests {
             action,
             actions_pred("hasDurationMinutes").as_ref(),
             LiteralRef::new_typed_literal("45", ns(XSD_NS, "integer").as_ref()).into(),
-        ));
-        assert!(has_term(
-            &store,
-            action,
-            actions_pred("hasExternalScheduleId").as_ref(),
-            LiteralRef::new_simple_literal("weekly-review@example.com").into(),
         ));
         assert!(has_term(
             &store,
