@@ -26,7 +26,8 @@ use crate::domain::{Action, ActionState, DomainModel};
 use crate::workspace::charter::{MarkdownCharter, implicit_charter};
 use crate::workspace::durability::{PendingBatch, WorkspaceLock, atomic_write, recover_pending};
 use crate::workspace::store::{Workspace, WorkspaceError, resolve_workspace_layout};
-use crate::workspace::{OutputFormat, SourcedAction, format};
+use crate::workspace::templates::{instantiate_template, resolve_template};
+use crate::workspace::{OutputFormat, SourcedAction, format, read_actions};
 
 type Time = Option<DateTime<Local>>;
 
@@ -277,7 +278,20 @@ pub fn plan_sync(
         .into_iter()
         .map(|action| action.id)
         .collect();
+
+    // A materialized occurrence token is represented on the calendar by its
+    // master's RRULE + deviations, never as a standalone VTODO — and its grafted
+    // template steps stay local in `.actions` entirely. Both are ordinary
+    // materialized lines a window-0 load keeps, so without this they would push
+    // as duplicate standalone todos on the next sync (the double-vision the master
+    // already covers). This is the materialized-token analog of the window-0 seal
+    // that removes *projected* occurrences before they ever reach here.
+    let occurrence_owned = occurrence_subtree_ids(model, store);
+
     for action in model.all_actions() {
+        if occurrence_owned.contains(&action.id) {
+            continue;
+        }
         let calendar_action = calendar.get(&action.id).map(|resource| &resource.action);
         let action_contexts = normalized_contexts(action.contexts.clone());
         let entry = SyncEntry {
@@ -340,6 +354,40 @@ pub fn plan_sync(
     }
     report.imports.sort_by_key(|import| import.action.id);
     Ok(report)
+}
+
+/// The ids of every materialized occurrence token **and its grafted subtree**.
+///
+/// A token root is any action carrying an occurrence link in `store`
+/// ([`stamp_occurrence_link`](PlansSyncStore::stamp_occurrence_link)); its grafted
+/// template steps are its descendants by `parent_id`. Together they are the actions
+/// the plans vdir represents through the master (RRULE occurrence + completion
+/// deviations) or keeps purely local — so [`plan_sync`] excludes them from
+/// standalone reconciliation. Returns an empty set when no tokens are stamped, the
+/// non-recurring common case.
+fn occurrence_subtree_ids(model: &DomainModel, store: &PlansSyncStore) -> HashSet<Uuid> {
+    let roots = store.occurrence_links();
+    if roots.is_empty() {
+        return HashSet::new();
+    }
+    let actions = model.all_actions();
+    let parent_of: HashMap<Uuid, Option<Uuid>> =
+        actions.iter().map(|a| (a.id, a.parent_id)).collect();
+
+    let mut owned = HashSet::new();
+    for action in &actions {
+        // Walk the parent chain; if it reaches a token root the action is part of
+        // that occurrence's subtree. The chain is a finite tree, so this terminates.
+        let mut cursor = Some(action.id);
+        while let Some(id) = cursor {
+            if roots.contains_key(&id) {
+                owned.insert(action.id);
+                break;
+            }
+            cursor = parent_of.get(&id).copied().flatten();
+        }
+    }
+    owned
 }
 
 fn normalized_contexts(mut contexts: Option<Vec<String>>) -> Option<Vec<String>> {
@@ -521,6 +569,7 @@ pub fn apply_sync(
         &mut store,
         &mut dirty_actions,
         &layout.charter_root,
+        &layout.data_root,
         Local::now(),
     )?;
 
@@ -633,6 +682,7 @@ pub fn resolve_materialized_occurrence(
             floor,
             now,
             &layout.charter_root,
+            &layout.data_root,
         )?
     {
         dirty_actions.insert(path);
@@ -672,6 +722,7 @@ fn ensure_active_occurrences(
     store: &mut PlansSyncStore,
     dirty_actions: &mut HashSet<PathBuf>,
     charter_root: &Path,
+    data_root: &Path,
     now: DateTime<Local>,
 ) -> Result<usize, WorkspaceError> {
     let links = store.occurrence_links();
@@ -699,9 +750,15 @@ fn ensure_active_occurrences(
             }
 
             // No live token → stamp the next upcoming slot (no floor).
-            if let Some(path) =
-                stage_plan_token(&mut charters[charter_idx], store, plan, None, now, charter_root)?
-            {
+            if let Some(path) = stage_plan_token(
+                &mut charters[charter_idx],
+                store,
+                plan,
+                None,
+                now,
+                charter_root,
+                data_root,
+            )? {
                 dirty_actions.insert(path);
                 stamped += 1;
             }
@@ -726,6 +783,7 @@ fn stage_plan_token(
     floor: Option<DateTime<Local>>,
     now: DateTime<Local>,
     charter_root: &Path,
+    data_root: &Path,
 ) -> Result<Option<PathBuf>, WorkspaceError> {
     let Some(uid) = plan.plan.external_id.as_deref() else {
         return Ok(None);
@@ -752,8 +810,51 @@ fn stage_plan_token(
         action: occurrence,
         source_metadata: None,
     });
+    graft_template_steps(charter, plan, occ_id, &actions_relative, charter_root, data_root)?;
     store.stamp_occurrence_link(occ_id, plan.plan.id, &slot_key)?;
     Ok(Some(charter_root.join(actions_relative)))
+}
+
+/// Graft a templated plan's step-forest beneath its just-stamped occurrence root.
+///
+/// `template:` is the one-bit lane switch and it only ever *adds children*: an
+/// atomic plan (no `template_name`) has no template to resolve and this is a
+/// no-op, leaving the childless root the caller already pushed. A templated plan
+/// instantiates its template with the occurrence id as the `parent_override`, so
+/// the template's own roots attach beneath the occurrence and every descendant
+/// remaps under it. Both lanes therefore share one synthesized root and differ
+/// only by the presence of grafted steps.
+///
+/// Fresh (`now_v7`) child ids are safe: the caller's root-id idempotency guard
+/// means we only reach here on the *first* stamp of a slot, never a re-stamp, so
+/// there is nothing for non-deterministic ids to duplicate. A named-but-missing
+/// template is deliberately non-fatal — the root token still stamps, matching the
+/// atomic lane; a dangling template reference is doctor's to surface, not the
+/// sync write path's to fail on.
+fn graft_template_steps(
+    charter: &mut MarkdownCharter,
+    plan: &super::ics::ICSPlan,
+    occ_id: Uuid,
+    actions_relative: &Path,
+    charter_root: &Path,
+    data_root: &Path,
+) -> Result<(), WorkspaceError> {
+    let Some(template_name) = plan.plan.template_name.as_deref() else {
+        return Ok(()); // atomic lane: childless root, nothing to graft
+    };
+    let actions_abs = charter_root.join(actions_relative);
+    let charter_dir = actions_abs.parent().unwrap_or(charter_root);
+    let Some(tpl_path) = resolve_template(charter_dir, data_root, template_name)? else {
+        return Ok(()); // named template missing → root still stamps
+    };
+    let steps = read_actions(&tpl_path)?;
+    for step in instantiate_template(&steps, |_| Uuid::now_v7(), Some(occ_id)) {
+        charter.actions.push(SourcedAction {
+            action: step,
+            source_metadata: None,
+        });
+    }
+    Ok(())
 }
 
 /// Parse a [`canonical_occurrence_key`] (`%Y%m%dT%H%M%SZ`, UTC) back to a local
@@ -1287,9 +1388,10 @@ mod tests {
         let mut store = PlansSyncStore::new(Path::new("/tmp/plans"));
         let mut dirty = HashSet::new();
         let root = Path::new("/ws/.clearhead/charters");
+        let data_root = Path::new("/ws/.clearhead");
 
-        let n =
-            ensure_active_occurrences(&mut charters, &mut store, &mut dirty, root, now).unwrap();
+        let n = ensure_active_occurrences(&mut charters, &mut store, &mut dirty, root, data_root, now)
+            .unwrap();
         assert_eq!(n, 1, "a fresh recurring plan gets exactly one token");
         assert_eq!(charters[0].actions.len(), 1);
 
@@ -1304,7 +1406,8 @@ mod tests {
 
         // Second run while the token is live and unresolved → nothing new.
         let again =
-            ensure_active_occurrences(&mut charters, &mut store, &mut dirty, root, now).unwrap();
+            ensure_active_occurrences(&mut charters, &mut store, &mut dirty, root, data_root, now)
+                .unwrap();
         assert_eq!(again, 0, "idempotent while the token is live");
         assert_eq!(charters[0].actions.len(), 1);
     }
@@ -1319,14 +1422,17 @@ mod tests {
         let mut store = PlansSyncStore::new(Path::new("/tmp/plans"));
         let mut dirty = HashSet::new();
         let root = Path::new("/ws/.clearhead/charters");
+        let data_root = Path::new("/ws/.clearhead");
 
-        ensure_active_occurrences(&mut charters, &mut store, &mut dirty, root, t(6)).unwrap();
+        ensure_active_occurrences(&mut charters, &mut store, &mut dirty, root, data_root, t(6))
+            .unwrap();
         let first_slot = charters[0].actions[0].action.scheduled_at.unwrap();
         charters[0].actions[0].action.state = ActionState::Completed; // resolved by hand
 
         let now_later = first_slot + chrono::Duration::days(1);
-        let n = ensure_active_occurrences(&mut charters, &mut store, &mut dirty, root, now_later)
-            .unwrap();
+        let n =
+            ensure_active_occurrences(&mut charters, &mut store, &mut dirty, root, data_root, now_later)
+                .unwrap();
         assert_eq!(n, 1, "no live token → the next slot is stamped");
         assert_eq!(charters[0].actions.len(), 2);
         let live: Vec<_> = charters[0]
@@ -1339,5 +1445,146 @@ mod tests {
             live[0].action.scheduled_at.unwrap() > first_slot,
             "advanced forward, not backward"
         );
+    }
+
+    #[test]
+    fn occurrence_tokens_and_grafted_steps_are_excluded_from_standalone_sync() {
+        // The materialized-token seal: an occurrence token (has a store link) and
+        // its grafted template steps (its subtree) must never push as standalone
+        // VTODOs — the master + deviations already represent the slot. An ordinary
+        // dated action alongside them still syncs.
+        let token = Uuid::now_v7();
+        let step = Uuid::now_v7();
+        let standalone = Uuid::now_v7();
+        let plan_id = Uuid::now_v7();
+
+        let model = DomainModel {
+            objectives: vec![],
+            charters: vec![crate::domain::Charter {
+                actions: vec![
+                    Action {
+                        id: token,
+                        name: "Weekly Review".into(),
+                        scheduled_at: Some(t(20)),
+                        ..Default::default()
+                    },
+                    Action {
+                        id: step,
+                        parent_id: Some(token),
+                        name: "Review the inbox".into(),
+                        ..Default::default()
+                    },
+                    Action {
+                        id: standalone,
+                        name: "buy milk".into(),
+                        scheduled_at: Some(t(21)),
+                        ..Default::default()
+                    },
+                ],
+                ..Default::default()
+            }],
+        };
+
+        let mut store = PlansSyncStore::new(Path::new("/tmp/plans"));
+        store
+            .stamp_occurrence_link(token, plan_id, "20260420T170000Z")
+            .unwrap();
+
+        // Empty vdir: without the seal every action here would push as a new VTODO.
+        let report = plan_sync(&model, &store, &HashMap::new()).unwrap();
+        let pushed: HashSet<Uuid> = report.entries.iter().map(|e| e.action_id).collect();
+
+        assert!(!pushed.contains(&token), "the occurrence token must not leak to the vdir");
+        assert!(!pushed.contains(&step), "the grafted step must stay local, not leak to the vdir");
+        assert!(pushed.contains(&standalone), "an ordinary dated action still reconciles");
+    }
+
+    #[test]
+    fn templated_plan_stamps_root_plus_grafted_steps() {
+        // The templated lane: `template:` adds a step-forest beneath the same
+        // synthesized occurrence root the atomic lane stamps. One root token
+        // (carrying the occurrence identity + store link), with the template's own
+        // roots grafted as its children.
+        let tmp = tempfile::tempdir().unwrap();
+        let charter_root = tmp.path().join("charters");
+        let data_root = tmp.path();
+        std::fs::create_dir_all(data_root.join("templates")).unwrap();
+        std::fs::write(
+            data_root.join("templates/weekly-review.actions"),
+            "[ ] Review the inbox #01970000-0000-7000-0000-000000000001\n\
+             [ ] Reflect on the week #01970000-0000-7000-0000-000000000002\n",
+        )
+        .unwrap();
+
+        let (mut charters, plan_id, uid) = weekly_charter(t(5));
+        charters[0].plans[0].plan.template_name = Some("weekly-review".into());
+
+        let mut store = PlansSyncStore::new(Path::new("/tmp/plans"));
+        let mut dirty = HashSet::new();
+        let n = ensure_active_occurrences(
+            &mut charters,
+            &mut store,
+            &mut dirty,
+            &charter_root,
+            data_root,
+            t(20),
+        )
+        .unwrap();
+        assert_eq!(n, 1, "one plan → one token stamped");
+
+        // Root token: carries the occurrence identity + store link, is parentless.
+        let acts = &charters[0].actions;
+        assert_eq!(acts.len(), 3, "one synthesized root + two grafted steps");
+        let root = acts
+            .iter()
+            .find(|sa| sa.action.plan_id == Some(plan_id))
+            .expect("the stamped occurrence root");
+        assert!(root.action.parent_id.is_none(), "the occurrence root is a root");
+        let slot = root.action.scheduled_at.unwrap();
+        let key = canonical_occurrence_key(slot);
+        assert_eq!(
+            root.action.id,
+            crate::workspace::calendar::ics::occurrence_action_id(&uid, &key)
+        );
+        assert_eq!(store.occurrence_link(root.action.id), Some((plan_id, key)));
+
+        // The template's roots graft *beneath* the occurrence root.
+        let steps: Vec<_> = acts
+            .iter()
+            .filter(|sa| sa.action.parent_id == Some(root.action.id))
+            .collect();
+        assert_eq!(steps.len(), 2, "both template steps grafted under the root");
+        let names: HashSet<&str> = steps.iter().map(|sa| sa.action.name.as_str()).collect();
+        assert!(names.contains("Review the inbox"));
+        assert!(names.contains("Reflect on the week"));
+    }
+
+    #[test]
+    fn atomic_plan_stamps_a_childless_root() {
+        // The atomic lane is the templated lane minus the template: a plan with no
+        // `template_name` stamps exactly the synthesized root, no children — and a
+        // *named-but-missing* template must degrade to the same, never fail the sync.
+        let tmp = tempfile::tempdir().unwrap();
+        let charter_root = tmp.path().join("charters");
+        let data_root = tmp.path();
+
+        let (mut charters, plan_id, _uid) = weekly_charter(t(5));
+        charters[0].plans[0].plan.template_name = Some("does-not-exist".into());
+
+        let mut store = PlansSyncStore::new(Path::new("/tmp/plans"));
+        let mut dirty = HashSet::new();
+        let n = ensure_active_occurrences(
+            &mut charters,
+            &mut store,
+            &mut dirty,
+            &charter_root,
+            data_root,
+            t(20),
+        )
+        .unwrap();
+
+        assert_eq!(n, 1, "a missing template still stamps the root token");
+        assert_eq!(charters[0].actions.len(), 1, "no phantom children grafted");
+        assert_eq!(charters[0].actions[0].action.plan_id, Some(plan_id));
     }
 }
