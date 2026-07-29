@@ -836,6 +836,36 @@ fn mixed_workspace_loads_actions_and_ics_plans() {
 }
 
 #[test]
+fn mixed_case_project_parent_matches_its_canonical_plan_slug() {
+    let dir = tempfile::tempdir().unwrap();
+    let project = dir.path().join("MixedCaseProject");
+    let charters = project.join(".clearhead/charters");
+    let plans = project
+        .join(".clearhead/plans")
+        .join("mixedcaseproject-dogfood");
+    fs::create_dir_all(&charters).unwrap();
+    fs::create_dir_all(&plans).unwrap();
+    fs::write(charters.join("next.actions"), "").unwrap();
+    fs::write(charters.join("dogfood.actions"), "").unwrap();
+    fs::write(
+        plans.join("daily.ics"),
+        "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VTODO\r\nUID:daily\r\nSUMMARY:Daily check\r\nDTSTART:20260730T090000Z\r\nRRULE:FREQ=DAILY\r\nEND:VTODO\r\nEND:VCALENDAR\r\n",
+    )
+    .unwrap();
+
+    let model = load_domain_model(&project).unwrap();
+    assert_eq!(model.charters.len(), 2, "no charterless plan owner");
+    let dogfood = model
+        .charters
+        .iter()
+        .find(|charter| charter.alias.as_deref() == Some("dogfood"))
+        .unwrap();
+    assert_eq!(dogfood.parent.as_deref(), Some("MixedCaseProject"));
+    assert_eq!(dogfood.plans.len(), 1);
+    assert_eq!(dogfood.plans[0].name, "Daily check");
+}
+
+#[test]
 fn mixed_workspace_ron_snapshots() {
     let root = fixture_path("project-mixed");
     // The on-disk model carries no projected occurrences (they materialize on the

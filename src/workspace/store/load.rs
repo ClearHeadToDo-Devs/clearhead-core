@@ -607,10 +607,14 @@ pub(crate) fn syntax_error_summary(doc: &crate::workspace::actions::ParsedDocume
 /// Compute the plans directory slug for a charter: `<parent>-<alias>` for sub-charters,
 /// `<alias>` for top-level charters. Matches the directory name under `plans/`.
 fn charter_plans_slug(c: &MarkdownCharter) -> String {
+    fn slug(value: &str) -> String {
+        value.to_lowercase().replace(' ', "-").replace('&', "and")
+    }
+
     let alias = c.alias.as_deref().unwrap_or(&c.title);
     match &c.parent {
-        None => alias.to_string(),
-        Some(parent) => format!("{}-{}", parent, alias),
+        None => slug(alias),
+        Some(parent) => format!("{}-{}", slug(parent), slug(alias)),
     }
 }
 
