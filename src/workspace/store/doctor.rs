@@ -9,7 +9,6 @@ use super::findings::{Finding, FindingSeverity};
 use super::load::{read_workspace_with_plans, syntax_error_summary};
 use super::{WorkspaceError, resolve_workspace_layout};
 use crate::domain::{Action, ActionState};
-use crate::workspace::action_files::completed_actions_path;
 use crate::workspace::charter::MarkdownCharter;
 use crate::workspace::sidecar::{read_sidecar, sidecar_path};
 use serde::Serialize;
@@ -76,9 +75,10 @@ pub fn diagnose_read(
     check_dangling_predecessors(charters, &completed, &archived, &mut findings);
     check_charter_alias_collisions(charters, &mut findings);
     check_open_actions_under_unresolved_parents(charters, &mut findings);
-    check_sidecar_coherence(&layout.charter_root, charters, &completed, &mut findings);
+    let known_action_ids = collect_known_action_ids(charters, &completed);
+    check_sidecar_coherence(&layout.charter_root, charters, &known_action_ids, &mut findings);
     check_sidecar_created_sanity(&layout.charter_root, charters, &mut findings);
-    check_orphaned_sidecars(&layout.charter_root, &mut findings);
+    check_orphaned_sidecars(&layout.charter_root, &known_action_ids, &mut findings);
     check_charterless_plans(charters, &mut findings);
     check_durability_residue(&layout.charter_root, &layout.plans_root, &mut findings);
 
@@ -368,12 +368,36 @@ fn check_open_actions_under_unresolved_parents(
 
 /// Sidecar entries whose UUID matches no action in the charter file or its
 /// completed archive — stale metadata with no owner.
+fn collect_known_action_ids(
+    charters: &[MarkdownCharter],
+    completed: &HashMap<PathBuf, Vec<Action>>,
+) -> HashSet<Uuid> {
+    let mut known = HashSet::new();
+    for charter in charters {
+        for sa in &charter.actions {
+            known.insert(sa.action.id);
+            known.extend(sa.action.plan_id);
+        }
+    }
+    for actions in completed.values() {
+        for action in actions {
+            known.insert(action.id);
+            known.extend(action.plan_id);
+        }
+    }
+    known
+}
+
 fn check_sidecar_coherence(
     charter_root: &Path,
     charters: &[MarkdownCharter],
-    completed: &HashMap<PathBuf, Vec<Action>>,
+    known_action_ids: &HashSet<Uuid>,
     findings: &mut Vec<Finding>,
 ) {
+    // Sidecar action metadata is UUID-addressed and intentionally rejoins
+    // workspace-wide after an action moves between charter files. An entry is
+    // orphaned only when its UUID exists nowhere in live or completed state,
+    // not merely when it left this sidecar's companion charter.
     for charter in charters {
         let Some(actions_file) = &charter.actions_file else { continue };
         let sc_relative = sidecar_path(actions_file);
@@ -382,32 +406,9 @@ fn check_sidecar_coherence(
         };
 
         // Entries are keyed by action id — or plan id for plan-generated actions.
-        let mut allowed: HashSet<Uuid> = HashSet::new();
-        for sa in &charter.actions {
-            allowed.insert(sa.action.id);
-            allowed.extend(sa.action.plan_id);
-        }
-        // Path derivation for a project-root `next.actions` needs the absolute
-        // workspace context (`<project>.completed.actions`); deriving from the
-        // relative path alone incorrectly looks for `next.completed.actions`.
-        let completed_relative = completed_actions_path(&charter_root.join(actions_file))
-            .strip_prefix(charter_root)
-            .unwrap_or_else(|_| actions_file.as_path())
-            .to_path_buf();
-        // Older project workspaces used `next.completed.actions`; include that
-        // relative derivation as legacy history while the canonical writer uses
-        // `<project>.completed.actions`.
-        let legacy_completed_relative = completed_actions_path(actions_file);
-        for completed_path in [&completed_relative, &legacy_completed_relative] {
-            for action in completed.get(completed_path).into_iter().flatten() {
-                allowed.insert(action.id);
-                allowed.extend(action.plan_id);
-            }
-        }
-
         for key in meta.actions.keys() {
             let orphaned = match Uuid::parse_str(key) {
-                Ok(id) => !allowed.contains(&id),
+                Ok(id) => !known_action_ids.contains(&id),
                 Err(_) => true,
             };
             if orphaned {
@@ -474,7 +475,11 @@ fn check_sidecar_created_sanity(
 }
 
 /// A `.<stem>.json` sidecar whose `<stem>.actions` file is gone entirely.
-fn check_orphaned_sidecars(charter_root: &Path, findings: &mut Vec<Finding>) {
+fn check_orphaned_sidecars(
+    charter_root: &Path,
+    known_action_ids: &HashSet<Uuid>,
+    findings: &mut Vec<Finding>,
+) {
     for path in walk_visible_files(charter_root) {
         let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
             continue;
@@ -484,6 +489,20 @@ fn check_orphaned_sidecars(charter_root: &Path, findings: &mut Vec<Finding>) {
         };
         let dir = path.parent().unwrap_or(charter_root);
         if !dir.join(format!("{stem}.actions")).exists() {
+            // A path-orphaned sidecar may still own metadata for an action that
+            // moved to another charter. The loader intentionally rejoins those
+            // entries globally, so the file is removable only when none remain
+            // live anywhere in the workspace.
+            let retains_live_metadata = read_sidecar(&path).ok().is_some_and(|metadata| {
+                metadata.actions.keys().any(|key| {
+                    Uuid::parse_str(key)
+                        .ok()
+                        .is_some_and(|id| known_action_ids.contains(&id))
+                })
+            });
+            if retains_live_metadata {
+                continue;
+            }
             let relative = path.strip_prefix(charter_root).unwrap_or(&path);
             findings.push(Finding::warning(
                 "orphaned-sidecar",

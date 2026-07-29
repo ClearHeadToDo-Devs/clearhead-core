@@ -1606,6 +1606,29 @@ fn doctor_flags_orphaned_sidecar_entry() {
 }
 
 #[test]
+fn doctor_preserves_sidecar_metadata_after_an_action_moves_charters() {
+    use clearhead_core::workspace::diagnose;
+
+    let moved = "01951111-0000-7000-0000-000000000019";
+    let sidecar = format!(
+        r#"{{"actions": {{"{moved}": {{"created": "2026-01-01T00:00:00+00:00"}}}}}}"#
+    );
+    let workspace = make_workspace(&[
+        ("work.actions", &format!("[ ] Moved here #{moved}\n")),
+        (".old-home.json", &sidecar),
+    ]);
+
+    let diagnosis = diagnose(initialized(workspace.path()), None).unwrap();
+    assert!(
+        !diagnosis.findings.iter().any(|finding| {
+            finding.code == "sidecar-orphan" || finding.code == "orphaned-sidecar"
+        }),
+        "findings: {:?}",
+        diagnosis.findings
+    );
+}
+
+#[test]
 fn doctor_finds_project_root_history_at_project_named_completed_path() {
     use clearhead_core::workspace::diagnose;
 
