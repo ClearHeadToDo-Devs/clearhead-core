@@ -387,7 +387,14 @@ fn check_sidecar_coherence(
             allowed.insert(sa.action.id);
             allowed.extend(sa.action.plan_id);
         }
-        for action in completed.get(&completed_actions_path(actions_file)).into_iter().flatten() {
+        // Path derivation for a project-root `next.actions` needs the absolute
+        // workspace context (`<project>.completed.actions`); deriving from the
+        // relative path alone incorrectly looks for `next.completed.actions`.
+        let completed_relative = completed_actions_path(&charter_root.join(actions_file))
+            .strip_prefix(charter_root)
+            .unwrap_or_else(|_| actions_file.as_path())
+            .to_path_buf();
+        for action in completed.get(&completed_relative).into_iter().flatten() {
             allowed.insert(action.id);
             allowed.extend(action.plan_id);
         }
