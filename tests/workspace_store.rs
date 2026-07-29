@@ -1610,18 +1610,22 @@ fn doctor_finds_project_root_history_at_project_named_completed_path() {
     use clearhead_core::workspace::diagnose;
 
     let completed_id = "01951111-0000-7000-0000-000000000017";
+    let legacy_id = "01951111-0000-7000-0000-000000000018";
     let sidecar = format!(
-        r#"{{"actions": {{"{completed_id}": {{"created": "2026-01-01T00:00:00+00:00"}}}}}}"#
+        r#"{{"actions": {{"{completed_id}": {{"created": "2026-01-01T00:00:00+00:00"}}, "{legacy_id}": {{"created": "2026-01-01T00:00:00+00:00"}}}}}}"#
     );
     let workspace = make_workspace(&[("next.actions", ""), (".next.json", &sidecar)]);
     let project_name = workspace.path().file_name().unwrap().to_string_lossy();
     let completed_name = format!("{project_name}.completed.actions");
+    let charters = workspace.path().join(".clearhead/charters");
     fs::write(
-        workspace
-            .path()
-            .join(".clearhead/charters")
-            .join(completed_name),
+        charters.join(completed_name),
         format!("[x] Completed root action #{completed_id}\n"),
+    )
+    .unwrap();
+    fs::write(
+        charters.join("next.completed.actions"),
+        format!("[x] Legacy completed root action #{legacy_id}\n"),
     )
     .unwrap();
 

@@ -394,9 +394,15 @@ fn check_sidecar_coherence(
             .strip_prefix(charter_root)
             .unwrap_or_else(|_| actions_file.as_path())
             .to_path_buf();
-        for action in completed.get(&completed_relative).into_iter().flatten() {
-            allowed.insert(action.id);
-            allowed.extend(action.plan_id);
+        // Older project workspaces used `next.completed.actions`; include that
+        // relative derivation as legacy history while the canonical writer uses
+        // `<project>.completed.actions`.
+        let legacy_completed_relative = completed_actions_path(actions_file);
+        for completed_path in [&completed_relative, &legacy_completed_relative] {
+            for action in completed.get(completed_path).into_iter().flatten() {
+                allowed.insert(action.id);
+                allowed.extend(action.plan_id);
+            }
         }
 
         for key in meta.actions.keys() {
