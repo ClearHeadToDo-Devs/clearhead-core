@@ -1,30 +1,38 @@
-//! Charter archival: relocate a closed charter's artifacts into the `archive/`
-//! region as plaintext, untouched.
+//! Charter archival: crystallize a closed charter's artifacts into the
+//! `archive/` region as flat, UUID-stemmed plaintext facts.
 //!
 //! The archived form is *data, not a projection*: nothing is serialized to
-//! Turtle or JSON-LD. The subtree's own `.actions` / `.completed.actions` /
-//! `.md` / sidecar files are moved verbatim into `<data_root>/archive/`,
-//! mirroring their path under `charters/`. Because discovery only recurses into
-//! `charters/`, the moved files drop out of the default read automatically while
-//! staying fully parseable when reference resolution or the graph binary needs
-//! them. Any RDF view of archived data is regenerated on read, exactly like
-//! live data. This is what lets `clearhead-core` shed Oxigraph: archival no
-//! longer writes Turtle.
+//! Turtle or JSON-LD. A charter's own `.actions` / `.completed.actions` / `.md`
+//! / sidecar files move into `<data_root>/archive/`, each **re-stemmed on the
+//! charter's UUID** (`<uuid>.actions`, `<uuid>.completed.actions`, `<uuid>.md`,
+//! `.<uuid>.json`) and dropped flat — no subdirectories. The UUID is the only
+//! stable key for an immutable fact: names collide over time and are mutable,
+//! and mirroring the live directory tree would reintroduce the sibling-alias
+//! collisions the flat scheme exists to avoid. Because discovery only recurses
+//! into `charters/`, the moved files drop out of the default read automatically
+//! while staying fully parseable when the graph binary needs them. Any RDF view
+//! is regenerated on read, exactly like live data — this is what lets
+//! `clearhead-core` shed Oxigraph: archival no longer writes Turtle.
 //!
-//! # Process (per spec)
+//! Crystallization is *almost* a verbatim relocation. Child 1's one content
+//! side effect is self-containment: the sidecar's own `charter.id` is stamped
+//! from the known charter UUID (when absent) so a lone `.<uuid>.json` declares
+//! its charter in its *content*, not merely its name. (Outbound `parent:` edge
+//! normalization is the sibling concern, handled separately.)
+//!
+//! # Process
 //!
 //! 1. Verify each charter in the subtree is terminal ([`CharterState::Closed`]
 //!    or [`CharterState::Cancelled`]).
 //! 2. Count open actions in each primary `.actions` file.
 //!    - If any are open and `force` is false, refuse and return
 //!      [`ArchiveCharterError::OpenActions`].
-//! 3. Move the source files, all-or-none, through the batch transaction:
-//!    - `<charter>.actions`
-//!    - `<charter>.completed.actions`
-//!    - `<charter>.md` (if present)
-//!    - `.<charter>.json` sidecar (if present) — moved *with* the files rather
-//!      than folded into the lines, so its `created_at` provenance survives intact.
-//!    Each lands at `<data_root>/archive/<path-under-charters>`.
+//! 3. Stamp the sidecar's `charter.id` (self-identification), then move the
+//!    quartet — `<uuid>.actions`, `<uuid>.completed.actions`, `<uuid>.md`,
+//!    `.<uuid>.json` — plus any supporting files (each prefixed `<uuid>.`),
+//!    all-or-none, through the batch transaction. Each lands flat in
+//!    `<data_root>/archive/`. The sidecar moves *with* the files rather than
+//!    folded into the lines, so its `created_at` provenance survives intact.
 //! 4. Collapse the now-empty charter subdirectory (directory-form charters
 //!    only; silently skipped when non-empty so sub-charters survive).
 //!
@@ -42,8 +50,8 @@ use uuid::Uuid;
 use crate::domain::{ActionState, Charter};
 use crate::workspace::MarkdownCharter;
 use crate::workspace::action_files::{completed_actions_path, read_actions};
-use crate::workspace::durability::{PendingBatch, WorkspaceLock, recover_pending};
-use crate::workspace::sidecar::sidecar_path;
+use crate::workspace::durability::{PendingBatch, WorkspaceLock, atomic_write, recover_pending};
+use crate::workspace::sidecar::{sidecar_path, stamp_charter_id};
 use crate::workspace::store::load_workspace;
 use crate::workspace::store::{WorkspaceError, resolve_workspace_layout};
 
@@ -126,7 +134,7 @@ pub fn archive_charter(
         .clone();
 
     let subtree = collect_charter_subtree(&charters, &mc);
-    archive_many(root, &subtree, opts)
+    archive_many(root, &subtree, &charters, opts)
 }
 
 /// Archive every charter whose `state` is terminal ([`CharterState::Closed`]
@@ -154,7 +162,7 @@ pub fn archive_terminal_charters(
     let mut results = Vec::new();
     for mc in &terminal_roots {
         let subtree = collect_charter_subtree(&charters, mc);
-        let result = archive_many(root, &subtree, opts)?;
+        let result = archive_many(root, &subtree, &charters, opts)?;
         results.push(result);
     }
     Ok(results)
@@ -168,6 +176,7 @@ pub fn archive_terminal_charters(
 fn archive_many(
     root: &Path,
     charters: &[MarkdownCharter],
+    all_charters: &[MarkdownCharter],
     opts: &ArchiveCharterOptions,
 ) -> Result<ArchiveCharterResult, ArchiveCharterError> {
     let root_charter = charters
@@ -178,11 +187,28 @@ fn archive_many(
     let layout = resolve_workspace_layout(root);
     let archive_root = layout.data_root.join("archive");
 
+    // Directory-form charter roots in this subtree. A parent's supporting-file
+    // sweep stops at these boundaries so a child charter's files are claimed
+    // under the *child's* UUID, not the parent's — making attribution
+    // independent of the order we visit the subtree.
+    let subtree_charter_dirs: HashSet<PathBuf> = charters
+        .iter()
+        .filter_map(|mc| {
+            let acts = layout.charter_root.join(mc.actions_file.as_ref()?);
+            if acts.file_name()?.to_str()? == "next.actions" {
+                acts.parent().map(PathBuf::from)
+            } else {
+                None
+            }
+        })
+        .collect();
+
     let mut primary_swept = 0usize;
     let mut completed_swept = 0usize;
-    // Source → destination pairs. Destinations mirror the source's path under
-    // `charters/`, rooted at `archive/`, so the subtree's internal structure
-    // (and thus its parent/child relationships) survives the move intact.
+    // Source → destination pairs. Destinations are flat and UUID-stemmed: the
+    // subtree's parent/child structure no longer rides directory nesting (which
+    // flattening destroys) — it is re-homed into the files themselves (`parent:`
+    // normalization, handled separately).
     let mut moves: Vec<(PathBuf, PathBuf)> = Vec::new();
     let mut seen_sources = HashSet::new();
     let mut dirs_to_remove: BTreeSet<(usize, PathBuf)> = BTreeSet::new();
@@ -239,27 +265,76 @@ fn archive_many(
         primary_swept += count_actions(&acts_abs)?;
         completed_swept += count_actions(&completed_abs)?;
 
+        // Self-containment side effect: guarantee the sidecar records its own
+        // `charter.id` before it leaves, so the archived `.<uuid>.json` declares
+        // its charter by content and not only by filename. Idempotent (stamps
+        // only when absent); skipped on dry-run, which must not write.
+        if !opts.dry_run {
+            if let Some(acts) = &acts_abs {
+                stamp_charter_id(acts, mc.id)?;
+            }
+        }
+
+        // Materialize the parent edge into the `.md` as a UUID before the move,
+        // so hierarchy survives flattening as *data* rather than as directory
+        // nesting (which we are about to destroy). Same shape as the id-stamp: an
+        // in-place, surgical write to the live source, then the normal move. The
+        // parent is resolved against the whole workspace — a child archived while
+        // its parent stays live must still resolve across the boundary. Absent or
+        // unresolvable parents are left verbatim, never fabricated.
+        if !opts.dry_run {
+            if let (Some(md), Some(parent)) = (&md_abs, mc.parent.as_deref()) {
+                if md.exists() {
+                    if let Some(parent_uuid) = resolve_parent_uuid(parent, all_charters) {
+                        let content = std::fs::read_to_string(md)?;
+                        if let Some(rewritten) = set_frontmatter_parent(&content, &parent_uuid) {
+                            atomic_write(md, rewritten.as_bytes())?;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Flat, UUID-stemmed destinations. The quartet keys on the charter's own
+        // UUID; the sidecar name derives from the actions dest and so agrees by
+        // construction. Distinct UUIDs are what make a flat dir safe.
+        let acts_dest = archive_root.join(format!("{}.actions", mc.id));
+        let quartet: [(Option<PathBuf>, PathBuf); 4] = [
+            (acts_abs, acts_dest.clone()),
+            (
+                completed_abs,
+                archive_root.join(format!("{}.completed.actions", mc.id)),
+            ),
+            (md_abs, archive_root.join(format!("{}.md", mc.id))),
+            (sidecar_abs, sidecar_path(&acts_dest)),
+        ];
+
         // The `.ics` plans are intentionally excluded: the server owns them and
         // they stay on disk. Everything else moves all-or-none.
-        for src in [acts_abs, completed_abs, md_abs, sidecar_abs]
-            .into_iter()
-            .flatten()
-            .filter(|p| p.exists())
-        {
-            if seen_sources.insert(src.clone()) {
-                let dest = archive_dest(&src, &layout.charter_root, &archive_root);
-                moves.push((src, dest));
+        for (src, dest) in quartet {
+            if let Some(src) = src.filter(|p| p.exists()) {
+                if seen_sources.insert(src.clone()) {
+                    moves.push((src, dest));
+                }
             }
         }
 
         if let Some(subdir) = charter_subdir {
             // Directory-form charters own all files below their directory, not
-            // only the formats core knows about. Move notes, inventories, and
-            // future charter-local artifacts verbatim with the subtree.
+            // only the formats core knows about — notes, inventories, future
+            // charter-local artifacts. Each is prefixed with the charter's UUID
+            // (`<uuid>.<name>`) so a no-UUID file stays owned once flat. The
+            // sweep stops at descendant charter boundaries (see above).
             if subdir != layout.charter_root {
-                for src in collect_supporting_files(&subdir)? {
+                let boundaries: HashSet<PathBuf> = subtree_charter_dirs
+                    .iter()
+                    .filter(|d| *d != &subdir)
+                    .cloned()
+                    .collect();
+                for src in collect_supporting_files(&subdir, &boundaries)? {
                     if seen_sources.insert(src.clone()) {
-                        let dest = archive_dest(&src, &layout.charter_root, &archive_root);
+                        let name = src.file_name().and_then(|n| n.to_str()).unwrap_or("file");
+                        let dest = archive_root.join(format!("{}.{}", mc.id, name));
                         moves.push((src, dest));
                     }
                 }
@@ -310,16 +385,26 @@ fn acquire_mutation_lock(
     })
 }
 
-fn collect_supporting_files(root: &Path) -> Result<Vec<PathBuf>, std::io::Error> {
+/// Files owned by a directory-form charter, recursively, sorted for
+/// determinism — but never descending into `exclude_dirs`, the subdirectories
+/// that belong to a *descendant* charter (those files are claimed under that
+/// charter's own UUID, not this one's).
+fn collect_supporting_files(
+    root: &Path,
+    exclude_dirs: &HashSet<PathBuf>,
+) -> Result<Vec<PathBuf>, std::io::Error> {
     let mut files = Vec::new();
     let mut dirs = vec![root.to_path_buf()];
     while let Some(dir) = dirs.pop() {
         for entry in std::fs::read_dir(dir)? {
             let entry = entry?;
+            let path = entry.path();
             if entry.file_type()?.is_dir() {
-                dirs.push(entry.path());
+                if !exclude_dirs.contains(&path) {
+                    dirs.push(path);
+                }
             } else {
-                files.push(entry.path());
+                files.push(path);
             }
         }
     }
@@ -327,13 +412,66 @@ fn collect_supporting_files(root: &Path) -> Result<Vec<PathBuf>, std::io::Error>
     Ok(files)
 }
 
-/// Destination for an archived source file: its path relative to `charters/`,
-/// re-rooted under `archive/`. Falls back to the bare filename directly under
-/// `archive/` if the source somehow isn't under `charter_root` (never expected).
-fn archive_dest(src: &Path, charter_root: &Path, archive_root: &Path) -> PathBuf {
-    match src.strip_prefix(charter_root) {
-        Ok(rel) => archive_root.join(rel),
-        Err(_) => archive_root.join(src.file_name().unwrap_or(src.as_os_str())),
+/// Resolve a `parent:` frontmatter value to a charter UUID for archival.
+///
+/// Accepts an already-canonical UUID (kept as-is) or an exact, case-insensitive
+/// alias resolved against the whole workspace — never a title, because a
+/// structural edge must not ride a display string. Returns `None` when the value
+/// resolves to nothing, so an unresolvable parent is left verbatim rather than
+/// fabricated.
+fn resolve_parent_uuid(parent: &str, all_charters: &[MarkdownCharter]) -> Option<Uuid> {
+    if let Ok(uuid) = Uuid::parse_str(parent) {
+        return Some(uuid);
+    }
+    let q = parent.to_lowercase();
+    all_charters
+        .iter()
+        .find(|c| c.alias.as_deref().is_some_and(|a| a.to_lowercase() == q))
+        .map(|c| c.id)
+}
+
+/// Substitute — or insert — a top-level `parent: <uuid>` line inside the leading
+/// YAML frontmatter, leaving every other byte untouched.
+///
+/// Returns the rewritten content, or `None` when there is nothing to do (no
+/// frontmatter block, or the value already matches). The insert case is the
+/// common one: a directory-nested charter carries no `parent:` line, its
+/// parenthood having lived only in the directory position we are flattening
+/// away. Assumes `\n` line endings — the form our writer emits and the only form
+/// these files take in practice.
+fn set_frontmatter_parent(content: &str, parent_uuid: &Uuid) -> Option<String> {
+    let desired = format!("parent: {parent_uuid}");
+
+    let body = content.strip_prefix("---\n")?;
+    let mut offset = "---\n".len();
+    let mut existing: Option<(usize, usize)> = None;
+    let mut close_start: Option<usize> = None;
+    for line in body.split_inclusive('\n') {
+        let trimmed = line.strip_suffix('\n').unwrap_or(line);
+        if trimmed == "---" {
+            close_start = Some(offset);
+            break;
+        }
+        if trimmed.starts_with("parent:") {
+            existing = Some((offset, offset + trimmed.len()));
+        }
+        offset += line.len();
+    }
+    let close_start = close_start?;
+
+    match existing {
+        Some((start, end)) => {
+            if content[start..end] == desired {
+                return None;
+            }
+            Some(format!("{}{}{}", &content[..start], desired, &content[end..]))
+        }
+        None => Some(format!(
+            "{}{}\n{}",
+            &content[..close_start],
+            desired,
+            &content[close_start..]
+        )),
     }
 }
 
@@ -529,6 +667,13 @@ mod tests {
         )
         .expect("write ics");
 
+        // Capture the charter's stable UUID before it is archived — the flat
+        // archive names every file `<uuid>.*`.
+        let uuid = {
+            let charters = load_workspace(&root).expect("load");
+            find_charter(&charters, "done").expect("charter").id
+        };
+
         let result = archive_charter(&root, "done", &ArchiveCharterOptions::default())
             .expect("archive should succeed");
         assert_eq!(result.charter_name, "done");
@@ -543,13 +688,13 @@ mod tests {
             !charters_dir.join("done.md").exists(),
             "charter md moved out"
         );
-        // …and land under `archive/`, verbatim, as plaintext (no Turtle).
+        // …and land flat under `archive/`, UUID-stemmed, as plaintext (no Turtle).
         assert!(
-            archive_dir.join("done.actions").exists(),
+            archive_dir.join(format!("{uuid}.actions")).exists(),
             "actions in archive/"
         );
         assert!(
-            archive_dir.join("done.md").exists(),
+            archive_dir.join(format!("{uuid}.md")).exists(),
             "charter md in archive/"
         );
         assert!(
@@ -600,18 +745,29 @@ mod tests {
         write_sidecar(&sc_path, &meta).expect("write sidecar");
         assert!(sc_path.exists(), "sidecar written before archiving");
 
+        let uuid = {
+            let charters = load_workspace(&root).expect("load");
+            find_charter(&charters, "done").expect("charter").id
+        };
+
         archive_charter(&root, "done", &ArchiveCharterOptions::default())
             .expect("archive should succeed");
 
         // The sidecar left `charters/` …
         assert!(!sc_path.exists(), "sidecar must move out of charters/");
-        // … and its provenance now lives in the archived sidecar, intact.
-        let archived_sc = sidecar_path(&root.join(".clearhead/archive/done.actions"));
+        // … and its provenance now lives in the flat, UUID-stemmed archived
+        // sidecar, intact — and self-identifying via a stamped `charter.id`.
+        let archived_sc =
+            sidecar_path(&root.join(format!(".clearhead/archive/{uuid}.actions")));
         let moved =
             std::fs::read_to_string(&archived_sc).expect("sidecar must be moved into archive/");
         assert!(
             moved.contains("2024-06-01"),
             "sidecar-only data must survive the move verbatim:\n{moved}"
+        );
+        assert!(
+            moved.contains(&uuid.to_string()),
+            "archived sidecar must self-identify with its charter.id:\n{moved}"
         );
     }
 
@@ -683,6 +839,15 @@ mod tests {
         std::fs::write(ops_dir.join("next.actions"), "[x] Child done\n")
             .expect("write child actions");
 
+        // Capture both charters' stable UUIDs before the flatten.
+        let (work_uuid, ops_uuid) = {
+            let charters = load_workspace(&root).expect("load");
+            (
+                find_charter(&charters, "work").expect("work charter").id,
+                find_charter(&charters, "ops").expect("ops charter").id,
+            )
+        };
+
         let result = archive_charter(&root, "work", &ArchiveCharterOptions::default())
             .expect("archive should succeed");
         assert_eq!(result.charter_name, "work");
@@ -714,28 +879,186 @@ mod tests {
             "parent directory removed once subtree is archived"
         );
 
-        // Both charters land under archive/, and the subtree's nesting is
-        // preserved so their parent/child structure stays reconstructable.
+        // Both charters land flat under archive/, each keyed on its own UUID —
+        // no directory nesting. Their parent/child structure is reconstructed
+        // from `parent:` in the files, not from path (normalization handled
+        // separately); here we assert the flat naming.
         let archive_dir = root.join(".clearhead/archive");
         assert!(
-            archive_dir.join("work/README.md").exists(),
-            "parent charter in archive/"
+            archive_dir.join(format!("{work_uuid}.md")).exists(),
+            "parent charter (flat) in archive/"
         );
         assert!(
-            archive_dir.join("work/next.actions").exists(),
-            "parent actions in archive/"
+            archive_dir.join(format!("{work_uuid}.actions")).exists(),
+            "parent actions (flat) in archive/"
         );
         assert!(
-            archive_dir.join("work/inventory.md").exists(),
-            "supporting file in archive/"
+            archive_dir
+                .join(format!("{work_uuid}.inventory.md"))
+                .exists(),
+            "supporting file, prefixed with the owning charter's UUID"
         );
         assert!(
-            archive_dir.join("work/ops/README.md").exists(),
-            "child charter nested in archive/"
+            archive_dir.join(format!("{ops_uuid}.md")).exists(),
+            "child charter (flat) in archive/, keyed on its own UUID"
         );
         assert!(
-            archive_dir.join("work/ops/next.actions").exists(),
-            "child actions nested in archive/"
+            archive_dir.join(format!("{ops_uuid}.actions")).exists(),
+            "child actions (flat) in archive/"
+        );
+        // The child's files must NOT be claimed under the parent's UUID.
+        assert!(
+            !archive_dir.join(format!("{work_uuid}.README.md")).exists(),
+            "child files must not be swept under the parent's UUID"
+        );
+
+        // Child 2: the child's parent edge is materialized into its archived
+        // `.md` as a UUID — it had no `parent:` line, its parenthood having lived
+        // only in the directory nesting we just flattened away.
+        let ops_md =
+            std::fs::read_to_string(archive_dir.join(format!("{ops_uuid}.md"))).unwrap();
+        assert!(
+            ops_md.contains(&format!("parent: {work_uuid}")),
+            "child's inferred parent must be written into the file as a UUID:\n{ops_md}"
+        );
+        // The root charter has no parent, so none is fabricated.
+        let work_md =
+            std::fs::read_to_string(archive_dir.join(format!("{work_uuid}.md"))).unwrap();
+        assert!(
+            !work_md.contains("parent:"),
+            "no parent may be fabricated for a root charter:\n{work_md}"
+        );
+    }
+
+    // ===== Child 2: parent-edge materialization =====
+
+    #[test]
+    fn set_frontmatter_parent_substitutes_existing() {
+        let u: Uuid = "019faab5-aa9a-7613-b5a6-f312904d9db3".parse().unwrap();
+        let content = "---\nalias: q3\nparent: goals\nstate: Closed\n---\n# Q3\nbody\n";
+        let out = set_frontmatter_parent(content, &u).unwrap();
+        assert_eq!(
+            out,
+            format!("---\nalias: q3\nparent: {u}\nstate: Closed\n---\n# Q3\nbody\n")
+        );
+    }
+
+    #[test]
+    fn set_frontmatter_parent_inserts_when_absent() {
+        let u: Uuid = "019faab5-aa9a-7613-b5a6-f312904d9db3".parse().unwrap();
+        let content = "---\nalias: ops\nstate: Closed\n---\n# Ops\n";
+        let out = set_frontmatter_parent(content, &u).unwrap();
+        assert_eq!(
+            out,
+            format!("---\nalias: ops\nstate: Closed\nparent: {u}\n---\n# Ops\n")
+        );
+    }
+
+    #[test]
+    fn set_frontmatter_parent_is_noop_when_already_canonical() {
+        let u: Uuid = "019faab5-aa9a-7613-b5a6-f312904d9db3".parse().unwrap();
+        let content = format!("---\nalias: ops\nparent: {u}\nstate: Closed\n---\n# Ops\n");
+        assert!(set_frontmatter_parent(&content, &u).is_none());
+    }
+
+    #[test]
+    fn set_frontmatter_parent_requires_a_frontmatter_block() {
+        let u: Uuid = "019faab5-aa9a-7613-b5a6-f312904d9db3".parse().unwrap();
+        assert!(set_frontmatter_parent("# Just a body, no frontmatter\n", &u).is_none());
+    }
+
+    #[test]
+    fn archive_rewrites_explicit_parent_alias_to_uuid() {
+        // A closed charter that names its parent by alias has that edge rewritten
+        // to the parent's UUID at archival (substitute case).
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("ws");
+        let charters_dir = root.join(".clearhead/charters");
+        std::fs::create_dir_all(&charters_dir).unwrap();
+
+        std::fs::write(
+            charters_dir.join("goals.md"),
+            "---\nalias: goals\nstate: Active\n---\n# Goals\n",
+        )
+        .unwrap();
+        std::fs::write(charters_dir.join("goals.actions"), "").unwrap();
+        std::fs::write(
+            charters_dir.join("q3.md"),
+            "---\nalias: q3\nparent: goals\nstate: Closed\n---\n# Q3\n",
+        )
+        .unwrap();
+        std::fs::write(charters_dir.join("q3.actions"), "").unwrap();
+
+        let (goals_uuid, q3_uuid) = {
+            let cs = load_workspace(&root).unwrap();
+            (
+                find_charter(&cs, "goals").unwrap().id,
+                find_charter(&cs, "q3").unwrap().id,
+            )
+        };
+
+        archive_charter(&root, "q3", &ArchiveCharterOptions::default()).expect("archive q3");
+
+        let archive_dir = root.join(".clearhead/archive");
+        let q3_md = std::fs::read_to_string(archive_dir.join(format!("{q3_uuid}.md"))).unwrap();
+        assert!(
+            q3_md.contains(&format!("parent: {goals_uuid}")),
+            "explicit alias edge must become a UUID:\n{q3_md}"
+        );
+        assert!(
+            !q3_md.contains("parent: goals"),
+            "the alias form must be gone:\n{q3_md}"
+        );
+    }
+
+    #[test]
+    fn archive_materializes_parent_uuid_across_a_live_boundary() {
+        // A child archived while its parent stays LIVE must still record its
+        // parent as a UUID that points into live space — the archive forest aims
+        // at the live world, and the edge resolves against the whole workspace.
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("ws");
+        let work_dir = root.join(".clearhead/charters/work");
+        let ops_dir = work_dir.join("ops");
+        std::fs::create_dir_all(&ops_dir).unwrap();
+
+        // Parent stays Active — only the closed child is archived.
+        std::fs::write(
+            work_dir.join("README.md"),
+            "---\nalias: work\nstate: Active\n---\n# Work\n",
+        )
+        .unwrap();
+        std::fs::write(work_dir.join("next.actions"), "").unwrap();
+
+        // Child is Closed, directory-nested, with NO explicit parent: line.
+        std::fs::write(
+            ops_dir.join("README.md"),
+            "---\nalias: ops\nstate: Closed\n---\n# Ops\n",
+        )
+        .unwrap();
+        std::fs::write(ops_dir.join("next.actions"), "").unwrap();
+
+        let (work_uuid, ops_uuid) = {
+            let cs = load_workspace(&root).unwrap();
+            (
+                find_charter(&cs, "work").unwrap().id,
+                find_charter(&cs, "ops").unwrap().id,
+            )
+        };
+
+        archive_charter(&root, "ops", &ArchiveCharterOptions::default())
+            .expect("archive the closed child while its parent stays live");
+
+        // Parent untouched.
+        assert!(work_dir.join("README.md").exists(), "live parent must stay");
+
+        // Child crystallized flat, its parent edge pointing at the live parent.
+        let archive_dir = root.join(".clearhead/archive");
+        let ops_md =
+            std::fs::read_to_string(archive_dir.join(format!("{ops_uuid}.md"))).unwrap();
+        assert!(
+            ops_md.contains(&format!("parent: {work_uuid}")),
+            "cross-boundary parent must be materialized as a UUID:\n{ops_md}"
         );
     }
 
