@@ -126,7 +126,7 @@ pub async fn serve_stdio() {
 mod tests {
     use super::*;
     use clearhead_core::workspace::actions::format::FormatConfig;
-    use clearhead_core::{OutputFormat, format};
+    use clearhead_core::{TrustedDocument, format_trusted_source};
 
     #[test]
     fn test_lsp_format_normalizes() {
@@ -138,7 +138,8 @@ mod tests {
             ..Default::default()
         };
 
-        let formatted = format(&parsed.actions, OutputFormat::Actions, Some(config), None).unwrap();
+        let trusted = TrustedDocument::try_from(parsed).unwrap();
+        let formatted = format_trusted_source(&trusted, Some(config)).unwrap();
 
         assert!(formatted.contains("#"));
         assert!(formatted.contains("[ ] Task without ID"));

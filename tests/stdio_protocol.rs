@@ -180,5 +180,56 @@ fn stdio_lifecycle_diagnostics_formatting_and_save() {
         "didSave must not archive an editor-owned buffer"
     );
 
+    // Historical destructive shape: a half-typed link lets generic recovery
+    // span into the next action. Diagnostics remain available, but formatting
+    // must return no full-document edit while that recovery evidence exists.
+    let malformed = concat!(
+        "[ ] Read [[docs|https://example.com\n",
+        "[ ] Next #019f0000-0000-7000-8000-000000000001",
+    );
+    lsp.send(json!({
+        "jsonrpc": "2.0",
+        "method": "textDocument/didChange",
+        "params": {
+            "textDocument": {"uri": source_uri, "version": 3},
+            "contentChanges": [{"text": malformed}]
+        }
+    }));
+    let malformed_diagnostics = lsp.receive_until(|message| {
+        message.get("method") == Some(&json!("textDocument/publishDiagnostics"))
+    });
+    assert!(
+        malformed_diagnostics["params"]["diagnostics"]
+            .as_array()
+            .is_some_and(|items| items.iter().any(|item| item["severity"] == json!(1))),
+        "incomplete link should produce an error diagnostic: {malformed_diagnostics}"
+    );
+
+    lsp.send(json!({
+        "jsonrpc": "2.0",
+        "method": "textDocument/didSave",
+        "params": {"textDocument": {"uri": source_uri}}
+    }));
+    lsp.send(json!({
+        "jsonrpc": "2.0",
+        "id": 3,
+        "method": "textDocument/formatting",
+        "params": {
+            "textDocument": {"uri": source_uri},
+            "options": {"tabSize": 4, "insertSpaces": true}
+        }
+    }));
+    let refused = lsp.receive_until(|message| message.get("id") == Some(&json!(3)));
+    assert_eq!(
+        refused["result"],
+        Value::Null,
+        "untrusted source must not receive a formatting edit: {refused}"
+    );
+    let sidecar_content = std::fs::read_to_string(&sidecar).unwrap();
+    assert!(
+        !sidecar_content.contains("019f0000-0000-7000-8000-000000000001"),
+        "didSave must not persist UUID attachment from recovered source: {sidecar_content}"
+    );
+
     lsp.stop();
 }

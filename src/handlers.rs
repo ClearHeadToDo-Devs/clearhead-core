@@ -6,7 +6,7 @@ use crate::telemetry::{
 use chrono::Local;
 use clearhead_core::workspace::actions::format::FormatConfig;
 use clearhead_core::workspace::actions::{Diff, FieldChange, diff_actions, get_node_text};
-use clearhead_core::{OutputFormat, ParsedDocument, format};
+use clearhead_core::{ParsedDocument, TrustedDocument, format_trusted_source};
 use tower_lsp_server::LanguageServer;
 use tower_lsp_server::jsonrpc::{Error, Result};
 use tower_lsp_server::ls_types::*;
@@ -110,7 +110,10 @@ impl LanguageServer for Backend {
         // client must save, invoke the CLI's durable workspace mutation, and
         // reload only after that process succeeds.
         if let Some(mut doc) = self.documents.get_mut(&uri) {
-            if let (Some(current), Some(last)) = (&doc.parsed, &doc.last_saved_parsed) {
+            if let (Some(current), Some(last)) = (&doc.parsed, &doc.last_saved_parsed)
+                && TrustedDocument::try_from(current.clone()).is_ok()
+                && TrustedDocument::try_from(last.clone()).is_ok()
+            {
                 let diff = diff_actions(&last.actions, &current.actions);
                 let file_path = uri
                     .to_file_path()
@@ -125,8 +128,9 @@ impl LanguageServer for Backend {
         if let Some(path) = uri.to_file_path()
             && let Some(doc) = self.documents.get(&uri)
             && let Some(ref parsed) = doc.parsed
+            && let Ok(trusted) = TrustedDocument::try_from(parsed.clone())
         {
-            let actions = parsed.actions.clone();
+            let actions = trusted.actions().clone();
             drop(doc);
             if let Err(e) =
                 clearhead_core::workspace::sidecar::stamp_sidecar_entries(&path, &actions)
@@ -374,7 +378,22 @@ impl LanguageServer for Backend {
                 indent_width: params.options.tab_size as usize,
                 ..Default::default()
             };
-            match format(&parsed.actions, OutputFormat::Actions, Some(config), None) {
+            let trusted = match TrustedDocument::try_from(parsed.clone()) {
+                Ok(document) => document,
+                Err(error) => {
+                    self.client
+                        .log_message(
+                            MessageType::WARNING,
+                            format!(
+                                "Formatting refused: fix {} parser integrity issue(s) first",
+                                error.issues.len()
+                            ),
+                        )
+                        .await;
+                    return Ok(None);
+                }
+            };
+            match format_trusted_source(&trusted, Some(config)) {
                 Ok(new_text) => {
                     return Ok(Some(vec![full_replace_text_edit(new_text)]));
                 }

@@ -92,6 +92,24 @@ pub fn compute_code_actions(
 ) -> Vec<CodeActionOrCommand> {
     let mut actions = Vec::new();
 
+    // Parser recovery remains diagnostic-only, but deterministic repairs can
+    // be offered as surgical source edits. A Tree-sitter MISSING close carries
+    // the exact insertion point and never requires whole-document formatting.
+    for issue in &doc.syntax_errors {
+        let issue_range = source_range_to_lsp_range(issue.range);
+        if issue.message == "missing ']]'"
+            && range.start.line <= issue_range.end.line
+            && range.end.line >= issue_range.start.line
+        {
+            actions.push(create_quick_fix(
+                uri.clone(),
+                issue_range.start,
+                "]]".to_string(),
+                "Close incomplete link".to_string(),
+            ));
+        }
+    }
+
     for action in &doc.actions {
         if let Some(metadata) = doc.source_map.get(&action.id) {
             let action_range = source_range_to_lsp_range(metadata.root);
@@ -247,6 +265,40 @@ mod tests {
     }
 
     // Unit tests for compute_code_actions
+
+    #[test]
+    fn test_code_action_closes_incomplete_link_without_formatting() {
+        let text = concat!(
+            "[ ] Read [[docs|https://example.com\n",
+            "[ ] Next #019f0000-0000-7000-8000-000000000001",
+        );
+        let parsed = get_parsed_document(text).unwrap();
+        let uri = Uri::from_file_path("/test.actions").unwrap();
+        let range = Range::new(Position::new(1, 0), Position::new(1, 0));
+
+        let actions = compute_code_actions(&parsed, &uri, range);
+        let close = actions
+            .iter()
+            .find_map(|action| match action {
+                CodeActionOrCommand::CodeAction(action)
+                    if action.title == "Close incomplete link" =>
+                {
+                    Some(action)
+                }
+                _ => None,
+            })
+            .expect("missing-link diagnostic should offer a narrow repair");
+        let edit = close
+            .edit
+            .as_ref()
+            .and_then(|edit| edit.changes.as_ref())
+            .and_then(|changes| changes.get(&uri))
+            .and_then(|edits| edits.first())
+            .expect("quick fix edit");
+        assert_eq!(edit.range.start, Position::new(1, 0));
+        assert_eq!(edit.range.end, Position::new(1, 0));
+        assert_eq!(edit.new_text, "]]");
+    }
 
     #[test]
     fn test_code_actions_hydrate_uuid() {
