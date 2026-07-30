@@ -1,4 +1,4 @@
-use super::{Action, ActionList};
+use super::{Action, ActionList, TrustedDocument};
 use serde::{Deserialize, Serialize};
 use std::io::Cursor;
 use topiary_core::{Language, Operation, TopiaryQuery, formatter};
@@ -92,6 +92,16 @@ pub fn format(
     }
 }
 
+/// Format actions originating from existing source. Requiring a
+/// [`TrustedDocument`] prevents recoverable parser output from being silently
+/// reserialized into a destructive full-document replacement.
+pub fn format_trusted_source(
+    document: &TrustedDocument,
+    config: Option<FormatConfig>,
+) -> Result<String, String> {
+    format_as_actions(document.actions(), config)
+}
+
 /// Format ActionList as .actions file format using Topiary
 fn format_as_actions(list: &ActionList, config: Option<FormatConfig>) -> Result<String, String> {
     let config = config.unwrap_or_default();
@@ -178,9 +188,12 @@ fn format_with_topiary(input_text: &str, config: &FormatConfig) -> Result<String
     };
 
     // Configure Operation
+    // Canonical serialization originates from typed Actions and must parse
+    // cleanly. Tolerating parser recovery here would recreate the same unsafe
+    // boundary that TrustedDocument removes from source formatting.
     let operation = Operation::Format {
         skip_idempotence: true,
-        tolerate_parsing_errors: true,
+        tolerate_parsing_errors: false,
     };
 
     // Run Formatter

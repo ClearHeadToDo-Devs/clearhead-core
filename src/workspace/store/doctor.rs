@@ -76,9 +76,15 @@ pub fn diagnose_read(
     check_charter_alias_collisions(charters, &mut findings);
     check_open_actions_under_unresolved_parents(charters, &mut findings);
     let known_action_ids = collect_known_action_ids(charters, &completed);
-    check_sidecar_coherence(&layout.charter_root, charters, &known_action_ids, &mut findings);
+    // A quarantined action file may still own every UUID in its sidecar. Until
+    // source integrity is restored, absence from the semantic model is not
+    // proof of orphanhood and doctor --fix must not prune that provenance.
+    let has_quarantined_source = findings.iter().any(|f| f.code == "syntax-errors");
+    if !has_quarantined_source {
+        check_sidecar_coherence(&layout.charter_root, charters, &known_action_ids, &mut findings);
+        check_orphaned_sidecars(&layout.charter_root, &known_action_ids, &mut findings);
+    }
     check_sidecar_created_sanity(&layout.charter_root, charters, &mut findings);
-    check_orphaned_sidecars(&layout.charter_root, &known_action_ids, &mut findings);
     check_charterless_plans(charters, &mut findings);
     check_durability_residue(&layout.charter_root, &layout.plans_root, &mut findings);
 

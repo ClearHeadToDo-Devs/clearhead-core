@@ -21,8 +21,9 @@ pub use parser::{ActionList, parse_tree};
 
 // Parse pipeline
 pub use source::{
-    ParseFailure, ParseMode, ParseOutcome, ParsedDocument, RecoveryReport, SourceMetadata,
-    SourceRange, get_node_text, parse_actions, parse_actions_with_mode, parse_document,
+    IntegrityError, ParseFailure, ParseMode, ParseOutcome, ParsedDocument, RecoveryReport,
+    SourceMetadata, SourceRange, TrustedDocument, get_node_text, parse_actions,
+    parse_actions_with_mode, parse_document, parse_trusted_document,
 };
 
 // Storage
@@ -35,6 +36,7 @@ pub use diff::{ActionDiff, Diff, FieldChange, diff_actions};
 // Format
 pub use format::{
     FormatConfig, FormatStyle, IndentStyle, OutputFormat, TableFormatOptions, format,
+    format_trusted_source,
 };
 
 // Lint

@@ -9,7 +9,7 @@
 //! parent-child links.
 
 use clearhead_core::{
-    ActionState, ParseMode, parse_actions, parse_actions_with_mode, parse_document,
+    ActionState, ParseMode, TrustedDocument, parse_actions, parse_actions_with_mode, parse_document,
 };
 
 // Use compile-time embedding so fixture content is verified to exist at build time.
@@ -139,4 +139,70 @@ fn parse_mode_recover_returns_diagnostics() {
         result.document.actions.len(),
         "recovery metadata should track recoverable action count"
     );
+}
+
+#[test]
+fn incomplete_link_recovery_cannot_become_trusted_source() {
+    // Historical data-loss shape: generic tree-sitter recovery spans into the
+    // next action and may attach its UUID to the first. Recovery remains useful
+    // for diagnostics, but the type required by rewriting must be unobtainable.
+    let source = concat!(
+        "[ ] Read [[docs|https://example.com\n",
+        "[ ] Next action #019f0000-0000-7000-8000-000000000001\n",
+    );
+    let parsed = parse_document(source).expect("tree-sitter should return a recoverable tree");
+    assert!(
+        !parsed.syntax_errors.is_empty(),
+        "the incomplete link must retain parser integrity evidence"
+    );
+    assert_eq!(
+        parsed.actions.len(),
+        2,
+        "link recovery must synchronize on the next structural action marker"
+    );
+    assert_eq!(parsed.actions[0].name, "Read [[docs|https://example.com");
+    assert_ne!(
+        parsed.actions[0].id.to_string(),
+        "019f0000-0000-7000-8000-000000000001",
+        "the next action's UUID must never attach to the recovered first action"
+    );
+    assert_eq!(parsed.actions[1].name, "Next action");
+    assert_eq!(
+        parsed.actions[1].id.to_string(),
+        "019f0000-0000-7000-8000-000000000001"
+    );
+    assert!(
+        TrustedDocument::try_from(parsed).is_err(),
+        "recovered source must not acquire rewrite capability"
+    );
+}
+
+#[test]
+fn valid_link_may_span_whitespace_and_remain_trusted() {
+    let source = concat!(
+        "[ ] Read [[documentation across\n",
+        "soft whitespace|https://example.com/docs]] #019f0000-0000-7000-8000-000000000002\n",
+    );
+    let parsed = parse_document(source).expect("multiline link should parse");
+    assert!(
+        parsed.syntax_errors.is_empty(),
+        "{:?}",
+        parsed.syntax_errors
+    );
+    let trusted = TrustedDocument::try_from(parsed).expect("complete multiline link is trusted");
+    assert_eq!(trusted.actions().len(), 1);
+    assert!(
+        trusted.actions()[0]
+            .name
+            .contains("documentation across\nsoft whitespace")
+    );
+}
+
+#[test]
+fn clean_source_can_acquire_rewrite_capability() {
+    let parsed = parse_document("[ ] Safe #019f0000-0000-7000-8000-000000000001\n")
+        .expect("clean source parses");
+    let trusted = TrustedDocument::try_from(parsed).expect("clean source should be trusted");
+    assert_eq!(trusted.actions().len(), 1);
+    assert_eq!(trusted.actions()[0].name, "Safe");
 }

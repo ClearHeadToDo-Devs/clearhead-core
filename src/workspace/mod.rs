@@ -22,10 +22,11 @@ pub mod templates;
 
 // Re-export key types at workspace level
 pub use actions::{
-    Action, ActionList, ActionState, Diff, OutputFormat,
+    Action, ActionList, ActionState, Diff, IntegrityError, OutputFormat,
     ParseFailure, ParseMode, ParseOutcome, ParsedDocument, RecoveryReport, SourceMetadata,
-    SourceRange, SourcedAction, diff_actions, format, parse_actions, parse_actions_with_mode,
-    parse_document, parse_tree, patch_action_list,
+    SourceRange, SourcedAction, TrustedDocument, diff_actions, format, format_trusted_source,
+    parse_actions, parse_actions_with_mode, parse_document, parse_tree, parse_trusted_document,
+    patch_action_list,
 };
 pub use action_files::{ActionsFile, completed_actions_path, read_action_file, read_actions, write_actions};
 pub use archive_actions::{

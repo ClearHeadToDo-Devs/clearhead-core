@@ -6,6 +6,7 @@ use crate::workspace::durability::recover_pending;
 use crate::domain::{Charter, DomainModel};
 use crate::workspace::actions::convert::from_actions_with_charter;
 use crate::workspace::actions::repository::SourcedAction;
+use crate::workspace::actions::TrustedDocument;
 use crate::workspace::charter::{
     MarkdownCharter, frontmatter_has_id_key, frontmatter_has_parent_key, implicit_charter,
     parse_charter,
@@ -242,13 +243,29 @@ pub fn read_workspace_with_plans(
             }
         };
 
-        if !parsed_doc.syntax_errors.is_empty() {
-            findings.push(Finding::warning(
-                "syntax-errors",
-                &relative,
-                syntax_error_summary(&parsed_doc),
-            ));
-        }
+        // A recoverable tree is useful for diagnostics, but its action/UUID
+        // attachment is not trustworthy enough for the domain model. Quarantine
+        // the whole source file until its parser integrity issues are fixed.
+        let parsed_doc = match TrustedDocument::try_from(parsed_doc) {
+            Ok(document) => document.into_parsed(),
+            Err(error) => {
+                let summary = error
+                    .issues
+                    .first()
+                    .map(|first| {
+                        format!(
+                            "{} parser issue(s); first at line {}, column {}: {}; file quarantined",
+                            error.issues.len(),
+                            first.range.start_row + 1,
+                            first.range.start_col + 1,
+                            first.message
+                        )
+                    })
+                    .unwrap_or_else(|| "parser integrity issue; file quarantined".to_string());
+                findings.push(Finding::warning("syntax-errors", &relative, summary));
+                continue;
+            }
+        };
 
         let source_map = parsed_doc.source_map;
         let mut sourced: Vec<SourcedAction> = parsed_doc.actions

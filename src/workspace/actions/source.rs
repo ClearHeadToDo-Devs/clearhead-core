@@ -17,6 +17,61 @@ pub struct ParsedDocument {
     pub syntax_errors: Vec<LintDiagnostic>,
 }
 
+/// Capability proving that a parsed source document contains no parser
+/// recovery. Consumers that may rewrite source must require this type rather
+/// than accepting a recoverable [`ParsedDocument`] or bare [`ActionList`].
+#[derive(Debug, Clone)]
+pub struct TrustedDocument {
+    document: ParsedDocument,
+}
+
+impl TrustedDocument {
+    pub fn parsed(&self) -> &ParsedDocument {
+        &self.document
+    }
+
+    pub fn actions(&self) -> &ActionList {
+        &self.document.actions
+    }
+
+    pub fn into_parsed(self) -> ParsedDocument {
+        self.document
+    }
+}
+
+/// Why a recoverable parse cannot be trusted for rewriting or semantic
+/// mutation. The diagnostics remain available to lint/LSP consumers.
+#[derive(Debug, Clone)]
+pub struct IntegrityError {
+    pub issues: Vec<LintDiagnostic>,
+}
+
+impl fmt::Display for IntegrityError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "source contains {} parser integrity issue(s)",
+            self.issues.len()
+        )
+    }
+}
+
+impl std::error::Error for IntegrityError {}
+
+impl TryFrom<ParsedDocument> for TrustedDocument {
+    type Error = IntegrityError;
+
+    fn try_from(document: ParsedDocument) -> Result<Self, Self::Error> {
+        if document.syntax_errors.is_empty() {
+            Ok(Self { document })
+        } else {
+            Err(IntegrityError {
+                issues: document.syntax_errors.clone(),
+            })
+        }
+    }
+}
+
 /// Parse policy for `.actions` source handling.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ParseMode {
@@ -107,6 +162,20 @@ impl SourceRange {
 pub fn parse_actions(input: &str) -> Result<ActionList, String> {
     let outcome = parse_actions_with_mode(input, ParseMode::Strict).map_err(|e| e.to_string())?;
     Ok(outcome.document.actions)
+}
+
+/// Parse source and return the capability required by rewriting consumers.
+pub fn parse_trusted_document(input: &str) -> Result<TrustedDocument, ParseFailure> {
+    let outcome = parse_actions_with_mode(input, ParseMode::Strict)?;
+    TrustedDocument::try_from(outcome.document).map_err(|error| {
+        let first = &error.issues[0];
+        ParseFailure {
+            code: "source-integrity-error",
+            message: first.message.clone(),
+            range: first.range,
+            hint: Some("Fix parser errors before formatting or mutating source".to_string()),
+        }
+    })
 }
 
 /// Parse a `.actions` document with explicit policy mode.

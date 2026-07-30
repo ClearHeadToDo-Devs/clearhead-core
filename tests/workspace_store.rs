@@ -745,7 +745,7 @@ fn fixture_md_merge_manifest_source_type() {
 }
 
 #[test]
-fn load_recovers_valid_actions_when_file_has_parse_issues() {
+fn load_quarantines_semantics_when_file_has_parse_issues() {
     let workspace = make_workspace(&[(
         "work.actions",
         "[ ] Valid one #01961111-0000-7000-0000-000000000001\n\
@@ -753,16 +753,24 @@ fn load_recovers_valid_actions_when_file_has_parse_issues() {
          [ ] Valid two #01961111-0000-7000-0000-000000000002\n",
     )]);
 
-    let model = load_domain_model(workspace.path()).expect("load should recover valid actions");
-    let work = model
-        .charters
-        .iter()
-        .find(|c| c.title == "work")
-        .expect("work charter");
+    let read = clearhead_core::workspace::read_workspace(workspace.path())
+        .expect("diagnostic read should succeed");
+    assert!(
+        read.findings.iter().any(|finding| {
+            finding.code == "syntax-errors" && finding.message.contains("file quarantined")
+        }),
+        "recovery should remain visible as a diagnostic finding"
+    );
+    assert!(
+        read.charters.iter().all(|charter| charter.actions.is_empty()),
+        "recovered actions must not enter semantic workspace state"
+    );
 
-    assert_eq!(work.actions.len(), 2, "valid actions should still be loaded");
-    assert!(work.actions.iter().any(|a| a.name == "Valid one"));
-    assert!(work.actions.iter().any(|a| a.name == "Valid two"));
+    let model = load_domain_model(workspace.path()).expect("quarantined load should still succeed");
+    assert!(
+        model.charters.iter().all(|charter| charter.actions.is_empty()),
+        "domain lowering must not attach recovered fields or UUIDs"
+    );
 }
 
 #[test]
@@ -1357,8 +1365,8 @@ fn syntax_errors_surface_as_a_warning_finding() {
     assert_eq!(finding.severity, FindingSeverity::Warning);
     assert_eq!(finding.path, Path::new("work.actions"));
     assert!(
-        finding.message.contains("recoverable action(s)"),
-        "message should summarize what still loaded: {}",
+        finding.message.contains("file quarantined"),
+        "message should make the semantic trust boundary explicit: {}",
         finding.message
     );
 }
@@ -1603,6 +1611,36 @@ fn doctor_flags_orphaned_sidecar_entry() {
         .collect();
     assert_eq!(orphans.len(), 1, "findings: {:?}", diagnosis.findings);
     assert!(orphans[0].message.contains(gone));
+}
+
+#[test]
+fn doctor_does_not_prune_sidecars_while_source_is_quarantined() {
+    use clearhead_core::workspace::diagnose;
+
+    let id = "019f0000-0000-7000-8000-000000000001";
+    let sidecar = format!(
+        r#"{{"actions": {{"{id}": {{"created": "2026-01-01T00:00:00+00:00"}}}}}}"#
+    );
+    let workspace = make_workspace(&[
+        (
+            "work.actions",
+            &format!("[ ] Read [[docs|https://example.com\n[ ] Next #{id}\n"),
+        ),
+        (".work.json", &sidecar),
+    ]);
+
+    let diagnosis = diagnose(initialized(workspace.path()), None).unwrap();
+    assert!(
+        diagnosis.findings.iter().any(|f| f.code == "syntax-errors"),
+        "the source-integrity finding must remain visible"
+    );
+    assert!(
+        !diagnosis.findings.iter().any(|finding| {
+            finding.code == "sidecar-orphan" || finding.code == "orphaned-sidecar"
+        }),
+        "quarantine is not proof that sidecar provenance is stale: {:?}",
+        diagnosis.findings
+    );
 }
 
 #[test]
