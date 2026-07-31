@@ -73,8 +73,17 @@ pub struct CloseActionResult {
 /// Only complete terminal trees are archived. A completed/cancelled root with
 /// an open descendant remains active, preserving the structural parent chain.
 /// Archived actions are detached because completed files are flat history, not
-/// an active hierarchy.
+/// an active hierarchy. Any archived action without a completion date is stamped
+/// at plan construction time; an existing completion date is preserved.
 pub fn plan_action_archive(active: &[Action], existing_completed: &[Action]) -> ActionArchivePlan {
+    plan_action_archive_at(active, existing_completed, Local::now())
+}
+
+fn plan_action_archive_at(
+    active: &[Action],
+    existing_completed: &[Action],
+    archived_at: DateTime<Local>,
+) -> ActionArchivePlan {
     let archive_root_ids: HashSet<_> = active
         .iter()
         .filter(|action| action.parent_id.is_none() && is_terminal(action))
@@ -104,6 +113,9 @@ pub fn plan_action_archive(active: &[Action], existing_completed: &[Action]) -> 
         if archive_ids.contains(&action.id) {
             let mut archived = action.clone();
             archived.parent_id = None;
+            if archived.completed_at.is_none() {
+                archived.completed_at = Some(archived_at);
+            }
             archived_actions.push(archived);
         } else {
             active_actions.push(action.clone());
@@ -338,14 +350,20 @@ mod tests {
 
     #[test]
     fn plan_archives_complete_terminal_trees_and_preserves_existing_history() {
+        use chrono::TimeZone;
+
         let root = action("done root", ActionState::Completed, None);
-        let child = action("cancelled child", ActionState::Cancelled, Some(root.id));
+        let mut child = action("cancelled child", ActionState::Cancelled, Some(root.id));
+        let existing_date = Local.with_ymd_and_hms(2026, 7, 1, 9, 0, 0).unwrap();
+        child.completed_at = Some(existing_date);
         let open = action("still open", ActionState::NotStarted, None);
         let existing = action("older", ActionState::Completed, None);
+        let archived_at = Local.with_ymd_and_hms(2026, 7, 31, 10, 30, 0).unwrap();
 
-        let plan = plan_action_archive(
+        let plan = plan_action_archive_at(
             &[root.clone(), child.clone(), open.clone()],
             std::slice::from_ref(&existing),
+            archived_at,
         );
 
         assert_eq!(plan.archived_count, 2);
@@ -353,6 +371,8 @@ mod tests {
         assert_eq!(plan.active_actions[0].id, open.id);
         assert_eq!(plan.completed_actions.len(), 3);
         assert_eq!(plan.completed_actions[0].id, existing.id);
+        assert_eq!(plan.completed_actions[1].completed_at, Some(archived_at));
+        assert_eq!(plan.completed_actions[2].completed_at, Some(existing_date));
         assert!(
             plan.completed_actions[1..]
                 .iter()
