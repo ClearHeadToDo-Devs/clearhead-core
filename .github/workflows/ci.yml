@@ -1,76 +1,41 @@
 name: CI
 
-# Auto-triggers are paused: this crate declares tree-sitter-actions as a sibling
-# path dependency (../tree-sitter-actions) that only exists inside the platform
-# super-repo, so a standalone CI checkout cannot build. Rather than patch the
-# dependency form now, we are folding CI into a proper release pipeline that
-# publishes prebuilt binaries to GH Releases (cargo binstall), which will settle
-# how the crate resolves its deps. Until then, run manually via workflow_dispatch.
-# See platform .clearhead/charters/dependency-hygiene for context.
 on:
+  push:
+  pull_request:
   workflow_dispatch:
 
 jobs:
   test:
-    name: Test Suite
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
+      - name: Checkout core
         uses: actions/checkout@v4
         with:
-          submodules: true
-      
-      - name: Install Rust toolchain
-        uses: actions-rs/toolchain@v1
-        with:
-          toolchain: stable
-          override: true
-          components: rustfmt, clippy
-      
-      - name: Cache cargo registry
-        uses: actions/cache@v3
-        with:
-          path: ~/.cargo/registry
-          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
-      
-      - name: Cache cargo index
-        uses: actions/cache@v3
-        with:
-          path: ~/.cargo/git
-          key: ${{ runner.os }}-cargo-index-${{ hashFiles('**/Cargo.lock') }}
-      
-      - name: Cache target directory
-        uses: actions/cache@v3
-        with:
-          path: target
-          key: ${{ runner.os }}-target-${{ hashFiles('**/Cargo.lock') }}
-      
-      - name: Build
-        run: cargo build --verbose
-      
-      - name: Run tests
-        run: cargo test --verbose
-      
-      - name: Run clippy
-        run: cargo clippy -- -D warnings
-      
-      - name: Check formatting
-        run: cargo fmt -- --check
+          path: workspace/clearhead-core
 
-  publish-dry-run:
-    name: Check Publish Readiness
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
+      # The crates intentionally use sibling path dependencies in the platform
+      # workspace. Check out those exact siblings rather than hiding the seam
+      # behind registry substitutions that local development does not use.
+      - name: Checkout tree-sitter grammar
         uses: actions/checkout@v4
         with:
-          submodules: true
-      
-      - name: Install Rust toolchain
-        uses: actions-rs/toolchain@v1
+          repository: ClearHeadToDo-Devs/tree-sitter-actions
+          path: workspace/tree-sitter-actions
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: stable
-          override: true
-      
-      - name: Dry-run publish
-        run: cargo publish --dry-run
+          components: clippy, rustfmt
+
+      - name: Format
+        working-directory: workspace/clearhead-core
+        run: cargo fmt --check
+
+      - name: Clippy
+        working-directory: workspace/clearhead-core
+        run: cargo clippy --all-targets --no-deps --locked -- -D warnings
+
+      - name: Test
+        working-directory: workspace/clearhead-core
+        run: cargo test --locked
