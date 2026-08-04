@@ -232,7 +232,6 @@ fn format_as_xml(list: &ActionList) -> Result<String, String> {
     quick_xml::se::to_string(&wrapper).map_err(|e| format!("XML formatting failed: {}", e))
 }
 
-
 pub const COLUMN_NAMES: [&str; 10] = [
     "State",       // 0
     "Name",        // 1

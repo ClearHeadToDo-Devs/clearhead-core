@@ -4,7 +4,7 @@
 //! plan-level changes, which contain action-level changes. This preserves
 //! charter context throughout — no post-hoc lookups needed.
 
-use super::{ActionState, Action, Charter, DomainModel, Plan, Recurrence};
+use super::{Action, ActionState, Charter, DomainModel, Plan, Recurrence};
 use chrono::{DateTime, Local};
 use std::collections::HashMap;
 use uuid::Uuid;
@@ -438,7 +438,7 @@ fn dates_equal(a: &Option<DateTime<Local>>, b: &Option<DateTime<Local>>) -> bool
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::{ActionState, Action, Charter};
+    use crate::domain::{Action, ActionState, Charter};
 
     fn make_model(id: &str, name: &str) -> DomainModel {
         let plan_id = Uuid::parse_str(id).unwrap();

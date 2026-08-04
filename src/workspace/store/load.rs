@@ -2,20 +2,22 @@ use super::discovery::{discover_action_files, discover_charter_files};
 use super::findings::Finding;
 use super::pathing::{infer_charter_name_for_workspace, infer_parent_charter_name_for_workspace};
 use super::{WorkspaceError, resolve_workspace_layout};
-use crate::workspace::durability::recover_pending;
 use crate::domain::{Charter, DomainModel};
+use crate::workspace::actions::TrustedDocument;
 use crate::workspace::actions::convert::from_actions_with_charter;
 use crate::workspace::actions::repository::SourcedAction;
-use crate::workspace::actions::TrustedDocument;
+use crate::workspace::calendar::ics::parse_ics_file;
+use crate::workspace::calendar::plans::collect_plan_files_in;
+use crate::workspace::calendar::sync_store::read_plans_sync_store;
 use crate::workspace::charter::{
     MarkdownCharter, frontmatter_has_id_key, frontmatter_has_parent_key, implicit_charter,
     parse_charter,
 };
-use crate::workspace::calendar::ics::parse_ics_file;
-use crate::workspace::calendar::plans::collect_plan_files_in;
-use crate::workspace::calendar::sync_store::read_plans_sync_store;
-use crate::workspace::sidecar::{collect_sidecar_actions, hydrate_actions_map, read_sidecar, sidecar_path};
+use crate::workspace::durability::recover_pending;
 use crate::workspace::manifest::WorkspaceManifest;
+use crate::workspace::sidecar::{
+    collect_sidecar_actions, hydrate_actions_map, read_sidecar, sidecar_path,
+};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
@@ -115,7 +117,10 @@ impl From<Workspace> for DomainModel {
         // calendar concern, rendered elsewhere from the recurrence engine — not
         // unioned in here. So the lowering is a straight per-charter flatten.
         let charters = ws.charters.into_iter().map(Charter::from).collect();
-        DomainModel { objectives: vec![], charters }
+        DomainModel {
+            objectives: vec![],
+            charters,
+        }
     }
 }
 
@@ -268,7 +273,8 @@ pub fn read_workspace_with_plans(
         };
 
         let source_map = parsed_doc.source_map;
-        let mut sourced: Vec<SourcedAction> = parsed_doc.actions
+        let mut sourced: Vec<SourcedAction> = parsed_doc
+            .actions
             .into_iter()
             .map(|mut action| {
                 if action.charter.is_none() {
@@ -283,7 +289,10 @@ pub fn read_workspace_with_plans(
             .collect();
 
         let base: Charter = from_actions_with_charter(
-            &sourced.iter().map(|sa| sa.action.clone()).collect::<Vec<_>>(),
+            &sourced
+                .iter()
+                .map(|sa| sa.action.clone())
+                .collect::<Vec<_>>(),
             name.clone(),
         );
         let mut mc = MarkdownCharter::from(base);
@@ -528,7 +537,9 @@ pub fn read_workspace_with_plans(
             charter.parent = entry.inferred_parent.clone();
             charter.plans_dir = Some(plans_dir.clone());
             charter.plans = plans;
-            path_for_name.entry(entry.charter_name.clone()).or_insert(plans_dir);
+            path_for_name
+                .entry(entry.charter_name.clone())
+                .or_insert(plans_dir);
             charters_by_name.insert(entry.charter_name.clone(), charter);
         }
     }
@@ -580,7 +591,12 @@ fn resolve_predecessor_aliases(charters: &mut [MarkdownCharter]) {
     let alias_to_id: HashMap<String, uuid::Uuid> = charters
         .iter()
         .flat_map(|c| &c.actions)
-        .filter_map(|sa| sa.action.alias.as_ref().map(|a| (a.to_lowercase(), sa.action.id)))
+        .filter_map(|sa| {
+            sa.action
+                .alias
+                .as_ref()
+                .map(|a| (a.to_lowercase(), sa.action.id))
+        })
         .collect();
     if alias_to_id.is_empty() {
         return;
@@ -589,8 +605,9 @@ fn resolve_predecessor_aliases(charters: &mut [MarkdownCharter]) {
         for sa in &mut charter.actions {
             for pred in sa.action.predecessors.iter_mut().flatten() {
                 if pred.resolved_uuid.is_none() {
-                    pred.resolved_uuid =
-                        alias_to_id.get(&pred.raw_ref.trim().to_lowercase()).copied();
+                    pred.resolved_uuid = alias_to_id
+                        .get(&pred.raw_ref.trim().to_lowercase())
+                        .copied();
                 }
             }
         }

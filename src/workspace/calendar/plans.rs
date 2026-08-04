@@ -130,8 +130,7 @@ pub(crate) fn collect_plan_files_in(
             continue;
         };
 
-        let inferred_parent =
-            infer_plan_parent_for_workspace(&relative_path, project_root_charter);
+        let inferred_parent = infer_plan_parent_for_workspace(&relative_path, project_root_charter);
 
         entries.push(PlanFileEntry {
             path,
@@ -330,10 +329,7 @@ mod tests {
             None
         );
         // Single component without .ics — invalid
-        assert_eq!(
-            infer_plan_charter_name(Path::new("inbox")),
-            None
-        );
+        assert_eq!(infer_plan_charter_name(Path::new("inbox")), None);
     }
 
     #[test]
@@ -354,8 +350,14 @@ mod tests {
 
     #[test]
     fn infer_plan_parent_names() {
-        assert_eq!(infer_plan_parent(Path::new("inbox/weekly-review.ics")), None);
-        assert_eq!(infer_plan_parent(Path::new("work-feature/deploy.ics")), None);
+        assert_eq!(
+            infer_plan_parent(Path::new("inbox/weekly-review.ics")),
+            None
+        );
+        assert_eq!(
+            infer_plan_parent(Path::new("work-feature/deploy.ics")),
+            None
+        );
     }
 
     #[test]
@@ -421,11 +423,7 @@ mod tests {
         assert_eq!(
             summarized,
             vec![
-                (
-                    "next/root.ics".into(),
-                    "my-project".into(),
-                    None
-                ),
+                ("next/root.ics".into(), "my-project".into(), None),
                 (
                     "work/release.ics".into(),
                     "work".into(),
@@ -462,7 +460,13 @@ mod tests {
         let entries = collect_plan_files(&workspace).expect("collect failed");
         let summarized: Vec<(String, String, Option<String>)> = entries
             .into_iter()
-            .map(|e| (e.relative_path.display().to_string(), e.charter_name, e.inferred_parent))
+            .map(|e| {
+                (
+                    e.relative_path.display().to_string(),
+                    e.charter_name,
+                    e.inferred_parent,
+                )
+            })
             .collect();
 
         assert_eq!(

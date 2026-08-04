@@ -31,7 +31,21 @@ const DESC_ESCAPE: &[char] = &['\\', '$'];
 fn is_escapable(c: char) -> bool {
     matches!(
         c,
-        '\\' | '$' | '!' | '*' | '+' | '@' | '%' | '^' | '#' | '>' | '<' | '~' | '=' | ':' | '[' | ']'
+        '\\' | '$'
+            | '!'
+            | '*'
+            | '+'
+            | '@'
+            | '%'
+            | '^'
+            | '#'
+            | '>'
+            | '<'
+            | '~'
+            | '='
+            | ':'
+            | '['
+            | ']'
     )
 }
 
@@ -261,9 +275,9 @@ pub fn parse_action_recursive(
         match meta.kind() {
             "description" => {
                 // Extract just the 'text' field content, not the $ markers
-                description = meta
-                    .child_by_field_name("text")
-                    .map(|text_node| unescape_field(get_node_text(&text_node, &node.source).trim()));
+                description = meta.child_by_field_name("text").map(|text_node| {
+                    unescape_field(get_node_text(&text_node, &node.source).trim())
+                });
             }
             "priority" => {
                 priority = get_prefixed_text(&meta, &node.source, '!').and_then(|s| s.parse().ok());
@@ -364,7 +378,11 @@ pub fn parse_action_recursive(
         due_date: due_date_time,
         completed_at: completed_date_time,
         created_at: created_date_time,
-        predecessors: if predecessors.is_empty() { None } else { Some(predecessors) },
+        predecessors: if predecessors.is_empty() {
+            None
+        } else {
+            Some(predecessors)
+        },
         charter,
         alias,
         is_sequential,

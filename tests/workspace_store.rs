@@ -281,10 +281,7 @@ END:VCALENDAR\n",
     assert_eq!(manifest.len(), 1);
     assert_eq!(manifest[0].path, "next.actions");
     assert_eq!(manifest[0].charter_name, "my-project");
-    assert_eq!(
-        manifest[0].source_type,
-        ManifestSourceType::ActionsPlusIcs
-    );
+    assert_eq!(manifest[0].source_type, ManifestSourceType::ActionsPlusIcs);
 }
 
 #[test]
@@ -515,7 +512,11 @@ fn load_md_only_charter_produces_empty_plan_list() {
         0,
         "charter from .md-only should have no plans"
     );
-    assert_eq!(charter.actions.len(), 0, "charter from .md-only should have no actions");
+    assert_eq!(
+        charter.actions.len(),
+        0,
+        "charter from .md-only should have no actions"
+    );
     assert_eq!(charter.title, "Health & Fitness");
 }
 
@@ -762,13 +763,18 @@ fn load_quarantines_semantics_when_file_has_parse_issues() {
         "recovery should remain visible as a diagnostic finding"
     );
     assert!(
-        read.charters.iter().all(|charter| charter.actions.is_empty()),
+        read.charters
+            .iter()
+            .all(|charter| charter.actions.is_empty()),
         "recovered actions must not enter semantic workspace state"
     );
 
     let model = load_domain_model(workspace.path()).expect("quarantined load should still succeed");
     assert!(
-        model.charters.iter().all(|charter| charter.actions.is_empty()),
+        model
+            .charters
+            .iter()
+            .all(|charter| charter.actions.is_empty()),
         "domain lowering must not attach recovered fields or UUIDs"
     );
 }
@@ -919,12 +925,19 @@ fn fixed_now() -> chrono::DateTime<chrono::Local> {
 }
 
 /// Grab the first projected occurrence's handle: (id, plan_id, occurrence_key).
-fn first_occurrence(root: &Path, now: chrono::DateTime<chrono::Local>) -> (uuid::Uuid, uuid::Uuid, String) {
+fn first_occurrence(
+    root: &Path,
+    now: chrono::DateTime<chrono::Local>,
+) -> (uuid::Uuid, uuid::Uuid, String) {
     let occ = render_projection(root, now, 2)
         .into_iter()
         .find(|a| a.external_occurrence_key.is_some())
         .expect("a projected occurrence");
-    (occ.id, occ.plan_id.unwrap(), occ.external_occurrence_key.unwrap())
+    (
+        occ.id,
+        occ.plan_id.unwrap(),
+        occ.external_occurrence_key.unwrap(),
+    )
 }
 
 #[test]
@@ -940,7 +953,14 @@ fn occurrence_complete_writes_deviation_that_reprojects() {
     let now = fixed_now();
 
     let (occ_id, plan_id, key) = first_occurrence(root, now);
-    apply_occurrence_op(root, None, plan_id, &key, &OccurrenceOp::Complete { at: now }).unwrap();
+    apply_occurrence_op(
+        root,
+        None,
+        plan_id,
+        &key,
+        &OccurrenceOp::Complete { at: now },
+    )
+    .unwrap();
 
     let reprojected = render_projection(root, now, 2)
         .into_iter()
@@ -965,7 +985,9 @@ fn occurrence_skip_removes_it_from_the_projection() {
     apply_occurrence_op(root, None, plan_id, &key, &OccurrenceOp::Skip).unwrap();
 
     assert!(
-        render_projection(root, now, 2).iter().all(|a| a.id != occ_id),
+        render_projection(root, now, 2)
+            .iter()
+            .all(|a| a.id != occ_id),
         "the EXDATE'd slot no longer projects"
     );
 }
@@ -985,7 +1007,10 @@ fn occurrence_reschedule_moves_the_slot_in_the_projection() {
         None,
         plan_id,
         &key,
-        &OccurrenceOp::Reschedule { scheduled_at: Some(moved), due_date: None },
+        &OccurrenceOp::Reschedule {
+            scheduled_at: Some(moved),
+            due_date: None,
+        },
     )
     .unwrap();
 
@@ -1030,24 +1055,51 @@ fn resolving_a_materialized_occurrence_writes_the_deviation_and_advances() {
     let (plan_id, resolved_slot) = (*plan_id, resolved_slot.clone());
 
     // Resolve it (complete).
-    let handled =
-        resolve_materialized_occurrence(root, None, occ_id, &OccurrenceOp::Complete { at: now }, now)
-            .unwrap();
-    assert!(handled, "a store-linked occurrence is handled by the deviation path");
+    let handled = resolve_materialized_occurrence(
+        root,
+        None,
+        occ_id,
+        &OccurrenceOp::Complete { at: now },
+        now,
+    )
+    .unwrap();
+    assert!(
+        handled,
+        "a store-linked occurrence is handled by the deviation path"
+    );
 
     // The resolved link is cleared and exactly one new token stands for the plan.
     let store2 = read_plans_sync_store(root, &plans_root).unwrap();
-    assert!(store2.occurrence_link(occ_id).is_none(), "resolved link is cleared");
+    assert!(
+        store2.occurrence_link(occ_id).is_none(),
+        "resolved link is cleared"
+    );
     let links2 = store2.occurrence_links();
-    assert_eq!(links2.len(), 1, "still exactly one live token after advancing");
+    assert_eq!(
+        links2.len(),
+        1,
+        "still exactly one live token after advancing"
+    );
     let (&next_id, (next_plan, _next_slot)) = links2.iter().next().unwrap();
-    assert_ne!(next_id, occ_id, "advanced to a new slot, not the resolved one");
-    assert_eq!(*next_plan, plan_id, "the new token belongs to the same plan");
+    assert_ne!(
+        next_id, occ_id,
+        "advanced to a new slot, not the resolved one"
+    );
+    assert_eq!(
+        *next_plan, plan_id,
+        "the new token belongs to the same plan"
+    );
 
     // The master carries the completed RECURRENCE-ID deviation for the resolved slot.
     let ics = fs::read_to_string(plans_root.join("health").join("run.ics")).unwrap();
-    assert!(ics.contains("RECURRENCE-ID"), "a deviation was written to the master");
-    assert!(ics.contains(&resolved_slot), "the deviation is keyed on the resolved slot");
+    assert!(
+        ics.contains("RECURRENCE-ID"),
+        "a deviation was written to the master"
+    );
+    assert!(
+        ics.contains(&resolved_slot),
+        "the deviation is keyed on the resolved slot"
+    );
 }
 
 #[test]
@@ -1069,7 +1121,9 @@ fn materialized_occurrence_hydrates_its_plan_link_from_the_sync_store() {
     let report = plan_sync(&model, &store0, &calendar).unwrap();
     apply_sync(root, None, &report).unwrap();
 
-    let links = read_plans_sync_store(root, &plans_root).unwrap().occurrence_links();
+    let links = read_plans_sync_store(root, &plans_root)
+        .unwrap()
+        .occurrence_links();
     assert_eq!(links.len(), 1, "sync stamped exactly one token");
     let (occ_id, (plan_id, slot_key)) = {
         let (id, link) = links.iter().next().unwrap();
@@ -1085,7 +1139,11 @@ fn materialized_occurrence_hydrates_its_plan_link_from_the_sync_store() {
         .find(|a| a.id == occ_id)
         .cloned()
         .expect("the stamped token line is loaded");
-    assert_eq!(token.plan_id, Some(plan_id), "plan_id hydrated from the sync store");
+    assert_eq!(
+        token.plan_id,
+        Some(plan_id),
+        "plan_id hydrated from the sync store"
+    );
     assert_eq!(
         token.external_occurrence_key.as_deref(),
         Some(slot_key.as_str()),
@@ -1120,7 +1178,10 @@ fn foreign_rollforward_is_ingested_as_completion() {
 
     // The anchor is reset to the origin and the 01-01 slot is a completed override.
     let content = fs::read_to_string(&ics).unwrap();
-    assert!(content.contains("DTSTART:20260101T080000Z"), "anchor reset to origin");
+    assert!(
+        content.contains("DTSTART:20260101T080000Z"),
+        "anchor reset to origin"
+    );
     assert!(content.contains("RECURRENCE-ID:20260101T080000Z"));
     assert!(content.contains("STATUS:COMPLETED"));
 
@@ -1133,7 +1194,11 @@ fn foreign_rollforward_is_ingested_as_completion() {
         .into_iter()
         .find(|a| a.id == occ_id)
         .expect("the origin slot still projects");
-    assert_eq!(occ.state, ActionState::Completed, "roll-forward recorded as completion");
+    assert_eq!(
+        occ.state,
+        ActionState::Completed,
+        "roll-forward recorded as completion"
+    );
 
     // A camp-B client that ignores overrides and re-advances records nothing new
     // (idempotent by slot) — only the anchor churns, history is stable.
@@ -1167,7 +1232,10 @@ fn multi_period_rollforward_records_each_passed_occurrence() {
     );
 
     let content = fs::read_to_string(&ics).unwrap();
-    assert!(content.contains("DTSTART:20260101T080000Z"), "anchor reset to origin");
+    assert!(
+        content.contains("DTSTART:20260101T080000Z"),
+        "anchor reset to origin"
+    );
     for day in ["20260101T080000Z", "20260102T080000Z", "20260103T080000Z"] {
         assert!(
             content.contains(&format!("RECURRENCE-ID:{day}")),
@@ -1181,9 +1249,8 @@ fn sidecar_hydrates_acts_on_load() {
     use uuid::Uuid;
 
     let uuid = "01951111-0000-7000-0000-000000000001";
-    let sidecar_json = format!(
-        r#"{{"acts": {{"{uuid}": {{"created": "2024-01-15T08:00:00+00:00"}}}}}}"#
-    );
+    let sidecar_json =
+        format!(r#"{{"acts": {{"{uuid}": {{"created": "2024-01-15T08:00:00+00:00"}}}}}}"#);
     let workspace = make_workspace(&[
         ("work.actions", &format!("[ ] Task one #{uuid}\n")),
         (".work.json", &sidecar_json),
@@ -1197,7 +1264,10 @@ fn sidecar_hydrates_acts_on_load() {
         .find(|a| a.id == Uuid::parse_str(uuid).unwrap())
         .expect("action not found in model");
 
-    assert!(action.created_at.is_some(), "sidecar created date should be hydrated into Action");
+    assert!(
+        action.created_at.is_some(),
+        "sidecar created date should be hydrated into Action"
+    );
 }
 
 #[test]
@@ -1208,9 +1278,8 @@ fn orphaned_sidecar_hydrates_acts_by_uuid() {
     // no .actions file — as if work.actions had been renamed and the sidecar left
     // behind. Hydration must still reach it by UUID.
     let uuid = "01951111-0000-7000-0000-000000000030";
-    let sidecar_json = format!(
-        r#"{{"acts": {{"{uuid}": {{"created": "2024-01-15T08:00:00+00:00"}}}}}}"#
-    );
+    let sidecar_json =
+        format!(r#"{{"acts": {{"{uuid}": {{"created": "2024-01-15T08:00:00+00:00"}}}}}}"#);
     let workspace = make_workspace(&[
         ("work.actions", &format!("[ ] Task one #{uuid}\n")),
         (".stale-name.json", &sidecar_json),
@@ -1239,8 +1308,14 @@ fn sidecar_charter_id_supersedes_derived_id() {
     // survives a rename that would otherwise recompute it.
     let recorded = "01951111-0000-7000-0000-0000000000c0";
     let workspace = make_workspace(&[
-        ("work.actions", "[ ] a task #01951111-0000-7000-0000-0000000000c1\n"),
-        (".work.json", &format!(r#"{{"charter": {{"id": "{recorded}"}}}}"#)),
+        (
+            "work.actions",
+            "[ ] a task #01951111-0000-7000-0000-0000000000c1\n",
+        ),
+        (
+            ".work.json",
+            &format!(r#"{{"charter": {{"id": "{recorded}"}}}}"#),
+        ),
     ]);
 
     let model = load_domain_model(workspace.path()).unwrap();
@@ -1266,9 +1341,18 @@ fn explicit_frontmatter_id_wins_over_sidecar() {
     let front = "01951111-0000-7000-0000-0000000000d0";
     let side = "01951111-0000-7000-0000-0000000000d9";
     let workspace = make_workspace(&[
-        ("work.actions", "[ ] a task #01951111-0000-7000-0000-0000000000d1\n"),
-        ("work.md", &format!("---\nid: {front}\nalias: work\n---\n# Work\n")),
-        (".work.json", &format!(r#"{{"charter": {{"id": "{side}"}}}}"#)),
+        (
+            "work.actions",
+            "[ ] a task #01951111-0000-7000-0000-0000000000d1\n",
+        ),
+        (
+            "work.md",
+            &format!("---\nid: {front}\nalias: work\n---\n# Work\n"),
+        ),
+        (
+            ".work.json",
+            &format!(r#"{{"charter": {{"id": "{side}"}}}}"#),
+        ),
     ]);
 
     let model = load_domain_model(workspace.path()).unwrap();
@@ -1290,11 +1374,13 @@ fn sidecar_does_not_overwrite_dsl_created() {
     use uuid::Uuid;
 
     let uuid = "01951111-0000-7000-0000-000000000002";
-    let sidecar_json = format!(
-        r#"{{"acts": {{"{uuid}": {{"created": "2020-01-01T00:00:00+00:00"}}}}}}"#
-    );
+    let sidecar_json =
+        format!(r#"{{"acts": {{"{uuid}": {{"created": "2020-01-01T00:00:00+00:00"}}}}}}"#);
     let workspace = make_workspace(&[
-        ("work.actions", &format!("[ ] Task #{uuid}\n  ^ 2024-06-01T10:00:00\n")),
+        (
+            "work.actions",
+            &format!("[ ] Task #{uuid}\n  ^ 2024-06-01T10:00:00\n"),
+        ),
         (".work.json", &sidecar_json),
     ]);
 
@@ -1306,7 +1392,9 @@ fn sidecar_does_not_overwrite_dsl_created() {
         .find(|a| a.id == Uuid::parse_str(uuid).unwrap())
         .expect("action not found in model");
 
-    let created = action.created_at.expect("created_at should be set from DSL ^ date");
+    let created = action
+        .created_at
+        .expect("created_at should be set from DSL ^ date");
     assert_eq!(
         created.format("%Y").to_string(),
         "2024",
@@ -1321,7 +1409,10 @@ fn corrupt_sidecar_is_a_finding_not_a_load_failure() {
     use clearhead_core::workspace::{FindingSeverity, read_workspace};
 
     let workspace = make_workspace(&[
-        ("work.actions", "[ ] Task one #01951111-0000-7000-0000-000000000003\n"),
+        (
+            "work.actions",
+            "[ ] Task one #01951111-0000-7000-0000-000000000003\n",
+        ),
         (".work.json", "{ this is not json"),
     ]);
 
@@ -1331,7 +1422,11 @@ fn corrupt_sidecar_is_a_finding_not_a_load_failure() {
         .iter()
         .find(|c| c.title == "work")
         .expect("work charter");
-    assert_eq!(work.actions.len(), 1, "actions load even when the sidecar is corrupt");
+    assert_eq!(
+        work.actions.len(),
+        1,
+        "actions load even when the sidecar is corrupt"
+    );
 
     let finding = read
         .findings
@@ -1379,7 +1474,11 @@ fn unparseable_ics_is_a_finding_and_the_rest_still_loads() {
         "work.actions",
         "[ ] Task #01951111-0000-7000-0000-000000000004\n",
     )]);
-    let plans_dir = workspace.path().join(".clearhead").join("plans").join("work");
+    let plans_dir = workspace
+        .path()
+        .join(".clearhead")
+        .join("plans")
+        .join("work");
     fs::create_dir_all(&plans_dir).expect("create plans dir");
     fs::write(plans_dir.join("bad.ics"), "this is not a calendar").expect("write bad ics");
 
@@ -1408,7 +1507,11 @@ fn read_does_not_replay_pending_journal_but_load_does() {
     // Simulate a crash mid-batch: staged temp + journal, rename never happened.
     let tmp = charter_root.join(".tmp.staged");
     let target = charter_root.join("work.actions");
-    fs::write(&tmp, "[ ] New content #01951111-0000-7000-0000-000000000005\n").expect("write tmp");
+    fs::write(
+        &tmp,
+        "[ ] New content #01951111-0000-7000-0000-000000000005\n",
+    )
+    .expect("write tmp");
     fs::write(
         charter_root.join(".pending"),
         format!("{}\t{}\n", tmp.display(), target.display()),
@@ -1420,16 +1523,30 @@ fn read_does_not_replay_pending_journal_but_load_does() {
         charter_root.join(".pending").exists(),
         "the pure reader must not replay the journal"
     );
-    let work = read.charters.iter().find(|c| c.title == "work").expect("work charter");
-    assert_eq!(work.actions[0].action.name, "Old content", "reader sees the pre-crash state as-is");
+    let work = read
+        .charters
+        .iter()
+        .find(|c| c.title == "work")
+        .expect("work charter");
+    assert_eq!(
+        work.actions[0].action.name, "Old content",
+        "reader sees the pre-crash state as-is"
+    );
 
     let model = load_domain_model(workspace.path()).expect("load failed");
     assert!(
         !charter_root.join(".pending").exists(),
         "loading replays the journal (recovery-to-consistency is loading's obligation)"
     );
-    let work = model.charters.iter().find(|c| c.title == "work").expect("work charter");
-    assert_eq!(work.actions[0].name, "New content", "load sees the recovered state");
+    let work = model
+        .charters
+        .iter()
+        .find(|c| c.title == "work")
+        .expect("work charter");
+    assert_eq!(
+        work.actions[0].name, "New content",
+        "load sees the recovered state"
+    );
 }
 
 // --- Doctor: read-only cross-file fsck (Decision 34) ---
@@ -1495,7 +1612,10 @@ fn doctor_flags_duplicate_uuids_across_files() {
     let uuid = "01951111-0000-7000-0000-000000000011";
     let workspace = make_workspace(&[
         ("work.actions", &format!("[ ] In work #{uuid}\n")),
-        ("home.actions", &format!("[ ] Copy-pasted into home #{uuid}\n")),
+        (
+            "home.actions",
+            &format!("[ ] Copy-pasted into home #{uuid}\n"),
+        ),
     ]);
 
     let diagnosis = diagnose(initialized(workspace.path()), None).expect("diagnose failed");
@@ -1570,7 +1690,12 @@ fn doctor_resolves_predecessors_into_the_archive_three_ways() {
         .iter()
         .filter(|f| f.code == "dangling-predecessor")
         .collect();
-    assert_eq!(dangling.len(), 1, "only the true break is dangling: {:?}", diagnosis.findings);
+    assert_eq!(
+        dangling.len(),
+        1,
+        "only the true break is dangling: {:?}",
+        diagnosis.findings
+    );
     assert!(dangling[0].message.contains("01951111-dead"));
 
     let abandoned: Vec<_> = diagnosis
@@ -1578,12 +1703,20 @@ fn doctor_resolves_predecessors_into_the_archive_three_ways() {
         .iter()
         .filter(|f| f.code == "abandoned-predecessor")
         .collect();
-    assert_eq!(abandoned.len(), 1, "cancelled archived target is abandoned: {:?}", diagnosis.findings);
+    assert_eq!(
+        abandoned.len(),
+        1,
+        "cancelled archived target is abandoned: {:?}",
+        diagnosis.findings
+    );
     assert!(abandoned[0].message.contains("0000000000a2"));
 
     // The satisfied dependency is healthy — it produces no finding at all.
     assert!(
-        !diagnosis.findings.iter().any(|f| f.message.contains("0000000000a1")),
+        !diagnosis
+            .findings
+            .iter()
+            .any(|f| f.message.contains("0000000000a1")),
         "a completed archived dependency must be silent: {:?}",
         diagnosis.findings
     );
@@ -1618,9 +1751,8 @@ fn doctor_does_not_prune_sidecars_while_source_is_quarantined() {
     use clearhead_core::workspace::diagnose;
 
     let id = "019f0000-0000-7000-8000-000000000001";
-    let sidecar = format!(
-        r#"{{"actions": {{"{id}": {{"created": "2026-01-01T00:00:00+00:00"}}}}}}"#
-    );
+    let sidecar =
+        format!(r#"{{"actions": {{"{id}": {{"created": "2026-01-01T00:00:00+00:00"}}}}}}"#);
     let workspace = make_workspace(&[
         (
             "work.actions",
@@ -1648,9 +1780,8 @@ fn doctor_preserves_sidecar_metadata_after_an_action_moves_charters() {
     use clearhead_core::workspace::diagnose;
 
     let moved = "01951111-0000-7000-0000-000000000019";
-    let sidecar = format!(
-        r#"{{"actions": {{"{moved}": {{"created": "2026-01-01T00:00:00+00:00"}}}}}}"#
-    );
+    let sidecar =
+        format!(r#"{{"actions": {{"{moved}": {{"created": "2026-01-01T00:00:00+00:00"}}}}}}"#);
     let workspace = make_workspace(&[
         ("work.actions", &format!("[ ] Moved here #{moved}\n")),
         (".old-home.json", &sidecar),
@@ -1742,7 +1873,11 @@ fn doctor_reports_pending_journal_without_replaying_it() {
     fs::write(&tmp, "[ ] New #01951111-0000-7000-0000-000000000017\n").expect("write tmp");
     fs::write(
         charter_root.join(".pending"),
-        format!("{}\t{}\n", tmp.display(), charter_root.join("work.actions").display()),
+        format!(
+            "{}\t{}\n",
+            tmp.display(),
+            charter_root.join("work.actions").display()
+        ),
     )
     .expect("write journal");
 
@@ -1751,7 +1886,12 @@ fn doctor_reports_pending_journal_without_replaying_it() {
         charter_root.join(".pending").exists(),
         "doctor must not replay the journal"
     );
-    assert!(diagnosis.findings.iter().any(|f| f.code == "pending-journal"));
+    assert!(
+        diagnosis
+            .findings
+            .iter()
+            .any(|f| f.code == "pending-journal")
+    );
     assert!(diagnosis.findings.iter().any(|f| f.code == "orphaned-temp"));
 }
 
@@ -1760,9 +1900,15 @@ fn doctor_flags_charter_alias_collision() {
     use clearhead_core::workspace::diagnose;
 
     let workspace = make_workspace(&[
-        ("one.actions", "[ ] A #01951111-0000-7000-0000-000000000018\n"),
+        (
+            "one.actions",
+            "[ ] A #01951111-0000-7000-0000-000000000018\n",
+        ),
         ("one.md", "---\nalias: shared\n---\n# One\n"),
-        ("two.actions", "[ ] B #01951111-0000-7000-0000-000000000019\n"),
+        (
+            "two.actions",
+            "[ ] B #01951111-0000-7000-0000-000000000019\n",
+        ),
         ("two.md", "---\nalias: shared\n---\n# Two\n"),
     ]);
 

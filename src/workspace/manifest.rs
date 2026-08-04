@@ -45,7 +45,9 @@ impl WorkspaceManifest {
     /// project layout (`<root>/.clearhead/workspace.json`) and the user layout
     /// (`<root>/workspace.json`).
     pub fn path(root: &Path) -> PathBuf {
-        resolve_workspace_layout(root).data_root.join("workspace.json")
+        resolve_workspace_layout(root)
+            .data_root
+            .join("workspace.json")
     }
 
     /// Read the manifest for the workspace at `root`.

@@ -107,7 +107,6 @@ pub fn completed_actions_path(actions_path: &Path) -> PathBuf {
     dir.join(format!("{}.completed.actions", stem))
 }
 
-
 // ============================================================================
 // Public API
 // ============================================================================
@@ -138,7 +137,10 @@ pub fn read_action_file(path: &Path) -> Result<ActionsFile, WorkspaceError> {
             source_metadata: None,
         })
         .collect();
-    Ok(ActionsFile { path: path.to_path_buf(), actions: sourced })
+    Ok(ActionsFile {
+        path: path.to_path_buf(),
+        actions: sourced,
+    })
 }
 
 /// Write [`Action`]s to a `.actions` or `.completed.actions` file.

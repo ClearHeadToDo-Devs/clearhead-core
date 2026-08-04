@@ -214,19 +214,27 @@ mod tests {
         let plan = Uuid::new_v4();
         let mut store = PlansSyncStore::new(plans_root);
 
-        store.stamp_occurrence_link(occ, plan, "20260503T090000Z").unwrap();
+        store
+            .stamp_occurrence_link(occ, plan, "20260503T090000Z")
+            .unwrap();
         let decoded: PlansSyncStore =
             serde_json::from_str(&serialize_plans_sync_store(&store).unwrap()).unwrap();
         assert_eq!(
             decoded.occurrence_link(occ),
             Some((plan, "20260503T090000Z".to_string()))
         );
-        assert_eq!(decoded.occurrence_links().get(&occ), Some(&(plan, "20260503T090000Z".to_string())));
+        assert_eq!(
+            decoded.occurrence_links().get(&occ),
+            Some(&(plan, "20260503T090000Z".to_string()))
+        );
 
         // Clearing after the deviation lands drops the (now-empty) entry entirely.
         store.clear_occurrence_link(occ);
         assert!(store.occurrence_link(occ).is_none());
-        assert!(store.actions.is_empty(), "empty entry is removed, not left dangling");
+        assert!(
+            store.actions.is_empty(),
+            "empty entry is removed, not left dangling"
+        );
     }
 
     #[test]
@@ -235,11 +243,16 @@ mod tests {
         // occurrence link is cleared.
         let occ = Uuid::new_v4();
         let mut store = PlansSyncStore::new(Path::new("/tmp/plans"));
-        store.stamp_occurrence_link(occ, Uuid::new_v4(), "slot").unwrap();
+        store
+            .stamp_occurrence_link(occ, Uuid::new_v4(), "slot")
+            .unwrap();
         store.stamp(occ, UID_FIELD, &"keep-me").unwrap();
         store.clear_occurrence_link(occ);
         assert!(store.occurrence_link(occ).is_none());
-        assert!(store.actions.contains_key(&occ), "the surviving base keeps the entry");
+        assert!(
+            store.actions.contains_key(&occ),
+            "the surviving base keeps the entry"
+        );
     }
 
     #[test]

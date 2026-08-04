@@ -7,38 +7,36 @@
 //! It speaks `DomainModel` at its boundary — callers convert to/from the
 //! domain IR, and the workspace module handles the DSL details.
 
-pub mod actions;
 pub mod action_files;
+pub mod actions;
 pub mod archive_actions;
-pub mod calendar;
-pub mod durability;
 pub mod archive_charter;
+pub mod calendar;
 pub mod charter;
 pub mod detection;
+pub mod durability;
 pub mod manifest;
 pub mod sidecar;
 pub mod store;
 pub mod templates;
 
 // Re-export key types at workspace level
-pub use actions::{
-    Action, ActionList, ActionState, Diff, IntegrityError, OutputFormat,
-    ParseFailure, ParseMode, ParseOutcome, ParsedDocument, RecoveryReport, SourceMetadata,
-    SourceRange, SourcedAction, TrustedDocument, diff_actions, format, format_trusted_source,
-    parse_actions, parse_actions_with_mode, parse_document, parse_tree, parse_trusted_document,
-    patch_action_list,
+pub use action_files::{
+    ActionsFile, completed_actions_path, read_action_file, read_actions, write_actions,
 };
-pub use action_files::{ActionsFile, completed_actions_path, read_action_file, read_actions, write_actions};
+pub use actions::{
+    Action, ActionList, ActionState, Diff, IntegrityError, OutputFormat, ParseFailure, ParseMode,
+    ParseOutcome, ParsedDocument, RecoveryReport, SourceMetadata, SourceRange, SourcedAction,
+    TrustedDocument, diff_actions, format, format_trusted_source, parse_actions,
+    parse_actions_with_mode, parse_document, parse_tree, parse_trusted_document, patch_action_list,
+};
 pub use archive_actions::{
     ActionArchivePlan, ActionArchiveResult, CloseActionResult, CloseActionSelector,
     archive_actions, close_action_subtree, plan_action_archive,
 };
-pub use sidecar::{ActionMeta, CharterMeta, CharterMetadata, hydrate_actions, read_sidecar, sidecar_path, write_sidecar};
-pub use charter::{MarkdownCharter, format_charter, implicit_charter, parse_charter};
-pub use manifest::WorkspaceManifest;
 pub use archive_charter::{
-    ArchiveCharterError, ArchiveCharterOptions, ArchiveCharterResult,
-    archive_charter, archive_terminal_charters, find_charter as find_markdown_charter,
+    ArchiveCharterError, ArchiveCharterOptions, ArchiveCharterResult, archive_charter,
+    archive_terminal_charters, find_charter as find_markdown_charter,
 };
 pub use calendar::ics::{
     ICSPlan, OccurrenceOp, OccurrenceOverride, VTodoAction, action_id_from_vtodo_uid,
@@ -55,18 +53,21 @@ pub use calendar::reconcile::{
     VTodoResource, apply_sync, plan_sync, read_ics_dates, read_vtodo_actions, reconcile,
     resolve_materialized_occurrence, sync_master_rollforwards,
 };
-pub use calendar::sync_store::{
-    PlansSyncStore, plans_sync_store_path, read_plans_sync_store,
+pub use calendar::sync_store::{PlansSyncStore, plans_sync_store_path, read_plans_sync_store};
+pub use charter::{MarkdownCharter, format_charter, implicit_charter, parse_charter};
+pub use manifest::WorkspaceManifest;
+pub use sidecar::{
+    ActionMeta, CharterMeta, CharterMetadata, hydrate_actions, read_sidecar, sidecar_path,
+    write_sidecar,
 };
 
 pub use detection::check_for_workspace;
 pub use store::{
-    Diagnosis, diagnose, diagnose_read, Finding, FindingSeverity, Workspace, WorkspaceRead, ManifestSourceType, WorkspaceError,
-    WorkspaceManifestEntry, collect_workspace_manifest, infer_charter_name,
-    infer_parent_charter_name, list_action_files, load_domain_model,
-    load_domain_model_with_plans,
-    load_workspaces, charter_root, plans_root, load_workspace,
-    load_workspace_with_plans, read_workspace, read_workspace_with_plans,
-    save_domain_model, workspace_data_root,
+    Diagnosis, Finding, FindingSeverity, ManifestSourceType, Workspace, WorkspaceError,
+    WorkspaceManifestEntry, WorkspaceRead, charter_root, collect_workspace_manifest, diagnose,
+    diagnose_read, infer_charter_name, infer_parent_charter_name, list_action_files,
+    load_domain_model, load_domain_model_with_plans, load_workspace, load_workspace_with_plans,
+    load_workspaces, plans_root, read_workspace, read_workspace_with_plans, save_domain_model,
+    workspace_data_root,
 };
 pub use templates::{instantiate_template, resolve_template};

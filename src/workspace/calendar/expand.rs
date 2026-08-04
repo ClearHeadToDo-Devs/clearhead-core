@@ -1,7 +1,7 @@
 use chrono::{DateTime, Local};
 
-use crate::workspace::actions::{Action, ActionState};
 use super::ics::{ICSPlan, OccurrenceOverride, canonical_occurrence_key, occurrence_action_id};
+use crate::workspace::actions::{Action, ActionState};
 
 // ============================================================================
 // Occurrence projection (render, don't file)
@@ -62,7 +62,11 @@ pub fn render_occurrences(ics_plan: &ICSPlan, now: DateTime<Local>, window: u32)
 /// window ([`render_occurrences`]) and the single-token stamper, so a materialized
 /// occurrence and its (soon-retired) projection are byte-identical where they
 /// overlap. The caller is responsible for EXDATE filtering.
-pub(crate) fn render_occurrence(ics_plan: &ICSPlan, plan_uid: &str, slot: DateTime<Local>) -> Action {
+pub(crate) fn render_occurrence(
+    ics_plan: &ICSPlan,
+    plan_uid: &str,
+    slot: DateTime<Local>,
+) -> Action {
     let key = canonical_occurrence_key(slot);
     let mut action = Action {
         id: occurrence_action_id(plan_uid, &key),
@@ -195,10 +199,19 @@ mod tests {
 
         let uid = "weekly@example.com";
         // 08:00Z every Wednesday, starting before US/Pacific DST (2026-03-08)…
-        let dtstart = Utc.with_ymd_and_hms(2026, 2, 25, 8, 0, 0).unwrap().with_timezone(&Local);
+        let dtstart = Utc
+            .with_ymd_and_hms(2026, 2, 25, 8, 0, 0)
+            .unwrap()
+            .with_timezone(&Local);
         // …and the excluded slot is on the summer side of that boundary.
-        let excluded = Utc.with_ymd_and_hms(2026, 3, 11, 8, 0, 0).unwrap().with_timezone(&Local);
-        let present = Utc.with_ymd_and_hms(2026, 3, 18, 8, 0, 0).unwrap().with_timezone(&Local);
+        let excluded = Utc
+            .with_ymd_and_hms(2026, 3, 11, 8, 0, 0)
+            .unwrap()
+            .with_timezone(&Local);
+        let present = Utc
+            .with_ymd_and_hms(2026, 3, 18, 8, 0, 0)
+            .unwrap()
+            .with_timezone(&Local);
 
         let plan = make_plan("weekly review", uid, dtstart, Some("weekly"));
         let ics_plan = ICSPlan {
@@ -208,7 +221,10 @@ mod tests {
             plan,
         };
 
-        let now = Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap().with_timezone(&Local);
+        let now = Utc
+            .with_ymd_and_hms(2026, 1, 1, 0, 0, 0)
+            .unwrap()
+            .with_timezone(&Local);
         let ids: Vec<Uuid> = render_occurrences(&ics_plan, now, 6)
             .into_iter()
             .map(|a| a.id)
@@ -216,8 +232,14 @@ mod tests {
 
         let excluded_id = occurrence_action_id(uid, &canonical_occurrence_key(excluded));
         let present_id = occurrence_action_id(uid, &canonical_occurrence_key(present));
-        assert!(!ids.contains(&excluded_id), "post-DST EXDATE slot must be skipped");
-        assert!(ids.contains(&present_id), "the following slot must still render");
+        assert!(
+            !ids.contains(&excluded_id),
+            "post-DST EXDATE slot must be skipped"
+        );
+        assert!(
+            ids.contains(&present_id),
+            "the following slot must still render"
+        );
     }
 
     // ---- plan without external_id is skipped ----
@@ -270,7 +292,10 @@ mod tests {
         let dtstart = Local.with_ymd_and_hms(2026, 4, 12, 9, 0, 0).unwrap();
         let slot = next_active_slot(&weekly_ics(dtstart), Some(dtstart), now()).unwrap();
         assert_eq!(slot, Local.with_ymd_and_hms(2026, 5, 3, 9, 0, 0).unwrap());
-        assert!(slot > dtstart + chrono::Duration::days(7), "not the mere successor");
+        assert!(
+            slot > dtstart + chrono::Duration::days(7),
+            "not the mere successor"
+        );
     }
 
     #[test]

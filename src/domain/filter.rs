@@ -29,16 +29,19 @@ impl ActionFilter {
                 return false;
             }
         } else if self.open_only
-            && matches!(action.state, ActionState::Completed | ActionState::Cancelled)
+            && matches!(
+                action.state,
+                ActionState::Completed | ActionState::Cancelled
+            )
         {
             return false;
         }
 
         if !self.context_tags.is_empty() {
-            let hit = action.contexts.as_ref().map_or(false, |cs| {
-                cs.iter()
-                    .any(|c| self.context_tags.contains(c))
-            });
+            let hit = action
+                .contexts
+                .as_ref()
+                .map_or(false, |cs| cs.iter().any(|c| self.context_tags.contains(c)));
             if !hit {
                 return false;
             }
@@ -48,8 +51,7 @@ impl ActionFilter {
             let matched = action.plan_id.map_or(false, |pid| {
                 let full = pid.to_string();
                 let short = full.replace('-', "");
-                full == *plan_ref
-                    || short.starts_with(plan_ref.as_str())
+                full == *plan_ref || short.starts_with(plan_ref.as_str())
             });
             if !matched {
                 return false;
@@ -77,7 +79,11 @@ mod tests {
     use uuid::Uuid;
 
     fn make_action(state: ActionState) -> Action {
-        Action { id: Uuid::now_v7(), state, ..Default::default() }
+        Action {
+            id: Uuid::now_v7(),
+            state,
+            ..Default::default()
+        }
     }
 
     fn action_with_contexts(contexts: Vec<&str>) -> Action {
@@ -113,7 +119,10 @@ mod tests {
 
     #[test]
     fn open_only_excludes_terminal_states() {
-        let filter = ActionFilter { open_only: true, ..Default::default() };
+        let filter = ActionFilter {
+            open_only: true,
+            ..Default::default()
+        };
         assert!(filter.matches(&make_action(ActionState::NotStarted)));
         assert!(filter.matches(&make_action(ActionState::InProgress)));
         assert!(filter.matches(&make_action(ActionState::BlockedOrAwaiting)));
@@ -135,7 +144,10 @@ mod tests {
 
     #[test]
     fn empty_context_tags_passes_all() {
-        let filter = ActionFilter { context_tags: vec![], ..Default::default() };
+        let filter = ActionFilter {
+            context_tags: vec![],
+            ..Default::default()
+        };
         assert!(filter.matches(&make_action(ActionState::NotStarted)));
         assert!(filter.matches(&action_with_contexts(vec!["anything"])));
     }
@@ -161,7 +173,10 @@ mod tests {
         let mut action = make_action(ActionState::NotStarted);
         action.plan_id = Some(plan_id);
 
-        let filter = ActionFilter { plan_ref: Some(short), ..Default::default() };
+        let filter = ActionFilter {
+            plan_ref: Some(short),
+            ..Default::default()
+        };
         assert!(filter.matches(&action));
     }
 
@@ -172,11 +187,17 @@ mod tests {
             make_action(ActionState::Completed),
             make_action(ActionState::InProgress),
         ]);
-        let filter = ActionFilter { open_only: true, ..Default::default() };
+        let filter = ActionFilter {
+            open_only: true,
+            ..Default::default()
+        };
         apply_filter(&mut model, &filter);
 
         let remaining: Vec<_> = model.charters[0].actions.iter().map(|a| a.state).collect();
-        assert_eq!(remaining, vec![ActionState::NotStarted, ActionState::InProgress]);
+        assert_eq!(
+            remaining,
+            vec![ActionState::NotStarted, ActionState::InProgress]
+        );
     }
 
     #[test]
@@ -187,7 +208,10 @@ mod tests {
                 Charter {
                     id: Uuid::now_v7(),
                     title: "A".into(),
-                    actions: vec![make_action(ActionState::Completed), make_action(ActionState::NotStarted)],
+                    actions: vec![
+                        make_action(ActionState::Completed),
+                        make_action(ActionState::NotStarted),
+                    ],
                     ..Default::default()
                 },
                 Charter {
@@ -198,7 +222,13 @@ mod tests {
                 },
             ],
         };
-        apply_filter(&mut model, &ActionFilter { open_only: true, ..Default::default() });
+        apply_filter(
+            &mut model,
+            &ActionFilter {
+                open_only: true,
+                ..Default::default()
+            },
+        );
 
         assert_eq!(model.charters[0].actions.len(), 1);
         assert_eq!(model.charters[1].actions.len(), 0);

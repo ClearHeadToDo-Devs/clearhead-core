@@ -36,16 +36,16 @@ impl Diagnosis {
     }
 
     fn count(&self, severity: FindingSeverity) -> usize {
-        self.findings.iter().filter(|f| f.severity == severity).count()
+        self.findings
+            .iter()
+            .filter(|f| f.severity == severity)
+            .count()
     }
 }
 
 /// Run every workspace coherence check and return the combined findings —
 /// the loader's per-file findings plus doctor's cross-file ones.
-pub fn diagnose(
-    root: &Path,
-    plan_override: Option<&Path>,
-) -> Result<Diagnosis, WorkspaceError> {
+pub fn diagnose(root: &Path, plan_override: Option<&Path>) -> Result<Diagnosis, WorkspaceError> {
     let read = read_workspace_with_plans(root, plan_override)?;
     Ok(diagnose_read(root, &read))
 }
@@ -53,10 +53,7 @@ pub fn diagnose(
 /// Like [`diagnose`], but over a workspace the caller already read — for
 /// read-only surfaces (e.g. `debug`) that need the workspace *and* its
 /// diagnosis without reading twice.
-pub fn diagnose_read(
-    root: &Path,
-    read: &super::load::WorkspaceRead,
-) -> Diagnosis {
+pub fn diagnose_read(root: &Path, read: &super::load::WorkspaceRead) -> Diagnosis {
     let layout = resolve_workspace_layout(root);
     let mut findings = read.findings.clone();
 
@@ -81,7 +78,12 @@ pub fn diagnose_read(
     // proof of orphanhood and doctor --fix must not prune that provenance.
     let has_quarantined_source = findings.iter().any(|f| f.code == "syntax-errors");
     if !has_quarantined_source {
-        check_sidecar_coherence(&layout.charter_root, charters, &known_action_ids, &mut findings);
+        check_sidecar_coherence(
+            &layout.charter_root,
+            charters,
+            &known_action_ids,
+            &mut findings,
+        );
         check_orphaned_sidecars(&layout.charter_root, &known_action_ids, &mut findings);
     }
     check_sidecar_created_sanity(&layout.charter_root, charters, &mut findings);
@@ -139,7 +141,10 @@ fn collect_completed_actions(
         if !name.ends_with(".completed.actions") {
             continue;
         }
-        let relative = path.strip_prefix(charter_root).unwrap_or(&path).to_path_buf();
+        let relative = path
+            .strip_prefix(charter_root)
+            .unwrap_or(&path)
+            .to_path_buf();
         let source = match std::fs::read_to_string(&path) {
             Ok(source) => source,
             Err(e) => {
@@ -191,7 +196,12 @@ fn check_duplicate_uuids(
             findings.push(Finding::violation(
                 "duplicate-uuid",
                 &files[0],
-                format!("uuid {} appears {} times: {}", id, files.len(), list.join(", ")),
+                format!(
+                    "uuid {} appears {} times: {}",
+                    id,
+                    files.len(),
+                    list.join(", ")
+                ),
             ));
         }
     }
@@ -219,7 +229,10 @@ fn collect_archived_action_states(
         if !is_actions {
             continue;
         }
-        let relative = path.strip_prefix(archive_root).unwrap_or(&path).to_path_buf();
+        let relative = path
+            .strip_prefix(archive_root)
+            .unwrap_or(&path)
+            .to_path_buf();
         let Ok(source) = std::fs::read_to_string(&path) else {
             findings.push(Finding::warning(
                 "unreadable-archive",
@@ -260,9 +273,13 @@ fn check_dangling_predecessors(
     archived: &HashMap<Uuid, ActionState>,
     findings: &mut Vec<Finding>,
 ) {
-    let known: HashSet<Uuid> = all_actions(charters, completed).map(|(_, a)| a.id).collect();
+    let known: HashSet<Uuid> = all_actions(charters, completed)
+        .map(|(_, a)| a.id)
+        .collect();
     for charter in charters {
-        let Some(file) = &charter.actions_file else { continue };
+        let Some(file) = &charter.actions_file else {
+            continue;
+        };
         for sa in &charter.actions {
             for pred in sa.action.predecessors.iter().flatten() {
                 let target = pred
@@ -332,10 +349,7 @@ fn check_open_actions_under_unresolved_parents(
     charters: &[MarkdownCharter],
     findings: &mut Vec<Finding>,
 ) {
-    let known_aliases: HashSet<&str> = charters
-        .iter()
-        .filter_map(|c| c.alias.as_deref())
-        .collect();
+    let known_aliases: HashSet<&str> = charters.iter().filter_map(|c| c.alias.as_deref()).collect();
 
     for charter in charters {
         let Some(parent) = charter.parent.as_deref() else {
@@ -353,7 +367,12 @@ fn check_open_actions_under_unresolved_parents(
         let open_count = charter
             .actions
             .iter()
-            .filter(|sa| !matches!(sa.action.state, ActionState::Completed | ActionState::Cancelled))
+            .filter(|sa| {
+                !matches!(
+                    sa.action.state,
+                    ActionState::Completed | ActionState::Cancelled
+                )
+            })
             .count();
         if open_count == 0 {
             continue;
@@ -405,7 +424,9 @@ fn check_sidecar_coherence(
     // orphaned only when its UUID exists nowhere in live or completed state,
     // not merely when it left this sidecar's companion charter.
     for charter in charters {
-        let Some(actions_file) = &charter.actions_file else { continue };
+        let Some(actions_file) = &charter.actions_file else {
+            continue;
+        };
         let sc_relative = sidecar_path(actions_file);
         let Ok(meta) = read_sidecar(&charter_root.join(&sc_relative)) else {
             continue; // corrupt sidecars are already a loader finding
@@ -457,13 +478,17 @@ fn check_sidecar_created_sanity(
         .expect("EARLIEST_PLAUSIBLE_CREATED is a valid RFC3339 constant")
         .with_timezone(&chrono::Local);
     for charter in charters {
-        let Some(actions_file) = &charter.actions_file else { continue };
+        let Some(actions_file) = &charter.actions_file else {
+            continue;
+        };
         let sc_relative = sidecar_path(actions_file);
         let Ok(meta) = read_sidecar(&charter_root.join(&sc_relative)) else {
             continue; // corrupt sidecars are already a loader finding
         };
         for (key, action) in &meta.actions {
-            let Some(created) = action.created else { continue };
+            let Some(created) = action.created else {
+                continue;
+            };
             if created > now || created < floor {
                 findings.push(Finding::warning(
                     "implausible-created",
@@ -519,13 +544,16 @@ fn check_orphaned_sidecars(
     }
 }
 
-
 /// A `plans/<slug>/` directory that matched no charter — the loader invents
 /// an implicit charter for it rather than telling anyone (load.rs).
 fn check_charterless_plans(charters: &[MarkdownCharter], findings: &mut Vec<Finding>) {
     for charter in charters {
-        if !charter.plans.is_empty() && charter.actions_file.is_none() && charter.md_file.is_none() {
-            let dir = charter.plans_dir.clone().unwrap_or_else(|| PathBuf::from(&charter.title));
+        if !charter.plans.is_empty() && charter.actions_file.is_none() && charter.md_file.is_none()
+        {
+            let dir = charter
+                .plans_dir
+                .clone()
+                .unwrap_or_else(|| PathBuf::from(&charter.title));
             findings.push(Finding::warning(
                 "charterless-plans",
                 dir,
@@ -570,9 +598,10 @@ fn all_actions<'a>(
     charters: &'a [MarkdownCharter],
     completed: &'a HashMap<PathBuf, Vec<Action>>,
 ) -> impl Iterator<Item = (&'a PathBuf, &'a Action)> {
-    let open = charters.iter().filter_map(|c| c.actions_file.as_ref().map(|f| (f, c))).flat_map(
-        |(file, charter)| charter.actions.iter().map(move |sa| (file, &sa.action)),
-    );
+    let open = charters
+        .iter()
+        .filter_map(|c| c.actions_file.as_ref().map(|f| (f, c)))
+        .flat_map(|(file, charter)| charter.actions.iter().map(move |sa| (file, &sa.action)));
     let closed = completed
         .iter()
         .flat_map(|(file, actions)| actions.iter().map(move |a| (file, a)));

@@ -203,11 +203,7 @@ pub fn filter_model_for_charter(
             continue;
         }
         if let Some(parent) = model.charters.iter().find(|c| c.id == current) {
-            for child in model
-                .charters
-                .iter()
-                .filter(|c| c.is_child_of(parent))
-            {
+            for child in model.charters.iter().filter(|c| c.is_child_of(parent)) {
                 if !keep.contains(&child.id) {
                     to_visit.push(child.id);
                 }
@@ -700,7 +696,10 @@ mod tests {
     #[test]
     fn multi_workspace_returns_first_match() {
         let model = sample_model();
-        let empty = DomainModel { objectives: vec![], charters: vec![] };
+        let empty = DomainModel {
+            objectives: vec![],
+            charters: vec![],
+        };
         let workspaces = [("secondary", &empty), ("primary", &model)];
         let (ws, target) =
             resolve_reference_in_workspaces(&workspaces, "build", &ReferenceOptions::default())
@@ -716,7 +715,10 @@ mod tests {
 
     #[test]
     fn multi_workspace_error_when_none_match() {
-        let empty = DomainModel { objectives: vec![], charters: vec![] };
+        let empty = DomainModel {
+            objectives: vec![],
+            charters: vec![],
+        };
         let workspaces = [("a", &empty), ("b", &empty)];
         let err =
             resolve_reference_in_workspaces(&workspaces, "missing", &ReferenceOptions::default())
@@ -729,7 +731,12 @@ mod tests {
         let model = sample_model();
         let action_id = Uuid::parse_str("deadbeef-0000-0000-0000-000000000005").unwrap();
         let long_prefix = &action_id.to_string().replace('-', "")[..12];
-        let target = resolve_reference(&model, &format!("a:{}", long_prefix), &ReferenceOptions::default()).unwrap();
+        let target = resolve_reference(
+            &model,
+            &format!("a:{}", long_prefix),
+            &ReferenceOptions::default(),
+        )
+        .unwrap();
         assert_eq!(target, ReferenceTarget::Action(action_id));
     }
 }

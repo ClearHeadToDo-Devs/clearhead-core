@@ -73,16 +73,24 @@ impl From<Charter> for MarkdownCharter {
             parent: c.parent,
             objectives: c.objectives,
             state: c.state,
-            plans: c.plans.into_iter().map(|plan| ICSPlan {
-                path: PathBuf::new(),
-                plan,
-                exdates: Default::default(),
-                overrides: Default::default(),
-            }).collect(),
-            actions: c.actions.into_iter().map(|action| SourcedAction {
-                action,
-                source_metadata: None,
-            }).collect(),
+            plans: c
+                .plans
+                .into_iter()
+                .map(|plan| ICSPlan {
+                    path: PathBuf::new(),
+                    plan,
+                    exdates: Default::default(),
+                    overrides: Default::default(),
+                })
+                .collect(),
+            actions: c
+                .actions
+                .into_iter()
+                .map(|action| SourcedAction {
+                    action,
+                    source_metadata: None,
+                })
+                .collect(),
             md_file: None,
             actions_file: None,
             plans_dir: None,
@@ -120,9 +128,8 @@ pub fn parse_charter(content: &str) -> Result<Charter, String> {
     let (frontmatter, body) = split_frontmatter(content);
 
     let fm: CharterFrontmatter = match frontmatter {
-        Some(yaml) => {
-            serde_yaml_ng::from_str(yaml).map_err(|e| format!("Invalid charter frontmatter: {}", e))?
-        }
+        Some(yaml) => serde_yaml_ng::from_str(yaml)
+            .map_err(|e| format!("Invalid charter frontmatter: {}", e))?,
         None => CharterFrontmatter::default(),
     };
 
@@ -244,7 +251,8 @@ pub(crate) fn frontmatter_has_parent_key(content: &str) -> bool {
     let (frontmatter, _) = split_frontmatter(content);
     frontmatter
         .and_then(|yaml| {
-            serde_yaml_ng::from_str::<std::collections::HashMap<String, serde_yaml_ng::Value>>(yaml).ok()
+            serde_yaml_ng::from_str::<std::collections::HashMap<String, serde_yaml_ng::Value>>(yaml)
+                .ok()
         })
         .map(|map| map.contains_key("parent"))
         .unwrap_or(false)
@@ -259,7 +267,8 @@ pub(crate) fn frontmatter_has_id_key(content: &str) -> bool {
     let (frontmatter, _) = split_frontmatter(content);
     frontmatter
         .and_then(|yaml| {
-            serde_yaml_ng::from_str::<std::collections::HashMap<String, serde_yaml_ng::Value>>(yaml).ok()
+            serde_yaml_ng::from_str::<std::collections::HashMap<String, serde_yaml_ng::Value>>(yaml)
+                .ok()
         })
         .map(|map| map.contains_key("id"))
         .unwrap_or(false)

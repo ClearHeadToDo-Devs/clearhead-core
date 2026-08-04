@@ -464,7 +464,12 @@ fn set_frontmatter_parent(content: &str, parent_uuid: &Uuid) -> Option<String> {
             if content[start..end] == desired {
                 return None;
             }
-            Some(format!("{}{}{}", &content[..start], desired, &content[end..]))
+            Some(format!(
+                "{}{}{}",
+                &content[..start],
+                desired,
+                &content[end..]
+            ))
         }
         None => Some(format!(
             "{}{}\n{}",
@@ -757,8 +762,7 @@ mod tests {
         assert!(!sc_path.exists(), "sidecar must move out of charters/");
         // … and its provenance now lives in the flat, UUID-stemmed archived
         // sidecar, intact — and self-identifying via a stamped `charter.id`.
-        let archived_sc =
-            sidecar_path(&root.join(format!(".clearhead/archive/{uuid}.actions")));
+        let archived_sc = sidecar_path(&root.join(format!(".clearhead/archive/{uuid}.actions")));
         let moved =
             std::fs::read_to_string(&archived_sc).expect("sidecar must be moved into archive/");
         assert!(
@@ -915,15 +919,13 @@ mod tests {
         // Child 2: the child's parent edge is materialized into its archived
         // `.md` as a UUID — it had no `parent:` line, its parenthood having lived
         // only in the directory nesting we just flattened away.
-        let ops_md =
-            std::fs::read_to_string(archive_dir.join(format!("{ops_uuid}.md"))).unwrap();
+        let ops_md = std::fs::read_to_string(archive_dir.join(format!("{ops_uuid}.md"))).unwrap();
         assert!(
             ops_md.contains(&format!("parent: {work_uuid}")),
             "child's inferred parent must be written into the file as a UUID:\n{ops_md}"
         );
         // The root charter has no parent, so none is fabricated.
-        let work_md =
-            std::fs::read_to_string(archive_dir.join(format!("{work_uuid}.md"))).unwrap();
+        let work_md = std::fs::read_to_string(archive_dir.join(format!("{work_uuid}.md"))).unwrap();
         assert!(
             !work_md.contains("parent:"),
             "no parent may be fabricated for a root charter:\n{work_md}"
@@ -1054,8 +1056,7 @@ mod tests {
 
         // Child crystallized flat, its parent edge pointing at the live parent.
         let archive_dir = root.join(".clearhead/archive");
-        let ops_md =
-            std::fs::read_to_string(archive_dir.join(format!("{ops_uuid}.md"))).unwrap();
+        let ops_md = std::fs::read_to_string(archive_dir.join(format!("{ops_uuid}.md"))).unwrap();
         assert!(
             ops_md.contains(&format!("parent: {work_uuid}")),
             "cross-boundary parent must be materialized as a UUID:\n{ops_md}"

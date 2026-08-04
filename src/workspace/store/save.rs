@@ -244,8 +244,11 @@ mod tests {
         let root = temp.path().join("platform");
         std::fs::create_dir_all(root.join(".clearhead/charters")).expect("create charters");
 
-        std::fs::write(root.join(".clearhead/charters/stale.actions"), "[ ] stale\n")
-            .expect("write stale");
+        std::fs::write(
+            root.join(".clearhead/charters/stale.actions"),
+            "[ ] stale\n",
+        )
+        .expect("write stale");
 
         let model = DomainModel {
             objectives: vec![],
@@ -280,7 +283,10 @@ mod tests {
 
         assert!(root.join(".clearhead/charters/next.actions").exists());
         assert!(root.join(".clearhead/charters/infra.actions").exists());
-        assert!(root.join(".clearhead/charters/infra/deploy.actions").exists());
+        assert!(
+            root.join(".clearhead/charters/infra/deploy.actions")
+                .exists()
+        );
         assert!(!root.join(".clearhead/charters/stale.actions").exists());
 
         let loaded = load_domain_model(&root).expect("load model");
@@ -391,8 +397,8 @@ mod tests {
         save_domain_model(&root, &updated).expect("incremental save");
 
         // ops should remain byte-stable because no charter actions changed.
-        let ops_content =
-            std::fs::read_to_string(root.join("charters/work/ops.actions")).expect("read ops.actions");
+        let ops_content = std::fs::read_to_string(root.join("charters/work/ops.actions"))
+            .expect("read ops.actions");
         assert!(
             !ops_content.contains("Backups v2"),
             "plan-only changes must not rewrite the charter action file"

@@ -4,11 +4,11 @@
 //! that tooling needs but humans don't want cluttering the DSL:
 //! created timestamps, recurring Plan linkage, etc.
 
+use super::store::WorkspaceError;
 use chrono::{DateTime, Local};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use super::store::WorkspaceError;
 
 /// The published contract for this file's shape. Stamped into every sidecar
 /// on save (see [`write_sidecar`]) so the file is self-describing and editors
@@ -97,7 +97,9 @@ pub fn read_sidecar(path: &Path) -> Result<CharterMetadata, WorkspaceError> {
 pub fn collect_sidecar_actions(charter_root: &Path) -> BTreeMap<String, ActionMeta> {
     let mut union: BTreeMap<String, ActionMeta> = BTreeMap::new();
     for path in sidecar_files(charter_root) {
-        let Ok(meta) = read_sidecar(&path) else { continue };
+        let Ok(meta) = read_sidecar(&path) else {
+            continue;
+        };
         for (key, action) in meta.actions {
             merge_action(union.entry(key).or_default(), action);
         }
@@ -146,7 +148,10 @@ fn sidecar_files(dir: &Path) -> Vec<PathBuf> {
 /// For each action, if the sidecar has a matching entry (by UUID string key),
 /// fills in `created_at` where the action doesn't already have it (DSL values
 /// are authoritative).
-pub fn hydrate_actions(actions: &mut [crate::workspace::actions::repository::SourcedAction], metadata: &CharterMetadata) {
+pub fn hydrate_actions(
+    actions: &mut [crate::workspace::actions::repository::SourcedAction],
+    metadata: &CharterMetadata,
+) {
     hydrate_actions_map(actions, &metadata.actions);
 }
 
@@ -222,8 +227,11 @@ fn created_from_uuid(id: uuid::Uuid) -> Option<DateTime<Local>> {
         return None;
     }
     let timestamp_ms = (id.as_u128() >> 80) as i64;
-    DateTime::from_timestamp(timestamp_ms / 1000, ((timestamp_ms % 1000) * 1_000_000) as u32)
-        .map(|dt| dt.into())
+    DateTime::from_timestamp(
+        timestamp_ms / 1000,
+        ((timestamp_ms % 1000) * 1_000_000) as u32,
+    )
+    .map(|dt| dt.into())
 }
 
 /// Write sidecar metadata to disk, atomically.
@@ -233,8 +241,8 @@ fn created_from_uuid(id: uuid::Uuid) -> Option<DateTime<Local>> {
 pub fn write_sidecar(path: &Path, metadata: &CharterMetadata) -> Result<(), WorkspaceError> {
     let mut metadata = metadata.clone();
     metadata.schema = Some(CHARTER_METADATA_SCHEMA_URL.to_string());
-    let content =
-        serde_json::to_string_pretty(&metadata).map_err(|e| WorkspaceError::Parse(e.to_string()))?;
+    let content = serde_json::to_string_pretty(&metadata)
+        .map_err(|e| WorkspaceError::Parse(e.to_string()))?;
     super::durability::atomic_write(path, content.as_bytes())?;
     Ok(())
 }
@@ -356,7 +364,11 @@ mod tests {
         // this is the self-healing half of the migration (no explicit tool needed).
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join(".legacy.json");
-        std::fs::write(&path, r#"{"acts": {"legacy-id": {"created": "2026-04-20T16:11:00-05:00"}}}"#).unwrap();
+        std::fs::write(
+            &path,
+            r#"{"acts": {"legacy-id": {"created": "2026-04-20T16:11:00-05:00"}}}"#,
+        )
+        .unwrap();
 
         let meta = read_sidecar(&path).unwrap();
         write_sidecar(&path, &meta).unwrap();
@@ -368,7 +380,9 @@ mod tests {
 
     // ===== Hydration =====
 
-    fn make_sourced(action: crate::domain::Action) -> crate::workspace::actions::repository::SourcedAction {
+    fn make_sourced(
+        action: crate::domain::Action,
+    ) -> crate::workspace::actions::repository::SourcedAction {
         use crate::workspace::actions::repository::SourcedAction;
         SourcedAction {
             action,
@@ -383,9 +397,18 @@ mod tests {
 
         let id = Uuid::now_v7();
         let created = Local::now();
-        let mut actions = vec![make_sourced(Action { id, ..Default::default() })];
+        let mut actions = vec![make_sourced(Action {
+            id,
+            ..Default::default()
+        })];
         let mut meta = CharterMetadata::default();
-        meta.actions.insert(id.to_string(), ActionMeta { created: Some(created), ..Default::default() });
+        meta.actions.insert(
+            id.to_string(),
+            ActionMeta {
+                created: Some(created),
+                ..Default::default()
+            },
+        );
 
         hydrate_actions(&mut actions, &meta);
         assert_eq!(actions[0].action.created_at, Some(created));
@@ -399,9 +422,19 @@ mod tests {
         let id = Uuid::now_v7();
         let dsl_created = Local::now();
         let sidecar_created = dsl_created - chrono::Duration::hours(1);
-        let mut actions = vec![make_sourced(Action { id, created_at: Some(dsl_created), ..Default::default() })];
+        let mut actions = vec![make_sourced(Action {
+            id,
+            created_at: Some(dsl_created),
+            ..Default::default()
+        })];
         let mut meta = CharterMetadata::default();
-        meta.actions.insert(id.to_string(), ActionMeta { created: Some(sidecar_created), ..Default::default() });
+        meta.actions.insert(
+            id.to_string(),
+            ActionMeta {
+                created: Some(sidecar_created),
+                ..Default::default()
+            },
+        );
 
         hydrate_actions(&mut actions, &meta);
         assert_eq!(actions[0].action.created_at, Some(dsl_created));
@@ -412,7 +445,10 @@ mod tests {
         use crate::domain::Action;
         use uuid::Uuid;
 
-        let mut actions = vec![make_sourced(Action { id: Uuid::now_v7(), ..Default::default() })];
+        let mut actions = vec![make_sourced(Action {
+            id: Uuid::now_v7(),
+            ..Default::default()
+        })];
         let meta = CharterMetadata::default();
 
         hydrate_actions(&mut actions, &meta);
@@ -448,7 +484,14 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let actions_path = dir.path().join("next.actions");
         let v4 = Uuid::new_v4();
-        stamp_sidecar_entries(&actions_path, &[Action { id: v4, ..Default::default() }]).unwrap();
+        stamp_sidecar_entries(
+            &actions_path,
+            &[Action {
+                id: v4,
+                ..Default::default()
+            }],
+        )
+        .unwrap();
 
         let meta = read_sidecar(&sidecar_path(&actions_path)).unwrap();
         let created = meta.actions[&v4.to_string()].created.expect("stamped");
@@ -490,7 +533,10 @@ mod tests {
         write_sidecar(&path, &meta).unwrap();
 
         let reloaded = read_sidecar(&path).unwrap();
-        assert_eq!(reloaded.schema.as_deref(), Some(CHARTER_METADATA_SCHEMA_URL));
+        assert_eq!(
+            reloaded.schema.as_deref(),
+            Some(CHARTER_METADATA_SCHEMA_URL)
+        );
     }
 
     #[test]

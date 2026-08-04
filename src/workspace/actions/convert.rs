@@ -53,7 +53,6 @@ pub fn to_action_list_ordered(model: &DomainModel, plan_order: &[String]) -> Act
         .collect()
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -89,7 +88,10 @@ mod tests {
         };
 
         let charter = from_actions_with_charter(&vec![action.clone()], "work".to_string());
-        let model = DomainModel { objectives: vec![], charters: vec![charter] };
+        let model = DomainModel {
+            objectives: vec![],
+            charters: vec![charter],
+        };
         let roundtripped = to_action_list(&model).into_iter().next().unwrap();
 
         assert_eq!(roundtripped.id, action.id);
@@ -112,8 +114,16 @@ mod tests {
                 id: uuid::Uuid::new_v4(),
                 title: "test".to_string(),
                 actions: vec![
-                    Action { id: id_a, name: "Alpha".to_string(), ..Default::default() },
-                    Action { id: id_b, name: "Beta".to_string(), ..Default::default() },
+                    Action {
+                        id: id_a,
+                        name: "Alpha".to_string(),
+                        ..Default::default()
+                    },
+                    Action {
+                        id: id_b,
+                        name: "Beta".to_string(),
+                        ..Default::default()
+                    },
                 ],
                 ..Default::default()
             }],

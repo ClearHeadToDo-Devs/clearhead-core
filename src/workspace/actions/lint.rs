@@ -366,8 +366,7 @@ fn check_tree_consistency(doc: &ParsedDocument) -> Vec<LintDiagnostic> {
             if !is_closed && all_children_closed {
                 diagnostics.push(LintDiagnostic::warning(
                     "W003",
-                    "All children are closed. Should this parent be closed too? (W003)"
-                        .to_string(),
+                    "All children are closed. Should this parent be closed too? (W003)".to_string(),
                     metadata.root,
                 ));
             }
@@ -599,7 +598,12 @@ mod tests {
         let parsed = get_parsed_document(text).unwrap();
 
         let results = lint_document(&parsed);
-        assert!(!results.info.iter().any(|d| d.code == "I001" || d.code == "I002"));
+        assert!(
+            !results
+                .info
+                .iter()
+                .any(|d| d.code == "I001" || d.code == "I002")
+        );
     }
 
     #[test]
@@ -646,10 +650,10 @@ mod tests {
         }
         // Genuine mistakes — invalid, not incomplete (E006).
         for s in [
-            "123",                // no dash, too short to be a uuid-in-progress
-            "01950000",           // bare short hash, not valid as an *id*
-            "abc-def-abc-def",    // dash at position 3, not a template slot
-            "not-a-uuid",         // non-hex
+            "123",             // no dash, too short to be a uuid-in-progress
+            "01950000",        // bare short hash, not valid as an *id*
+            "abc-def-abc-def", // dash at position 3, not a template slot
+            "not-a-uuid",      // non-hex
             "invalid-uuid-format",
             "01950000-0000-7000-8000-000000000001", // a full, valid uuid is neither
         ] {

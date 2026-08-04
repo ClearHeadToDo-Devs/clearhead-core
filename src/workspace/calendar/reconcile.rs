@@ -11,11 +11,11 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
+use super::expand::{next_active_slot, render_occurrence};
 use super::ics::{
     VTodoAction, action_to_vtodo, canonical_occurrence_key, parse_ics_file, parse_vtodo_actions,
     write_master_rollforward,
 };
-use super::expand::{next_active_slot, render_occurrence};
 use super::plans::{action_mirror_path, charter_plans_dir_relative, collect_plan_files_in};
 use super::sync_store::{
     CONTEXTS_FIELD, DESCRIPTION_FIELD, DUE_DATE_FIELD, MASTER_DTSTART_FIELD, PRIORITY_FIELD,
@@ -603,7 +603,9 @@ fn commit_actions_and_store(
     let mut paths: Vec<_> = dirty_actions.into_iter().collect();
     paths.sort();
     for action_path in paths {
-        let relative = action_path.strip_prefix(charter_root).unwrap_or(&action_path);
+        let relative = action_path
+            .strip_prefix(charter_root)
+            .unwrap_or(&action_path);
         let charter = charters
             .iter()
             .find(|charter| charter.actions_file.as_deref() == Some(relative))
@@ -810,7 +812,14 @@ fn stage_plan_token(
         action: occurrence,
         source_metadata: None,
     });
-    graft_template_steps(charter, plan, occ_id, &actions_relative, charter_root, data_root)?;
+    graft_template_steps(
+        charter,
+        plan,
+        occ_id,
+        &actions_relative,
+        charter_root,
+        data_root,
+    )?;
     store.stamp_occurrence_link(occ_id, plan.plan.id, &slot_key)?;
     Ok(Some(charter_root.join(actions_relative)))
 }
@@ -1219,7 +1228,8 @@ pub fn sync_master_rollforwards(
 
     if store_dirty {
         let content = serialize_plans_sync_store(&store)?;
-        atomic_write(&plans_sync_store_path(root), content.as_bytes()).map_err(WorkspaceError::Io)?;
+        atomic_write(&plans_sync_store_path(root), content.as_bytes())
+            .map_err(WorkspaceError::Io)?;
     }
     Ok(recorded)
 }
@@ -1390,17 +1400,24 @@ mod tests {
         let root = Path::new("/ws/.clearhead/charters");
         let data_root = Path::new("/ws/.clearhead");
 
-        let n = ensure_active_occurrences(&mut charters, &mut store, &mut dirty, root, data_root, now)
-            .unwrap();
+        let n =
+            ensure_active_occurrences(&mut charters, &mut store, &mut dirty, root, data_root, now)
+                .unwrap();
         assert_eq!(n, 1, "a fresh recurring plan gets exactly one token");
         assert_eq!(charters[0].actions.len(), 1);
 
         let occ = &charters[0].actions[0].action;
         assert!(!is_resolved(occ.state));
         let slot = occ.scheduled_at.unwrap();
-        assert!(slot >= now, "the token is the next upcoming slot, never a past one");
+        assert!(
+            slot >= now,
+            "the token is the next upcoming slot, never a past one"
+        );
         let key = canonical_occurrence_key(slot);
-        assert_eq!(occ.id, crate::workspace::calendar::ics::occurrence_action_id(&uid, &key));
+        assert_eq!(
+            occ.id,
+            crate::workspace::calendar::ics::occurrence_action_id(&uid, &key)
+        );
         assert_eq!(store.occurrence_link(occ.id), Some((plan_id, key)));
         assert!(dirty.contains(&root.join("health.actions")));
 
@@ -1430,9 +1447,15 @@ mod tests {
         charters[0].actions[0].action.state = ActionState::Completed; // resolved by hand
 
         let now_later = first_slot + chrono::Duration::days(1);
-        let n =
-            ensure_active_occurrences(&mut charters, &mut store, &mut dirty, root, data_root, now_later)
-                .unwrap();
+        let n = ensure_active_occurrences(
+            &mut charters,
+            &mut store,
+            &mut dirty,
+            root,
+            data_root,
+            now_later,
+        )
+        .unwrap();
         assert_eq!(n, 1, "no live token → the next slot is stamped");
         assert_eq!(charters[0].actions.len(), 2);
         let live: Vec<_> = charters[0]
@@ -1494,9 +1517,18 @@ mod tests {
         let report = plan_sync(&model, &store, &HashMap::new()).unwrap();
         let pushed: HashSet<Uuid> = report.entries.iter().map(|e| e.action_id).collect();
 
-        assert!(!pushed.contains(&token), "the occurrence token must not leak to the vdir");
-        assert!(!pushed.contains(&step), "the grafted step must stay local, not leak to the vdir");
-        assert!(pushed.contains(&standalone), "an ordinary dated action still reconciles");
+        assert!(
+            !pushed.contains(&token),
+            "the occurrence token must not leak to the vdir"
+        );
+        assert!(
+            !pushed.contains(&step),
+            "the grafted step must stay local, not leak to the vdir"
+        );
+        assert!(
+            pushed.contains(&standalone),
+            "an ordinary dated action still reconciles"
+        );
     }
 
     #[test]
@@ -1539,7 +1571,10 @@ mod tests {
             .iter()
             .find(|sa| sa.action.plan_id == Some(plan_id))
             .expect("the stamped occurrence root");
-        assert!(root.action.parent_id.is_none(), "the occurrence root is a root");
+        assert!(
+            root.action.parent_id.is_none(),
+            "the occurrence root is a root"
+        );
         let slot = root.action.scheduled_at.unwrap();
         let key = canonical_occurrence_key(slot);
         assert_eq!(

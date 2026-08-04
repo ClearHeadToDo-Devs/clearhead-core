@@ -88,7 +88,9 @@ pub fn occurrence_action_id(plan_uid: &str, occurrence_key: &str) -> uuid::Uuid 
 /// Hashing the immutable *slot* (never the occurrence's mutable DUE) is the
 /// invariant: a reschedule must not mint a new identity.
 pub fn canonical_occurrence_key(slot: DateTime<Local>) -> String {
-    slot.with_timezone(&Utc).format("%Y%m%dT%H%M%SZ").to_string()
+    slot.with_timezone(&Utc)
+        .format("%Y%m%dT%H%M%SZ")
+        .to_string()
 }
 
 /// Resolve a standalone VTODO UID to its Action identity. ClearHead-authored
@@ -298,7 +300,9 @@ fn override_from_todo(todo: &Todo) -> Option<(String, OccurrenceOverride)> {
         scheduled_at: todo.get_start().and_then(date_perhaps_time_to_local),
         due_date: todo.get_due().and_then(date_perhaps_time_to_local),
         state: vtodo_state(todo),
-        completed_at: todo.get_completed().map(|value| value.with_timezone(&Local)),
+        completed_at: todo
+            .get_completed()
+            .map(|value| value.with_timezone(&Local)),
         title: todo.get_summary().map(str::to_string),
         description: todo
             .get_description()
@@ -383,7 +387,10 @@ pub fn write_occurrence_deviation(
                 todo.completed(at.with_timezone(&Utc));
             })?
         }
-        OccurrenceOp::Reschedule { scheduled_at, due_date } => {
+        OccurrenceOp::Reschedule {
+            scheduled_at,
+            due_date,
+        } => {
             let (scheduled_at, due_date) = (*scheduled_at, *due_date);
             upsert_override(&mut calendar, master_uid, occurrence_key, |todo| {
                 todo.remove_starts();
@@ -422,8 +429,9 @@ pub fn write_master_rollforward(
     let mut calendar: Calendar = content.parse().map_err(WorkspaceError::Parse)?;
 
     // Reset the master anchor to the canonical origin.
-    let index = master_index(&calendar, master_uid)
-        .ok_or_else(|| WorkspaceError::Parse(format!("recurring master VTODO {master_uid} not found")))?;
+    let index = master_index(&calendar, master_uid).ok_or_else(|| {
+        WorkspaceError::Parse(format!("recurring master VTODO {master_uid} not found"))
+    })?;
     if let CalendarComponent::Todo(master) = &mut calendar.components[index] {
         master.remove_starts();
         master.starts(base_dtstart.with_timezone(&Utc));
@@ -568,7 +576,8 @@ pub fn parse_vtodo_actions(path: &Path) -> Result<Vec<VTodoAction>, WorkspaceErr
         };
         // A recurring master (RRULE) is a Plan, and a RECURRENCE-ID component is an
         // occurrence override *of* its master — neither is a standalone Action.
-        if todo.property_value("RRULE").is_some() || todo.property_value("RECURRENCE-ID").is_some() {
+        if todo.property_value("RRULE").is_some() || todo.property_value("RECURRENCE-ID").is_some()
+        {
             continue;
         }
         let Some(uid) = todo.get_uid() else {
@@ -803,7 +812,11 @@ mod tests {
         ));
 
         let plans = parse_ics_file(f.path()).unwrap();
-        assert_eq!(plans.len(), 1, "the RECURRENCE-ID VTODO is a deviation, not a second plan");
+        assert_eq!(
+            plans.len(),
+            1,
+            "the RECURRENCE-ID VTODO is a deviation, not a second plan"
+        );
         let plan = &plans[0];
 
         assert!(
@@ -849,8 +862,15 @@ mod tests {
         write_occurrence_deviation(f.path(), uid, key, &OccurrenceOp::Skip).unwrap();
 
         let plan = &parse_ics_file(f.path()).unwrap()[0];
-        assert!(plan.exdates.contains(key), "EXDATE round-trips into the read model");
-        assert_eq!(plan.exdates.len(), 1, "writing the same skip twice is idempotent");
+        assert!(
+            plan.exdates.contains(key),
+            "EXDATE round-trips into the read model"
+        );
+        assert_eq!(
+            plan.exdates.len(),
+            1,
+            "writing the same skip twice is idempotent"
+        );
         // Unrelated properties survive the mutation.
         let raw = std::fs::read_to_string(f.path()).unwrap();
         assert!(raw.contains("X-APPLE-SORT-ORDER:7"));
@@ -860,13 +880,19 @@ mod tests {
     fn complete_writes_recurrence_id_override() {
         let uid = "standup@example.com";
         let key = "20260505T090000Z";
-        let at = Utc.with_ymd_and_hms(2026, 5, 5, 9, 30, 0).unwrap().with_timezone(&Local);
+        let at = Utc
+            .with_ymd_and_hms(2026, 5, 5, 9, 30, 0)
+            .unwrap()
+            .with_timezone(&Local);
         let f = master_ics(uid);
 
         write_occurrence_deviation(f.path(), uid, key, &OccurrenceOp::Complete { at }).unwrap();
 
         let plan = &parse_ics_file(f.path()).unwrap()[0];
-        let over = plan.overrides.get(key).expect("override keyed by the completed slot");
+        let over = plan
+            .overrides
+            .get(key)
+            .expect("override keyed by the completed slot");
         assert_eq!(over.state, ActionState::Completed);
         assert!(over.completed_at.is_some());
     }
@@ -875,21 +901,34 @@ mod tests {
     fn reschedule_then_complete_updates_one_override() {
         let uid = "standup@example.com";
         let key = "20260505T090000Z";
-        let moved = Utc.with_ymd_and_hms(2026, 5, 5, 14, 0, 0).unwrap().with_timezone(&Local);
-        let at = Utc.with_ymd_and_hms(2026, 5, 5, 14, 15, 0).unwrap().with_timezone(&Local);
+        let moved = Utc
+            .with_ymd_and_hms(2026, 5, 5, 14, 0, 0)
+            .unwrap()
+            .with_timezone(&Local);
+        let at = Utc
+            .with_ymd_and_hms(2026, 5, 5, 14, 15, 0)
+            .unwrap()
+            .with_timezone(&Local);
         let f = master_ics(uid);
 
         write_occurrence_deviation(
             f.path(),
             uid,
             key,
-            &OccurrenceOp::Reschedule { scheduled_at: Some(moved), due_date: None },
+            &OccurrenceOp::Reschedule {
+                scheduled_at: Some(moved),
+                due_date: None,
+            },
         )
         .unwrap();
         write_occurrence_deviation(f.path(), uid, key, &OccurrenceOp::Complete { at }).unwrap();
 
         let plan = &parse_ics_file(f.path()).unwrap()[0];
-        assert_eq!(plan.overrides.len(), 1, "second op updates the same override, not a new one");
+        assert_eq!(
+            plan.overrides.len(),
+            1,
+            "second op updates the same override, not a new one"
+        );
         let over = plan.overrides.get(key).unwrap();
         // The reschedule (moved time) and the completion coexist on one override.
         assert_eq!(over.scheduled_at.unwrap().with_timezone(&Utc).hour(), 14);
@@ -925,7 +964,10 @@ mod tests {
             "20260505T090000Z",
             &OccurrenceOp::Skip,
         );
-        assert!(result.is_err(), "a missing master is an error, not a silent no-op");
+        assert!(
+            result.is_err(),
+            "a missing master is an error, not a silent no-op"
+        );
     }
 
     // -------------------------------------------------------------------------

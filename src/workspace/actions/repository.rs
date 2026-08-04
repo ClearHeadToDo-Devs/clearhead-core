@@ -1,5 +1,5 @@
-use crate::domain::Action;
 use super::source::SourceMetadata;
+use crate::domain::Action;
 
 /// An action paired with its file-layer source metadata.
 ///

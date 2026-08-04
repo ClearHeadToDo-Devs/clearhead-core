@@ -171,10 +171,19 @@ mod tests {
 
     fn hierarchy() -> WorkspaceConfig {
         let mut h = HashMap::new();
-        h.insert("computer".to_string(), vec!["terminal".to_string(), "browser".to_string()]);
-        h.insert("terminal".to_string(), vec!["neovim".to_string(), "tmux".to_string()]);
+        h.insert(
+            "computer".to_string(),
+            vec!["terminal".to_string(), "browser".to_string()],
+        );
+        h.insert(
+            "terminal".to_string(),
+            vec!["neovim".to_string(), "tmux".to_string()],
+        );
         h.insert("driving".to_string(), vec!["grocery_store".to_string()]);
-        WorkspaceConfig { tag_hierarchies: h, ..Default::default() }
+        WorkspaceConfig {
+            tag_hierarchies: h,
+            ..Default::default()
+        }
     }
 
     #[test]
@@ -187,7 +196,10 @@ mod tests {
     #[test]
     fn ancestors_multi_level() {
         let cfg = hierarchy();
-        assert_eq!(cfg.get_tag_ancestors("neovim"), vec!["terminal", "computer"]);
+        assert_eq!(
+            cfg.get_tag_ancestors("neovim"),
+            vec!["terminal", "computer"]
+        );
     }
 
     #[test]
@@ -205,7 +217,10 @@ mod tests {
     #[test]
     fn ancestors_case_insensitive() {
         let cfg = hierarchy();
-        assert_eq!(cfg.get_tag_ancestors("NEOVIM"), vec!["terminal", "computer"]);
+        assert_eq!(
+            cfg.get_tag_ancestors("NEOVIM"),
+            vec!["terminal", "computer"]
+        );
     }
 
     #[test]
@@ -221,7 +236,10 @@ mod tests {
         let cfg = hierarchy();
         let mut got = cfg.expand_tags(&["neovim".to_string(), "grocery_store".to_string()]);
         got.sort();
-        assert_eq!(got, vec!["computer", "driving", "grocery_store", "neovim", "terminal"]);
+        assert_eq!(
+            got,
+            vec!["computer", "driving", "grocery_store", "neovim", "terminal"]
+        );
     }
 
     #[test]
@@ -229,7 +247,10 @@ mod tests {
         let cfg = hierarchy();
         let mut got = cfg.descendants_and_self("computer");
         got.sort();
-        assert_eq!(got, vec!["browser", "computer", "neovim", "terminal", "tmux"]);
+        assert_eq!(
+            got,
+            vec!["browser", "computer", "neovim", "terminal", "tmux"]
+        );
     }
 
     #[test]
@@ -251,7 +272,10 @@ mod tests {
         let mut h = HashMap::new();
         h.insert("a".to_string(), vec!["b".to_string()]);
         h.insert("b".to_string(), vec!["a".to_string()]); // cycle
-        let cfg = WorkspaceConfig { tag_hierarchies: h, ..Default::default() };
+        let cfg = WorkspaceConfig {
+            tag_hierarchies: h,
+            ..Default::default()
+        };
         // must terminate
         let _ = cfg.get_tag_ancestors("a");
         let _ = cfg.get_tag_ancestors("b");
