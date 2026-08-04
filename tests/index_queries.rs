@@ -80,7 +80,11 @@ fn index_pipe_defaults_to_ndjson() {
         "stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    let lines: Vec<_> = output.stdout.split(|byte| *byte == b'\n').filter(|line| !line.is_empty()).collect();
+    let lines: Vec<_> = output
+        .stdout
+        .split(|byte| *byte == b'\n')
+        .filter(|line| !line.is_empty())
+        .collect();
     assert_eq!(lines.len(), 1, "expected one NDJSON record");
     let row: serde_json::Value = serde_json::from_slice(lines[0]).expect("valid NDJSON row");
     assert_eq!(row["name"], "past scheduled action");

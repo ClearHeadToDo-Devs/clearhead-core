@@ -371,10 +371,8 @@ fn scheduled_actions_on_or_before_date() {
 // test should explain why in a comment rather than silently passing.
 // ============================================================================
 
-const NEXT_ACTIONS_SPARQL: &str =
-    include_str!("../src/queries/next-actions.sparql");
-const ACTIONS_BY_PHASE_SPARQL: &str =
-    include_str!("../src/queries/actions-by-phase.sparql");
+const NEXT_ACTIONS_SPARQL: &str = include_str!("../src/queries/next-actions.sparql");
+const ACTIONS_BY_PHASE_SPARQL: &str = include_str!("../src/queries/actions-by-phase.sparql");
 const OPEN_PLANS_SPARQL: &str = include_str!("../src/queries/open-plans.sparql");
 
 fn inject_status(sparql: &str, status_iri: &str) -> String {

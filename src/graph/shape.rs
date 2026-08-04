@@ -65,7 +65,9 @@ pub fn frame_tree(rows: &[Row]) -> Result<Value> {
         match row.get("parent") {
             None => roots.push(index),
             Some(parent) if parent == &row["id"] => {
-                return Err(GraphError::Contract(format!("tree node {parent} is its own parent")));
+                return Err(GraphError::Contract(format!(
+                    "tree node {parent} is its own parent"
+                )));
             }
             Some(parent) => {
                 let parent_index = positions.get(parent).copied().ok_or_else(|| {
@@ -79,7 +81,9 @@ pub fn frame_tree(rows: &[Row]) -> Result<Value> {
         }
     }
     if !rows.is_empty() && roots.is_empty() {
-        return Err(GraphError::Contract("tree has no root (cycle detected)".into()));
+        return Err(GraphError::Contract(
+            "tree has no root (cycle detected)".into(),
+        ));
     }
 
     let mut visiting = vec![false; rows.len()];
@@ -89,7 +93,9 @@ pub fn frame_tree(rows: &[Row]) -> Result<Value> {
         .map(|root| build_tree_node(root, rows, &children, &mut visiting, &mut emitted))
         .collect::<Result<Vec<_>>>()?;
     if emitted.iter().any(|seen| !seen) {
-        return Err(GraphError::Contract("tree contains a disconnected cycle".into()));
+        return Err(GraphError::Contract(
+            "tree contains a disconnected cycle".into(),
+        ));
     }
     Ok(Value::Array(trees))
 }
@@ -102,7 +108,10 @@ fn build_tree_node(
     emitted: &mut [bool],
 ) -> Result<Value> {
     if visiting[index] {
-        return Err(GraphError::Contract(format!("tree cycle at {}", rows[index]["id"])));
+        return Err(GraphError::Contract(format!(
+            "tree cycle at {}",
+            rows[index]["id"]
+        )));
     }
     visiting[index] = true;
     let mut node = row_node(&rows[index])?;

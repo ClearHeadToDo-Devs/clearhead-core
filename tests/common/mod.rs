@@ -24,7 +24,13 @@ impl TestEnv {
         for dir in [&config_dir, &data_dir, &state_dir, &work_dir] {
             fs::create_dir_all(dir).expect("create test directory");
         }
-        Self { _temp_dir: temp_dir, config_dir, data_dir, state_dir, work_dir }
+        Self {
+            _temp_dir: temp_dir,
+            config_dir,
+            data_dir,
+            state_dir,
+            work_dir,
+        }
     }
 
     pub fn with_workspace_identity(&self) -> &Self {

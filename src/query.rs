@@ -14,8 +14,8 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context as _, anyhow};
 use chrono::Utc;
 use clearhead_core::WorkspaceConfig;
-use oxigraph::io::{JsonLdProfileSet, RdfFormat, RdfSerializer};
 use clearhead_core::workspace::store::load::Workspace;
+use oxigraph::io::{JsonLdProfileSet, RdfFormat, RdfSerializer};
 use tracing::debug;
 
 use crate::graph::{self, GraphName, Store};
@@ -103,13 +103,20 @@ pub fn build_store(workspace: &Path, config: &WorkspaceConfig) -> anyhow::Result
 
 fn load_additional(store: &Store, path: &Path) -> anyhow::Result<()> {
     if !path.exists() {
-        anyhow::bail!("Additional workspace path does not exist: {}", path.display());
+        anyhow::bail!(
+            "Additional workspace path does not exist: {}",
+            path.display()
+        );
     }
     let workspace = Workspace::load(path)
         .map_err(|e| anyhow!("Failed to load workspace at {}: {e}", path.display()))?;
     let graph_name = GraphName::NamedNode(graph::workspace_graph_uri(&workspace.effective_id()));
-    graph::insert_workspace_metadata(store, &workspace, graph_name.clone())
-        .map_err(|e| anyhow!("Failed to insert workspace metadata for {}: {e}", path.display()))?;
+    graph::insert_workspace_metadata(store, &workspace, graph_name.clone()).map_err(|e| {
+        anyhow!(
+            "Failed to insert workspace metadata for {}: {e}",
+            path.display()
+        )
+    })?;
     let model = clearhead_core::DomainModel::from(workspace);
     graph::load_domain_model(store, &model, None, graph_name)
         .map_err(|e| anyhow!("Failed to insert workspace {}: {e}", path.display()))
@@ -200,30 +207,57 @@ const BUILT_IN_INDEX_QUERIES: &[(&str, &str)] = &[
     ("agenda", include_str!("queries/index/agenda.sparql")),
     ("chain", include_str!("queries/index/chain.sparql")),
     ("default", include_str!("queries/index/default.sparql")),
-    ("unscheduled", include_str!("queries/index/unscheduled.sparql")),
+    (
+        "unscheduled",
+        include_str!("queries/index/unscheduled.sparql"),
+    ),
     ("weekly", include_str!("queries/index/weekly.sparql")),
 ];
 
-const BUILT_IN_TREE_QUERIES: &[(&str, &str)] = &[
-    ("work-map", include_str!("queries/tree/work-map.sparql")),
-];
+const BUILT_IN_TREE_QUERIES: &[(&str, &str)] =
+    &[("work-map", include_str!("queries/tree/work-map.sparql"))];
 
-const BUILT_IN_GRAPH_QUERIES: &[(&str, &str)] = &[
-    ("dependencies", include_str!("queries/graph/dependencies.sparql")),
-];
+const BUILT_IN_GRAPH_QUERIES: &[(&str, &str)] = &[(
+    "dependencies",
+    include_str!("queries/graph/dependencies.sparql"),
+)];
 
 const BUILT_IN_QUERIES: &[(&str, &str)] = &[
-    ("actions-by-phase", include_str!("queries/actions-by-phase.sparql")),
+    (
+        "actions-by-phase",
+        include_str!("queries/actions-by-phase.sparql"),
+    ),
     ("all-plans", include_str!("queries/all-plans.sparql")),
-    ("all-plans-simple", include_str!("queries/all-plans-simple.sparql")),
-    ("completion-velocity", include_str!("queries/completion-velocity.sparql")),
-    ("dependency-chain", include_str!("queries/dependency-chain.sparql")),
-    ("high-priority", include_str!("queries/high-priority.sparql")),
+    (
+        "all-plans-simple",
+        include_str!("queries/all-plans-simple.sparql"),
+    ),
+    (
+        "completion-velocity",
+        include_str!("queries/completion-velocity.sparql"),
+    ),
+    (
+        "dependency-chain",
+        include_str!("queries/dependency-chain.sparql"),
+    ),
+    (
+        "high-priority",
+        include_str!("queries/high-priority.sparql"),
+    ),
     ("next-actions", include_str!("queries/next-actions.sparql")),
-    ("orphaned-actions", include_str!("queries/orphaned-actions.sparql")),
-    ("overdue-tasks", include_str!("queries/overdue-tasks.sparql")),
+    (
+        "orphaned-actions",
+        include_str!("queries/orphaned-actions.sparql"),
+    ),
+    (
+        "overdue-tasks",
+        include_str!("queries/overdue-tasks.sparql"),
+    ),
     ("open-plans", include_str!("queries/open-plans.sparql")),
-    ("plans-with-contexts", include_str!("queries/plans-with-contexts.sparql")),
+    (
+        "plans-with-contexts",
+        include_str!("queries/plans-with-contexts.sparql"),
+    ),
 ];
 
 fn resolve_named_queries(cx: &QueryContext) -> HashMap<String, NamedQuery> {
@@ -231,10 +265,17 @@ fn resolve_named_queries(cx: &QueryContext) -> HashMap<String, NamedQuery> {
     for (name, sparql) in BUILT_IN_QUERIES {
         queries.insert(
             name.to_string(),
-            NamedQuery { sparql: sparql.to_string(), source: QuerySource::BuiltIn },
+            NamedQuery {
+                sparql: sparql.to_string(),
+                source: QuerySource::BuiltIn,
+            },
         );
     }
-    scan_query_dir(&cx.config_dir.join("queries"), QuerySource::User, &mut queries);
+    scan_query_dir(
+        &cx.config_dir.join("queries"),
+        QuerySource::User,
+        &mut queries,
+    );
     let project_dir = cx.workspace.join(".clearhead").join("queries");
     scan_query_dir(&project_dir, QuerySource::Project, &mut queries);
     queries
@@ -263,7 +304,10 @@ fn resolve_typed_queries(cx: &QueryContext, type_name: &str) -> HashMap<String, 
         &mut queries,
     );
     scan_query_dir(
-        &cx.workspace.join(".clearhead").join("queries").join(type_name),
+        &cx.workspace
+            .join(".clearhead")
+            .join("queries")
+            .join(type_name),
         QuerySource::Project,
         &mut queries,
     );
@@ -273,7 +317,10 @@ fn resolve_typed_queries(cx: &QueryContext, type_name: &str) -> HashMap<String, 
 fn scan_all_typed_queries(cx: &QueryContext) -> Vec<(String, String, NamedQuery)> {
     let dirs: Vec<(PathBuf, QuerySource)> = vec![
         (cx.config_dir.join("queries"), QuerySource::User),
-        (cx.workspace.join(".clearhead").join("queries"), QuerySource::Project),
+        (
+            cx.workspace.join(".clearhead").join("queries"),
+            QuerySource::Project,
+        ),
     ];
     let mut result = Vec::new();
     for (base, source) in dirs {
@@ -377,13 +424,13 @@ pub fn run_index(
 
     let doc = graph::frame_index(&rows)
         .map_err(|e| anyhow!("Query result does not satisfy the index contract: {e}"))?;
-    let nodes = doc["@graph"].as_array().expect("frame_index always emits an @graph array");
+    let nodes = doc["@graph"]
+        .as_array()
+        .expect("frame_index always emits an @graph array");
 
     match format.unwrap_or_else(default_index_format) {
         Format::Table => emit_table(&rows),
-        Format::Json => {
-            write_stdout(&serde_json::to_string_pretty(nodes).context("serialize")?)
-        }
+        Format::Json => write_stdout(&serde_json::to_string_pretty(nodes).context("serialize")?),
         Format::Ndjson => emit_ndjson(nodes),
         Format::Jsonld => write_stdout(&serde_json::to_string_pretty(&doc).context("serialize")?),
         Format::Turtle | Format::Dot => {
@@ -426,8 +473,12 @@ pub fn run_tree(
     match format.unwrap_or_else(default_tree_format) {
         Format::Table => emit_tree(&tree),
         Format::Json => write_stdout(&serde_json::to_string_pretty(&tree).context("serialize")?),
-        Format::Ndjson => anyhow::bail!("--format ndjson is not defined for tree queries; use json"),
-        Format::Jsonld => anyhow::bail!("--format jsonld is not defined for tree queries; use json"),
+        Format::Ndjson => {
+            anyhow::bail!("--format ndjson is not defined for tree queries; use json")
+        }
+        Format::Jsonld => {
+            anyhow::bail!("--format jsonld is not defined for tree queries; use json")
+        }
         Format::Turtle | Format::Dot => {
             anyhow::bail!("--format turtle/dot requires a CONSTRUCT graph query")
         }
@@ -462,7 +513,12 @@ pub fn run_graph(
         .map_err(|e| anyhow!("SPARQL graph query failed: {e}"))?;
     match format.unwrap_or_else(default_graph_format) {
         Format::Table => emit_graph_summary(&triples),
-        Format::Jsonld => emit_rdf(&triples, RdfFormat::JsonLd { profile: JsonLdProfileSet::empty() }),
+        Format::Jsonld => emit_rdf(
+            &triples,
+            RdfFormat::JsonLd {
+                profile: JsonLdProfileSet::empty(),
+            },
+        ),
         Format::Turtle => emit_rdf(&triples, RdfFormat::Turtle),
         Format::Dot => write_stdout_raw(graph::frame_dot(&triples).as_bytes()),
         Format::Json | Format::Ndjson => {
@@ -494,13 +550,25 @@ pub fn list(cx: &QueryContext) -> anyhow::Result<()> {
         ]);
     }
     for (name, _) in BUILT_IN_INDEX_QUERIES {
-        table.add_row(vec![Cell::new(name), Cell::new("index"), Cell::new("built-in")]);
+        table.add_row(vec![
+            Cell::new(name),
+            Cell::new("index"),
+            Cell::new("built-in"),
+        ]);
     }
     for (name, _) in BUILT_IN_TREE_QUERIES {
-        table.add_row(vec![Cell::new(name), Cell::new("tree"), Cell::new("built-in")]);
+        table.add_row(vec![
+            Cell::new(name),
+            Cell::new("tree"),
+            Cell::new("built-in"),
+        ]);
     }
     for (name, _) in BUILT_IN_GRAPH_QUERIES {
-        table.add_row(vec![Cell::new(name), Cell::new("graph"), Cell::new("built-in")]);
+        table.add_row(vec![
+            Cell::new(name),
+            Cell::new("graph"),
+            Cell::new("built-in"),
+        ]);
     }
     let mut typed = scan_all_typed_queries(cx);
     typed.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
@@ -524,14 +592,22 @@ pub fn show(cx: &QueryContext, name: &str) -> anyhow::Result<()> {
                 .find(|(n, _)| *n == name)
                 .map(|(_, s)| s.to_string())
         })
-        .or_else(|| resolve_typed_queries(cx, "tree").remove(name).map(|q| q.sparql))
+        .or_else(|| {
+            resolve_typed_queries(cx, "tree")
+                .remove(name)
+                .map(|q| q.sparql)
+        })
         .or_else(|| {
             BUILT_IN_TREE_QUERIES
                 .iter()
                 .find(|(n, _)| *n == name)
                 .map(|(_, sparql)| sparql.to_string())
         })
-        .or_else(|| resolve_typed_queries(cx, "graph").remove(name).map(|q| q.sparql))
+        .or_else(|| {
+            resolve_typed_queries(cx, "graph")
+                .remove(name)
+                .map(|q| q.sparql)
+        })
         .or_else(|| {
             BUILT_IN_GRAPH_QUERIES
                 .iter()
@@ -561,26 +637,36 @@ fn emit_rows(rows: &[HashMap<String, String>], format: Option<Format>) -> anyhow
             write_stdout_lines(&lines)
         }
         Format::Table => emit_table(rows),
-        Format::Jsonld | Format::Turtle | Format::Dot => anyhow::bail!(
-            "graph formats require a shaped graph query such as `query graph`"
-        ),
+        Format::Jsonld | Format::Turtle | Format::Dot => {
+            anyhow::bail!("graph formats require a shaped graph query such as `query graph`")
+        }
     }
 }
 
 fn emit_graph_summary(triples: &[oxigraph::model::Triple]) -> anyhow::Result<()> {
     use std::collections::HashSet;
-    let subjects: HashSet<_> = triples.iter().map(|triple| triple.subject.to_string()).collect();
-    let predicates: HashSet<_> = triples.iter().map(|triple| triple.predicate.to_string()).collect();
+    let subjects: HashSet<_> = triples
+        .iter()
+        .map(|triple| triple.subject.to_string())
+        .collect();
+    let predicates: HashSet<_> = triples
+        .iter()
+        .map(|triple| triple.predicate.to_string())
+        .collect();
     write_stdout(&format!(
         "{} triples, {} subjects, {} predicates",
-        triples.len(), subjects.len(), predicates.len()
+        triples.len(),
+        subjects.len(),
+        predicates.len()
     ))
 }
 
 fn emit_rdf(triples: &[oxigraph::model::Triple], format: RdfFormat) -> anyhow::Result<()> {
     let mut serializer = RdfSerializer::from_format(format).for_writer(Vec::new());
     for triple in triples {
-        serializer.serialize_triple(triple).context("serialize RDF triple")?;
+        serializer
+            .serialize_triple(triple)
+            .context("serialize RDF triple")?;
     }
     let bytes = serializer.finish().context("finish RDF serialization")?;
     write_stdout_raw(&bytes)
@@ -591,8 +677,16 @@ fn emit_tree(tree: &serde_json::Value) -> anyhow::Result<()> {
         let name = node["name"].as_str().unwrap_or("?");
         let kind = node["kind"].as_str().unwrap_or("node");
         let status = node.get("status").and_then(|value| value.as_str());
-        let suffix = status.map(|value| format!(" [{value}]")).unwrap_or_default();
-        lines.push(format!("{}{}: {}{}", "  ".repeat(depth), kind, name, suffix));
+        let suffix = status
+            .map(|value| format!(" [{value}]"))
+            .unwrap_or_default();
+        lines.push(format!(
+            "{}{}: {}{}",
+            "  ".repeat(depth),
+            kind,
+            name,
+            suffix
+        ));
         if let Some(children) = node.get("children").and_then(|value| value.as_array()) {
             for child in children {
                 visit(child, depth + 1, lines);
@@ -683,12 +777,19 @@ mod tests {
     fn end_of_today_injects_end_of_day() {
         let result = inject_params("FILTER(?x <= ?END_OF_TODAY)", None, None);
         let today = Utc::now().format("%Y-%m-%d").to_string();
-        assert!(result.contains(&format!("\"{today}T23:59:59Z\"^^xsd:dateTime")), "{result}");
+        assert!(
+            result.contains(&format!("\"{today}T23:59:59Z\"^^xsd:dateTime")),
+            "{result}"
+        );
     }
 
     #[test]
     fn status_filter_replaced_when_provided() {
-        let result = inject_params("FILTER(?s = ?STATUS_FILTER)", Some("<actions:InProgress>"), None);
+        let result = inject_params(
+            "FILTER(?s = ?STATUS_FILTER)",
+            Some("<actions:InProgress>"),
+            None,
+        );
         assert!(result.contains("<actions:InProgress>"), "{result}");
         assert!(!result.contains("?STATUS_FILTER"), "{result}");
     }
@@ -703,6 +804,9 @@ mod tests {
     #[test]
     fn prefixes_injected_only_when_missing() {
         let already = "PREFIX actions: <x>\nSELECT * WHERE {}";
-        assert_eq!(inject_prefixes(already).matches("PREFIX actions:").count(), 1);
+        assert_eq!(
+            inject_prefixes(already).matches("PREFIX actions:").count(),
+            1
+        );
     }
 }

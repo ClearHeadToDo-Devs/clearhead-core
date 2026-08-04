@@ -8,9 +8,7 @@ fn dependency_workspace() -> TestEnv {
     let env = TestEnv::new();
     env.with_workspace_identity().write_actions(
         "next.actions",
-        &format!(
-            "[ ] prepare =prepare #{PREDECESSOR}\n[ ] ship <prepare #{SUCCESSOR}\n"
-        ),
+        &format!("[ ] prepare =prepare #{PREDECESSOR}\n[ ] ship <prepare #{SUCCESSOR}\n"),
     );
     env
 }
@@ -23,11 +21,24 @@ fn dependencies_construct_emits_standard_turtle_edges() {
         .args(["query", "graph", "dependencies", "--format", "turtle"])
         .output()
         .expect("run dependency graph");
-    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let turtle = String::from_utf8(output.stdout).expect("utf8 turtle");
-    assert!(turtle.contains(&format!("urn:uuid:{SUCCESSOR}")), "{turtle}");
-    assert!(turtle.contains(&format!("urn:uuid:{PREDECESSOR}")), "{turtle}");
-    assert!(turtle.contains("ont00001775"), "predecessor predicate missing: {turtle}");
+    assert!(
+        turtle.contains(&format!("urn:uuid:{SUCCESSOR}")),
+        "{turtle}"
+    );
+    assert!(
+        turtle.contains(&format!("urn:uuid:{PREDECESSOR}")),
+        "{turtle}"
+    );
+    assert!(
+        turtle.contains("ont00001775"),
+        "predecessor predicate missing: {turtle}"
+    );
 }
 
 #[test]
@@ -38,9 +49,16 @@ fn dependencies_construct_emits_jsonld_for_machine_default() {
         .args(["query", "graph", "dependencies"])
         .output()
         .expect("run dependency graph");
-    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let json: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid JSON-LD");
-    assert!(json.is_array() || json.is_object(), "JSON-LD document: {json}");
+    assert!(
+        json.is_array() || json.is_object(),
+        "JSON-LD document: {json}"
+    );
     assert!(String::from_utf8_lossy(&output.stdout).contains("ont00001775"));
 }
 
@@ -52,13 +70,23 @@ fn dependencies_construct_emits_dot_with_visual_flow() {
         .args(["query", "graph", "dependencies", "--format", "dot"])
         .output()
         .expect("run dependency graph as DOT");
-    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let dot = String::from_utf8(output.stdout).expect("utf8 DOT");
     assert!(dot.starts_with("digraph"), "{dot}");
     assert!(dot.contains("prepare"), "{dot}");
     assert!(dot.contains("ship"), "{dot}");
-    assert!(dot.contains("0 -> 1"), "dependency must flow prepare -> ship: {dot}");
-    assert!(dot.contains("penwidth=\"2\""), "dependency edge styling missing: {dot}");
+    assert!(
+        dot.contains("0 -> 1"),
+        "dependency must flow prepare -> ship: {dot}"
+    );
+    assert!(
+        dot.contains("penwidth=\"2\""),
+        "dependency edge styling missing: {dot}"
+    );
 }
 
 #[test]

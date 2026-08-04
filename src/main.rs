@@ -98,11 +98,13 @@ fn discover_config() -> Result<WorkspaceConfig> {
     let base = clearhead_core::config::loader::find_project_data_dir()
         .map(|root| root.join(".clearhead"))
         .unwrap_or_else(clearhead_core::config::loader::get_config_dir);
-    config.additional_workspaces =
-        clearhead_core::config::loader::resolve_workspace_paths(&config.additional_workspaces, &base)
-            .into_iter()
-            .map(|p| p.to_string_lossy().into_owned())
-            .collect();
+    config.additional_workspaces = clearhead_core::config::loader::resolve_workspace_paths(
+        &config.additional_workspaces,
+        &base,
+    )
+    .into_iter()
+    .map(|p| p.to_string_lossy().into_owned())
+    .collect();
     Ok(config)
 }
 
@@ -157,4 +159,3 @@ fn export_jsonld(mut input: impl Read) -> Result<()> {
     println!("{jsonld}");
     Ok(())
 }
-

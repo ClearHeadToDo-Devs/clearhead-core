@@ -66,7 +66,10 @@ fn tree_pipe_defaults_to_nested_json() {
         String::from_utf8_lossy(&output.stderr)
     );
     let tree: serde_json::Value = serde_json::from_slice(&output.stdout).expect("nested JSON");
-    assert!(tree.is_array(), "tree machine output must be a JSON array: {tree}");
+    assert!(
+        tree.is_array(),
+        "tree machine output must be a JSON array: {tree}"
+    );
 }
 
 #[test]
@@ -87,9 +90,18 @@ fn work_map_resolves_charter_parent_by_alias() {
         .args(["query", "tree", "work-map", "--format", "json"])
         .output()
         .expect("run tree query");
-    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let tree: serde_json::Value = serde_json::from_slice(&output.stdout).expect("nested JSON");
-    let root = tree.as_array().unwrap().iter().find(|node| node["name"] == "Root charter").expect("root");
+    let root = tree
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|node| node["name"] == "Root charter")
+        .expect("root");
     assert_eq!(root["source_file"], "root/README.md");
     assert_eq!(root["children"][0]["name"], "Child charter");
     assert_eq!(root["children"][0]["source_file"], "child/README.md");
@@ -113,7 +125,11 @@ fn work_map_uses_filesystem_hierarchy_for_markdown_only_charters() {
         .args(["query", "tree", "work-map", "--format", "json"])
         .output()
         .expect("run tree query");
-    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let tree: serde_json::Value = serde_json::from_slice(&output.stdout).expect("nested JSON");
     let someday = tree
         .as_array()
@@ -131,8 +147,10 @@ fn work_map_uses_filesystem_hierarchy_for_markdown_only_charters() {
 #[test]
 fn project_tree_query_must_satisfy_contract() {
     let env = TestEnv::new();
-    env.with_workspace_identity()
-        .write_actions("next.actions", "[ ] action #01900000-0000-7000-8000-000000000104\n");
+    env.with_workspace_identity().write_actions(
+        "next.actions",
+        "[ ] action #01900000-0000-7000-8000-000000000104\n",
+    );
     env.write_text(
         ".clearhead/queries/tree/bad.sparql",
         "SELECT (\"urn:uuid:test\" AS ?id) (\"missing kind\" AS ?name) WHERE {}",
