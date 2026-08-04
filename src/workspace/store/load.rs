@@ -431,9 +431,10 @@ pub fn read_workspace_with_plans(
         };
         let sc_path = layout.charter_root.join(sidecar_path(actions_file));
         if let Ok(recorded) = read_sidecar(&sc_path).map(|sc| sc.charter.and_then(|c| c.id))
-            && let Some(id) = recorded {
-                charter.id = id;
-            }
+            && let Some(id) = recorded
+        {
+            charter.id = id;
+        }
     }
 
     // Explicit frontmatter wins: translate filesystem-inferred parent names to their
@@ -475,22 +476,23 @@ pub fn read_workspace_with_plans(
         .collect();
     for (name, charter) in &charters {
         if let Some(parent) = &charter.parent
-            && !known_aliases.contains(parent.as_str()) {
-                let file = path_for_name
-                    .get(name)
-                    .cloned()
-                    .unwrap_or_else(|| PathBuf::from("<unknown>"));
-                findings.push(Finding::warning(
-                    "unresolvable-parent",
-                    file,
-                    format!(
-                        "charter '{}' has unresolvable parent '{}' — \
+            && !known_aliases.contains(parent.as_str())
+        {
+            let file = path_for_name
+                .get(name)
+                .cloned()
+                .unwrap_or_else(|| PathBuf::from("<unknown>"));
+            findings.push(Finding::warning(
+                "unresolvable-parent",
+                file,
+                format!(
+                    "charter '{}' has unresolvable parent '{}' — \
                          use the alias (machine key), not the display title",
-                        charter.alias.as_deref().unwrap_or(&charter.title),
-                        parent
-                    ),
-                ));
-            }
+                    charter.alias.as_deref().unwrap_or(&charter.title),
+                    parent
+                ),
+            ));
+        }
     }
 
     let mut charters_by_name = charters;

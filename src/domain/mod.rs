@@ -112,8 +112,7 @@ pub struct Objective {
 ///
 /// assert_eq!(r.to_string(), "R:FREQ=WEEKLY;INTERVAL=2;COUNT=5;BYDAY=MO,WE");
 /// ```
-#[derive(PartialEq, Debug, Clone, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(PartialEq, Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Recurrence {
     pub frequency: String, // FREQ: secondly, minutely, hourly, daily, weekly, monthly, yearly
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -143,7 +142,6 @@ pub struct Recurrence {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub week_start: Option<String>, // WKST: MO,TU,WE,TH,FR,SA,SU (default MO)
 }
-
 
 impl fmt::Display for Recurrence {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -546,9 +544,10 @@ impl Charter {
             return false;
         }
         if let Some(alias) = &parent.alias
-            && parent_ref == alias.to_lowercase() {
-                return true;
-            }
+            && parent_ref == alias.to_lowercase()
+        {
+            return true;
+        }
         // UUID reference: a full match, or a hex prefix of at least 4 chars per
         // the reference-syntax spec. Prefixes may run past 8 to disambiguate
         // IDs minted together (v7 timestamp prefixes, v5 namespacing).

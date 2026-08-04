@@ -109,9 +109,11 @@ mod tests {
     #[test]
     fn empty_filter_passes_everything() {
         let filter = ActionFilter::default();
-        let actions = [make_action(ActionState::NotStarted),
+        let actions = [
+            make_action(ActionState::NotStarted),
             make_action(ActionState::Completed),
-            make_action(ActionState::Cancelled)];
+            make_action(ActionState::Cancelled),
+        ];
         assert!(actions.iter().all(|a| filter.matches(a)));
     }
 

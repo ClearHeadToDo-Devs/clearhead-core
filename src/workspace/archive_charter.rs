@@ -270,9 +270,10 @@ fn archive_many(
         // its charter by content and not only by filename. Idempotent (stamps
         // only when absent); skipped on dry-run, which must not write.
         if !opts.dry_run
-            && let Some(acts) = &acts_abs {
-                stamp_charter_id(acts, mc.id)?;
-            }
+            && let Some(acts) = &acts_abs
+        {
+            stamp_charter_id(acts, mc.id)?;
+        }
 
         // Materialize the parent edge into the `.md` as a UUID before the move,
         // so hierarchy survives flattening as *data* rather than as directory
@@ -283,13 +284,14 @@ fn archive_many(
         // unresolvable parents are left verbatim, never fabricated.
         if !opts.dry_run
             && let (Some(md), Some(parent)) = (&md_abs, mc.parent.as_deref())
-                && md.exists()
-                    && let Some(parent_uuid) = resolve_parent_uuid(parent, all_charters) {
-                        let content = std::fs::read_to_string(md)?;
-                        if let Some(rewritten) = set_frontmatter_parent(&content, &parent_uuid) {
-                            atomic_write(md, rewritten.as_bytes())?;
-                        }
-                    }
+            && md.exists()
+            && let Some(parent_uuid) = resolve_parent_uuid(parent, all_charters)
+        {
+            let content = std::fs::read_to_string(md)?;
+            if let Some(rewritten) = set_frontmatter_parent(&content, &parent_uuid) {
+                atomic_write(md, rewritten.as_bytes())?;
+            }
+        }
 
         // Flat, UUID-stemmed destinations. The quartet keys on the charter's own
         // UUID; the sidecar name derives from the actions dest and so agrees by
@@ -309,9 +311,10 @@ fn archive_many(
         // they stay on disk. Everything else moves all-or-none.
         for (src, dest) in quartet {
             if let Some(src) = src.filter(|p| p.exists())
-                && seen_sources.insert(src.clone()) {
-                    moves.push((src, dest));
-                }
+                && seen_sources.insert(src.clone())
+            {
+                moves.push((src, dest));
+            }
         }
 
         if let Some(subdir) = charter_subdir {
@@ -570,18 +573,20 @@ pub fn find_charter<'a>(
 
     // Full UUID
     if let Ok(uuid) = Uuid::parse_str(query)
-        && let Some(c) = charters.iter().find(|c| c.id == uuid) {
-            return Some(c);
-        }
+        && let Some(c) = charters.iter().find(|c| c.id == uuid)
+    {
+        return Some(c);
+    }
 
     // UUID prefix (≥ 4 hex chars)
-    if query.len() >= 4 && query.chars().all(|c| c.is_ascii_hexdigit() || c == '-')
+    if query.len() >= 4
+        && query.chars().all(|c| c.is_ascii_hexdigit() || c == '-')
         && let Some(c) = charters
             .iter()
             .find(|c| c.id.to_string().starts_with(query))
-        {
-            return Some(c);
-        }
+    {
+        return Some(c);
+    }
 
     // Alias exact match (case-insensitive)
     if let Some(c) = charters.iter().find(|c| {

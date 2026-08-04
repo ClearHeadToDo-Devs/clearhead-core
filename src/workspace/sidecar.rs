@@ -172,9 +172,10 @@ pub fn hydrate_actions_map(
             .map(|id| id.to_string())
             .unwrap_or_else(|| action.id.to_string());
         if let Some(meta) = actions_meta.get(&key)
-            && action.created_at.is_none() {
-                action.created_at = meta.created;
-            }
+            && action.created_at.is_none()
+        {
+            action.created_at = meta.created;
+        }
     }
 }
 
