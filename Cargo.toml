@@ -21,7 +21,7 @@ tower-lsp-server = "0.23.0"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.22", features = ["env-filter"] }
 tree-sitter = "0.26.3"
-tree-sitter-actions = { path = "../tree-sitter-actions", version = "0.9.4" }
+tree-sitter-actions = { path = "../tree-sitter-actions", version = "0.10.0" }
 uuid = "1.0"
 
 [dev-dependencies]
