@@ -28,9 +28,10 @@
 //!   (UUID, short-prefix, alias, and path-style `charter/plan`).
 //! - [`config`]: [`WorkspaceConfig`] — semantic settings (tag hierarchies, expansion
 //!   counts) passed in by tools; core never reads disk config itself.
+//! - [`telemetry`]: Structured event emission for action lifecycle observability.
+//!
 //! Graph execution and linked-data export deliberately live in the separate
 //! `clearhead-graphd` crate, which consumes this crate's domain/workspace API.
-//! - [`telemetry`]: Structured event emission for action lifecycle observability.
 
 pub mod workspace;
 pub use workspace::store::{ManifestSourceType, WorkspaceManifestEntry};

@@ -720,7 +720,7 @@ fn is_resolved(state: ActionState) -> bool {
 /// `[x]` edit) reads as not-live, so sync re-stamps the next slot — the safety net
 /// under the eager completion path. Returns the number of tokens stamped.
 fn ensure_active_occurrences(
-    charters: &mut Vec<MarkdownCharter>,
+    charters: &mut [MarkdownCharter],
     store: &mut PlansSyncStore,
     dirty_actions: &mut HashSet<PathBuf>,
     charter_root: &Path,

@@ -121,7 +121,7 @@ pub fn read_actions(path: &Path) -> Result<ActionList, WorkspaceError> {
     }
 
     let content = std::fs::read_to_string(path).map_err(WorkspaceError::Io)?;
-    parse_actions(&content).map_err(|e| WorkspaceError::Actions(e))
+    parse_actions(&content).map_err(WorkspaceError::Actions)
 }
 
 /// Read a `.actions` file into an [`ActionsFile`], preserving file origin on each action.
@@ -149,7 +149,7 @@ pub fn read_action_file(path: &Path) -> Result<ActionsFile, WorkspaceError> {
 pub fn write_actions(actions: &[Action], path: &Path) -> Result<(), WorkspaceError> {
     let list: ActionList = actions.to_vec();
     let content =
-        format(&list, OutputFormat::Actions, None, None).map_err(|e| WorkspaceError::Actions(e))?;
+        format(&list, OutputFormat::Actions, None, None).map_err(WorkspaceError::Actions)?;
     super::durability::atomic_write(path, content.as_bytes()).map_err(WorkspaceError::Io)
 }
 
@@ -242,7 +242,7 @@ mod tests {
         let tmp = tempfile::tempdir().expect("tempdir");
         let path = tmp.path().join("health.completed.actions");
 
-        write_actions(&[action.clone()], &path).expect("write");
+        write_actions(std::slice::from_ref(&action), &path).expect("write");
         let loaded = read_actions(&path).expect("read");
 
         assert_eq!(loaded.len(), 1);

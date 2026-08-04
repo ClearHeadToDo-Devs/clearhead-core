@@ -26,10 +26,9 @@ pub fn check_for_workspace(cwd: &std::path::Path) -> Option<std::path::PathBuf> 
         }
 
         // If we've reached the root directory, stop searching
-        if let Some(parent) = current_dir.parent() {
+        {
+            let parent = current_dir.parent()?;
             current_dir = parent;
-        } else {
-            return None;
         }
     }
 }

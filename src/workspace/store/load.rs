@@ -430,11 +430,10 @@ pub fn read_workspace_with_plans(
             continue;
         };
         let sc_path = layout.charter_root.join(sidecar_path(actions_file));
-        if let Ok(recorded) = read_sidecar(&sc_path).map(|sc| sc.charter.and_then(|c| c.id)) {
-            if let Some(id) = recorded {
+        if let Ok(recorded) = read_sidecar(&sc_path).map(|sc| sc.charter.and_then(|c| c.id))
+            && let Some(id) = recorded {
                 charter.id = id;
             }
-        }
     }
 
     // Explicit frontmatter wins: translate filesystem-inferred parent names to their
@@ -475,8 +474,8 @@ pub fn read_workspace_with_plans(
         .filter_map(|c| c.alias.as_deref())
         .collect();
     for (name, charter) in &charters {
-        if let Some(parent) = &charter.parent {
-            if !known_aliases.contains(parent.as_str()) {
+        if let Some(parent) = &charter.parent
+            && !known_aliases.contains(parent.as_str()) {
                 let file = path_for_name
                     .get(name)
                     .cloned()
@@ -492,7 +491,6 @@ pub fn read_workspace_with_plans(
                     ),
                 ));
             }
-        }
     }
 
     let mut charters_by_name = charters;

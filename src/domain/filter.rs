@@ -41,14 +41,14 @@ impl ActionFilter {
             let hit = action
                 .contexts
                 .as_ref()
-                .map_or(false, |cs| cs.iter().any(|c| self.context_tags.contains(c)));
+                .is_some_and(|cs| cs.iter().any(|c| self.context_tags.contains(c)));
             if !hit {
                 return false;
             }
         }
 
         if let Some(plan_ref) = &self.plan_ref {
-            let matched = action.plan_id.map_or(false, |pid| {
+            let matched = action.plan_id.is_some_and(|pid| {
                 let full = pid.to_string();
                 let short = full.replace('-', "");
                 full == *plan_ref || short.starts_with(plan_ref.as_str())
@@ -109,11 +109,9 @@ mod tests {
     #[test]
     fn empty_filter_passes_everything() {
         let filter = ActionFilter::default();
-        let actions = vec![
-            make_action(ActionState::NotStarted),
+        let actions = [make_action(ActionState::NotStarted),
             make_action(ActionState::Completed),
-            make_action(ActionState::Cancelled),
-        ];
+            make_action(ActionState::Cancelled)];
         assert!(actions.iter().all(|a| filter.matches(a)));
     }
 

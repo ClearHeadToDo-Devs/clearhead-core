@@ -90,7 +90,7 @@ pub(crate) fn render_occurrence(
 /// Overlay a `RECURRENCE-ID` override onto its rendered occurrence. `None`
 /// fields inherit the value already rendered from the master.
 fn apply_override(action: &mut Action, over: &OccurrenceOverride) {
-    action.state = over.state.clone();
+    action.state = over.state;
     if over.scheduled_at.is_some() {
         action.scheduled_at = over.scheduled_at;
     }
@@ -150,7 +150,7 @@ pub fn next_active_slot(
 
     slots
         .into_iter()
-        .filter(|&slot| after_exclusive.map_or(true, |a| slot > a))
+        .filter(|&slot| after_exclusive.is_none_or(|a| slot > a))
         .filter(|&slot| slot >= now)
         .find(|slot| !ics_plan.exdates.contains(&canonical_occurrence_key(*slot)))
 }

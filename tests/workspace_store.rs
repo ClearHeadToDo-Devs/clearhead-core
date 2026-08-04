@@ -546,8 +546,8 @@ fn model_to_ron(model: &clearhead_core::DomainModel) -> String {
     let mut sorted = model.clone();
     sorted.charters.sort_by(|a, b| a.title.cmp(&b.title));
     for charter in &mut sorted.charters {
-        charter.plans.sort_by(|a, b| a.id.cmp(&b.id));
-        charter.actions.sort_by(|a, b| a.id.cmp(&b.id));
+        charter.plans.sort_by_key(|a| a.id);
+        charter.actions.sort_by_key(|a| a.id);
     }
     ron::ser::to_string_pretty(&sorted, ron::ser::PrettyConfig::default())
         .expect("RON serialization failed")

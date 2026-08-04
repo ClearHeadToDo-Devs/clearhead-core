@@ -171,11 +171,10 @@ pub fn hydrate_actions_map(
             .plan_id
             .map(|id| id.to_string())
             .unwrap_or_else(|| action.id.to_string());
-        if let Some(meta) = actions_meta.get(&key) {
-            if action.created_at.is_none() {
+        if let Some(meta) = actions_meta.get(&key)
+            && action.created_at.is_none() {
                 action.created_at = meta.created;
             }
-        }
     }
 }
 
@@ -193,7 +192,6 @@ pub fn stamp_sidecar_entries(
         let key = action.id.to_string();
         meta.actions.entry(key).or_insert_with(|| ActionMeta {
             created: Some(created_from_uuid(action.id).unwrap_or_else(Local::now)),
-            ..Default::default()
         });
     }
     write_sidecar(&sc_path, &meta)
@@ -314,11 +312,13 @@ mod tests {
     #[test]
     fn metadata_with_charter_roundtrips() {
         let charter_id = uuid::Uuid::new_v4();
-        let mut meta = CharterMetadata::default();
-        meta.charter = Some(CharterMeta {
-            id: Some(charter_id),
-            created: Some(Local::now()),
-        });
+        let meta = CharterMetadata {
+            charter: Some(CharterMeta {
+                id: Some(charter_id),
+                created: Some(Local::now()),
+            }),
+            ..Default::default()
+        };
         let json = serde_json::to_string_pretty(&meta).unwrap();
         let parsed: CharterMetadata = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed.charter.and_then(|c| c.id), Some(charter_id));
@@ -406,7 +406,6 @@ mod tests {
             id.to_string(),
             ActionMeta {
                 created: Some(created),
-                ..Default::default()
             },
         );
 
@@ -432,7 +431,6 @@ mod tests {
             id.to_string(),
             ActionMeta {
                 created: Some(sidecar_created),
-                ..Default::default()
             },
         );
 
@@ -549,7 +547,6 @@ mod tests {
             "test-uuid".to_string(),
             ActionMeta {
                 created: Some(Local::now()),
-                ..Default::default()
             },
         );
 
