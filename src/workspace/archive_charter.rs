@@ -935,6 +935,64 @@ mod tests {
         );
     }
 
+    #[test]
+    fn archive_moves_every_completed_history_owned_by_a_directory_charter() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path().join("ws");
+        let charters_dir = root.join(".clearhead/charters");
+        let charter_dir = charters_dir.join("graph-views");
+        std::fs::create_dir_all(&charter_dir).expect("create charter dir");
+        std::fs::write(charters_dir.join("next.actions"), "").expect("write root actions");
+
+        std::fs::write(
+            charter_dir.join("README.md"),
+            "---\nalias: graph-views\nstate: Closed\n---\n# Graph Views\n",
+        )
+        .expect("write charter md");
+        std::fs::write(charter_dir.join("next.actions"), "").expect("write actions");
+        // Directory-form `next.actions` derives its canonical history from the
+        // charter directory name. The legacy `next.completed.actions` file is
+        // still charter-owned history and must move with it.
+        std::fs::write(
+            charter_dir.join("graph-views.completed.actions"),
+            "[x] Canonical history\n",
+        )
+        .expect("write canonical completed history");
+        std::fs::write(
+            charter_dir.join("next.completed.actions"),
+            "[x] Alternate history\n",
+        )
+        .expect("write alternate completed history");
+
+        let charter_uuid = find_charter(
+            &load_workspace(&root).expect("load workspace"),
+            "graph-views",
+        )
+        .expect("graph-views charter")
+        .id;
+
+        archive_charter(&root, "graph-views", &ArchiveCharterOptions::default())
+            .expect("archive should move every charter-local history");
+
+        assert!(
+            !charter_dir.exists(),
+            "no completed history may keep a ghost active charter directory"
+        );
+        let archive_dir = root.join(".clearhead/archive");
+        assert_eq!(
+            std::fs::read_to_string(archive_dir.join(format!("{charter_uuid}.completed.actions")))
+                .unwrap(),
+            "[x] Canonical history\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(
+                archive_dir.join(format!("{charter_uuid}.next.completed.actions"))
+            )
+            .unwrap(),
+            "[x] Alternate history\n"
+        );
+    }
+
     // ===== Child 2: parent-edge materialization =====
 
     #[test]
