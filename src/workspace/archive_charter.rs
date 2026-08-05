@@ -93,6 +93,10 @@ pub enum ArchiveCharterError {
     #[error("Charter '{0}' not found")]
     NotFound(String),
 
+    /// The supplied reference matched multiple charters.
+    #[error("Charter reference '{0}' is ambiguous; candidates: {1}")]
+    Ambiguous(String, String),
+
     /// The charter exists but is not in a terminal state (`Closed` or `Cancelled`).
     #[error(
         "Charter '{0}' is not Closed or Cancelled (current state: {1}); set state: Closed or state: Cancelled before archiving"
@@ -129,7 +133,7 @@ pub fn archive_charter(
     recover_pending(&layout.charter_root)?;
     let charters = load_workspace(root)?;
 
-    let mc = find_charter(&charters, query)
+    let mc = select_archive_charter(&charters, query)?
         .ok_or_else(|| ArchiveCharterError::NotFound(query.to_string()))?
         .clone();
 
@@ -412,20 +416,17 @@ fn collect_supporting_files(
 
 /// Resolve a `parent:` frontmatter value to a charter UUID for archival.
 ///
-/// Accepts an already-canonical UUID (kept as-is) or an exact, case-insensitive
-/// alias resolved against the whole workspace — never a title, because a
+/// Accepts a full/short UUID or an exact, case-insensitive alias resolved
+/// against the whole workspace — never a title, because a
 /// structural edge must not ride a display string. Returns `None` when the value
 /// resolves to nothing, so an unresolvable parent is left verbatim rather than
 /// fabricated.
 fn resolve_parent_uuid(parent: &str, all_charters: &[MarkdownCharter]) -> Option<Uuid> {
-    if let Ok(uuid) = Uuid::parse_str(parent) {
-        return Some(uuid);
+    match crate::reference::select_reference(all_charters, parent) {
+        crate::reference::ReferenceSelection::Unique { index, .. } => Some(all_charters[index].id),
+        crate::reference::ReferenceSelection::NotFound
+        | crate::reference::ReferenceSelection::Ambiguous { .. } => None,
     }
-    let q = parent.to_lowercase();
-    all_charters
-        .iter()
-        .find(|c| c.alias.as_deref().is_some_and(|a| a.to_lowercase() == q))
-        .map(|c| c.id)
 }
 
 /// Substitute — or insert — a top-level `parent: <uuid>` line inside the leading
@@ -565,43 +566,38 @@ fn has_terminal_ancestor(charter: &MarkdownCharter, charters: &[MarkdownCharter]
 
 /// Find a charter in a loaded workspace by UUID, UUID prefix, alias (exact),
 /// or title (partial, case-insensitive).
+fn select_archive_charter<'a>(
+    charters: &'a [MarkdownCharter],
+    query: &str,
+) -> Result<Option<&'a MarkdownCharter>, ArchiveCharterError> {
+    match crate::reference::select_reference(charters, query) {
+        crate::reference::ReferenceSelection::Unique { index, .. } => Ok(Some(&charters[index])),
+        crate::reference::ReferenceSelection::Ambiguous { indices, .. } => {
+            let candidates = indices
+                .into_iter()
+                .map(|index| charters[index].id.to_string())
+                .collect::<Vec<_>>()
+                .join(", ");
+            Err(ArchiveCharterError::Ambiguous(
+                query.to_string(),
+                candidates,
+            ))
+        }
+        crate::reference::ReferenceSelection::NotFound => {
+            // Human-friendly archive search remains an adapter policy, not reference syntax.
+            let query_lower = query.to_lowercase();
+            Ok(charters
+                .iter()
+                .find(|charter| charter.title.to_lowercase().contains(&query_lower)))
+        }
+    }
+}
+
 pub fn find_charter<'a>(
     charters: &'a [MarkdownCharter],
     query: &str,
 ) -> Option<&'a MarkdownCharter> {
-    let q = query.to_lowercase();
-
-    // Full UUID
-    if let Ok(uuid) = Uuid::parse_str(query)
-        && let Some(c) = charters.iter().find(|c| c.id == uuid)
-    {
-        return Some(c);
-    }
-
-    // UUID prefix (≥ 4 hex chars)
-    if query.len() >= 4
-        && query.chars().all(|c| c.is_ascii_hexdigit() || c == '-')
-        && let Some(c) = charters
-            .iter()
-            .find(|c| c.id.to_string().starts_with(query))
-    {
-        return Some(c);
-    }
-
-    // Alias exact match (case-insensitive)
-    if let Some(c) = charters.iter().find(|c| {
-        c.alias
-            .as_deref()
-            .map(|a| a.to_lowercase() == q)
-            .unwrap_or(false)
-    }) {
-        return Some(c);
-    }
-
-    // Title partial match (case-insensitive)
-    charters
-        .iter()
-        .find(|c| c.title.to_lowercase().contains(&q))
+    select_archive_charter(charters, query).ok().flatten()
 }
 
 // ============================================================================
@@ -635,6 +631,15 @@ mod tests {
         let charters = vec![make_mc("health-and-fitness", None)];
         let found = find_charter(&charters, "fitness").unwrap();
         assert_eq!(found.alias.as_deref(), Some("health-and-fitness"));
+    }
+
+    #[test]
+    fn archive_selection_reports_ambiguous_aliases() {
+        let first = make_mc("work", Some(CharterState::Closed));
+        let mut second = make_mc("work", Some(CharterState::Closed));
+        second.id = Uuid::now_v7();
+        let error = select_archive_charter(&[first, second], "work").unwrap_err();
+        assert!(matches!(error, ArchiveCharterError::Ambiguous(_, _)));
     }
 
     #[test]

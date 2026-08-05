@@ -8,17 +8,17 @@
 //! | Form | Example | Resolves to |
 //! |------|---------|-------------|
 //! | Full UUID | `019de698-0eb4-7ed1-b763-999f7a22282a` | Any target type |
-//! | Short prefix (≥8 hex chars) | `019de698` | Any target type |
-//! | Alias | `staging-deploy` | Charter only |
-//! | Path | `work/feature` | Charter → Plan |
+//! | Short prefix (≥4 hex chars) | `019de698` | Any target type |
+//! | Alias | `staging-deploy` | Charter or Action |
+//! | Path | `work/feature` | Charter → sub-entity |
 //! | Prefixed | `c:work`, `p:11223344`, `a:019de698` | Scoped to type |
 //!
-//! Resolution order for unscoped single-segment references:
-//! 1. Charter (UUID, short prefix, alias)
-//! 2. Plan (UUID or short prefix only — no alias matching)
-//! 3. Action (UUID or short prefix only)
+//! Unscoped references apply identity precedence across all entity types:
+//! full UUID, then short UUID, then alias. Type prefixes restrict the candidate
+//! set when the strongest tier remains ambiguous. Plans have no alias.
 
 use crate::domain::{Action, Charter, DomainModel, Plan};
+use crate::workspace::MarkdownCharter;
 use std::fmt;
 use uuid::Uuid;
 
@@ -39,8 +39,188 @@ pub enum ReferenceTarget {
 /// Controls how alias segments are matched during resolution.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MatchMode {
-    /// Case-insensitive exact string match against alias or name.
+    /// Case-insensitive exact string match against an alias.
     Exact,
+}
+
+/// The canonical way an entity matched a reference string.
+///
+/// Ordering is semantic: UUID identity is stronger than a human-readable alias.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum ReferenceMatch {
+    /// The input parsed as the entity's complete UUID.
+    FullUuid,
+    /// The input was an unambiguous-capable UUID prefix of at least four hex digits.
+    ShortUuid,
+    /// The input exactly matched the entity's alias, ignoring ASCII case.
+    Alias,
+}
+
+/// A domain entity that participates in canonical reference resolution.
+pub trait ReferenceEntity {
+    /// Stable entity identity.
+    fn reference_id(&self) -> Uuid;
+    /// Human-readable alias, when this entity type supports aliases.
+    fn reference_alias(&self) -> Option<&str>;
+}
+
+impl ReferenceEntity for Charter {
+    fn reference_id(&self) -> Uuid {
+        self.id
+    }
+
+    fn reference_alias(&self) -> Option<&str> {
+        self.alias.as_deref()
+    }
+}
+
+impl ReferenceEntity for MarkdownCharter {
+    fn reference_id(&self) -> Uuid {
+        self.id
+    }
+
+    fn reference_alias(&self) -> Option<&str> {
+        self.alias.as_deref()
+    }
+}
+
+impl ReferenceEntity for Action {
+    fn reference_id(&self) -> Uuid {
+        self.id
+    }
+
+    fn reference_alias(&self) -> Option<&str> {
+        self.alias.as_deref()
+    }
+}
+
+impl ReferenceEntity for Plan {
+    fn reference_id(&self) -> Uuid {
+        self.id
+    }
+
+    fn reference_alias(&self) -> Option<&str> {
+        None
+    }
+}
+
+impl<T: ReferenceEntity + ?Sized> ReferenceEntity for &T {
+    fn reference_id(&self) -> Uuid {
+        (*self).reference_id()
+    }
+
+    fn reference_alias(&self) -> Option<&str> {
+        (*self).reference_alias()
+    }
+}
+
+/// Result of selecting a reference from a candidate collection.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ReferenceSelection {
+    /// No candidate matched UUID or alias syntax.
+    NotFound,
+    /// Exactly one candidate matched at the strongest available tier.
+    Unique {
+        index: usize,
+        matched_by: ReferenceMatch,
+    },
+    /// Multiple candidates matched at the strongest available tier.
+    Ambiguous {
+        indices: Vec<usize>,
+        matched_by: ReferenceMatch,
+    },
+}
+
+/// Select one entity using canonical UUID/alias precedence and ambiguity rules.
+pub fn select_reference<T: ReferenceEntity>(items: &[T], input: &str) -> ReferenceSelection {
+    select_reference_where(items, input, |_| true)
+}
+
+/// Select one entity among candidates accepted by `predicate`.
+///
+/// Full UUID beats short UUID, which beats alias. Multiple matches at the
+/// strongest tier are returned as [`ReferenceSelection::Ambiguous`] rather than
+/// silently choosing collection order.
+pub fn select_reference_where<T: ReferenceEntity>(
+    items: &[T],
+    input: &str,
+    predicate: impl Fn(&T) -> bool,
+) -> ReferenceSelection {
+    let mut matches: Vec<(usize, ReferenceMatch)> = items
+        .iter()
+        .enumerate()
+        .filter(|(_, item)| predicate(item))
+        .filter_map(|(index, item)| {
+            match_entity_reference(item.reference_id(), item.reference_alias(), input)
+                .map(|matched_by| (index, matched_by))
+        })
+        .collect();
+
+    let Some(strongest) = matches.iter().map(|(_, matched_by)| *matched_by).min() else {
+        return ReferenceSelection::NotFound;
+    };
+    matches.retain(|(_, matched_by)| *matched_by == strongest);
+
+    if matches.len() == 1 {
+        ReferenceSelection::Unique {
+            index: matches[0].0,
+            matched_by: strongest,
+        }
+    } else {
+        ReferenceSelection::Ambiguous {
+            indices: matches.into_iter().map(|(index, _)| index).collect(),
+            matched_by: strongest,
+        }
+    }
+}
+
+/// Classify a UUID reference according to the workspace reference syntax.
+///
+/// Full UUIDs (including forms accepted by [`Uuid::parse_str`]) and short UUID
+/// prefixes are supported. Prefixes contain at least four hexadecimal digits;
+/// hyphens are ignored so a prefix copied from a canonical UUID remains valid
+/// beyond the first group.
+pub fn match_uuid_reference(id: Uuid, input: &str) -> Option<ReferenceMatch> {
+    let input = input.trim();
+    if let Ok(parsed) = Uuid::parse_str(input) {
+        return (parsed == id).then_some(ReferenceMatch::FullUuid);
+    }
+
+    if !input.chars().all(|c| c.is_ascii_hexdigit() || c == '-') {
+        return None;
+    }
+    let compact: String = input.chars().filter(|c| *c != '-').collect();
+    if compact.len() < 4 {
+        return None;
+    }
+
+    id.simple()
+        .to_string()
+        .starts_with(&compact.to_ascii_lowercase())
+        .then_some(ReferenceMatch::ShortUuid)
+}
+
+/// Classify a reference against an entity UUID and optional alias.
+///
+/// A UUID-shaped input is identity-only: if it does not identify `id`, it does
+/// not fall through and accidentally match an alias. Aliases are exact and
+/// case-insensitive; names and titles are deliberately outside reference syntax.
+pub fn match_entity_reference(
+    id: Uuid,
+    alias: Option<&str>,
+    input: &str,
+) -> Option<ReferenceMatch> {
+    let input = input.trim();
+    if let Some(kind) = match_uuid_reference(id, input) {
+        return Some(kind);
+    }
+    if Uuid::parse_str(input).is_ok() {
+        return None;
+    }
+
+    alias
+        .filter(|candidate| candidate.eq_ignore_ascii_case(input))
+        .map(|_| ReferenceMatch::Alias)
 }
 
 /// Options controlling reference resolution behaviour.
@@ -65,13 +245,26 @@ impl Default for ReferenceOptions {
 #[derive(Debug, Clone)]
 pub struct ReferenceError {
     message: String,
+    ambiguous: bool,
 }
 
 impl ReferenceError {
     fn new(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
+            ambiguous: false,
         }
+    }
+
+    fn ambiguous(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            ambiguous: true,
+        }
+    }
+
+    fn is_ambiguous(&self) -> bool {
+        self.ambiguous
     }
 }
 
@@ -94,11 +287,37 @@ enum Prefix {
 enum Scope<'a> {
     Charter(&'a Charter),
     Plan(&'a Charter, &'a Plan),
+    Action(&'a Charter, &'a Action),
+}
+
+#[derive(Debug, Clone, Copy)]
+enum ScopedCandidate<'a> {
+    Charter(&'a Charter),
+    Plan(&'a Plan),
+    Action(&'a Action),
+}
+
+impl ReferenceEntity for ScopedCandidate<'_> {
+    fn reference_id(&self) -> Uuid {
+        match self {
+            Self::Charter(charter) => charter.id,
+            Self::Plan(plan) => plan.id,
+            Self::Action(action) => action.id,
+        }
+    }
+
+    fn reference_alias(&self) -> Option<&str> {
+        match self {
+            Self::Charter(charter) => charter.alias.as_deref(),
+            Self::Plan(_) => None,
+            Self::Action(action) => action.alias.as_deref(),
+        }
+    }
 }
 
 /// Resolve a reference string to a typed [`ReferenceTarget`] within `model`.
 ///
-/// Accepts full UUIDs, 8-char short prefixes, aliases, and path-style
+/// Accepts full UUIDs, short prefixes of at least four hex digits, aliases, and path-style
 /// `charter/plan` strings. Use `options` to control prefix handling and
 /// match mode.
 ///
@@ -132,6 +351,9 @@ pub fn resolve_reference(
 
     match prefix {
         Some(Prefix::Charter) => {
+            if segments.len() == 1 {
+                return resolve_charter_global(model, segments[0]);
+            }
             let target = resolve_path(model, &segments)?;
             match target {
                 ReferenceTarget::Charter(_) => Ok(target),
@@ -148,7 +370,7 @@ pub fn resolve_reference(
             match target {
                 ReferenceTarget::Plan(_) => Ok(target),
                 _ => Err(ReferenceError::new(
-                    "Reference resolved to a non-plan target; use a plan alias or UUID",
+                    "Reference resolved to a non-plan target; use a Plan UUID",
                 )),
             }
         }
@@ -160,7 +382,7 @@ pub fn resolve_reference(
             match target {
                 ReferenceTarget::Action(_) => Ok(target),
                 _ => Err(ReferenceError::new(
-                    "Reference resolved to a non-action target; use an action UUID",
+                    "Reference resolved to a non-action target; use an action alias or UUID",
                 )),
             }
         }
@@ -319,32 +541,56 @@ fn resolve_unscoped_single(
     model: &DomainModel,
     segment: &str,
 ) -> Result<ReferenceTarget, ReferenceError> {
-    if let Ok(target) = resolve_charter_global(model, segment) {
-        return Ok(target);
+    let mut candidates: Vec<ScopedCandidate<'_>> = model
+        .charters
+        .iter()
+        .map(ScopedCandidate::Charter)
+        .collect();
+    candidates.extend(
+        model
+            .charters
+            .iter()
+            .flat_map(|charter| &charter.plans)
+            .map(ScopedCandidate::Plan),
+    );
+    candidates.extend(
+        model
+            .charters
+            .iter()
+            .flat_map(|charter| &charter.actions)
+            .map(ScopedCandidate::Action),
+    );
+
+    match select_reference(&candidates, segment) {
+        ReferenceSelection::NotFound => Err(ReferenceError::new(format!(
+            "No entity matches reference '{}'",
+            segment
+        ))),
+        ReferenceSelection::Unique { index, .. } => match candidates[index] {
+            ScopedCandidate::Charter(charter) => Ok(ReferenceTarget::Charter(charter.id)),
+            ScopedCandidate::Plan(plan) => Ok(ReferenceTarget::Plan(plan.id)),
+            ScopedCandidate::Action(action) => Ok(ReferenceTarget::Action(action.id)),
+        },
+        ReferenceSelection::Ambiguous { .. } => Err(ReferenceError::ambiguous(format!(
+            "Ambiguous reference '{}'; use a type prefix, path, or longer UUID prefix",
+            segment
+        ))),
     }
-    if let Ok(target) = resolve_plan_global(model, segment) {
-        return Ok(target);
-    }
-    resolve_action_global(model, segment)
 }
 
 fn resolve_charter_global(
     model: &DomainModel,
     segment: &str,
 ) -> Result<ReferenceTarget, ReferenceError> {
-    let matches = model
-        .charters
-        .iter()
-        .filter(|c| charter_matches_segment(c, segment))
-        .collect::<Vec<_>>();
-
-    match matches.len() {
-        0 => Err(ReferenceError::new(format!(
+    match select_reference(&model.charters, segment) {
+        ReferenceSelection::NotFound => Err(ReferenceError::new(format!(
             "No charter matches reference '{}'",
             segment
         ))),
-        1 => Ok(ReferenceTarget::Charter(matches[0].id)),
-        _ => Err(ReferenceError::new(format!(
+        ReferenceSelection::Unique { index, .. } => {
+            Ok(ReferenceTarget::Charter(model.charters[index].id))
+        }
+        ReferenceSelection::Ambiguous { .. } => Err(ReferenceError::ambiguous(format!(
             "Ambiguous charter reference '{}'; use c:<alias> or c:<uuid>",
             segment
         ))),
@@ -355,23 +601,20 @@ fn resolve_plan_global(
     model: &DomainModel,
     segment: &str,
 ) -> Result<ReferenceTarget, ReferenceError> {
-    let mut matches: Vec<&Plan> = Vec::new();
-    for charter in &model.charters {
-        for plan in &charter.plans {
-            if plan_matches_segment(plan, segment) {
-                matches.push(plan);
-            }
-        }
-    }
+    let candidates: Vec<&Plan> = model
+        .charters
+        .iter()
+        .flat_map(|charter| &charter.plans)
+        .collect();
 
-    match matches.len() {
-        0 => Err(ReferenceError::new(format!(
+    match select_reference(&candidates, segment) {
+        ReferenceSelection::NotFound => Err(ReferenceError::new(format!(
             "No plan matches reference '{}'",
             segment
         ))),
-        1 => Ok(ReferenceTarget::Plan(matches[0].id)),
-        _ => Err(ReferenceError::new(format!(
-            "Ambiguous plan reference '{}'; use p:<alias> with a charter path or a UUID",
+        ReferenceSelection::Unique { index, .. } => Ok(ReferenceTarget::Plan(candidates[index].id)),
+        ReferenceSelection::Ambiguous { .. } => Err(ReferenceError::ambiguous(format!(
+            "Ambiguous plan reference '{}'; use a longer UUID prefix",
             segment
         ))),
     }
@@ -381,23 +624,22 @@ fn resolve_action_global(
     model: &DomainModel,
     segment: &str,
 ) -> Result<ReferenceTarget, ReferenceError> {
-    let mut matches: Vec<&Action> = Vec::new();
-    for charter in &model.charters {
-        for action in &charter.actions {
-            if action_matches_segment(action, segment) {
-                matches.push(action);
-            }
-        }
-    }
+    let candidates: Vec<&Action> = model
+        .charters
+        .iter()
+        .flat_map(|charter| &charter.actions)
+        .collect();
 
-    match matches.len() {
-        0 => Err(ReferenceError::new(format!(
+    match select_reference(&candidates, segment) {
+        ReferenceSelection::NotFound => Err(ReferenceError::new(format!(
             "No action matches reference '{}'",
             segment
         ))),
-        1 => Ok(ReferenceTarget::Action(matches[0].id)),
-        _ => Err(ReferenceError::new(format!(
-            "Ambiguous action reference '{}'; use a full UUID",
+        ReferenceSelection::Unique { index, .. } => {
+            Ok(ReferenceTarget::Action(candidates[index].id))
+        }
+        ReferenceSelection::Ambiguous { .. } => Err(ReferenceError::ambiguous(format!(
+            "Ambiguous action reference '{}'; use a path or longer UUID prefix",
             segment
         ))),
     }
@@ -408,80 +650,105 @@ fn resolve_path(model: &DomainModel, segments: &[&str]) -> Result<ReferenceTarge
         .first()
         .ok_or_else(|| ReferenceError::new("Reference path is empty"))?;
 
-    let root_matches: Vec<&Charter> = model
-        .charters
-        .iter()
-        .filter(|c| c.is_root() && charter_matches_segment(c, first))
-        .collect();
-
-    let mut scope = match root_matches.len() {
-        0 => {
-            return Err(ReferenceError::new(format!(
-                "No charter matches root reference '{}'",
-                first
-            )));
-        }
-        1 => Scope::Charter(root_matches[0]),
-        _ => {
-            return Err(ReferenceError::new(format!(
-                "Ambiguous root charter reference '{}'; use c:<alias> or c:<uuid>",
-                first
-            )));
-        }
-    };
+    let mut scope =
+        match select_reference_where(&model.charters, first, |charter| charter.is_root()) {
+            ReferenceSelection::NotFound => {
+                return Err(ReferenceError::new(format!(
+                    "No charter matches root reference '{}'",
+                    first
+                )));
+            }
+            ReferenceSelection::Unique { index, .. } => Scope::Charter(&model.charters[index]),
+            ReferenceSelection::Ambiguous { .. } => {
+                return Err(ReferenceError::ambiguous(format!(
+                    "Ambiguous root charter reference '{}'; use c:<alias> or c:<uuid>",
+                    first
+                )));
+            }
+        };
 
     for segment in &segments[1..] {
         scope = match scope {
             Scope::Charter(charter) => {
-                let child_charters: Vec<&Charter> = model
+                let mut candidates: Vec<ScopedCandidate<'_>> = model
                     .charters
                     .iter()
-                    .filter(|c| c.is_child_of(charter) && charter_matches_segment(c, segment))
+                    .filter(|candidate| candidate.is_child_of(charter))
+                    .map(ScopedCandidate::Charter)
                     .collect();
+                candidates.extend(charter.plans.iter().map(ScopedCandidate::Plan));
+                candidates.extend(
+                    charter
+                        .actions
+                        .iter()
+                        .filter(|action| action.parent_id.is_none())
+                        .map(ScopedCandidate::Action),
+                );
 
-                let child_plans: Vec<&Plan> = charter
-                    .plans
-                    .iter()
-                    .filter(|p| plan_matches_segment(p, segment))
-                    .collect();
-
-                match (child_charters.len(), child_plans.len()) {
-                    (0, 0) => {
+                match select_reference(&candidates, segment) {
+                    ReferenceSelection::NotFound => {
                         return Err(ReferenceError::new(format!(
                             "No match for '{}' under charter '{}'",
                             segment, charter.title
                         )));
                     }
-                    (1, 0) => Scope::Charter(child_charters[0]),
-                    (0, 1) => Scope::Plan(charter, child_plans[0]),
-                    _ => {
-                        return Err(ReferenceError::new(format!(
-                            "Ambiguous reference '{}' under charter '{}'; use c: or p: prefix",
+                    ReferenceSelection::Unique { index, .. } => match candidates[index] {
+                        ScopedCandidate::Charter(child) => Scope::Charter(child),
+                        ScopedCandidate::Plan(plan) => Scope::Plan(charter, plan),
+                        ScopedCandidate::Action(action) => Scope::Action(charter, action),
+                    },
+                    ReferenceSelection::Ambiguous { .. } => {
+                        return Err(ReferenceError::ambiguous(format!(
+                            "Ambiguous reference '{}' under charter '{}'; use a type prefix or UUID",
                             segment, charter.title
                         )));
                     }
                 }
             }
             Scope::Plan(charter, plan) => {
-                let child_acts: Vec<&Action> = charter
+                let candidates: Vec<&Action> = charter
                     .actions
                     .iter()
-                    .filter(|a| a.plan_id == Some(plan.id))
-                    .filter(|a| action_matches_segment(a, segment))
+                    .filter(|action| action.plan_id == Some(plan.id))
                     .collect();
-
-                match child_acts.len() {
-                    0 => {
+                match select_reference(&candidates, segment) {
+                    ReferenceSelection::NotFound => {
                         return Err(ReferenceError::new(format!(
                             "No match for '{}' under plan '{}'",
                             segment, plan.name
                         )));
                     }
-                    1 => return Ok(ReferenceTarget::Action(child_acts[0].id)),
-                    _ => {
-                        return Err(ReferenceError::new(format!(
-                            "Ambiguous reference '{}' under plan '{}'; use a: prefix",
+                    ReferenceSelection::Unique { index, .. } => {
+                        Scope::Action(charter, candidates[index])
+                    }
+                    ReferenceSelection::Ambiguous { .. } => {
+                        return Err(ReferenceError::ambiguous(format!(
+                            "Ambiguous reference '{}' under plan '{}'; use a longer path or UUID",
                             segment, plan.name
+                        )));
+                    }
+                }
+            }
+            Scope::Action(charter, action) => {
+                let candidates: Vec<&Action> = charter
+                    .actions
+                    .iter()
+                    .filter(|candidate| candidate.parent_id == Some(action.id))
+                    .collect();
+                match select_reference(&candidates, segment) {
+                    ReferenceSelection::NotFound => {
+                        return Err(ReferenceError::new(format!(
+                            "No action matches '{}' under action '{}'",
+                            segment, action.name
+                        )));
+                    }
+                    ReferenceSelection::Unique { index, .. } => {
+                        Scope::Action(charter, candidates[index])
+                    }
+                    ReferenceSelection::Ambiguous { .. } => {
+                        return Err(ReferenceError::ambiguous(format!(
+                            "Ambiguous action reference '{}' under action '{}'; use a UUID",
+                            segment, action.name
                         )));
                     }
                 }
@@ -492,47 +759,8 @@ fn resolve_path(model: &DomainModel, segments: &[&str]) -> Result<ReferenceTarge
     match scope {
         Scope::Charter(charter) => Ok(ReferenceTarget::Charter(charter.id)),
         Scope::Plan(_, plan) => Ok(ReferenceTarget::Plan(plan.id)),
+        Scope::Action(_, action) => Ok(ReferenceTarget::Action(action.id)),
     }
-}
-
-fn charter_matches_segment(charter: &Charter, segment: &str) -> bool {
-    if matches_uuid(&charter.id, segment) {
-        return true;
-    }
-
-    match &charter.alias {
-        Some(alias) => alias_match(alias, segment),
-        None => false,
-    }
-}
-
-fn plan_matches_segment(plan: &Plan, segment: &str) -> bool {
-    matches_uuid(&plan.id, segment)
-}
-
-fn action_matches_segment(action: &Action, segment: &str) -> bool {
-    matches_uuid(&action.id, segment)
-}
-
-fn matches_uuid(id: &Uuid, segment: &str) -> bool {
-    if let Ok(parsed) = Uuid::parse_str(segment) {
-        return parsed == *id;
-    }
-
-    if is_short_uuid(segment) {
-        let id_hex = id.to_string().replace('-', "");
-        return id_hex.starts_with(&segment.to_lowercase());
-    }
-
-    false
-}
-
-fn alias_match(alias: &str, segment: &str) -> bool {
-    alias.to_lowercase() == segment.to_lowercase()
-}
-
-fn is_short_uuid(segment: &str) -> bool {
-    segment.len() >= 4 && segment.chars().all(|c| c.is_ascii_hexdigit())
 }
 
 /// Resolve a reference across multiple workspaces, returning the first match.
@@ -545,8 +773,10 @@ pub fn resolve_reference_in_workspaces(
     options: &ReferenceOptions,
 ) -> Result<(String, ReferenceTarget), ReferenceError> {
     for (name, model) in workspaces {
-        if let Ok(target) = resolve_reference(model, input, options) {
-            return Ok((name.to_string(), target));
+        match resolve_reference(model, input, options) {
+            Ok(target) => return Ok((name.to_string(), target)),
+            Err(error) if error.is_ambiguous() => return Err(error),
+            Err(_) => {}
         }
     }
     Err(ReferenceError::new(format!(
@@ -653,6 +883,26 @@ mod tests {
     }
 
     #[test]
+    fn path_selection_applies_uuid_precedence_across_entity_types() {
+        let mut model = sample_model();
+        model.charters[1].alias = Some("1122".to_string());
+        let plan_id = model.charters[0].plans[0].id;
+
+        let target = resolve_reference(&model, "build/1122", &ReferenceOptions::default()).unwrap();
+        assert_eq!(target, ReferenceTarget::Plan(plan_id));
+    }
+
+    #[test]
+    fn unscoped_selection_applies_uuid_precedence_across_entity_types() {
+        let mut model = sample_model();
+        model.charters[0].alias = Some("dead".to_string());
+        let action_id = model.charters[0].actions[0].id;
+
+        let target = resolve_reference(&model, "dead", &ReferenceOptions::default()).unwrap();
+        assert_eq!(target, ReferenceTarget::Action(action_id));
+    }
+
+    #[test]
     fn resolves_act_in_plan_path() {
         let model = sample_model();
         let plan_id = Uuid::parse_str("11223344-0000-0000-0000-000000000003").unwrap();
@@ -694,6 +944,13 @@ mod tests {
     }
 
     #[test]
+    fn charter_prefix_resolves_a_child_alias_globally() {
+        let model = sample_model();
+        let target = resolve_reference(&model, "c:obs", &ReferenceOptions::default()).unwrap();
+        assert_eq!(target, ReferenceTarget::Charter(model.charters[1].id));
+    }
+
+    #[test]
     fn multi_workspace_returns_first_match() {
         let model = sample_model();
         let empty = DomainModel {
@@ -727,6 +984,32 @@ mod tests {
     }
 
     #[test]
+    fn ambiguity_does_not_fall_through_to_a_different_entity_type() {
+        let mut model = sample_model();
+        let mut duplicate = model.charters[0].clone();
+        duplicate.id = Uuid::parse_str("12345678-ffff-ffff-ffff-ffffffffffff").unwrap();
+        model.charters.push(duplicate);
+
+        let err = resolve_reference(&model, "build", &ReferenceOptions::default()).unwrap_err();
+        assert!(err.to_string().contains("Ambiguous reference"));
+    }
+
+    #[test]
+    fn ambiguity_in_an_earlier_workspace_does_not_fall_through_to_a_later_one() {
+        let mut ambiguous = sample_model();
+        let mut duplicate = ambiguous.charters[0].clone();
+        duplicate.id = Uuid::parse_str("12345678-ffff-ffff-ffff-ffffffffffff").unwrap();
+        ambiguous.charters.push(duplicate);
+        let valid = sample_model();
+        let workspaces = [("ambiguous", &ambiguous), ("valid", &valid)];
+
+        let err =
+            resolve_reference_in_workspaces(&workspaces, "build", &ReferenceOptions::default())
+                .unwrap_err();
+        assert!(err.to_string().contains("Ambiguous reference"));
+    }
+
+    #[test]
     fn short_uuid_prefix_longer_than_eight_resolves() {
         let model = sample_model();
         let action_id = Uuid::parse_str("deadbeef-0000-0000-0000-000000000005").unwrap();
@@ -738,5 +1021,97 @@ mod tests {
         )
         .unwrap();
         assert_eq!(target, ReferenceTarget::Action(action_id));
+    }
+
+    #[test]
+    fn canonical_uuid_matching_accepts_four_or_more_hex_digits_and_hyphens() {
+        let id = Uuid::parse_str("deadbeef-1234-5678-9abc-000000000005").unwrap();
+        assert_eq!(
+            match_uuid_reference(id, "dead"),
+            Some(ReferenceMatch::ShortUuid)
+        );
+        assert_eq!(
+            match_uuid_reference(id, "DEADBEEF-1234"),
+            Some(ReferenceMatch::ShortUuid)
+        );
+        assert_eq!(match_uuid_reference(id, "dea"), None);
+    }
+
+    #[test]
+    fn canonical_alias_matching_is_exact_and_case_insensitive() {
+        let id = Uuid::parse_str("deadbeef-1234-5678-9abc-000000000005").unwrap();
+        assert_eq!(
+            match_entity_reference(id, Some("Deploy"), "DEPLOY"),
+            Some(ReferenceMatch::Alias)
+        );
+        assert_eq!(match_entity_reference(id, Some("Deploy"), "depl"), None);
+    }
+
+    #[test]
+    fn selection_reports_ambiguous_short_uuid_prefixes() {
+        let actions = vec![
+            Action {
+                id: Uuid::parse_str("dead0000-0000-0000-0000-000000000001").unwrap(),
+                ..Default::default()
+            },
+            Action {
+                id: Uuid::parse_str("deadffff-0000-0000-0000-000000000002").unwrap(),
+                ..Default::default()
+            },
+        ];
+        assert_eq!(
+            select_reference(&actions, "dead"),
+            ReferenceSelection::Ambiguous {
+                indices: vec![0, 1],
+                matched_by: ReferenceMatch::ShortUuid,
+            }
+        );
+    }
+
+    #[test]
+    fn selection_applies_identity_before_alias_across_the_collection() {
+        let identity = Uuid::parse_str("deadbeef-0000-0000-0000-000000000001").unwrap();
+        let actions = vec![
+            Action {
+                alias: Some("deadbeef".to_string()),
+                ..Default::default()
+            },
+            Action {
+                id: identity,
+                ..Default::default()
+            },
+        ];
+        assert_eq!(
+            select_reference(&actions, "deadbeef"),
+            ReferenceSelection::Unique {
+                index: 1,
+                matched_by: ReferenceMatch::ShortUuid,
+            }
+        );
+    }
+
+    #[test]
+    fn resolves_action_alias() {
+        let mut model = sample_model();
+        model.charters[0].actions[0].alias = Some("ship".to_string());
+        let action_id = model.charters[0].actions[0].id;
+        let target = resolve_reference(&model, "a:SHIP", &ReferenceOptions::default()).unwrap();
+        assert_eq!(target, ReferenceTarget::Action(action_id));
+    }
+
+    #[test]
+    fn resolves_path_scoped_action_aliases() {
+        let mut model = sample_model();
+        let root_id = model.charters[0].actions[0].id;
+        model.charters[0].actions[0].alias = Some("deploy".to_string());
+        let child_id = Uuid::parse_str("feedface-0000-0000-0000-000000000006").unwrap();
+        let mut child = make_action(child_id, model.charters[0].plans[0].id);
+        child.parent_id = Some(root_id);
+        child.alias = Some("verify".to_string());
+        model.charters[0].actions.push(child);
+
+        let target =
+            resolve_reference(&model, "build/deploy/verify", &ReferenceOptions::default()).unwrap();
+        assert_eq!(target, ReferenceTarget::Action(child_id));
     }
 }

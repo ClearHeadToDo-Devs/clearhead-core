@@ -26,7 +26,7 @@ use uuid::Uuid;
 pub enum Reference {
     /// Full UUID.
     UUID(Uuid),
-    /// Short UUID prefix (first 8 hex chars).
+    /// Short UUID prefix containing at least four hex digits.
     Prefix(String),
     /// Human-readable name (case-insensitive substring match).
     Name(String),
@@ -531,33 +531,15 @@ impl Charter {
     /// Whether this charter is a direct child of `parent`.
     ///
     /// Resolves this charter's `parent` reference against the candidate's
-    /// alias, full UUID, or 8-char short prefix — case-insensitively, per the
+    /// alias, full UUID, or short prefix of at least four hex digits, per the
     /// reference-syntax spec. Titles are never matched. Combine with a filter
     /// to collect a parent's children:
     /// `model.charters.iter().filter(|c| c.is_child_of(parent))`.
     pub fn is_child_of(&self, parent: &Charter) -> bool {
-        let parent_ref = match self.parent.as_deref() {
-            Some(v) => v.trim().to_lowercase(),
-            None => return false,
-        };
-        if parent_ref.is_empty() {
-            return false;
-        }
-        if let Some(alias) = &parent.alias
-            && parent_ref == alias.to_lowercase()
-        {
-            return true;
-        }
-        // UUID reference: a full match, or a hex prefix of at least 4 chars per
-        // the reference-syntax spec. Prefixes may run past 8 to disambiguate
-        // IDs minted together (v7 timestamp prefixes, v5 namespacing).
-        let parent_id = parent.id.to_string();
-        if parent_ref == parent_id {
-            return true;
-        }
-        parent_ref.len() >= 4
-            && parent_ref.bytes().all(|b| b.is_ascii_hexdigit())
-            && parent_id.replace('-', "").starts_with(&parent_ref)
+        self.parent.as_deref().is_some_and(|parent_ref| {
+            crate::reference::match_entity_reference(parent.id, parent.alias.as_deref(), parent_ref)
+                .is_some()
+        })
     }
 }
 

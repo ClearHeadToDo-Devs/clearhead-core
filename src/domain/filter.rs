@@ -18,7 +18,7 @@ pub struct ActionFilter {
     /// Require at least one of these tags to appear in `action.contexts`.
     /// Empty means no context filter.
     pub context_tags: Vec<String>,
-    /// Restrict to actions whose `plan_id` matches this UUID string or 8-char prefix.
+    /// Restrict to actions whose `plan_id` matches this UUID or a prefix of at least four hex digits.
     pub plan_ref: Option<String>,
 }
 
@@ -48,10 +48,8 @@ impl ActionFilter {
         }
 
         if let Some(plan_ref) = &self.plan_ref {
-            let matched = action.plan_id.is_some_and(|pid| {
-                let full = pid.to_string();
-                let short = full.replace('-', "");
-                full == *plan_ref || short.starts_with(plan_ref.as_str())
+            let matched = action.plan_id.is_some_and(|plan_id| {
+                crate::reference::match_uuid_reference(plan_id, plan_ref).is_some()
             });
             if !matched {
                 return false;
