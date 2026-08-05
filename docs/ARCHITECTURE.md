@@ -1,98 +1,88 @@
-# Architecture
+# architecture overview
 
-The core library is primarily concerned with the in-memory represenation of the ontology defined in the ontology repo.
+Attempts have been made to make the CLI as thin as possible.
 
-That is:
-- Objectives
-- Charters
-- Plans
-- Planned Acts
+We do this by making many of the _core_ functionalities availabile through the `clearhead-core` crate, which is a shared Rust library that handles all shared concerns between this project and other projects that work with the workspaces. This allows us to keep the CLI focused on the user interface and how it leverages core functionality as it becomes available.
 
-These are the core domain objects and everything we do speaks in terms of these Planned Acts
+This allows for a layer of control between core and the cli but also allows the
+cli to own how the different possibilities become well
 
-the rest is various formats that are able to leverage the core domain model to provide different functionality and to keep the domain model separated from the various needs of our usecases
+## Conceptual Model
 
-There are two primary modules:
-- domain: the in-memory representation of the domain model, including the core structs and the various algorithms that operate on them
-- workspace: the various formats that we use to interact with the domain model, including the actions files and the markdown files for charters and objectives
+The **Rust struct (IR) is the canonical representation**. Everything else is a view or persistence mechanism.
 
-Distributed synchronization is deferred and does not live in core. If it is pursued later, it should be implemented as a separate integration over the public domain and workspace APIs so local file workflows do not pay its dependency or build cost.
+- Workspace is all the plaintext files that users interact with directly. These files are the durable source of truth and are parsed into the IR.
+- analytics tools such as our own graphd are expected to read the workspace
+files like any other consumer to get their information, which is why much of
+this functionality is within core so that all tools can leverage the same
+language of configuration and workspace layout
 
-## Workspaces
+## Workspace Architecture
 
-The workspace is the collection of files that are serving as the user interface for the domain model.
-
-now discipline is required to keep this library from taking on more responsibility than needed so what this workspace module does is work on converting the text of these workspace files into and out of the domain model.
-
-However is does NOT handle any of the actual file reading and writing, that is the responsibility of the CLI layer. This allows us to keep the core library focused on the domain model and the various formats that we need to support without getting bogged down in system-level interactions.
-
-This also allows implementors the freedom to implement the structure that makes the most sense for them.
-
-### Actions files
-
-In particular the actions DSL has a few pieces of extra functionality that are worth noting here.
-
-- Formatter to have consistent formatting of the actions files
-- Parser to convert the actions files into the domain model and back using tree-sitter and the custom grammar defined in the specifications repo.
-- Linter to ensure that the actions files are adhering to the linting specification defined in the specifications repo. this is important to ensure that the actions files are consistent and adhere to the expected structure, while not making the parser overly strict and allowing for some flexibility in how users write their plans.
-
-### Markdown files
-
-Charters and Objectives are assumed to be markdown files that follow the specifications defined in the specifications repo. this library is responsible for parsing those markdown files into the domain model and for converting the domain model back into markdown when needed.
-## RDF and SPARQL
-
-RDF translation, SPARQL execution, graph validation, and linked-data export live
-in the separate `clearhead-graphd` crate. It consumes the public domain and
-workspace model from core like any other integration. This keeps graph database
-dependencies and graph-specific functionality out of the foundational library.
-
-The workspace files remain truth; graphd builds a disposable read model from
-core's parsed representation.
-### Module Structure
-
-
-### Data Flow
+Per the [Process Specification][Process Specification], cli leverages our [Naming Conventions][Naming Conventions] to actually discover and build the proper domain model.
 
 ```mmd
-graph TD
-    DSL[Actions DSL] -->|parse file| actions[ActionList]
-    actions -->|Transform| domain[Domain Structs]
-    domain -->|JSON/library API| graphd[clearhead-graphd]
-    graphd -->|oxigraph| graph[Graph Store]
-    domain -->|format| output[Formatted Output]
+---
+config:
+  theme: redux
+---
+flowchart BT
+    charters[Charters] <--many-to-many--> objectives[Objectives]
+    actions[Actions] --References--> charters 
+    plans[Plans] --References--> charters 
+    actions[Actions] <--May Reference--> plans
+    sidecar[JSON Sidecar]--watches-->actions
+    sidecar[JSON Sidecar]--watches-->charters
 ```
 
-## Core Types
+### File Format Distinctions
 
-The Domain model is the core struct of the entire library.
+In particular, its important to know how the different domain models translate to different files within the workspace:
 
-### Testing
+- `Objectives` -> `.md` files within the `objectives/` directory per our and following the [Objectives File Specification][Objectives File Specification]
+- `Charters` -> `.md` files within the workspace root or any subdirectory and is written according to the [Charter File Specification][Charter File Specification]
+- `Plans` -> `.ics` files that conform to the VTODO standard
+- `Planned Acts` -> `.actions` files that conform to the action file specification
+- `Sidecar` -> finally, we have a data sidecar in the form of a JSON that is
+intended to capture data that does not currently belong in the Actions DSL and
+scoped to one sidecar per charter
 
-Run tests:
+These four file formats come together to allow us to form and update the `DomainModel` in memory, which will enable the core of what we are doing here
 
-```bash
-cargo test
+Everything uses this model, from the CLI to the LSP server and UI rendering. This is the heart of our architecture, and it all relies on these file formats being properly defined and adhered to.
+
+#### File Conversions
+
+What needs to be known is that converting between different file formats is a core part of the architecture and we are intending to participate in delivering functionality by supporting the following conversions:
+
+- Plan DSL (Action files)
+- Markdown (Objectives and Charters)
+- VTODO (for recurring Plans and standalone Action projections)
+- JSON for sidecars
+
+By getting these structures in place we can easily deliver functionality by simply making different structures available in different formats
+
+#### Calendar Export Boundary
+
+When plans are exported as `.ics` files, the CLI writes them to:
+
+```text
+$XDG_DATA_HOME/clearhead/plans/<charter-slug>/<plan-uid>.ics
 ```
 
-Run with verbose output:
-c
-```bash
-cargo test -- --nocapture
-```
+This is an **output boundary** — the CLI's responsibility ends at writing a valid iCalendar file to that path. Sync to external calendar systems (Google Calendar, CalDAV servers, etc.) is handled entirely by external tooling (e.g., vdirsyncer). The CLI has no dependency on any sync tool and makes no assumptions about what, if anything, consumes these files.
 
-### Snapshots
-In addition, RON snapshots are the recommended method for structuring tests such that different datasets can be created according to a golden format
+This is intentional. Keeping sync out of the CLI means:
 
-please see the `tests` directory where we load some example fixtures and generates RON snapshots, this allows us to have end-to-end testing persistently on-disk
+- the CLI remains testable without network or credentials
+- operators choose their own sync strategy
+- the `.ics` files are usable standalone by any CalDAV-aware tool
 
-for changes to the structure of the structs themselves be sure to update the RON
+Project-local workspaces (those with a `.clearhead/` directory at the project root) write plans to `.clearhead/plans/` within that project. These are development workspace files and are not expected to be in the personal calendar sync path.
 
-## Contributing
+## Reference
 
-Contributions are welcome! Please ensure:
-
-1. All tests pass (`cargo test`)
-2. Code is formatted (`cargo fmt`)
-3. No clippy warnings (`cargo clippy`)
-4. No environment dependencies (filesystem, network, config)
-
+[Process Specification]: https://github.com/ClearHeadToDo-Devs/specifications/blob/master/process.md
+[Naming Conventions]: https://github.com/ClearHeadToDo-Devs/specifications/blob/master/naming_conventions.md
+[Charter File Specification]: https://github.com/ClearHeadToDo-Devs/specifications/blob/master/charters.md
+[Objectives File Specification]: https://github.com/ClearHeadToDo-Devs/specifications/blob/master/objectives.md
