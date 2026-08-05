@@ -5,9 +5,9 @@
 //! Component kind and RRULE semantics, rather than server-specific metadata or
 //! filenames, determine which domain projection is read.
 //!
-//! **Export direction** (`domain → ics`): converts a slice of [`Action`]s into
-//! an iCalendar string. Every standalone action becomes one VTODO; DTSTART and
-//! DUE remain optional, and action projections never carry RRULE.
+//! **Export direction** (`domain → ics`): converts [`Plan`]s and [`Action`]s
+//! into iCalendar. Recurring Plans become VTODO masters carrying RRULE; every
+//! standalone Action becomes one VTODO whose DTSTART and DUE remain optional.
 
 use crate::domain::{Action, ActionState, Plan, Recurrence};
 use crate::workspace::durability::atomic_write;
@@ -651,8 +651,58 @@ fn split_text_list(value: &str) -> Vec<String> {
 }
 
 // ============================================================================
-// Export direction: Action slice → iCalendar string
+// Export direction: domain → iCalendar string
 // ============================================================================
+
+/// Convert one recurring [`Plan`] to its canonical VTODO master.
+///
+/// `external_id` is the interoperable RFC 5545 UID when present; locally
+/// authored Plans fall back to their domain UUID. Plan names map to SUMMARY,
+/// recurrence to RRULE, and the optional template directive leads DESCRIPTION.
+pub fn plan_to_vtodo(plan: &Plan) -> Todo {
+    let mut todo = Todo::new();
+    let uid = plan
+        .external_id
+        .clone()
+        .unwrap_or_else(|| plan.id.to_string());
+    todo.uid(&uid);
+    todo.summary(&plan.name);
+
+    if let Some(dtstart) = plan.dtstart {
+        todo.starts(dtstart.with_timezone(&Utc));
+    }
+    if let Some(recurrence) = &plan.recurrence {
+        let rrule = recurrence.to_string();
+        todo.add_property("RRULE", rrule.strip_prefix("R:").unwrap_or(&rrule));
+    }
+
+    let mut description = Vec::new();
+    if let Some(template) = &plan.template_name {
+        description.push(format!("template: {template}"));
+    }
+    if let Some(text) = &plan.description {
+        description.push(text.clone());
+    }
+    if !description.is_empty() {
+        todo.description(&description.join("\n"));
+    }
+
+    todo.done()
+}
+
+/// Convert recurring [`Plan`]s to the canonical ClearHead Plan calendar.
+pub fn plans_to_icalendar(plans: &[Plan]) -> String {
+    let mut calendar = Calendar::new()
+        .name("ClearHead Plans")
+        .description("Schedules managed by ClearHead")
+        .done();
+
+    for plan in plans {
+        calendar.push(plan_to_vtodo(plan));
+    }
+
+    calendar.to_string()
+}
 
 /// Map [`ActionState`] to the closest standard iCalendar [`TodoStatus`].
 ///
@@ -1090,6 +1140,58 @@ mod tests {
         let todo = action_to_vtodo(&action).to_string();
         assert!(todo.contains("STATUS:COMPLETED"));
         assert!(todo.contains("COMPLETED:"));
+    }
+
+    #[test]
+    fn plan_serialization_preserves_uid_rrule_directives_and_round_trips() {
+        let dtstart = Utc
+            .with_ymd_and_hms(2026, 8, 10, 14, 30, 0)
+            .unwrap()
+            .with_timezone(&Local);
+        let plan = Plan {
+            id: plan_id_from_ics_uid("weekly@example.com"),
+            name: "Weekly Review".to_string(),
+            description: Some("Review open commitments".to_string()),
+            recurrence: Recurrence::from_rrule_str("FREQ=WEEKLY;COUNT=3"),
+            external_id: Some("weekly@example.com".to_string()),
+            template_name: Some("weekly-review".to_string()),
+            dtstart: Some(dtstart),
+            ..Default::default()
+        };
+
+        let component = plan_to_vtodo(&plan).to_string();
+        assert!(component.contains("UID:weekly@example.com"));
+        assert!(component.contains("SUMMARY:Weekly Review"));
+        assert!(component.contains("RRULE:FREQ=WEEKLY;COUNT=3"));
+        assert!(!component.contains("RRULE:R:"));
+
+        let calendar = plans_to_icalendar(std::slice::from_ref(&plan));
+        assert!(calendar.contains("X-WR-CALNAME:ClearHead Plans"));
+        let file = write_ics(&calendar);
+        let parsed = parse_ics_file(file.path()).unwrap();
+        assert_eq!(parsed.len(), 1);
+        let round_trip = &parsed[0].plan;
+        assert_eq!(round_trip.id, plan.id);
+        assert_eq!(round_trip.external_id, plan.external_id);
+        assert_eq!(round_trip.name, plan.name);
+        assert_eq!(round_trip.description, plan.description);
+        assert_eq!(round_trip.template_name, plan.template_name);
+        assert_eq!(round_trip.recurrence, plan.recurrence);
+        assert_eq!(
+            round_trip.dtstart.map(|value| value.timestamp()),
+            plan.dtstart.map(|value| value.timestamp())
+        );
+    }
+
+    #[test]
+    fn plan_without_external_uid_serializes_its_domain_uuid() {
+        let plan = Plan {
+            name: "Fallback identity".to_string(),
+            recurrence: Recurrence::from_rrule_str("FREQ=DAILY"),
+            ..Default::default()
+        };
+        let calendar = plans_to_icalendar(std::slice::from_ref(&plan));
+        assert!(calendar.contains(&format!("UID:{}", plan.id)));
     }
 
     #[test]

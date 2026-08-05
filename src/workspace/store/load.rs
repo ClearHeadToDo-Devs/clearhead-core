@@ -7,7 +7,7 @@ use crate::workspace::actions::TrustedDocument;
 use crate::workspace::actions::convert::from_actions_with_charter;
 use crate::workspace::actions::repository::SourcedAction;
 use crate::workspace::calendar::ics::parse_ics_file;
-use crate::workspace::calendar::plans::collect_plan_files_in;
+use crate::workspace::calendar::plans::{collect_plan_files_in, slugify};
 use crate::workspace::calendar::sync_store::read_plans_sync_store;
 use crate::workspace::charter::{
     MarkdownCharter, frontmatter_has_id_key, frontmatter_has_parent_key, implicit_charter,
@@ -641,14 +641,10 @@ pub(crate) fn syntax_error_summary(doc: &crate::workspace::actions::ParsedDocume
 /// Compute the plans directory slug for a charter: `<parent>-<alias>` for sub-charters,
 /// `<alias>` for top-level charters. Matches the directory name under `plans/`.
 fn charter_plans_slug(c: &MarkdownCharter) -> String {
-    fn slug(value: &str) -> String {
-        value.to_lowercase().replace(' ', "-").replace('&', "and")
-    }
-
     let alias = c.alias.as_deref().unwrap_or(&c.title);
     match &c.parent {
-        None => slug(alias),
-        Some(parent) => format!("{}-{}", slug(parent), slug(alias)),
+        None => slugify(alias),
+        Some(parent) => format!("{}-{}", slugify(parent), slugify(alias)),
     }
 }
 

@@ -24,8 +24,13 @@ pub fn collect_plan_files(root: &Path) -> Result<Vec<PlanFileEntry>, WorkspaceEr
     collect_plan_files_with_plans(root, None)
 }
 
-/// Slug a user-facing name into the directory/file form used under `plans/`.
-fn slug(value: &str) -> String {
+/// Slug a user-facing value into the canonical directory/file form used by ClearHead.
+///
+/// This intentionally preserves the historical policy: lowercase Unicode,
+/// replace spaces with `-`, and replace `&` with `and`. It does not perform
+/// broad punctuation stripping because existing workspace paths and imported
+/// iCalendar UIDs depend on byte-for-byte stability.
+pub fn slugify(value: &str) -> String {
     value.to_lowercase().replace(' ', "-").replace('&', "and")
 }
 
@@ -38,7 +43,7 @@ pub fn plan_file_name(plan: &Plan) -> String {
         .external_id
         .clone()
         .unwrap_or_else(|| plan.id.to_string());
-    format!("{}.ics", slug(&uid))
+    format!("{}.ics", slugify(&uid))
 }
 
 /// Relative plans directory for a charter under `plans_root`.
@@ -65,8 +70,8 @@ pub fn charter_plans_dir_relative(charter: &MarkdownCharter) -> PathBuf {
         PathBuf::from("next")
     } else {
         let dir = match charter.parent.as_deref() {
-            Some(parent) => format!("{}-{}", slug(parent), slug(key)),
-            None => slug(key),
+            Some(parent) => format!("{}-{}", slugify(parent), slugify(key)),
+            None => slugify(key),
         };
         PathBuf::from(dir)
     }
@@ -90,7 +95,7 @@ pub fn action_mirror_path(
 ) -> PathBuf {
     plans_root
         .join(charter_plans_dir_relative(charter))
-        .join(format!("{}.ics", slug(&action.id.to_string())))
+        .join(format!("{}.ics", slugify(&action.id.to_string())))
 }
 
 /// Like [`collect_plan_files`] but reads `.ics` from `plan_override` when given
@@ -303,7 +308,43 @@ fn discover_plan_paths(dir: &Path, files: &mut Vec<PathBuf>) -> Result<(), Works
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::workspace::charter::implicit_charter;
     use std::fs;
+
+    #[test]
+    fn canonical_slug_policy_is_stable() {
+        assert_eq!(slugify("Team & Operations"), "team-and-operations");
+        assert_eq!(slugify("Already--Slugged"), "already--slugged");
+        assert_eq!(slugify("release@example.com"), "release@example.com");
+    }
+
+    #[test]
+    fn canonical_plan_paths_cover_uid_and_charter_policy() {
+        let plan = Plan {
+            external_id: Some("Weekly Review & Notes".to_string()),
+            ..Default::default()
+        };
+        assert_eq!(plan_file_name(&plan), "weekly-review-and-notes.ics");
+
+        let mut top = MarkdownCharter::from(implicit_charter("Team & Ops"));
+        top.plans_dir = None;
+        assert_eq!(charter_plans_dir_relative(&top), Path::new("team-and-ops"));
+
+        let mut child = MarkdownCharter::from(implicit_charter("Release Notes"));
+        child.parent = Some("Team & Ops".to_string());
+        child.plans_dir = None;
+        assert_eq!(
+            charter_plans_dir_relative(&child),
+            Path::new("team-and-ops-release-notes")
+        );
+        assert_eq!(
+            plan_output_path(Path::new("/plans"), &child, &plan),
+            Path::new("/plans/team-and-ops-release-notes/weekly-review-and-notes.ics")
+        );
+
+        top.actions_file = Some(PathBuf::from("next.actions"));
+        assert_eq!(charter_plans_dir_relative(&top), Path::new("next"));
+    }
 
     #[test]
     fn infer_plan_charter_names() {

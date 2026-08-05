@@ -56,11 +56,11 @@ pub use workspace::{
     load_domain_model_with_plans, load_workspace, load_workspace_with_plans, load_workspaces,
     occurrence_action_id, parse_actions, parse_actions_with_mode, parse_charter, parse_document,
     parse_tree, parse_trusted_document, parse_vtodo_actions, patch_action_list,
-    plan_action_archive, plan_file_name, plan_output_path, plan_sync, plans_root,
-    plans_sync_store_path, read_action_file, read_actions, read_ics_dates, read_plans_sync_store,
-    read_vtodo_actions, reconcile, resolve_materialized_occurrence, save_domain_model,
-    sync_master_rollforwards, workspace_data_root, write_actions, write_master_rollforward,
-    write_occurrence_deviation,
+    plan_action_archive, plan_file_name, plan_output_path, plan_sync, plan_to_vtodo, plans_root,
+    plans_sync_store_path, plans_to_icalendar, read_action_file, read_actions, read_ics_dates,
+    read_plans_sync_store, read_vtodo_actions, reconcile, resolve_materialized_occurrence,
+    save_domain_model, slugify, sync_master_rollforwards, workspace_data_root, write_actions,
+    write_master_rollforward, write_occurrence_deviation,
 };
 
 pub mod domain;
