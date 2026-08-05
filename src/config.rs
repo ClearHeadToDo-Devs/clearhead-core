@@ -15,10 +15,10 @@ pub mod loader;
 
 /// Semantic workspace configuration shared across all ClearHead tools.
 ///
-/// Corresponds to the core settings in `config.schema.json` in the
-/// specifications repository. Tools are responsible for loading and
-/// constructing this from `~/.config/clearhead/config.json`; core only
-/// consumes it.
+/// Corresponds to the shared settings in `config.schema.json` in the
+/// specifications repository. Core's [`loader`] assembles the canonical file
+/// and environment source stack; each tool deserializes that stack into this
+/// type or into an extension containing tool-specific fields.
 ///
 /// Workspace *identity* (`workspace_id`, `workspace_name`, `created_at`) is
 /// deliberately **not** here — it is a per-workspace fact that must not layer

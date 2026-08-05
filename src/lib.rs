@@ -1,9 +1,11 @@
 //! ClearHead Core Library
 //!
-//! Pure domain model and business logic for the ClearHead framework, aligned
-//! with the Actions Vocabulary v4 ontology. Designed to be environment-agnostic:
-//! no filesystem access, no network, no configuration loading. Every tool (CLI,
-//! LSP, nvim plugin) constructs this layer and passes context in.
+//! Shared domain and workspace services for the ClearHead framework, aligned
+//! with the Actions Vocabulary v4 ontology. The [`domain`] module contains the
+//! in-memory model and pure algorithms; [`workspace`] and [`config`] own the
+//! canonical local-file layout, persistence, and configuration semantics used
+//! consistently by the CLI, LSP, graphd, and other clients. Network transport
+//! and client-specific user interfaces remain outside this crate.
 //!
 //! # Domain Model
 //!
@@ -26,8 +28,8 @@
 //!   and the [`DomainModel`] aggregate.
 //! - [`reference`]: String-based reference resolution across the domain model
 //!   (UUID, short-prefix, alias, and path-style `charter/plan`).
-//! - [`config`]: [`WorkspaceConfig`] — semantic settings (tag hierarchies, expansion
-//!   counts) passed in by tools; core never reads disk config itself.
+//! - [`config`]: Shared semantic settings plus the canonical config source and
+//!   precedence stack; clients may extend these settings with tool-specific fields.
 //! - [`telemetry`]: Structured event emission for action lifecycle observability.
 //!
 //! Graph execution and linked-data export deliberately live in the separate
