@@ -13,6 +13,7 @@ use uuid::Uuid;
 
 use crate::domain::{close_subtree, collect_subtree_ids};
 use crate::workspace::action_files::{completed_actions_path, read_actions};
+use crate::workspace::actions::format::require_actions_formatting;
 use crate::workspace::actions::{Action, ActionList, ActionState, OutputFormat, format};
 use crate::workspace::durability::{PendingBatch, WorkspaceLock, recover_pending};
 use crate::workspace::store::{WorkspaceError, resolve_workspace_layout};
@@ -145,6 +146,7 @@ pub fn archive_actions(
 ) -> Result<ActionArchiveResult, WorkspaceError> {
     let layout = resolve_workspace_layout(workspace_root);
     validate_source_path(source_path, &layout.charter_root)?;
+    require_actions_formatting().map_err(WorkspaceError::Actions)?;
 
     std::fs::create_dir_all(&layout.charter_root)?;
     let _lock = WorkspaceLock::try_acquire(&layout.data_root)?
@@ -196,6 +198,7 @@ pub fn close_action_subtree(
 
     let layout = resolve_workspace_layout(workspace_root);
     validate_source_path(source_path, &layout.charter_root)?;
+    require_actions_formatting().map_err(WorkspaceError::Actions)?;
     std::fs::create_dir_all(&layout.charter_root)?;
     let _lock = WorkspaceLock::try_acquire(&layout.data_root)?
         .ok_or_else(|| WorkspaceError::WorkspaceLocked(layout.data_root.clone()))?;
@@ -340,6 +343,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "formatting")]
     fn selector(id: Uuid, name: &str) -> CloseActionSelector {
         CloseActionSelector {
             id,
@@ -391,6 +395,7 @@ mod tests {
         assert_eq!(plan.active_actions.len(), 2);
     }
 
+    #[cfg(feature = "formatting")]
     #[test]
     fn durable_archive_updates_active_and_completed_files() {
         let temp = tempfile::tempdir().unwrap();
@@ -421,6 +426,7 @@ mod tests {
         assert!(!charters.join(".pending").exists());
     }
 
+    #[cfg(feature = "formatting")]
     #[test]
     fn archive_recovers_an_interrupted_batch_before_planning() {
         let temp = tempfile::tempdir().unwrap();
@@ -461,6 +467,7 @@ mod tests {
         assert!(!charters.join(".pending").exists());
     }
 
+    #[cfg(feature = "formatting")]
     #[test]
     fn close_selected_subtree_updates_both_files_in_one_batch() {
         let temp = tempfile::tempdir().unwrap();
@@ -494,6 +501,7 @@ mod tests {
         assert!(completed.contains("[x] Child"));
     }
 
+    #[cfg(feature = "formatting")]
     #[test]
     fn close_recovers_interrupted_move_without_duplicate_append() {
         let temp = tempfile::tempdir().unwrap();
@@ -534,6 +542,7 @@ mod tests {
         assert_eq!(read_actions(&completed).unwrap().len(), 1);
     }
 
+    #[cfg(feature = "formatting")]
     #[test]
     fn close_refuses_to_race_an_existing_writer() {
         let temp = tempfile::tempdir().unwrap();
@@ -558,6 +567,7 @@ mod tests {
         assert!(!completed_actions_path(&source).exists());
     }
 
+    #[cfg(feature = "formatting")]
     #[test]
     fn archive_refuses_to_race_an_existing_writer() {
         let temp = tempfile::tempdir().unwrap();

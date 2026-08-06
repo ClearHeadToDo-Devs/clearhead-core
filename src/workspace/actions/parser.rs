@@ -678,6 +678,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "formatting")]
     #[test]
     fn test_reserved_chars_in_name_survive_full_format_pipeline() {
         // The Decision-33 residue: a name with reserved sigils must survive the
@@ -702,6 +703,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "formatting")]
     #[test]
     fn test_reserved_chars_survive_in_description_and_refs() {
         // Description bodies and predecessor refs are freeform too — a literal

@@ -23,6 +23,7 @@ use super::sync_store::{
     read_plans_sync_store, serialize_plans_sync_store,
 };
 use crate::domain::{Action, ActionState, DomainModel};
+use crate::workspace::actions::format::require_actions_formatting;
 use crate::workspace::charter::{MarkdownCharter, implicit_charter};
 use crate::workspace::durability::{PendingBatch, WorkspaceLock, atomic_write, recover_pending};
 use crate::workspace::store::{Workspace, WorkspaceError, resolve_workspace_layout};
@@ -418,6 +419,7 @@ pub fn apply_sync(
     plan_override: Option<&Path>,
     report: &SyncReport,
 ) -> Result<AppliedSync, WorkspaceError> {
+    require_actions_formatting().map_err(WorkspaceError::Actions)?;
     let layout = resolve_workspace_layout(root);
     std::fs::create_dir_all(&layout.charter_root)?;
     let _lock = WorkspaceLock::try_acquire(&layout.data_root)?
@@ -642,6 +644,7 @@ pub fn resolve_materialized_occurrence(
     op: &super::ics::OccurrenceOp,
     now: DateTime<Local>,
 ) -> Result<bool, WorkspaceError> {
+    require_actions_formatting().map_err(WorkspaceError::Actions)?;
     let layout = resolve_workspace_layout(root);
     let plans_root = plan_override.unwrap_or(&layout.plans_root).to_path_buf();
 
@@ -1243,6 +1246,35 @@ mod tests {
         Local.with_ymd_and_hms(2026, 4, day, 10, 0, 0).unwrap()
     }
 
+    #[cfg(not(feature = "formatting"))]
+    #[test]
+    fn mutation_entrypoints_refuse_before_calendar_or_workspace_changes() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path();
+        let master = root.join(".clearhead/plans/master.ics");
+        std::fs::create_dir_all(master.parent().unwrap()).expect("create plans");
+        std::fs::write(&master, "calendar sentinel\n").expect("write master");
+
+        let apply_error = apply_sync(root, None, &SyncReport::default()).unwrap_err();
+        assert!(apply_error.to_string().contains("`formatting` feature"));
+
+        let resolve_error = resolve_materialized_occurrence(
+            root,
+            None,
+            Uuid::new_v4(),
+            &super::super::ics::OccurrenceOp::Complete { at: t(1) },
+            t(1),
+        )
+        .unwrap_err();
+        assert!(resolve_error.to_string().contains("`formatting` feature"));
+        assert_eq!(
+            std::fs::read_to_string(master).expect("read master"),
+            "calendar sentinel\n"
+        );
+        assert!(!root.join(".clearhead/charters").exists());
+        assert!(!plans_sync_store_path(root).exists());
+    }
+
     #[test]
     fn generic_three_way_table_and_first_sync() {
         assert_eq!(reconcile(&"a", Some(&"a"), Some(&"a")), Reconcile::NoOp);
@@ -1350,6 +1382,7 @@ mod tests {
 
     /// One charter holding one weekly recurring plan, no materialized actions yet.
     /// Returns the charters, the plan id, and its UID.
+    #[cfg(feature = "formatting")]
     fn weekly_charter(dtstart: DateTime<Local>) -> (Vec<MarkdownCharter>, Uuid, String) {
         use crate::domain::{Plan, Recurrence};
         use std::collections::{BTreeMap, BTreeSet};
@@ -1390,6 +1423,7 @@ mod tests {
         (vec![charter], plan_id, uid)
     }
 
+    #[cfg(feature = "formatting")]
     #[test]
     fn stamps_one_token_then_is_idempotent() {
         let dtstart = t(5);
@@ -1429,6 +1463,7 @@ mod tests {
         assert_eq!(charters[0].actions.len(), 1);
     }
 
+    #[cfg(feature = "formatting")]
     #[test]
     fn resolved_token_advances_by_jump_forward() {
         // Safety net: a token resolved outside the completion hook (a raw `[x]`
@@ -1470,6 +1505,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "formatting")]
     #[test]
     fn occurrence_tokens_and_grafted_steps_are_excluded_from_standalone_sync() {
         // The materialized-token seal: an occurrence token (has a store link) and
@@ -1531,6 +1567,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "formatting")]
     #[test]
     fn templated_plan_stamps_root_plus_grafted_steps() {
         // The templated lane: `template:` adds a step-forest beneath the same
@@ -1594,6 +1631,7 @@ mod tests {
         assert!(names.contains("Reflect on the week"));
     }
 
+    #[cfg(feature = "formatting")]
     #[test]
     fn atomic_plan_stamps_a_childless_root() {
         // The atomic lane is the templated lane minus the template: a plan with no

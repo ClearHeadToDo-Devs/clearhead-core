@@ -4,9 +4,11 @@
 //! Each test creates an isolated temp workspace so there are no shared-state concerns.
 
 use clearhead_core::{
-    ManifestSourceType, collect_workspace_manifest, diff_domain_models, load_domain_model,
-    load_workspace, render_occurrences, save_domain_model,
+    ManifestSourceType, collect_workspace_manifest, load_domain_model, load_workspace,
+    render_occurrences,
 };
+#[cfg(feature = "formatting")]
+use clearhead_core::{diff_domain_models, save_domain_model};
 use std::fs;
 use std::path::Path;
 use tempfile::TempDir;
@@ -88,6 +90,7 @@ fn make_user_workspace(files: &[(&str, &str)]) -> TempDir {
 
 // --- Tests ---
 
+#[cfg(feature = "formatting")]
 #[test]
 fn roundtrip_preserves_model() {
     // Fixture uses explicit UUIDs so IDs are stable across loads.
@@ -299,6 +302,7 @@ fn user_layout_uses_filename_as_charter() {
     assert_eq!(model.charters[0].title, "next");
 }
 
+#[cfg(feature = "formatting")]
 #[test]
 fn roundtrip_is_stable_across_multiple_cycles() {
     // Repeated save/reload should converge — not drift on each cycle.
@@ -1026,6 +1030,7 @@ fn occurrence_reschedule_moves_the_slot_in_the_projection() {
     );
 }
 
+#[cfg(feature = "formatting")]
 #[test]
 fn resolving_a_materialized_occurrence_writes_the_deviation_and_advances() {
     // The completion hook end to end: a real sync stamps the single token; resolving
@@ -1102,6 +1107,7 @@ fn resolving_a_materialized_occurrence_writes_the_deviation_and_advances() {
     );
 }
 
+#[cfg(feature = "formatting")]
 #[test]
 fn materialized_occurrence_hydrates_its_plan_link_from_the_sync_store() {
     // After the unwind a stamped occurrence is a plain `.actions` line — no plan_id

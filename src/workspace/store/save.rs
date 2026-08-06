@@ -2,6 +2,7 @@ use super::WorkspaceLayout;
 use super::discovery::discover_action_files;
 use super::{WorkspaceError, resolve_workspace_layout};
 use crate::domain::{Charter, DomainModel};
+use crate::workspace::actions::format::require_actions_formatting;
 use crate::workspace::durability::{PendingBatch, WorkspaceLock, recover_pending};
 use crate::workspace::{ActionList, OutputFormat, format};
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -18,6 +19,7 @@ pub fn save_domain_model(root: &Path, model: &DomainModel) -> Result<(), Workspa
     if !root.is_dir() {
         return Err(WorkspaceError::InvalidPath(root.to_path_buf()));
     }
+    require_actions_formatting().map_err(WorkspaceError::Actions)?;
 
     let layout = resolve_workspace_layout(root);
     std::fs::create_dir_all(&layout.charter_root)?;
@@ -226,9 +228,13 @@ fn prune_empty_directories(start: &Path, stop_at: &Path) -> Result<(), Workspace
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::{Charter, DomainModel, Plan};
+    use crate::domain::DomainModel;
+    #[cfg(feature = "formatting")]
+    use crate::domain::{Charter, Plan};
+    #[cfg(feature = "formatting")]
     use crate::workspace::store::load_domain_model;
 
+    #[cfg(feature = "formatting")]
     fn test_plan(name: &str) -> Plan {
         let id = Uuid::new_v4();
         Plan {
@@ -238,6 +244,25 @@ mod tests {
         }
     }
 
+    #[cfg(not(feature = "formatting"))]
+    #[test]
+    fn disabled_formatting_refuses_save_before_filesystem_changes() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path().join("platform");
+        let actions_path = root.join(".clearhead/charters/existing.actions");
+        std::fs::create_dir_all(actions_path.parent().unwrap()).expect("create charters");
+        std::fs::write(&actions_path, "[ ] Preserve me\n").expect("write fixture");
+
+        let error = save_domain_model(&root, &DomainModel::default()).unwrap_err();
+
+        assert!(error.to_string().contains("`formatting` feature"));
+        assert_eq!(
+            std::fs::read_to_string(actions_path).expect("read fixture"),
+            "[ ] Preserve me\n"
+        );
+    }
+
+    #[cfg(feature = "formatting")]
     #[test]
     fn save_project_local_layout() {
         let temp = tempfile::tempdir().expect("tempdir");
@@ -309,6 +334,7 @@ mod tests {
         assert_eq!(deploy.parent.as_deref(), Some("infra"));
     }
 
+    #[cfg(feature = "formatting")]
     #[test]
     fn save_global_layout() {
         let temp = tempfile::tempdir().expect("tempdir");
@@ -348,6 +374,7 @@ mod tests {
         assert!(root.join("charters/work/ops.actions").exists());
     }
 
+    #[cfg(feature = "formatting")]
     #[test]
     fn incremental_save_only_writes_changed_files() {
         let temp = tempfile::tempdir().expect("tempdir");
@@ -413,6 +440,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "formatting")]
     #[test]
     fn incremental_save_removes_orphaned_files() {
         let temp = tempfile::tempdir().expect("tempdir");

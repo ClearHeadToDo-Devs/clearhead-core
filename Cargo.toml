@@ -7,6 +7,12 @@ edition = "2024"
 license = "MIT"
 repository = "https://github.com/ClearHeadToDo-Devs/clearhead-core.git"
 
+[features]
+default = ["formatting"]
+# Canonical .actions source formatting. Read-only consumers can disable default
+# features to avoid Topiary and its async runtime dependency closure.
+formatting = ["dep:topiary-core", "dep:topiary-tree-sitter-facade"]
+
 [dependencies]
 # Shared domain, workspace, persistence, and configuration dependencies
 chrono = { version = "0.4", features = ["serde"] }
@@ -22,8 +28,8 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 serde_yaml_ng = "0.10"
 thiserror = "2.0"
-topiary-core = "0.7.3"
-topiary-tree-sitter-facade = "0.7.3"
+topiary-core = { version = "0.7.3", optional = true }
+topiary-tree-sitter-facade = { version = "0.7.3", optional = true }
 tree-sitter = "0.26.3"
 tree-sitter-actions = { path = "../tree-sitter-actions", version = "0.10.0" }
 

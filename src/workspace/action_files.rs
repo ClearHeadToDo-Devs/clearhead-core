@@ -204,6 +204,7 @@ mod tests {
         assert!(result.unwrap().is_empty());
     }
 
+    #[cfg(feature = "formatting")]
     #[test]
     fn test_roundtrip() {
         use crate::workspace::actions::{Action, ActionState};
@@ -227,6 +228,7 @@ mod tests {
         assert_eq!(loaded[0].state, ActionState::NotStarted);
     }
 
+    #[cfg(feature = "formatting")]
     #[test]
     fn test_completed_roundtrip() {
         use crate::workspace::actions::{Action, ActionState};

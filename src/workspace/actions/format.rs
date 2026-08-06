@@ -1,8 +1,26 @@
 use super::{Action, ActionList, TrustedDocument};
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "formatting")]
 use std::io::Cursor;
+#[cfg(feature = "formatting")]
 use topiary_core::{Language, Operation, TopiaryQuery, formatter};
+#[cfg(feature = "formatting")]
 use topiary_tree_sitter_facade::Language as TreeSitterLanguage;
+
+#[cfg(not(feature = "formatting"))]
+const FORMATTING_DISABLED_ERROR: &str =
+    "canonical .actions formatting requires clearhead-core's `formatting` feature";
+
+pub(crate) fn require_actions_formatting() -> Result<(), String> {
+    #[cfg(feature = "formatting")]
+    {
+        Ok(())
+    }
+    #[cfg(not(feature = "formatting"))]
+    {
+        Err(FORMATTING_DISABLED_ERROR.to_string())
+    }
+}
 
 /// Table column filtering options (defined in library for reusability)
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -161,6 +179,7 @@ fn serialize_actions_canonical(list: &ActionList, config: &FormatConfig) -> Stri
 }
 
 /// Format a string using Topiary with the .actions grammar
+#[cfg(feature = "formatting")]
 fn format_with_topiary(input_text: &str, config: &FormatConfig) -> Result<String, String> {
     let mut input = Cursor::new(input_text.as_bytes());
     let mut output = Vec::new();
@@ -201,6 +220,12 @@ fn format_with_topiary(input_text: &str, config: &FormatConfig) -> Result<String
         .map_err(|e| format!("Topiary formatting failed: {}", e))?;
 
     String::from_utf8(output).map_err(|e| format!("Topiary output was not valid UTF-8: {}", e))
+}
+
+#[cfg(not(feature = "formatting"))]
+fn format_with_topiary(_input_text: &str, _config: &FormatConfig) -> Result<String, String> {
+    require_actions_formatting()?;
+    unreachable!("formatting is unavailable when the feature is disabled")
 }
 
 fn format_as_json(list: &ActionList) -> Result<String, String> {
@@ -289,6 +314,14 @@ mod tests {
         }
     }
 
+    #[cfg(not(feature = "formatting"))]
+    #[test]
+    fn actions_formatting_reports_the_disabled_capability() {
+        let error = format(&Vec::new(), OutputFormat::Actions, None, None).unwrap_err();
+        assert!(error.contains("`formatting` feature"));
+    }
+
+    #[cfg(feature = "formatting")]
     #[test]
     fn test_format_as_actions() {
         let mut actions = vec![create_test_action("Root", ActionState::Completed, None)];
@@ -339,6 +372,7 @@ mod tests {
         assert!(formatted.contains("<state>not_started</state>"));
     }
 
+    #[cfg(feature = "formatting")]
     #[test]
     fn test_indentation_applied() {
         let mut actions = vec![create_test_action("Root", ActionState::NotStarted, None)];
@@ -372,6 +406,7 @@ mod tests {
         assert!(formatted_tabs.contains("\t>[ ] Child"));
     }
 
+    #[cfg(feature = "formatting")]
     #[test]
     fn test_metadata_spacing_is_single_and_idempotent() {
         // Exercises the boundaries that used to double-space: a multi-word
