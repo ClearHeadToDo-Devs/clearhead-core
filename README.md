@@ -3,7 +3,9 @@
 Standalone graph/query tool and graph-runtime library for ClearHead. It owns
 Oxigraph, RDF materialization, SPARQL execution, query registration, shape
 validation, and JSON-LD serialization. `clearhead-core` remains the
-graph-neutral domain/workspace substrate.
+graph-neutral domain/workspace substrate. graphd disables Core's `formatting`
+feature because its read-only runtime neither writes `.actions` files nor needs
+Topiary or Tokio.
 
 The first implementation is deliberately one-shot rather than a resident
 daemon. It discovers ClearHead configuration through core and can be installed
@@ -16,8 +18,10 @@ Run a built-in index view:
 ```sh
 clearhead-graphd --workspace /path/to/project query index unscheduled
 clearhead-graphd --workspace /path/to/project query tree work-map
-clearhead-graphd --workspace /path/to/project query graph dependencies --format jsonld
-clearhead-graphd --workspace /path/to/project query graph dependencies --format dot
+clearhead-graphd --workspace /path/to/project query graph dependencies \
+  --format jsonld
+clearhead-graphd --workspace /path/to/project query graph dependencies \
+  --format dot
 ```
 
 Inspect and run registered queries:

@@ -12,7 +12,8 @@ path = "src/main.rs"
 [dependencies]
 anyhow = "1.0"
 clap = { version = "4.0", features = ["derive"] }
-clearhead_core = { path = "../clearhead-core", version = "0.2.0" }
+# graphd is read-only and does not need canonical .actions source formatting.
+clearhead_core = { path = "../clearhead-core", version = "0.2.0", default-features = false }
 comfy-table = "7.1"
 chrono = "0.4"
 config = { version = "0.15.19", default-features = false, features = ["json"] }
@@ -28,6 +29,8 @@ tracing-subscriber = { version = "0.3.22", features = ["env-filter"] }
 
 [dev-dependencies]
 assert_cmd = "2.0"
-jsonschema = "0.18"
+# Local schema validation does not need HTTP/file reference resolution or its
+# async networking stack.
+jsonschema = { version = "0.18", default-features = false }
 predicates = "3.1"
 tempfile = "3.0"
