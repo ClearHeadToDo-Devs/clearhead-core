@@ -156,6 +156,21 @@ impl SourceRange {
     }
 }
 
+fn is_unescaped_description_bracket(node: &Node<'_>, source: &str) -> bool {
+    let mut ancestor = node.parent();
+    let inside_description = loop {
+        match ancestor {
+            Some(parent) if parent.kind() == "description" => break true,
+            Some(parent) => ancestor = parent.parent(),
+            None => break false,
+        }
+    };
+    let start = node.start_byte();
+    inside_description
+        && source.as_bytes().get(start) == Some(&b'[')
+        && source.as_bytes().get(start + 1) != Some(&b'[')
+}
+
 // --- Parse pipeline (high → low) ---
 
 /// Parse a `.actions` file into a structured `ActionList`, returning an error on syntax problems.
@@ -235,21 +250,36 @@ impl TryFrom<TreeWrapper> for ParsedDocument {
                 if node.is_error() || node.is_missing() {
                     let start = node.start_position();
                     let end = node.end_position();
-                    let message = if node.is_missing() {
-                        format!("missing '{}'", node.kind())
-                    } else {
-                        "unexpected token".to_string()
-                    };
-                    syntax_errors.push(LintDiagnostic::error(
-                        "syntax-error",
-                        message,
-                        SourceRange {
-                            start_row: start.row,
-                            start_col: start.column,
-                            end_row: end.row,
-                            end_col: end.column,
-                        },
-                    ));
+                    let (code, message, range) =
+                        if is_unescaped_description_bracket(&node, &value.source) {
+                            (
+                                "unescaped-description-bracket",
+                                "literal '[' in a description must be escaped as '\\['".to_string(),
+                                SourceRange {
+                                    start_row: start.row,
+                                    start_col: start.column,
+                                    end_row: start.row,
+                                    end_col: start.column + 1,
+                                },
+                            )
+                        } else {
+                            let message = if node.is_missing() {
+                                format!("missing '{}'", node.kind())
+                            } else {
+                                "unexpected token".to_string()
+                            };
+                            (
+                                "syntax-error",
+                                message,
+                                SourceRange {
+                                    start_row: start.row,
+                                    start_col: start.column,
+                                    end_row: end.row,
+                                    end_col: end.column,
+                                },
+                            )
+                        };
+                    syntax_errors.push(LintDiagnostic::error(code, message, range));
                 }
                 if !node.is_error() {
                     for child in node.children(&mut cursor) {

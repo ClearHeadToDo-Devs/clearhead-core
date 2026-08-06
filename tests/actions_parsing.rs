@@ -202,36 +202,57 @@ fn valid_link_may_span_whitespace_and_remain_trusted() {
 }
 
 #[test]
-fn lone_brackets_are_trusted_description_prose() {
+fn escaped_brackets_are_trusted_description_prose() {
     let source = concat!(
-        "[ ] Brackets $reserved !@%+{} and lone [ or\n[wrapped] are prose; ",
+        "[ ] Brackets $reserved !@%+{} and literal \\[ or \\[wrapped] are prose; ",
         "[[label|https://example.com]] remains a link$ ",
         "#019f0000-0000-7000-8000-000000000003\n",
     );
-    let parsed = parse_document(source).expect("description brackets should parse");
+    let parsed = parse_document(source).expect("escaped description brackets should parse");
     assert!(
         parsed.syntax_errors.is_empty(),
         "{:?}",
         parsed.syntax_errors
     );
-    let trusted = TrustedDocument::try_from(parsed).expect("bracket prose should be trusted");
+    let trusted = TrustedDocument::try_from(parsed).expect("escaped bracket prose is trusted");
     assert_eq!(trusted.actions().len(), 1);
-    let expected = Some(
-        "reserved !@%+{} and lone [ or\n[wrapped] are prose; \
-         [[label|https://example.com]] remains a link",
-    );
-    assert_eq!(trusted.actions()[0].description.as_deref(), expected);
+    let description = trusted.actions()[0]
+        .description
+        .as_deref()
+        .expect("description should parse");
+    assert!(description.contains("[wrapped]"));
+    assert!(description.contains("[[label|https://example.com]]"));
 
     let formatted = format_trusted_source(&trusted, None).expect("trusted source should format");
     let reparsed = parse_document(&formatted).expect("formatted bracket prose should parse");
-    let retrusted =
-        TrustedDocument::try_from(reparsed).expect("formatted prose should stay trusted");
-    let formatted_description = retrusted.actions()[0]
-        .description
-        .as_deref()
-        .expect("description should survive formatting");
-    assert!(formatted_description.contains("[wrapped]"));
-    assert!(formatted_description.contains("[[label|https://example.com]]"));
+    TrustedDocument::try_from(reparsed).expect("formatted prose should stay trusted");
+}
+
+#[test]
+fn unescaped_description_bracket_is_a_precise_integrity_error() {
+    let source = concat!(
+        "[ ] Brackets $literal [ must be escaped$ ",
+        "#019f0000-0000-7000-8000-000000000004\n",
+        "[ ] Following action #019f0000-0000-7000-8000-000000000005\n",
+    );
+    let parsed = parse_document(source).expect("unescaped bracket should recover");
+    let diagnostic = parsed
+        .syntax_errors
+        .iter()
+        .find(|diagnostic| diagnostic.code == "unescaped-description-bracket")
+        .expect("unescaped bracket should have a specific diagnostic");
+    assert_eq!(
+        diagnostic.message,
+        "literal '[' in a description must be escaped as '\\['"
+    );
+    assert_eq!(diagnostic.range.end_col, diagnostic.range.start_col + 1);
+    assert_eq!(
+        parsed.actions.len(),
+        2,
+        "the following action must stay separate"
+    );
+    assert_eq!(parsed.actions[1].name, "Following action");
+    TrustedDocument::try_from(parsed).expect_err("unescaped bracket cannot be trusted");
 }
 
 #[test]

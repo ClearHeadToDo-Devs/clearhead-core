@@ -19,9 +19,10 @@ const NAME_ESCAPE: &[char] = &[
     '\\', '$', '!', '*', '+', '@', '%', '^', '#', '>', '<', '~', '=', ':', '[', ']',
 ];
 
-/// Sigils a description body escapes: only `$` (its block delimiter) and the
-/// backslash itself — a description already tolerates every other sigil.
-const DESC_ESCAPE: &[char] = &['\\', '$'];
+/// Sigils a description body escapes: `$` closes the block, `[` may open a
+/// link, and the backslash is the escape character itself. Complete `[[link]]`
+/// spans remain verbatim through [`escape_field`].
+const DESC_ESCAPE: &[char] = &['\\', '$', '['];
 
 /// Whether a backslash may escape `c` when reading a field back — the grammar's
 /// escape set: every metadata sigil, both brackets, and the backslash itself.
@@ -83,7 +84,7 @@ pub(crate) fn escape_name(s: &str) -> String {
     escape_field(s, NAME_ESCAPE)
 }
 
-/// Escape a description body (only `$` and the backslash itself need it).
+/// Escape a description body while leaving complete `[[link]]` spans intact.
 pub(crate) fn escape_description(s: &str) -> String {
     escape_field(s, DESC_ESCAPE)
 }
