@@ -9,7 +9,8 @@
 //! parent-child links.
 
 use clearhead_core::{
-    ActionState, ParseMode, TrustedDocument, parse_actions, parse_actions_with_mode, parse_document,
+    ActionState, ParseMode, TrustedDocument, format_trusted_source, parse_actions,
+    parse_actions_with_mode, parse_document,
 };
 
 // Use compile-time embedding so fixture content is verified to exist at build time.
@@ -198,6 +199,39 @@ fn valid_link_may_span_whitespace_and_remain_trusted() {
             .name
             .contains("documentation across\nsoft whitespace")
     );
+}
+
+#[test]
+fn lone_brackets_are_trusted_description_prose() {
+    let source = concat!(
+        "[ ] Brackets $reserved !@%+{} and lone [ or [wrapped] are prose; ",
+        "[[label|https://example.com]] remains a link$ ",
+        "#019f0000-0000-7000-8000-000000000003\n",
+    );
+    let parsed = parse_document(source).expect("description brackets should parse");
+    assert!(
+        parsed.syntax_errors.is_empty(),
+        "{:?}",
+        parsed.syntax_errors
+    );
+    let trusted = TrustedDocument::try_from(parsed).expect("bracket prose should be trusted");
+    assert_eq!(trusted.actions().len(), 1);
+    let expected = Some(
+        "reserved !@%+{} and lone [ or [wrapped] are prose; \
+         [[label|https://example.com]] remains a link",
+    );
+    assert_eq!(trusted.actions()[0].description.as_deref(), expected);
+
+    let formatted = format_trusted_source(&trusted, None).expect("trusted source should format");
+    let reparsed = parse_document(&formatted).expect("formatted bracket prose should parse");
+    let retrusted =
+        TrustedDocument::try_from(reparsed).expect("formatted prose should stay trusted");
+    let formatted_description = retrusted.actions()[0]
+        .description
+        .as_deref()
+        .expect("description should survive formatting");
+    assert!(formatted_description.contains("[wrapped]"));
+    assert!(formatted_description.contains("[[label|https://example.com]]"));
 }
 
 #[test]
