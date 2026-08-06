@@ -12,7 +12,7 @@ name = "clearhead-lsp"
 path = "src/main.rs"
 
 [dependencies]
-clearhead_core = { path = "../clearhead-core", version = "0.2.0" }
+clearhead_core = { path = "../clearhead-core", version = "0.2.0", default-features = false, features = ["formatting"] }
 chrono = "0.4"
 dashmap = "6.1.0"
 serde_json = "1.0"
