@@ -204,7 +204,7 @@ fn valid_link_may_span_whitespace_and_remain_trusted() {
 #[test]
 fn lone_brackets_are_trusted_description_prose() {
     let source = concat!(
-        "[ ] Brackets $reserved !@%+{} and lone [ or [wrapped] are prose; ",
+        "[ ] Brackets $reserved !@%+{} and lone [ or\n[wrapped] are prose; ",
         "[[label|https://example.com]] remains a link$ ",
         "#019f0000-0000-7000-8000-000000000003\n",
     );
@@ -217,7 +217,7 @@ fn lone_brackets_are_trusted_description_prose() {
     let trusted = TrustedDocument::try_from(parsed).expect("bracket prose should be trusted");
     assert_eq!(trusted.actions().len(), 1);
     let expected = Some(
-        "reserved !@%+{} and lone [ or [wrapped] are prose; \
+        "reserved !@%+{} and lone [ or\n[wrapped] are prose; \
          [[label|https://example.com]] remains a link",
     );
     assert_eq!(trusted.actions()[0].description.as_deref(), expected);
