@@ -85,7 +85,7 @@ The query family determines the useful machine representation. Destination
 selects human rendering versus machine emission:
 
 | Family | Terminal | Pipe or redirect |
-|---|---|---|
+| --- | --- | --- |
 | `index` | table | NDJSON, one entry per line |
 | `tree` | indented tree | nested JSON |
 | `graph` | graph summary | JSON-LD |
