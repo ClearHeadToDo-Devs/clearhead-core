@@ -17,6 +17,7 @@ Run a built-in index view:
 
 ```sh
 clearhead-graphd --workspace /path/to/project query index unscheduled
+clearhead-graphd --workspace /path/to/project query index unscheduled --format ids
 clearhead-graphd --workspace /path/to/project query tree work-map
 clearhead-graphd --workspace /path/to/project query graph dependencies \
   --format jsonld
@@ -62,8 +63,9 @@ Output is destination-aware. A terminal defaults to a human rendering. A pipe
 uses the query family's machine projection: index views emit NDJSON, while
 unrestricted `SELECT` queries emit JSON row arrays. Index views validate their
 addressable-row contract before any projection. Explicit `--format table`,
-`json`, `ndjson`, `jsonld`, `turtle`, and `dot` override detection where
-supported.
+`json`, `ndjson`, `jsonld`, `ids`, `turtle`, and `dot` override detection where
+supported. The index-only `ids` projection emits each canonical identity
+unchanged, one per line in query order, for JSON-parser-free composition.
 
 The semantic rules for index output are documented in
 [`docs/query_contract.md`](docs/query_contract.md). Exact JSON-LD fields are in

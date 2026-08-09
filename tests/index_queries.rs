@@ -92,6 +92,53 @@ fn index_pipe_defaults_to_ndjson() {
 }
 
 #[test]
+fn index_ids_emit_canonical_references_in_query_order() {
+    let env = TestEnv::new();
+    env.with_workspace_identity().write_actions(
+        "next.actions",
+        "[ ] later but urgent !1 @2000-01-02T00:00 #01900000-0000-7000-8000-000000000011\n\
+         [ ] earlier but minor !3 @2000-01-01T00:00 #01900000-0000-7000-8000-000000000012\n",
+    );
+
+    let output = env
+        .command()
+        .args(["query", "index", "agenda", "--format", "ids"])
+        .output()
+        .expect("failed to run");
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        output.stdout,
+        b"urn:uuid:01900000-0000-7000-8000-000000000011\n\
+          urn:uuid:01900000-0000-7000-8000-000000000012\n"
+    );
+}
+
+#[test]
+fn index_ids_emit_no_bytes_for_an_empty_view() {
+    let env = TestEnv::new();
+    env.with_workspace_identity()
+        .write_actions("next.actions", UNDATED_ACTION);
+
+    let output = env
+        .command()
+        .args(["query", "index", "agenda", "--format", "ids"])
+        .output()
+        .expect("failed to run");
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stdout.is_empty(), "expected no ID records");
+}
+
+#[test]
 fn agenda_excludes_undated_actions() {
     let env = TestEnv::new();
     // Both actions present — only the dated one should appear.

@@ -92,17 +92,20 @@ selects human rendering versus machine emission:
 | unrestricted `SELECT` | table | JSON row array |
 
 Explicit format flags override destination detection. `jsonld` preserves the
-semantic document for consumers that need it; `json`, `ndjson`, `dot`, and
-`table` provide shallower projections where the selected query form supports
-them.
-Empty machine results remain valid structured output: no NDJSON records, `[]`
-for JSON rows, or an empty JSON-LD graph.
+semantic document for consumers that need it; `json`, `ndjson`, `ids`, `dot`,
+and `table` provide shallower projections where the selected query form
+supports them. `ids` is defined for the index family and emits each row's
+canonical `id` binding unchanged, one per line in query order. It is the small
+composition interface for consumers that need identity without parsing JSON.
+Empty machine results remain valid structured output: no NDJSON or ID records,
+`[]` for JSON rows, or an empty JSON-LD graph.
 
 ## Identity and ordering
 
 Contracted nodes carry canonical identity. In JSON-LD this is semantically
 `@id`; contexts may compact it to the client-facing `id` key. It is never a
-presentation-local identifier.
+presentation-local identifier. The `ids` projection preserves this complete
+value—for example, `urn:uuid:…`—rather than shortening it to a UUID or alias.
 
 Ordered `SELECT` families preserve SPARQL `ORDER BY` in their emitted sequence.
 Queries must also project the relevant sort keys when consumers need to recover

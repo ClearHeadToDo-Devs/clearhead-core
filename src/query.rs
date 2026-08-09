@@ -39,6 +39,7 @@ pub enum Format {
     Json,
     Ndjson,
     Jsonld,
+    Ids,
     Turtle,
     Dot,
 }
@@ -433,6 +434,7 @@ pub fn run_index(
         Format::Json => write_stdout(&serde_json::to_string_pretty(nodes).context("serialize")?),
         Format::Ndjson => emit_ndjson(nodes),
         Format::Jsonld => write_stdout(&serde_json::to_string_pretty(&doc).context("serialize")?),
+        Format::Ids => emit_ids(nodes),
         Format::Turtle | Format::Dot => {
             anyhow::bail!("--format turtle/dot requires a CONSTRUCT graph query")
         }
@@ -479,6 +481,9 @@ pub fn run_tree(
         Format::Jsonld => {
             anyhow::bail!("--format jsonld is not defined for tree queries; use json")
         }
+        Format::Ids => {
+            anyhow::bail!("--format ids is defined for index queries")
+        }
         Format::Turtle | Format::Dot => {
             anyhow::bail!("--format turtle/dot requires a CONSTRUCT graph query")
         }
@@ -523,6 +528,9 @@ pub fn run_graph(
         Format::Dot => write_stdout_raw(graph::frame_dot(&triples).as_bytes()),
         Format::Json | Format::Ndjson => {
             anyhow::bail!("graph queries require an RDF format: use jsonld or turtle")
+        }
+        Format::Ids => {
+            anyhow::bail!("--format ids is defined for index queries")
         }
     }
 }
@@ -637,6 +645,9 @@ fn emit_rows(rows: &[HashMap<String, String>], format: Option<Format>) -> anyhow
             write_stdout_lines(&lines)
         }
         Format::Table => emit_table(rows),
+        Format::Ids => {
+            anyhow::bail!("--format ids is defined for index queries")
+        }
         Format::Jsonld | Format::Turtle | Format::Dot => {
             anyhow::bail!("graph formats require a shaped graph query such as `query graph`")
         }
@@ -709,6 +720,19 @@ fn emit_ndjson(nodes: &[serde_json::Value]) -> anyhow::Result<()> {
         .map(serde_json::to_string)
         .collect::<Result<Vec<_>, _>>()
         .context("serialize")?;
+    write_stdout_lines(&lines)
+}
+
+fn emit_ids(nodes: &[serde_json::Value]) -> anyhow::Result<()> {
+    let lines = nodes
+        .iter()
+        .map(|node| {
+            node.get("id")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned)
+                .ok_or_else(|| anyhow!("index contract produced a non-string id"))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
     write_stdout_lines(&lines)
 }
 
