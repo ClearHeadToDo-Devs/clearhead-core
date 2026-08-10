@@ -23,9 +23,13 @@ use super::sync_store::{
     read_plans_sync_store, serialize_plans_sync_store,
 };
 use crate::domain::{Action, ActionState, DomainModel};
+use crate::workspace::action_files::completed_actions_path;
 use crate::workspace::actions::format::require_actions_formatting;
 use crate::workspace::charter::{MarkdownCharter, implicit_charter};
 use crate::workspace::durability::{PendingBatch, WorkspaceLock, atomic_write, recover_pending};
+use crate::workspace::sidecar::{
+    ActionMeta, CHARTER_METADATA_SCHEMA_URL, OccurrenceSnapshot, read_sidecar, sidecar_path,
+};
 use crate::workspace::store::{Workspace, WorkspaceError, resolve_workspace_layout};
 use crate::workspace::templates::{instantiate_template, resolve_template};
 use crate::workspace::{OutputFormat, SourcedAction, format, read_actions};
@@ -581,6 +585,7 @@ pub fn apply_sync(
         &workspace.charters,
         &store,
         dirty_actions,
+        Vec::new(),
     )?;
     let tally = report.tally();
     Ok(AppliedSync {
@@ -600,6 +605,7 @@ fn commit_actions_and_store(
     charters: &[MarkdownCharter],
     store: &PlansSyncStore,
     dirty_actions: HashSet<PathBuf>,
+    extra_files: Vec<(PathBuf, String)>,
 ) -> Result<(), WorkspaceError> {
     let mut batch = PendingBatch::new(charter_root.to_path_buf());
     let mut paths: Vec<_> = dirty_actions.into_iter().collect();
@@ -619,6 +625,9 @@ fn commit_actions_and_store(
             })?;
         let content = render_actions(&charter.actions)?;
         batch.stage(action_path, content.as_bytes())?;
+    }
+    for (path, content) in extra_files {
+        batch.stage(path, content.as_bytes())?;
     }
     batch.stage(store_path, serialize_plans_sync_store(store)?.as_bytes())?;
     batch.commit()?;
@@ -665,6 +674,13 @@ pub fn resolve_materialized_occurrence(
 
     let mut workspace = Workspace::load_with_plans(root, plan_override)?;
     let mut store = read_plans_sync_store(root, &plans_root)?;
+    let archive_snapshot = stage_archived_occurrence_snapshot(
+        &layout.charter_root,
+        &workspace.charters,
+        occurrence_id,
+        plan_id,
+        &slot_key,
+    )?;
     store.clear_occurrence_link(occurrence_id);
 
     // Advance: stamp the plan's next token, using the resolved slot as the floor so
@@ -699,8 +715,83 @@ pub fn resolve_materialized_occurrence(
         &workspace.charters,
         &store,
         dirty_actions,
+        archive_snapshot.into_iter().collect(),
     )?;
     Ok(true)
+}
+
+/// If `occurrence_id` has already been closed into a completed archive, stage the
+/// sidecar update that freezes its plan lineage.
+///
+/// Direct core tests may call [`resolve_materialized_occurrence`] while the token
+/// is still live; in that case there is no completed fact to snapshot yet and this
+/// returns `None`. The CLI's normal complete/cancel path closes first, so the
+/// completed action is present and receives the snapshot before the live sync-store
+/// link is cleared.
+fn stage_archived_occurrence_snapshot(
+    charter_root: &Path,
+    charters: &[MarkdownCharter],
+    occurrence_id: Uuid,
+    plan_id: Uuid,
+    slot_key: &str,
+) -> Result<Option<(PathBuf, String)>, WorkspaceError> {
+    let Some(plan) = charters
+        .iter()
+        .flat_map(|charter| &charter.plans)
+        .find(|plan| plan.plan.id == plan_id)
+    else {
+        return Ok(None);
+    };
+
+    let Some((completed_path, archived_action)) =
+        find_completed_occurrence(charter_root, charters, occurrence_id)?
+    else {
+        return Ok(None);
+    };
+
+    let sidecar = sidecar_path(&completed_path);
+    let mut meta = read_sidecar(&sidecar)?;
+    let entry = meta
+        .actions
+        .entry(occurrence_id.to_string())
+        .or_insert_with(ActionMeta::default);
+    if entry.occurrence.is_none() {
+        entry.occurrence = Some(OccurrenceSnapshot {
+            plan_id,
+            plan_uid: plan.plan.external_id.clone(),
+            occurrence_key: slot_key.to_string(),
+            plan_title: plan.plan.name.clone(),
+            scheduled_at: archived_action.scheduled_at,
+            rrule: plan.plan.recurrence.as_ref().map(|r| {
+                let text = r.to_string();
+                text.strip_prefix("R:").unwrap_or(&text).to_string()
+            }),
+            template: plan.plan.template_name.clone(),
+        });
+    }
+    meta.schema = Some(CHARTER_METADATA_SCHEMA_URL.to_string());
+    let content =
+        serde_json::to_string_pretty(&meta).map_err(|e| WorkspaceError::Parse(e.to_string()))?;
+    Ok(Some((sidecar, content)))
+}
+
+fn find_completed_occurrence(
+    charter_root: &Path,
+    charters: &[MarkdownCharter],
+    occurrence_id: Uuid,
+) -> Result<Option<(PathBuf, Action)>, WorkspaceError> {
+    for charter in charters {
+        let Some(actions_relative) = charter.actions_file.as_deref() else {
+            continue;
+        };
+        let completed_path = completed_actions_path(&charter_root.join(actions_relative));
+        for action in read_actions(&completed_path)? {
+            if action.id == occurrence_id {
+                return Ok(Some((completed_path, action)));
+            }
+        }
+    }
+    Ok(None)
 }
 
 /// A resolved occurrence no longer holds the token — the next may be stamped.

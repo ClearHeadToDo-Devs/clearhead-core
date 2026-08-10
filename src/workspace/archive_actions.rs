@@ -73,9 +73,11 @@ pub struct CloseActionResult {
 ///
 /// Only complete terminal trees are archived. A completed/cancelled root with
 /// an open descendant remains active, preserving the structural parent chain.
-/// Archived actions are detached because completed files are flat history, not
-/// an active hierarchy. Any archived action without a completion date is stamped
-/// at plan construction time; an existing completion date is preserved.
+/// Archived roots are detached from external parents, while descendants keep
+/// parent links inside the archived subtree. Completed files are history, but
+/// the hierarchy is part of the fact (especially for templated recurring
+/// occurrences). Any archived action without a completion date is stamped at
+/// plan construction time; an existing completion date is preserved.
 pub fn plan_action_archive(active: &[Action], existing_completed: &[Action]) -> ActionArchivePlan {
     plan_action_archive_at(active, existing_completed, Local::now())
 }
@@ -113,7 +115,12 @@ fn plan_action_archive_at(
     for action in active {
         if archive_ids.contains(&action.id) {
             let mut archived = action.clone();
-            archived.parent_id = None;
+            if !archived
+                .parent_id
+                .is_some_and(|parent| archive_ids.contains(&parent))
+            {
+                archived.parent_id = None;
+            }
             if archived.completed_at.is_none() {
                 archived.completed_at = Some(archived_at);
             }
@@ -377,11 +384,8 @@ mod tests {
         assert_eq!(plan.completed_actions[0].id, existing.id);
         assert_eq!(plan.completed_actions[1].completed_at, Some(archived_at));
         assert_eq!(plan.completed_actions[2].completed_at, Some(existing_date));
-        assert!(
-            plan.completed_actions[1..]
-                .iter()
-                .all(|action| action.parent_id.is_none())
-        );
+        assert_eq!(plan.completed_actions[1].parent_id, None);
+        assert_eq!(plan.completed_actions[2].parent_id, Some(root.id));
     }
 
     #[test]
@@ -498,7 +502,7 @@ mod tests {
         assert!(!active.contains("Child"));
         assert!(active.contains("Other"));
         assert!(completed.contains("[x] Selected"));
-        assert!(completed.contains("[x] Child"));
+        assert!(completed.contains(">[x] Child") || completed.contains("> [x] Child"));
     }
 
     #[cfg(feature = "formatting")]

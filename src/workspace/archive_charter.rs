@@ -748,6 +748,7 @@ mod tests {
                         .unwrap()
                         .with_timezone(&chrono::Local),
                 ),
+                ..Default::default()
             },
         );
         write_sidecar(&sc_path, &meta).expect("write sidecar");

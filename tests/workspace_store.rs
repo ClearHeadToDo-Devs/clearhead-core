@@ -1109,6 +1109,64 @@ fn resolving_a_materialized_occurrence_writes_the_deviation_and_advances() {
 
 #[cfg(feature = "formatting")]
 #[test]
+fn closing_a_materialized_occurrence_snapshots_lineage_to_completed_sidecar() {
+    use clearhead_core::{
+        CloseActionSelector, OccurrenceOp, apply_sync, close_action_subtree,
+        completed_actions_path, plan_sync, read_actions, read_plans_sync_store, read_vtodo_actions,
+        resolve_materialized_occurrence,
+    };
+
+    let ws = recurring_plan_workspace();
+    let root = ws.path();
+    let plans_root = root.join(".clearhead").join("plans");
+    let actions_path = root.join(".clearhead/charters/health.actions");
+    let now = chrono::Local::now();
+
+    let model = load_domain_model(root).unwrap();
+    let store0 = read_plans_sync_store(root, &plans_root).unwrap();
+    let calendar = read_vtodo_actions(&plans_root).unwrap();
+    let report = plan_sync(&model, &store0, &calendar).unwrap();
+    apply_sync(root, None, &report).unwrap();
+
+    let links = read_plans_sync_store(root, &plans_root)
+        .unwrap()
+        .occurrence_links();
+    let (&occ_id, (plan_id, slot_key)) = links.iter().next().unwrap();
+    let plan_id = *plan_id;
+    let slot_key = slot_key.clone();
+    let token = read_actions(&actions_path)
+        .unwrap()
+        .into_iter()
+        .find(|a| a.id == occ_id)
+        .unwrap();
+
+    close_action_subtree(
+        root,
+        &actions_path,
+        &CloseActionSelector::from(&token),
+        clearhead_core::ActionState::Completed,
+        now,
+    )
+    .unwrap();
+    resolve_materialized_occurrence(root, None, occ_id, &OccurrenceOp::Complete { at: now }, now)
+        .unwrap();
+
+    let completed_path = completed_actions_path(&actions_path);
+    let completed = fs::read_to_string(&completed_path).unwrap();
+    assert!(completed.contains(&occ_id.to_string()));
+    let sidecar_path = completed_path.with_file_name(".health.completed.json");
+    let sidecar: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(sidecar_path).unwrap()).unwrap();
+    let occurrence = &sidecar["actions"][occ_id.to_string()]["occurrence"];
+    assert_eq!(occurrence["plan_id"], plan_id.to_string());
+    assert_eq!(occurrence["plan_uid"], "run@example.com");
+    assert_eq!(occurrence["occurrence_key"], slot_key);
+    assert_eq!(occurrence["plan_title"], "Run");
+    assert_eq!(occurrence["rrule"], "FREQ=DAILY");
+}
+
+#[cfg(feature = "formatting")]
+#[test]
 fn materialized_occurrence_hydrates_its_plan_link_from_the_sync_store() {
     // After the unwind a stamped occurrence is a plain `.actions` line — no plan_id
     // in the DSL or sidecar; the linkage lives only in the sync store. The loader

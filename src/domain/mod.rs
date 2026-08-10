@@ -576,8 +576,9 @@ pub fn charter_from_plans_and_name(name: String, plans: Vec<Plan>) -> Charter {
 /// unchanged by graph and display integrations. No conversion needed.
 ///
 /// Fields set to `None` by the parser (no DSL syntax exists for them) are
-/// populated from the JSON sidecar (`plan_id`) or, for projected recurring
-/// occurrences, stamped in memory (`plan_id` + `external_occurrence_key`).
+/// populated from machine metadata: live materialized recurring occurrences
+/// hydrate `plan_id` + `external_occurrence_key` from the sync store, while
+/// archived occurrence facts snapshot their lineage in completed sidecars.
 ///
 /// `predecessors` carries raw DSL references for file round-trips;
 /// call [`Action::depends_on`] to get resolved UUIDs for integration work.
@@ -611,11 +612,12 @@ pub struct Action {
     pub charter: Option<String>,
     pub alias: Option<String>,
     pub is_sequential: Option<bool>,
-    /// The [`Plan`] that prescribed this action (populated from sidecar, not DSL).
+    /// The [`Plan`] that prescribed this action (hydrated from machine metadata,
+    /// not DSL).
     pub plan_id: Option<Uuid>,
-    /// Canonical occurrence-slot key, stamped in memory on a *projected* recurring
-    /// occurrence. With [`plan_id`](Self::plan_id) it is the handle a deviation
-    /// write targets. Never filed — occurrences have no `.actions` line.
+    /// Canonical occurrence-slot key. With [`plan_id`](Self::plan_id) it is the
+    /// handle a deviation write targets. Live materialized occurrences hydrate it
+    /// from the sync store; archived facts snapshot it in sidecar metadata.
     pub external_occurrence_key: Option<String>,
 }
 
@@ -680,7 +682,9 @@ pub fn collect_subtree_ids(actions: &[Action], root_id: Uuid) -> Vec<Uuid> {
 }
 
 /// Close `root_id` and its full subtree in `actions`: stamp `closing_state` and
-/// `completed_at`, and detach each from its parent. Returns the closed subtree
+/// `completed_at`, and detach only the closed root from any external parent.
+/// Descendants keep parent links inside the closed subtree so completed archives
+/// preserve the factual checklist structure. Returns the closed subtree
 /// (root first, then descendants in discovery order) for the caller to append
 /// to the `.completed.actions` file — `actions` itself is untouched; removing
 /// the closed ids from the open list is the caller's job.
@@ -702,7 +706,12 @@ pub fn close_subtree(
             let mut closed = a.clone();
             closed.state = closing_state;
             closed.completed_at = Some(now);
-            closed.parent_id = None;
+            if !closed
+                .parent_id
+                .is_some_and(|parent| subtree_ids.contains(&parent))
+            {
+                closed.parent_id = None;
+            }
             closed
         })
         .collect()
@@ -898,7 +907,7 @@ mod tests {
     }
 
     #[test]
-    fn close_subtree_stamps_state_and_detaches_parent() {
+    fn close_subtree_stamps_state_and_preserves_internal_hierarchy() {
         let root = action_with("root", None);
         let child = action_with("child", Some(root.id));
         let unrelated = action_with("unrelated", None);
@@ -910,9 +919,14 @@ mod tests {
         assert_eq!(closed.len(), 2);
         assert!(closed.iter().all(|a| a.state == ActionState::Completed));
         assert!(closed.iter().all(|a| a.completed_at == Some(now)));
-        assert!(closed.iter().all(|a| a.parent_id.is_none()));
-        assert!(closed.iter().any(|a| a.id == root.id));
-        assert!(closed.iter().any(|a| a.id == child.id));
+        assert_eq!(
+            closed.iter().find(|a| a.id == root.id).unwrap().parent_id,
+            None
+        );
+        assert_eq!(
+            closed.iter().find(|a| a.id == child.id).unwrap().parent_id,
+            Some(root.id)
+        );
         assert!(!closed.iter().any(|a| a.id == unrelated.id));
     }
 

@@ -62,6 +62,30 @@ pub struct ActionMeta {
     /// When this action was first created by tooling.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub created: Option<DateTime<Local>>,
+    /// Frozen lineage for an archived materialized recurring occurrence.
+    ///
+    /// Live occurrence lineage is hydrated from the plans sync store because it is
+    /// mutable working state. Once the occurrence is closed into a completed
+    /// archive, the fact must be self-contained: future plan edits/deletion must
+    /// not change what this completed instance realized.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub occurrence: Option<OccurrenceSnapshot>,
+}
+
+/// Durable lineage captured when a materialized recurring occurrence closes.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct OccurrenceSnapshot {
+    pub plan_id: uuid::Uuid,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plan_uid: Option<String>,
+    pub occurrence_key: String,
+    pub plan_title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scheduled_at: Option<DateTime<Local>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rrule: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub template: Option<String>,
 }
 
 /// Derive the sidecar path from an `.actions` file path.
@@ -112,6 +136,7 @@ pub fn collect_sidecar_actions(charter_root: &Path) -> BTreeMap<String, ActionMe
 /// duplicate.
 fn merge_action(to: &mut ActionMeta, from: ActionMeta) {
     to.created = to.created.or(from.created);
+    to.occurrence = to.occurrence.clone().or(from.occurrence);
 }
 
 /// Every hidden `.json` file under `dir`, recursively, sorted for determinism.
@@ -193,6 +218,7 @@ pub fn stamp_sidecar_entries(
         let key = action.id.to_string();
         meta.actions.entry(key).or_insert_with(|| ActionMeta {
             created: Some(created_from_uuid(action.id).unwrap_or_else(Local::now)),
+            ..Default::default()
         });
     }
     write_sidecar(&sc_path, &meta)
@@ -301,6 +327,7 @@ mod tests {
             "019dad29-c05d-7781-a92c-40d71adfb88e".to_string(),
             ActionMeta {
                 created: Some(Local::now()),
+                ..Default::default()
             },
         );
         let json = serde_json::to_string_pretty(&meta).unwrap();
@@ -407,6 +434,7 @@ mod tests {
             id.to_string(),
             ActionMeta {
                 created: Some(created),
+                ..Default::default()
             },
         );
 
@@ -432,6 +460,7 @@ mod tests {
             id.to_string(),
             ActionMeta {
                 created: Some(sidecar_created),
+                ..Default::default()
             },
         );
 
@@ -548,6 +577,7 @@ mod tests {
             "test-uuid".to_string(),
             ActionMeta {
                 created: Some(Local::now()),
+                ..Default::default()
             },
         );
 
