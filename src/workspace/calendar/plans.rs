@@ -59,22 +59,32 @@ pub fn charter_plans_dir_relative(charter: &MarkdownCharter) -> PathBuf {
     }
 
     let key = charter.alias.as_deref().unwrap_or(&charter.title);
-    let is_root = charter
-        .actions_file
-        .as_deref()
-        .and_then(|p| p.file_name())
-        .and_then(|n| n.to_str())
-        .is_some_and(|n| n == "next.actions");
-
-    if is_root {
-        PathBuf::from("next")
-    } else {
-        let dir = match charter.parent.as_deref() {
-            Some(parent) => format!("{}-{}", slugify(parent), slugify(key)),
-            None => slugify(key),
-        };
-        PathBuf::from(dir)
+    if let Some(actions_file) = charter.actions_file.as_deref() {
+        if actions_file == Path::new("next.actions") {
+            return PathBuf::from("next");
+        }
+        if actions_file.file_name() == Some(std::ffi::OsStr::new("next.actions"))
+            && let Some(parent) = actions_file.parent()
+        {
+            let slug = parent
+                .components()
+                .filter_map(|component| match component {
+                    std::path::Component::Normal(value) => value.to_str().map(slugify),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+                .join("-");
+            if !slug.is_empty() {
+                return PathBuf::from(slug);
+            }
+        }
     }
+
+    let dir = match charter.parent.as_deref() {
+        Some(parent) => format!("{}-{}", slugify(parent), slugify(key)),
+        None => slugify(key),
+    };
+    PathBuf::from(dir)
 }
 
 /// Absolute output path for a plan's `.ics` file under `plans_root`.
@@ -344,6 +354,22 @@ mod tests {
 
         top.actions_file = Some(PathBuf::from("next.actions"));
         assert_eq!(charter_plans_dir_relative(&top), Path::new("next"));
+
+        let mut nested = MarkdownCharter::from(implicit_charter("linux"));
+        nested.parent = Some("platform".to_string());
+        nested.actions_file = Some(PathBuf::from("linux/next.actions"));
+        nested.plans_dir = None;
+        assert_eq!(
+            charter_plans_dir_relative(&nested),
+            Path::new("linux"),
+            "a nested primary filename maps from its charter path, not the root next collection"
+        );
+
+        nested.actions_file = Some(PathBuf::from("work/feature/next.actions"));
+        assert_eq!(
+            charter_plans_dir_relative(&nested),
+            Path::new("work-feature")
+        );
     }
 
     #[test]
