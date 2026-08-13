@@ -1,13 +1,16 @@
 use super::discovery::{discover_action_files, discover_charter_files};
 use super::findings::Finding;
-use super::pathing::{infer_charter_name_for_workspace, infer_parent_charter_name_for_workspace};
+use super::pathing::{
+    infer_charter_name_for_workspace, infer_parent_charter_name_for_workspace,
+    infer_plans_collection,
+};
 use super::{WorkspaceError, resolve_workspace_layout};
 use crate::domain::{Charter, DomainModel};
 use crate::workspace::actions::TrustedDocument;
 use crate::workspace::actions::convert::from_actions_with_charter;
 use crate::workspace::actions::repository::SourcedAction;
 use crate::workspace::calendar::ics::parse_ics_file;
-use crate::workspace::calendar::plans::{collect_plan_files_in, slugify};
+use crate::workspace::calendar::plans::collect_plan_files_in;
 use crate::workspace::calendar::sync_store::read_plans_sync_store;
 use crate::workspace::charter::{
     MarkdownCharter, frontmatter_has_id_key, frontmatter_has_parent_key, implicit_charter,
@@ -297,6 +300,7 @@ pub fn read_workspace_with_plans(
         );
         let mut mc = MarkdownCharter::from(base);
         mc.actions_file = Some(relative.clone());
+        mc.plans_dir = infer_plans_collection(&relative);
         mc.actions = sourced.clone();
 
         // The sidecar at the conventional path is still checked for corruption,
@@ -410,9 +414,13 @@ pub fn read_workspace_with_plans(
                     implicit.state = explicit.state;
                 }
                 implicit.md_file = Some(md_relative.clone());
+                if implicit.plans_dir.is_none() {
+                    implicit.plans_dir = infer_plans_collection(&md_relative);
+                }
             })
             .or_insert_with(|| {
                 let mut mc = MarkdownCharter::from(explicit);
+                mc.plans_dir = infer_plans_collection(&md_relative);
                 mc.md_file = Some(md_relative);
                 mc
             });
@@ -525,12 +533,10 @@ pub fn read_workspace_with_plans(
             .parent()
             .map(std::path::Path::to_path_buf)
             .ok_or_else(|| WorkspaceError::InvalidPath(entry.relative_path.clone()))?;
-        if let Some(charter) = charters_by_name.values_mut().find(|c| {
-            charter_plans_slug(c) == entry.charter_name
-                || c.alias.as_deref() == Some(&entry.charter_name)
-                || c.title == entry.charter_name
-        }) {
-            charter.plans_dir = Some(plans_dir.clone());
+        if let Some(charter) = charters_by_name
+            .values_mut()
+            .find(|charter| charter.plans_dir.as_deref() == Some(plans_dir.as_path()))
+        {
             charter.plans.extend(plans);
         } else {
             let mut charter = MarkdownCharter::from(implicit_charter(&entry.charter_name));
@@ -640,14 +646,6 @@ pub(crate) fn syntax_error_summary(doc: &crate::workspace::actions::ParsedDocume
 
 /// Compute the plans directory slug for a charter: `<parent>-<alias>` for sub-charters,
 /// `<alias>` for top-level charters. Matches the directory name under `plans/`.
-fn charter_plans_slug(c: &MarkdownCharter) -> String {
-    let alias = c.alias.as_deref().unwrap_or(&c.title);
-    match &c.parent {
-        None => slugify(alias),
-        Some(parent) => format!("{}-{}", slugify(parent), slugify(alias)),
-    }
-}
-
 fn parent_hints(
     path_for_name: &HashMap<String, PathBuf>,
     project_root_charter: Option<&str>,

@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Infer charter name with optional project-root behavior.
 pub(crate) fn infer_charter_name_for_workspace(
@@ -16,6 +16,38 @@ pub(crate) fn infer_charter_name_for_workspace(
     }
 
     infer_charter_name(relative_path)
+}
+
+/// Canonical plans collection owned by the charter anchored at `relative_path`.
+///
+/// Workspace construction assigns this once for every charter. Consumers then
+/// attach calendar resources by exact path instead of reconstructing ownership
+/// from aliases, titles, or action-file basenames.
+pub(crate) fn infer_plans_collection(relative_path: &Path) -> Option<PathBuf> {
+    let filename = relative_path.file_name()?.to_str()?;
+    let components: Vec<_> = relative_path.components().collect();
+
+    if components.len() == 1 && is_primary_filename(filename) {
+        return Some(PathBuf::from("next"));
+    }
+
+    let named_owner;
+    let owner = if is_primary_filename(filename) {
+        relative_path.parent()?
+    } else {
+        named_owner = relative_path.with_extension("");
+        &named_owner
+    };
+    let slug = owner
+        .components()
+        .filter_map(|component| match component {
+            std::path::Component::Normal(value) => value.to_str().map(crate::workspace::slugify),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("-");
+
+    (!slug.is_empty()).then(|| PathBuf::from(slug))
 }
 
 /// Infer the charter name from a relative file path.
@@ -135,6 +167,30 @@ mod tests {
         assert_eq!(
             infer_parent_charter_name(Path::new("myproject/subdir/next.actions")),
             Some("myproject".into())
+        );
+    }
+
+    #[test]
+    fn plans_collection_is_derived_from_the_workspace_anchor() {
+        assert_eq!(
+            infer_plans_collection(Path::new("next.actions")),
+            Some(PathBuf::from("next"))
+        );
+        assert_eq!(
+            infer_plans_collection(Path::new("linux/next.actions")),
+            Some(PathBuf::from("linux"))
+        );
+        assert_eq!(
+            infer_plans_collection(Path::new("work/feature/next.actions")),
+            Some(PathBuf::from("work-feature"))
+        );
+        assert_eq!(
+            infer_plans_collection(Path::new("inbox.actions")),
+            Some(PathBuf::from("inbox"))
+        );
+        assert_eq!(
+            infer_plans_collection(Path::new("next.actions")),
+            Some(PathBuf::from("next"))
         );
     }
 

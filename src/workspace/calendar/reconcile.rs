@@ -16,7 +16,7 @@ use super::ics::{
     VTodoAction, action_to_vtodo, canonical_occurrence_key, parse_ics_file, parse_vtodo_actions,
     write_master_rollforward,
 };
-use super::plans::{action_mirror_path, charter_plans_dir_relative, collect_plan_files_in};
+use super::plans::{action_mirror_path, collect_plan_files_in};
 use super::sync_store::{
     CONTEXTS_FIELD, DESCRIPTION_FIELD, DUE_DATE_FIELD, MASTER_DTSTART_FIELD, PRIORITY_FIELD,
     PlansSyncStore, SCHEDULED_AT_FIELD, STATE_FIELD, TITLE_FIELD, UID_FIELD, plans_sync_store_path,
@@ -972,11 +972,10 @@ fn locate_or_create_import_charter(
     charters: &mut Vec<MarkdownCharter>,
     import: &SyncImport,
 ) -> usize {
-    if let Some(index) = charters.iter().position(|charter| {
-        charter_plans_dir_relative(charter) == import.plans_dir
-            || charter.alias.as_deref() == Some(&import.charter_name)
-            || charter.title == import.charter_name
-    }) {
+    if let Some(index) = charters
+        .iter()
+        .position(|charter| charter.plans_dir.as_deref() == Some(import.plans_dir.as_path()))
+    {
         return index;
     }
 

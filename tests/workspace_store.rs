@@ -238,6 +238,55 @@ fn project_layout_next_actions_uses_project_name_as_charter() {
 }
 
 #[test]
+fn workspace_construction_assigns_collection_ownership_without_ics_resources() {
+    let (_outer, project) = make_named_project(
+        "my-project",
+        &[
+            (
+                "next.actions",
+                "[ ] Root task #01951111-0000-7000-0000-000000000052\n",
+            ),
+            (
+                "linux/next.actions",
+                "[ ] Linux task #01951111-0000-7000-0000-000000000053\n",
+            ),
+            (
+                "work/next.actions",
+                "[ ] Work task #01951111-0000-7000-0000-000000000055\n",
+            ),
+            (
+                "work/feature/next.actions",
+                "[ ] Feature task #01951111-0000-7000-0000-000000000054\n",
+            ),
+        ],
+    );
+
+    let charters = load_workspace(&project).expect("load failed");
+    let ownership: std::collections::HashMap<_, _> = charters
+        .iter()
+        .map(|charter| {
+            (
+                charter.actions_file.as_deref().unwrap(),
+                charter.plans_dir.as_deref().unwrap(),
+            )
+        })
+        .collect();
+
+    assert_eq!(
+        ownership.get(Path::new("next.actions")),
+        Some(&Path::new("next"))
+    );
+    assert_eq!(
+        ownership.get(Path::new("linux/next.actions")),
+        Some(&Path::new("linux"))
+    );
+    assert_eq!(
+        ownership.get(Path::new("work/feature/next.actions")),
+        Some(&Path::new("work-feature"))
+    );
+}
+
+#[test]
 fn project_layout_root_plans_dir_uses_project_name_as_charter() {
     let (_outer, project) = make_named_project(
         "my-project",
@@ -854,13 +903,11 @@ fn mixed_workspace_loads_actions_and_ics_plans() {
 }
 
 #[test]
-fn mixed_case_project_parent_matches_its_canonical_plan_slug() {
+fn flat_project_charter_owns_collection_named_by_its_workspace_anchor() {
     let dir = tempfile::tempdir().unwrap();
     let project = dir.path().join("MixedCaseProject");
     let charters = project.join(".clearhead/charters");
-    let plans = project
-        .join(".clearhead/plans")
-        .join("mixedcaseproject-dogfood");
+    let plans = project.join(".clearhead/plans").join("dogfood");
     fs::create_dir_all(&charters).unwrap();
     fs::create_dir_all(&plans).unwrap();
     fs::write(charters.join("next.actions"), "").unwrap();

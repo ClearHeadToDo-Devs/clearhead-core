@@ -48,38 +48,15 @@ pub fn plan_file_name(plan: &Plan) -> String {
 
 /// Relative plans directory for a charter under `plans_root`.
 ///
-/// Resolution order:
-/// - `MarkdownCharter.plans_dir` when already known (preserve an existing path)
-/// - project-root charter (`next.actions`) → reserved `next/`
-/// - sub-charter → `<parent>-<charter>/`
-/// - top-level charter → `<charter>/`
+/// Workspace-loaded charters already carry this ownership. The fallback exists
+/// only for synthetic authoring inputs that have not passed through workspace
+/// construction yet.
 pub fn charter_plans_dir_relative(charter: &MarkdownCharter) -> PathBuf {
     if let Some(path) = &charter.plans_dir {
         return path.clone();
     }
 
     let key = charter.alias.as_deref().unwrap_or(&charter.title);
-    if let Some(actions_file) = charter.actions_file.as_deref() {
-        if actions_file == Path::new("next.actions") {
-            return PathBuf::from("next");
-        }
-        if actions_file.file_name() == Some(std::ffi::OsStr::new("next.actions"))
-            && let Some(parent) = actions_file.parent()
-        {
-            let slug = parent
-                .components()
-                .filter_map(|component| match component {
-                    std::path::Component::Normal(value) => value.to_str().map(slugify),
-                    _ => None,
-                })
-                .collect::<Vec<_>>()
-                .join("-");
-            if !slug.is_empty() {
-                return PathBuf::from(slug);
-            }
-        }
-    }
-
     let dir = match charter.parent.as_deref() {
         Some(parent) => format!("{}-{}", slugify(parent), slugify(key)),
         None => slugify(key),
@@ -352,24 +329,8 @@ mod tests {
             Path::new("/plans/team-and-ops-release-notes/weekly-review-and-notes.ics")
         );
 
-        top.actions_file = Some(PathBuf::from("next.actions"));
+        top.plans_dir = Some(PathBuf::from("next"));
         assert_eq!(charter_plans_dir_relative(&top), Path::new("next"));
-
-        let mut nested = MarkdownCharter::from(implicit_charter("linux"));
-        nested.parent = Some("platform".to_string());
-        nested.actions_file = Some(PathBuf::from("linux/next.actions"));
-        nested.plans_dir = None;
-        assert_eq!(
-            charter_plans_dir_relative(&nested),
-            Path::new("linux"),
-            "a nested primary filename maps from its charter path, not the root next collection"
-        );
-
-        nested.actions_file = Some(PathBuf::from("work/feature/next.actions"));
-        assert_eq!(
-            charter_plans_dir_relative(&nested),
-            Path::new("work-feature")
-        );
     }
 
     #[test]
