@@ -216,17 +216,15 @@ pub fn close_action_subtree(
     let mut completed = read_actions(&completed_path)?;
 
     // The caller resolves aliases/names before entering this locked read-plan-apply
-    // boundary. Re-identify only by the resulting canonical UUID: falling back to
-    // mutable, non-unique display fields after reload could close the wrong action.
-    let action_id = active
-        .iter()
-        .find(|action| action.id == selector.id)
-        .map(|action| action.id);
+    // boundary. UUID remains authoritative. A unique alias/name fallback supports
+    // ID-less plaintext actions whose generated in-memory UUID changes on reload;
+    // ambiguity is rejected rather than selecting by file order.
+    let action_id = unique_selector_match(&active, selector)?;
 
     let Some(action_id) = action_id else {
-        if completed.iter().any(|action| action.id == selector.id) {
+        if let Some(completed_id) = unique_selector_match(&completed, selector)? {
             return Ok(CloseActionResult {
-                action_id: selector.id,
+                action_id: completed_id,
                 closed_count: 0,
                 source_path: source_path.to_path_buf(),
                 completed_path,
@@ -281,6 +279,46 @@ pub fn close_action_subtree(
         completed_path,
         already_closed: false,
     })
+}
+
+fn unique_selector_match(
+    actions: &[Action],
+    selector: &CloseActionSelector,
+) -> Result<Option<uuid::Uuid>, WorkspaceError> {
+    if actions.iter().any(|action| action.id == selector.id) {
+        return Ok(Some(selector.id));
+    }
+
+    let unique = |matches: Vec<uuid::Uuid>, field: &str| match matches.as_slice() {
+        [] => Ok(None),
+        [id] => Ok(Some(*id)),
+        _ => Err(WorkspaceError::Actions(format!(
+            "action selector {field} is ambiguous after locked reload: {}",
+            selector.id
+        ))),
+    };
+
+    if let Some(alias) = &selector.alias
+        && let Some(id) = unique(
+            actions
+                .iter()
+                .filter(|action| action.alias.as_ref() == Some(alias))
+                .map(|action| action.id)
+                .collect(),
+            "alias",
+        )?
+    {
+        return Ok(Some(id));
+    }
+
+    unique(
+        actions
+            .iter()
+            .filter(|action| action.name == selector.name)
+            .map(|action| action.id)
+            .collect(),
+        "name",
+    )
 }
 
 fn validate_source_path(source_path: &Path, charter_root: &Path) -> Result<(), WorkspaceError> {
@@ -541,44 +579,77 @@ mod tests {
 
     #[cfg(feature = "formatting")]
     #[test]
-    fn close_reidentifies_only_by_canonical_uuid() {
+    fn close_reidentifies_an_idless_action_by_unique_name() {
         let temp = tempfile::tempdir().unwrap();
         let charters = temp.path().join("charters");
         std::fs::create_dir_all(&charters).unwrap();
         let source = charters.join("work.actions");
-        let mut active = action("duplicate name", ActionState::NotStarted, None);
-        active.alias = Some("duplicate-alias".to_string());
-        let mut completed = action("duplicate name", ActionState::Completed, None);
-        completed.alias = Some("duplicate-alias".to_string());
-        std::fs::write(&source, render(std::slice::from_ref(&active)).unwrap()).unwrap();
-        std::fs::write(
-            completed_actions_path(&source),
-            render(std::slice::from_ref(&completed)).unwrap(),
+        std::fs::write(&source, "[ ] Unique task\n").unwrap();
+        let selector = CloseActionSelector::from(&read_actions(&source).unwrap()[0]);
+
+        let result = close_action_subtree(
+            temp.path(),
+            &source,
+            &selector,
+            ActionState::Completed,
+            Local::now(),
         )
         .unwrap();
 
-        let missing_id = Uuid::now_v7();
-        let error = close_action_subtree(
+        assert_eq!(result.closed_count, 1);
+        assert!(read_actions(&source).unwrap().is_empty());
+        assert_eq!(read_actions(&result.completed_path).unwrap().len(), 1);
+    }
+
+    #[cfg(feature = "formatting")]
+    #[test]
+    fn close_rejects_ambiguous_name_and_alias_fallbacks() {
+        let temp = tempfile::tempdir().unwrap();
+        let charters = temp.path().join("charters");
+        std::fs::create_dir_all(&charters).unwrap();
+
+        let name_source = charters.join("names.actions");
+        std::fs::write(&name_source, "[ ] Duplicate\n[ ] Duplicate\n").unwrap();
+        let name_selector = CloseActionSelector::from(&read_actions(&name_source).unwrap()[0]);
+        let name_error = close_action_subtree(
             temp.path(),
-            &source,
+            &name_source,
+            &name_selector,
+            ActionState::Completed,
+            Local::now(),
+        )
+        .unwrap_err();
+        assert!(
+            matches!(name_error, WorkspaceError::Actions(message) if message.contains("name is ambiguous"))
+        );
+        assert_eq!(read_actions(&name_source).unwrap().len(), 2);
+
+        let alias_source = charters.join("aliases.actions");
+        let mut first = action("First", ActionState::NotStarted, None);
+        first.alias = Some("duplicate-alias".to_string());
+        let mut second = action("Second", ActionState::NotStarted, None);
+        second.alias = first.alias.clone();
+        std::fs::write(
+            &alias_source,
+            render(&[first.clone(), second.clone()]).unwrap(),
+        )
+        .unwrap();
+        let alias_error = close_action_subtree(
+            temp.path(),
+            &alias_source,
             &CloseActionSelector {
-                id: missing_id,
-                alias: active.alias.clone(),
-                name: active.name.clone(),
+                id: Uuid::now_v7(),
+                alias: first.alias.clone(),
+                name: "does not match".to_string(),
             },
             ActionState::Completed,
             Local::now(),
         )
         .unwrap_err();
-
         assert!(
-            matches!(error, WorkspaceError::Actions(message) if message.contains(&missing_id.to_string()))
+            matches!(alias_error, WorkspaceError::Actions(message) if message.contains("alias is ambiguous"))
         );
-        assert_eq!(read_actions(&source).unwrap(), vec![active]);
-        assert_eq!(
-            read_actions(&completed_actions_path(&source)).unwrap(),
-            vec![completed]
-        );
+        assert_eq!(read_actions(&alias_source).unwrap(), vec![first, second]);
     }
 
     #[test]
