@@ -1,13 +1,10 @@
 # Canonical JSON-LD Export Contract
 
-**Status:** Stable
-**Version:** v4 (aligned with `actions.context.v4.json` and `actions.schema.v4.json`)
+**Status:** Stable **Version:** v4 (aligned with `actions.context.v4.json` and `actions.schema.v4.json`)
 
 ## Overview
 
-`serialize_domain_to_jsonld(model: &DomainModel) -> Result<String>` in
-`clearhead-core/src/graph/jsonld.rs` is the single authoritative export path.
-Output is compact JSON-LD validated against the vendored schema at test time.
+`serialize_domain_to_jsonld(model: &DomainModel) -> Result<String>` in `clearhead-core/src/graph/jsonld.rs` is the single authoritative export path. Output is compact JSON-LD validated against the vendored schema at test time.
 
 ## Document Shape
 
@@ -92,8 +89,7 @@ Charter → Context → Plan → Action
 
 ## Graph Validation Contract
 
-`validate_actions_vocabulary(store: &Store)` runs the following checks. Each
-failure appends a human-readable violation string.
+`validate_actions_vocabulary(store: &Store)` runs the following checks. Each failure appends a human-readable violation string.
 
 | Shape | Rule |
 |---|---|
@@ -108,14 +104,9 @@ failure appends a human-readable violation string.
 
 ## Context Node Deferral
 
-Context tags (`+tag` in the DSL) are exported as provisional `Context` nodes
-with `urn:context:<name>` identifiers. These URNs are **not declared in the v4
-ontology** — full context semantics (SKOS concept scheme, real IRIs, class
-hierarchy) are explicitly deferred.
+Context tags (`+tag` in the DSL) are exported as provisional `Context` nodes with `urn:context:<name>` identifiers. These URNs are **not declared in the v4 ontology** — full context semantics (SKOS concept scheme, real IRIs, class hierarchy) are explicitly deferred.
 
-When context nodes are present, the export includes a `_meta.context_nodes`
-block describing this deferral. Consumers **must not** treat `urn:context:*`
-identifiers as stable cross-document identity.
+When context nodes are present, the export includes a `_meta.context_nodes` block describing this deferral. Consumers **must not** treat `urn:context:*` identifiers as stable cross-document identity.
 
 ## Snapshots and Testing
 
@@ -123,5 +114,4 @@ identifiers as stable cross-document identity.
 - `clearhead-graphd/src/resources/actions.schema.v4.json` — vendored JSON Schema
 - `clearhead-graphd/src/resources/ontology-out.example.v4.jsonld` — example output
 
-The test `exported_jsonld_validates_against_vendored_schema` in `graph::jsonld`
-validates real export output against the vendored schema at every test run.
+The test `exported_jsonld_validates_against_vendored_schema` in `graph::jsonld` validates real export output against the vendored schema at every test run.
