@@ -456,6 +456,7 @@ pub fn filter_model_for_plan(model: &DomainModel, plan_id: Uuid) -> DomainModel 
         if let Some(plan) = charter.plans.iter().find(|p| p.id == plan_id) {
             let mut charter_copy = charter.clone();
             charter_copy.plans = vec![plan.clone()];
+            charter_copy.actions.clear();
             return DomainModel {
                 objectives: vec![],
                 charters: vec![charter_copy],
