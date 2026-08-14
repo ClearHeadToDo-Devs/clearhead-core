@@ -242,29 +242,65 @@ impl Default for ReferenceOptions {
     }
 }
 
-#[derive(Debug, Clone)]
+/// Stable semantic classification for reference resolution failures.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReferenceErrorKind {
+    /// The supplied reference contained no text.
+    Empty,
+    /// The supplied reference used malformed prefix or path syntax.
+    InvalidSyntax,
+    /// No entity matched the syntactically valid reference.
+    NotFound,
+    /// More than one entity matched at the strongest reference tier.
+    Ambiguous,
+    /// A type-prefixed path resolved to a different entity type.
+    TypeMismatch,
+}
+
+/// A typed reference failure with a stable kind and contextual diagnostic.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReferenceError {
+    kind: ReferenceErrorKind,
     message: String,
-    ambiguous: bool,
 }
 
 impl ReferenceError {
-    fn new(message: impl Into<String>) -> Self {
+    fn with_kind(kind: ReferenceErrorKind, message: impl Into<String>) -> Self {
         Self {
+            kind,
             message: message.into(),
-            ambiguous: false,
         }
+    }
+
+    fn empty() -> Self {
+        Self::with_kind(ReferenceErrorKind::Empty, "Reference cannot be empty")
+    }
+
+    fn invalid_syntax(message: impl Into<String>) -> Self {
+        Self::with_kind(ReferenceErrorKind::InvalidSyntax, message)
+    }
+
+    fn not_found(message: impl Into<String>) -> Self {
+        Self::with_kind(ReferenceErrorKind::NotFound, message)
     }
 
     fn ambiguous(message: impl Into<String>) -> Self {
-        Self {
-            message: message.into(),
-            ambiguous: true,
-        }
+        Self::with_kind(ReferenceErrorKind::Ambiguous, message)
     }
 
-    fn is_ambiguous(&self) -> bool {
-        self.ambiguous
+    fn type_mismatch(message: impl Into<String>) -> Self {
+        Self::with_kind(ReferenceErrorKind::TypeMismatch, message)
+    }
+
+    /// Return the stable semantic category of this failure.
+    pub const fn kind(&self) -> ReferenceErrorKind {
+        self.kind
+    }
+
+    /// Whether more than one entity matched at the strongest tier.
+    pub const fn is_ambiguous(&self) -> bool {
+        matches!(self.kind, ReferenceErrorKind::Ambiguous)
     }
 }
 
@@ -343,7 +379,7 @@ pub fn resolve_reference(
 ) -> Result<ReferenceTarget, ReferenceError> {
     let trimmed = input.trim();
     if trimmed.is_empty() {
-        return Err(ReferenceError::new("Reference cannot be empty"));
+        return Err(ReferenceError::empty());
     }
 
     let (prefix, path) = parse_prefix(trimmed, options.allow_prefixes)?;
@@ -357,7 +393,7 @@ pub fn resolve_reference(
             let target = resolve_path(model, &segments)?;
             match target {
                 ReferenceTarget::Charter(_) => Ok(target),
-                _ => Err(ReferenceError::new(
+                _ => Err(ReferenceError::type_mismatch(
                     "Reference resolved to a non-charter target; use a charter alias or UUID",
                 )),
             }
@@ -369,7 +405,7 @@ pub fn resolve_reference(
             let target = resolve_path(model, &segments)?;
             match target {
                 ReferenceTarget::Plan(_) => Ok(target),
-                _ => Err(ReferenceError::new(
+                _ => Err(ReferenceError::type_mismatch(
                     "Reference resolved to a non-plan target; use a Plan UUID",
                 )),
             }
@@ -381,7 +417,7 @@ pub fn resolve_reference(
             let target = resolve_path(model, &segments)?;
             match target {
                 ReferenceTarget::Action(_) => Ok(target),
-                _ => Err(ReferenceError::new(
+                _ => Err(ReferenceError::type_mismatch(
                     "Reference resolved to a non-action target; use an action alias or UUID",
                 )),
             }
@@ -520,7 +556,7 @@ fn parse_prefix(
     if let Some(found) = prefix {
         let rest = input[2..].trim();
         if rest.is_empty() {
-            return Err(ReferenceError::new(
+            return Err(ReferenceError::invalid_syntax(
                 "Reference prefix provided without a value",
             ));
         }
@@ -533,7 +569,7 @@ fn parse_prefix(
 fn split_segments(path: &str) -> Result<Vec<&str>, ReferenceError> {
     let segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
     if segments.is_empty() {
-        return Err(ReferenceError::new("Reference path is empty"));
+        return Err(ReferenceError::invalid_syntax("Reference path is empty"));
     }
     Ok(segments)
 }
@@ -563,7 +599,7 @@ fn resolve_unscoped_single(
     );
 
     match select_reference(&candidates, segment) {
-        ReferenceSelection::NotFound => Err(ReferenceError::new(format!(
+        ReferenceSelection::NotFound => Err(ReferenceError::not_found(format!(
             "No entity matches reference '{}'",
             segment
         ))),
@@ -584,7 +620,7 @@ fn resolve_charter_global(
     segment: &str,
 ) -> Result<ReferenceTarget, ReferenceError> {
     match select_reference(&model.charters, segment) {
-        ReferenceSelection::NotFound => Err(ReferenceError::new(format!(
+        ReferenceSelection::NotFound => Err(ReferenceError::not_found(format!(
             "No charter matches reference '{}'",
             segment
         ))),
@@ -609,7 +645,7 @@ fn resolve_plan_global(
         .collect();
 
     match select_reference(&candidates, segment) {
-        ReferenceSelection::NotFound => Err(ReferenceError::new(format!(
+        ReferenceSelection::NotFound => Err(ReferenceError::not_found(format!(
             "No plan matches reference '{}'",
             segment
         ))),
@@ -632,7 +668,7 @@ fn resolve_action_global(
         .collect();
 
     match select_reference(&candidates, segment) {
-        ReferenceSelection::NotFound => Err(ReferenceError::new(format!(
+        ReferenceSelection::NotFound => Err(ReferenceError::not_found(format!(
             "No action matches reference '{}'",
             segment
         ))),
@@ -649,12 +685,12 @@ fn resolve_action_global(
 fn resolve_path(model: &DomainModel, segments: &[&str]) -> Result<ReferenceTarget, ReferenceError> {
     let first = segments
         .first()
-        .ok_or_else(|| ReferenceError::new("Reference path is empty"))?;
+        .ok_or_else(|| ReferenceError::invalid_syntax("Reference path is empty"))?;
 
     let mut scope =
         match select_reference_where(&model.charters, first, |charter| charter.is_root()) {
             ReferenceSelection::NotFound => {
-                return Err(ReferenceError::new(format!(
+                return Err(ReferenceError::not_found(format!(
                     "No charter matches root reference '{}'",
                     first
                 )));
@@ -688,7 +724,7 @@ fn resolve_path(model: &DomainModel, segments: &[&str]) -> Result<ReferenceTarge
 
                 match select_reference(&candidates, segment) {
                     ReferenceSelection::NotFound => {
-                        return Err(ReferenceError::new(format!(
+                        return Err(ReferenceError::not_found(format!(
                             "No match for '{}' under charter '{}'",
                             segment, charter.title
                         )));
@@ -714,7 +750,7 @@ fn resolve_path(model: &DomainModel, segments: &[&str]) -> Result<ReferenceTarge
                     .collect();
                 match select_reference(&candidates, segment) {
                     ReferenceSelection::NotFound => {
-                        return Err(ReferenceError::new(format!(
+                        return Err(ReferenceError::not_found(format!(
                             "No match for '{}' under plan '{}'",
                             segment, plan.name
                         )));
@@ -738,7 +774,7 @@ fn resolve_path(model: &DomainModel, segments: &[&str]) -> Result<ReferenceTarge
                     .collect();
                 match select_reference(&candidates, segment) {
                     ReferenceSelection::NotFound => {
-                        return Err(ReferenceError::new(format!(
+                        return Err(ReferenceError::not_found(format!(
                             "No action matches '{}' under action '{}'",
                             segment, action.name
                         )));
@@ -768,21 +804,40 @@ fn resolve_path(model: &DomainModel, segments: &[&str]) -> Result<ReferenceTarge
 ///
 /// `workspaces` should be ordered primary-first; the caller controls
 /// precedence. Returns the matching workspace name alongside the target.
+/// Invalid syntax and ambiguity stop resolution immediately. A type mismatch
+/// is returned only if no later workspace resolves the same reference.
 pub fn resolve_reference_in_workspaces(
     workspaces: &[(&str, &DomainModel)],
     input: &str,
     options: &ReferenceOptions,
 ) -> Result<(String, ReferenceTarget), ReferenceError> {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return Err(ReferenceError::empty());
+    }
+    let (_, path) = parse_prefix(trimmed, options.allow_prefixes)?;
+    split_segments(path)?;
+
+    let mut type_mismatch = None;
     for (name, model) in workspaces {
-        match resolve_reference(model, input, options) {
+        match resolve_reference(model, trimmed, options) {
             Ok(target) => return Ok((name.to_string(), target)),
-            Err(error) if error.is_ambiguous() => return Err(error),
-            Err(_) => {}
+            Err(error) => match error.kind() {
+                ReferenceErrorKind::Empty | ReferenceErrorKind::InvalidSyntax => return Err(error),
+                ReferenceErrorKind::Ambiguous => return Err(error),
+                ReferenceErrorKind::TypeMismatch => {
+                    type_mismatch.get_or_insert(error);
+                }
+                ReferenceErrorKind::NotFound => {}
+            },
         }
     }
-    Err(ReferenceError::new(format!(
+    if let Some(error) = type_mismatch {
+        return Err(error);
+    }
+    Err(ReferenceError::not_found(format!(
         "No match for '{}' in any workspace",
-        input
+        trimmed
     )))
 }
 
@@ -929,7 +984,17 @@ mod tests {
     fn rejects_missing_prefix_value() {
         let model = sample_model();
         let err = resolve_reference(&model, "c:", &ReferenceOptions::default()).unwrap_err();
+        assert_eq!(err.kind(), ReferenceErrorKind::InvalidSyntax);
         assert!(err.to_string().contains("prefix"));
+    }
+
+    #[test]
+    fn rejects_empty_reference_with_typed_kind() {
+        let err =
+            resolve_reference(&DomainModel::new(), "  ", &ReferenceOptions::default()).unwrap_err();
+        assert_eq!(err.kind(), ReferenceErrorKind::Empty);
+        assert!(!err.is_ambiguous());
+        assert_eq!(err.to_string(), "Reference cannot be empty");
     }
 
     #[test]
@@ -981,7 +1046,48 @@ mod tests {
         let err =
             resolve_reference_in_workspaces(&workspaces, "missing", &ReferenceOptions::default())
                 .unwrap_err();
+        assert_eq!(err.kind(), ReferenceErrorKind::NotFound);
         assert!(err.to_string().contains("missing"));
+    }
+
+    #[test]
+    fn multi_workspace_preserves_typed_input_and_target_failures() {
+        let no_workspaces = [];
+        let empty =
+            resolve_reference_in_workspaces(&no_workspaces, " ", &ReferenceOptions::default())
+                .unwrap_err();
+        assert_eq!(empty.kind(), ReferenceErrorKind::Empty);
+
+        let invalid =
+            resolve_reference_in_workspaces(&no_workspaces, "c:", &ReferenceOptions::default())
+                .unwrap_err();
+        assert_eq!(invalid.kind(), ReferenceErrorKind::InvalidSyntax);
+
+        let model = sample_model();
+        let workspaces = [("primary", &model)];
+        let mismatch = resolve_reference_in_workspaces(
+            &workspaces,
+            "p:build/dead",
+            &ReferenceOptions::default(),
+        )
+        .unwrap_err();
+        assert_eq!(mismatch.kind(), ReferenceErrorKind::TypeMismatch);
+
+        let mut valid = sample_model();
+        let plan_id = Uuid::parse_str("deadbeef-0000-0000-0000-000000000005").unwrap();
+        valid.charters[0].actions.clear();
+        valid.charters[0]
+            .plans
+            .push(make_plan(plan_id, "matching-plan"));
+        let workspaces = [("mismatch", &model), ("valid", &valid)];
+        let (workspace, target) = resolve_reference_in_workspaces(
+            &workspaces,
+            "p:build/dead",
+            &ReferenceOptions::default(),
+        )
+        .unwrap();
+        assert_eq!(workspace, "valid");
+        assert_eq!(target, ReferenceTarget::Plan(plan_id));
     }
 
     #[test]
@@ -1007,6 +1113,8 @@ mod tests {
         let err =
             resolve_reference_in_workspaces(&workspaces, "build", &ReferenceOptions::default())
                 .unwrap_err();
+        assert_eq!(err.kind(), ReferenceErrorKind::Ambiguous);
+        assert!(err.is_ambiguous());
         assert!(err.to_string().contains("Ambiguous reference"));
     }
 

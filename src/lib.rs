@@ -85,10 +85,10 @@ pub use workspace::{PlansSyncStore, Reconcile, SyncEntry, SyncReport, SyncTally}
 pub mod reference;
 #[doc(inline)]
 pub use reference::{
-    MatchMode, ReferenceEntity, ReferenceError, ReferenceMatch, ReferenceOptions,
-    ReferenceSelection, ReferenceTarget, filter_model_for_action, filter_model_for_charter,
-    filter_model_for_plan, match_entity_reference, match_uuid_reference, resolve_reference,
-    resolve_reference_in_workspaces, select_reference, select_reference_where,
+    MatchMode, ReferenceEntity, ReferenceError, ReferenceErrorKind, ReferenceMatch,
+    ReferenceOptions, ReferenceSelection, ReferenceTarget, filter_model_for_action,
+    filter_model_for_charter, filter_model_for_plan, match_entity_reference, match_uuid_reference,
+    resolve_reference, resolve_reference_in_workspaces, select_reference, select_reference_where,
 };
 
 pub mod telemetry;

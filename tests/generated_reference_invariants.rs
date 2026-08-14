@@ -1,7 +1,8 @@
 use clearhead_core::{
     Action, Charter, DomainModel, MarkdownCharter, Objective, Plan, ReferenceEntity,
-    ReferenceMatch, ReferenceOptions, ReferenceSelection, ReferenceTarget, filter_model_for_action,
-    filter_model_for_charter, filter_model_for_plan, resolve_reference, select_reference,
+    ReferenceErrorKind, ReferenceMatch, ReferenceOptions, ReferenceSelection, ReferenceTarget,
+    filter_model_for_action, filter_model_for_charter, filter_model_for_plan, resolve_reference,
+    select_reference,
 };
 use proptest::prelude::*;
 use proptest::test_runner::FileFailurePersistence;
@@ -318,10 +319,11 @@ proptest! {
             }
             ExpectedResolution::Ambiguous => {
                 let error = actual.expect_err("generated ambiguous references must be rejected");
-                prop_assert!(error.to_string().starts_with("Ambiguous"));
+                prop_assert_eq!(error.kind(), ReferenceErrorKind::Ambiguous);
             }
             ExpectedResolution::NotFound => {
                 let error = actual.expect_err("generated missing references must be rejected");
+                prop_assert_eq!(error.kind(), ReferenceErrorKind::NotFound);
                 prop_assert_eq!(
                     error.to_string(),
                     format!("No entity matches reference '{}'", scenario.input),
@@ -329,6 +331,7 @@ proptest! {
             }
             ExpectedResolution::WrongType(expected_fragment) => {
                 let error = actual.expect_err("generated wrong-type paths must be rejected");
+                prop_assert_eq!(error.kind(), ReferenceErrorKind::TypeMismatch);
                 prop_assert!(error.to_string().contains(expected_fragment));
             }
         }
@@ -367,6 +370,7 @@ proptest! {
         let error = resolve_reference(&model, &input, &options)
             .expect_err("disabled prefixes must remain part of plain reference text");
 
+        prop_assert_eq!(error.kind(), ReferenceErrorKind::NotFound);
         prop_assert_eq!(
             error.to_string(),
             format!("No entity matches reference '{input}'"),
