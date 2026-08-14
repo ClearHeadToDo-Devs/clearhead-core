@@ -1,7 +1,5 @@
 use super::common::*;
-use clearhead_core::{
-    ManifestSourceType, collect_workspace_manifest, load_domain_model,
-};
+use clearhead_core::{ManifestSourceType, collect_workspace_manifest, load_domain_model};
 
 // =============================================================================
 // Fixture-based tests (checked-in workspace trees)
@@ -181,4 +179,3 @@ fn fixture_md_merge_manifest_source_type() {
     let ron = manifest_to_ron(&manifest);
     assert_snapshot(&fixture_path("md-merge-manifest.ron"), &ron);
 }
-

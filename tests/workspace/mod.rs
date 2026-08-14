@@ -1,8 +1,8 @@
 pub mod common;
 
+mod doctor;
 mod load;
-mod snapshots;
+mod reader;
 mod recurrence;
 mod sidecar;
-mod reader;
-mod doctor;
+mod snapshots;

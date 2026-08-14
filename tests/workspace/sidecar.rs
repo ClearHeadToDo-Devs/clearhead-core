@@ -158,4 +158,3 @@ fn sidecar_does_not_overwrite_dsl_created() {
         "DSL ^ date (2024) must win over sidecar date (2020)"
     );
 }
-

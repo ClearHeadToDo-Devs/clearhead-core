@@ -149,4 +149,3 @@ fn read_does_not_replay_pending_journal_but_load_does() {
         "load sees the recovered state"
     );
 }
-

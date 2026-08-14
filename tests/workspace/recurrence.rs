@@ -1,7 +1,4 @@
-use clearhead_core::{
-    load_domain_model, load_workspace,
-    render_occurrences,
-};
+use clearhead_core::{load_domain_model, load_workspace, render_occurrences};
 use std::fs;
 use std::path::Path;
 use tempfile::TempDir;
@@ -428,4 +425,3 @@ fn multi_period_rollforward_records_each_passed_occurrence() {
         );
     }
 }
-
