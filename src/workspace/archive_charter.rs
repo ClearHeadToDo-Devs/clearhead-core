@@ -52,8 +52,9 @@ use crate::workspace::MarkdownCharter;
 use crate::workspace::action_files::{completed_actions_path, read_actions};
 use crate::workspace::durability::{PendingBatch, WorkspaceLock, atomic_write, recover_pending};
 use crate::workspace::sidecar::{sidecar_path, stamp_charter_id};
-use crate::workspace::store::load_workspace;
-use crate::workspace::store::{WorkspaceError, resolve_workspace_layout};
+use crate::workspace::store::{
+    WorkspaceError, load_workspace, read_workspace, resolve_workspace_layout,
+};
 
 // ============================================================================
 // Public types
@@ -128,10 +129,7 @@ pub fn archive_charter(
     query: &str,
     opts: &ArchiveCharterOptions,
 ) -> Result<ArchiveCharterResult, ArchiveCharterError> {
-    let layout = resolve_workspace_layout(root);
-    let _lock = acquire_mutation_lock(&layout)?;
-    recover_pending(&layout.charter_root)?;
-    let charters = load_workspace(root)?;
+    let (_lock, charters) = prepare_archive_read(root, opts)?;
 
     let mc = select_archive_charter(&charters, query)?
         .ok_or_else(|| ArchiveCharterError::NotFound(query.to_string()))?
@@ -151,10 +149,7 @@ pub fn archive_terminal_charters(
     root: &Path,
     opts: &ArchiveCharterOptions,
 ) -> Result<Vec<ArchiveCharterResult>, ArchiveCharterError> {
-    let layout = resolve_workspace_layout(root);
-    let _lock = acquire_mutation_lock(&layout)?;
-    recover_pending(&layout.charter_root)?;
-    let charters = load_workspace(root)?;
+    let (_lock, charters) = prepare_archive_read(root, opts)?;
 
     let terminal_roots: Vec<MarkdownCharter> = charters
         .iter()
@@ -256,11 +251,11 @@ fn archive_many(
         // unless forced. Counting is the only reason we read the files — the
         // bytes themselves move verbatim, so there is no hydration to do.
         let open_count = match &acts_abs {
-            Some(p) if p.exists() => read_actions(p)?
+            Some(p) => read_actions(p)?
                 .iter()
                 .filter(|a| !matches!(a.state, ActionState::Completed | ActionState::Cancelled))
                 .count(),
-            _ => 0,
+            None => 0,
         };
         if open_count > 0 && !opts.force {
             return Err(ArchiveCharterError::OpenActions(current_name, open_count));
@@ -379,6 +374,20 @@ fn archive_many(
     })
 }
 
+fn prepare_archive_read(
+    root: &Path,
+    opts: &ArchiveCharterOptions,
+) -> Result<(Option<WorkspaceLock>, Vec<MarkdownCharter>), ArchiveCharterError> {
+    if opts.dry_run {
+        return Ok((None, read_workspace(root)?.charters));
+    }
+
+    let layout = resolve_workspace_layout(root);
+    let lock = acquire_mutation_lock(&layout)?;
+    recover_pending(&layout.charter_root)?;
+    Ok((Some(lock), load_workspace(root)?))
+}
+
 fn acquire_mutation_lock(
     layout: &crate::workspace::store::WorkspaceLayout,
 ) -> Result<WorkspaceLock, ArchiveCharterError> {
@@ -482,8 +491,8 @@ fn set_frontmatter_parent(content: &str, parent_uuid: &Uuid) -> Option<String> {
 /// Count the actions in an optional file, treating a missing file as empty.
 fn count_actions(path: &Option<PathBuf>) -> Result<usize, ArchiveCharterError> {
     match path {
-        Some(p) if p.exists() => Ok(read_actions(p)?.len()),
-        _ => Ok(0),
+        Some(p) => Ok(read_actions(p)?.len()),
+        None => Ok(0),
     }
 }
 
@@ -640,6 +649,108 @@ mod tests {
         second.id = Uuid::now_v7();
         let error = select_archive_charter(&[first, second], "work").unwrap_err();
         assert!(matches!(error, ArchiveCharterError::Ambiguous(_, _)));
+    }
+
+    #[test]
+    fn dry_run_reports_exact_action_counts_without_mutating_sources() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path().join("ws");
+        let charters_dir = root.join(".clearhead/charters");
+        std::fs::create_dir_all(&charters_dir).expect("create charters dir");
+        std::fs::write(
+            charters_dir.join("done.md"),
+            "---\nalias: done\nstate: Closed\n---\n# Done\n",
+        )
+        .expect("write charter");
+        std::fs::write(
+            charters_dir.join("done.actions"),
+            "[x] First #019f733d-45b2-7f21-bcad-5610887b7230\n\
+             [_] Second #019f733d-45c2-7dd2-91dc-8631f33c6b77\n",
+        )
+        .expect("write active history");
+        std::fs::write(
+            charters_dir.join("done.completed.actions"),
+            "[x] Older #019f733d-45d2-7dd2-91dc-8631f33c6b77\n",
+        )
+        .expect("write completed history");
+        let pending_source = charters_dir.join(".pending-source");
+        let pending_dest = charters_dir.join("replayed.actions");
+        let pending_journal = charters_dir.join(".pending");
+        std::fs::write(&pending_source, "[ ] Must not replay\n").unwrap();
+        std::fs::write(
+            &pending_journal,
+            format!("{}\t{}\n", pending_source.display(), pending_dest.display()),
+        )
+        .unwrap();
+
+        let result = archive_charter(
+            &root,
+            "done",
+            &ArchiveCharterOptions {
+                dry_run: true,
+                ..ArchiveCharterOptions::default()
+            },
+        )
+        .expect("dry-run should accept a closed charter with no open actions");
+
+        assert_eq!(result.primary_actions_swept, 2);
+        assert_eq!(result.completed_actions_swept, 1);
+        assert!(result.was_dry_run);
+        assert!(charters_dir.join("done.actions").exists());
+        assert!(charters_dir.join("done.completed.actions").exists());
+        assert!(pending_source.exists(), "dry-run must not replay the batch");
+        assert!(
+            pending_journal.exists(),
+            "dry-run must preserve the journal"
+        );
+        assert!(
+            !pending_dest.exists(),
+            "dry-run must not create destinations"
+        );
+        assert!(
+            !root.join(".clearhead/.clearhead.lock").exists(),
+            "dry-run must not create or rewrite the mutation lock"
+        );
+        assert!(!root.join(".clearhead/archive").exists());
+    }
+
+    #[test]
+    fn archive_rejects_open_actions_without_force() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path().join("ws");
+        let charters_dir = root.join(".clearhead/charters");
+        std::fs::create_dir_all(&charters_dir).expect("create charters dir");
+        std::fs::write(
+            charters_dir.join("done.md"),
+            "---\nalias: done\nstate: Closed\n---\n# Done\n",
+        )
+        .expect("write charter");
+        std::fs::write(charters_dir.join("done.actions"), "[ ] Still open\n")
+            .expect("write open action");
+
+        let error = archive_charter(
+            &root,
+            "done",
+            &ArchiveCharterOptions {
+                dry_run: true,
+                ..ArchiveCharterOptions::default()
+            },
+        )
+        .expect_err("open actions require an explicit force override");
+
+        assert!(matches!(error, ArchiveCharterError::OpenActions(_, 1)));
+        assert!(charters_dir.join("done.actions").exists());
+        assert!(!root.join(".clearhead/archive").exists());
+    }
+
+    #[test]
+    fn missing_action_sources_count_as_zero() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        assert_eq!(count_actions(&None).unwrap(), 0);
+        assert_eq!(
+            count_actions(&Some(temp.path().join("missing.actions"))).unwrap(),
+            0
+        );
     }
 
     #[test]

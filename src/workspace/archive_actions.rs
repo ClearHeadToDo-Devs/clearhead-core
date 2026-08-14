@@ -215,28 +215,16 @@ pub fn close_action_subtree(
     let mut active = read_actions(source_path)?;
     let mut completed = read_actions(&completed_path)?;
 
+    // The caller resolves aliases/names before entering this locked read-plan-apply
+    // boundary. Re-identify only by the resulting canonical UUID: falling back to
+    // mutable, non-unique display fields after reload could close the wrong action.
     let action_id = active
         .iter()
         .find(|action| action.id == selector.id)
-        .or_else(|| {
-            selector.alias.as_ref().and_then(|alias| {
-                active
-                    .iter()
-                    .find(|action| action.alias.as_deref() == Some(alias.as_str()))
-            })
-        })
-        .or_else(|| active.iter().find(|action| action.name == selector.name))
         .map(|action| action.id);
 
     let Some(action_id) = action_id else {
-        if completed.iter().any(|action| {
-            action.id == selector.id
-                || selector
-                    .alias
-                    .as_ref()
-                    .is_some_and(|alias| action.alias.as_deref() == Some(alias.as_str()))
-                || action.name == selector.name
-        }) {
+        if completed.iter().any(|action| action.id == selector.id) {
             return Ok(CloseActionResult {
                 action_id: selector.id,
                 closed_count: 0,
@@ -296,7 +284,12 @@ pub fn close_action_subtree(
 }
 
 fn validate_source_path(source_path: &Path, charter_root: &Path) -> Result<(), WorkspaceError> {
-    if !source_path.starts_with(charter_root)
+    let is_within_charters = source_path
+        .canonicalize()
+        .ok()
+        .zip(charter_root.canonicalize().ok())
+        .is_some_and(|(source, root)| source.starts_with(root));
+    if !is_within_charters
         || source_path
             .file_name()
             .and_then(|name| name.to_str())
@@ -544,6 +537,79 @@ mod tests {
         assert!(result.already_closed);
         assert_eq!(result.closed_count, 0);
         assert_eq!(read_actions(&completed).unwrap().len(), 1);
+    }
+
+    #[cfg(feature = "formatting")]
+    #[test]
+    fn close_reidentifies_only_by_canonical_uuid() {
+        let temp = tempfile::tempdir().unwrap();
+        let charters = temp.path().join("charters");
+        std::fs::create_dir_all(&charters).unwrap();
+        let source = charters.join("work.actions");
+        let mut active = action("duplicate name", ActionState::NotStarted, None);
+        active.alias = Some("duplicate-alias".to_string());
+        let mut completed = action("duplicate name", ActionState::Completed, None);
+        completed.alias = Some("duplicate-alias".to_string());
+        std::fs::write(&source, render(std::slice::from_ref(&active)).unwrap()).unwrap();
+        std::fs::write(
+            completed_actions_path(&source),
+            render(std::slice::from_ref(&completed)).unwrap(),
+        )
+        .unwrap();
+
+        let missing_id = Uuid::now_v7();
+        let error = close_action_subtree(
+            temp.path(),
+            &source,
+            &CloseActionSelector {
+                id: missing_id,
+                alias: active.alias.clone(),
+                name: active.name.clone(),
+            },
+            ActionState::Completed,
+            Local::now(),
+        )
+        .unwrap_err();
+
+        assert!(
+            matches!(error, WorkspaceError::Actions(message) if message.contains(&missing_id.to_string()))
+        );
+        assert_eq!(read_actions(&source).unwrap(), vec![active]);
+        assert_eq!(
+            read_actions(&completed_actions_path(&source)).unwrap(),
+            vec![completed]
+        );
+    }
+
+    #[test]
+    fn source_path_validation_rejects_every_non_active_actions_shape() {
+        let temp = tempfile::tempdir().unwrap();
+        let charter_root = temp.path().join("charters");
+        std::fs::create_dir_all(&charter_root).unwrap();
+        let valid = charter_root.join("work.actions");
+        let outside = temp.path().join("outside.actions");
+        let completed = charter_root.join("work.completed.actions");
+        let wrong_extension = charter_root.join("work.txt");
+        for path in [&valid, &outside, &completed, &wrong_extension] {
+            std::fs::write(path, "").unwrap();
+        }
+
+        assert!(validate_source_path(&valid, &charter_root).is_ok());
+        for invalid in [
+            outside,
+            completed,
+            wrong_extension,
+            charter_root.join("../outside.actions"),
+        ] {
+            assert!(
+                matches!(
+                    validate_source_path(&invalid, &charter_root),
+                    Err(WorkspaceError::InvalidPath(path)) if path == invalid
+                ),
+                "{} must not be accepted as an active action source",
+                invalid.display()
+            );
+        }
     }
 
     #[cfg(feature = "formatting")]

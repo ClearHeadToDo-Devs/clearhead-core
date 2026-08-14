@@ -828,11 +828,9 @@ fn ensure_active_occurrences(
         // Clone the plan list so we can mutate this charter's actions in the loop.
         let plans = charters[charter_idx].plans.clone();
         for plan in &plans {
-            if plan.plan.external_id.is_none() || plan.plan.recurrence.is_none() {
-                continue; // need a UID for identity; one-shots aren't tokened series
-            }
-
-            // Skip if this plan already has a live (unresolved) token anywhere.
+            // `stage_plan_token` is the single authority for whether the Plan can
+            // produce a token (it requires a UID and an active recurring slot).
+            // This loop only skips a Plan when its live token already exists.
             let has_live_token = links.iter().any(|(occ_id, (pid, _slot))| {
                 *pid == plan.plan.id
                     && charters.iter().any(|c| {
@@ -1466,6 +1464,72 @@ mod tests {
         assert!(output.contains("BEGIN:VALARM"));
     }
 
+    #[test]
+    fn imported_vtodo_preserves_every_owned_action_field() {
+        let completed_at = t(30);
+        let source = VTodoAction {
+            id: Uuid::now_v7(),
+            uid: "foreign@example.com".to_string(),
+            scheduled_at: Some(t(20)),
+            due_date: Some(t(25)),
+            state: ActionState::Completed,
+            title: "Imported title".to_string(),
+            description: Some("Imported description".to_string()),
+            priority: Some(3),
+            contexts: Some(vec!["errands".to_string(), "home".to_string()]),
+            completed_at: Some(completed_at),
+        };
+
+        let action = action_from_vtodo(&source);
+
+        assert_eq!(
+            action,
+            Action {
+                id: source.id,
+                state: source.state,
+                name: source.title,
+                description: source.description,
+                priority: source.priority,
+                contexts: source.contexts,
+                scheduled_at: source.scheduled_at,
+                due_date: source.due_date,
+                completed_at: Some(completed_at),
+                ..Action::default()
+            }
+        );
+    }
+
+    #[test]
+    fn calendar_imports_contribute_to_the_take_calendar_tally() {
+        let report = SyncReport {
+            imports: vec![SyncImport {
+                action: VTodoAction {
+                    id: Uuid::now_v7(),
+                    uid: "foreign@example.com".to_string(),
+                    scheduled_at: None,
+                    due_date: None,
+                    state: ActionState::NotStarted,
+                    title: "Imported".to_string(),
+                    description: None,
+                    priority: None,
+                    contexts: None,
+                    completed_at: None,
+                },
+                plans_dir: PathBuf::from("next"),
+                charter_name: "workspace".to_string(),
+            }],
+            ..SyncReport::default()
+        };
+
+        assert_eq!(
+            report.tally(),
+            SyncTally {
+                take_calendar: 1,
+                ..SyncTally::default()
+            }
+        );
+    }
+
     // ---- ensure_active_occurrences: single-token stamping ----
 
     /// One charter holding one weekly recurring plan, no materialized actions yet.
@@ -1553,6 +1617,53 @@ mod tests {
 
     #[cfg(feature = "formatting")]
     #[test]
+    fn each_recurring_plan_gets_its_own_live_token() {
+        let (mut charters, first_plan_id, _) = weekly_charter(t(5));
+        let mut second_plan = charters[0].plans[0].clone();
+        second_plan.plan.id = Uuid::now_v7();
+        second_plan.plan.external_id = Some("second-review@example.com".to_string());
+        second_plan.path = PathBuf::from("second-review.ics");
+        let second_plan_id = second_plan.plan.id;
+        charters[0].plans.push(second_plan);
+
+        let mut store = PlansSyncStore::new(Path::new("/tmp/plans"));
+        let mut dirty = HashSet::new();
+        let root = Path::new("/ws/.clearhead/charters");
+        let data_root = Path::new("/ws/.clearhead");
+        let first_plan = charters[0].plans[0].clone();
+        stage_plan_token(
+            &mut charters[0],
+            &mut store,
+            &first_plan,
+            None,
+            t(20),
+            root,
+            data_root,
+        )
+        .unwrap()
+        .expect("first plan token should stamp");
+
+        let stamped = ensure_active_occurrences(
+            &mut charters,
+            &mut store,
+            &mut dirty,
+            root,
+            data_root,
+            t(20),
+        )
+        .unwrap();
+
+        assert_eq!(stamped, 1, "only the second plan still needs a token");
+        let linked_plans: HashSet<_> = store
+            .occurrence_links()
+            .into_values()
+            .map(|(plan_id, _)| plan_id)
+            .collect();
+        assert_eq!(linked_plans, HashSet::from([first_plan_id, second_plan_id]));
+    }
+
+    #[cfg(feature = "formatting")]
+    #[test]
     fn resolved_token_advances_by_jump_forward() {
         // Safety net: a token resolved outside the completion hook (a raw `[x]`
         // edit) reads as not-live, so a later sync stamps the next slot >= now,
@@ -1568,6 +1679,13 @@ mod tests {
             .unwrap();
         let first_slot = charters[0].actions[0].action.scheduled_at.unwrap();
         charters[0].actions[0].action.state = ActionState::Completed; // resolved by hand
+        charters[0].actions.push(SourcedAction {
+            action: Action {
+                name: "unrelated open action".to_string(),
+                ..Action::default()
+            },
+            source_metadata: None,
+        });
 
         let now_later = first_slot + chrono::Duration::days(1);
         let n = ensure_active_occurrences(
@@ -1580,15 +1698,15 @@ mod tests {
         )
         .unwrap();
         assert_eq!(n, 1, "no live token → the next slot is stamped");
-        assert_eq!(charters[0].actions.len(), 2);
-        let live: Vec<_> = charters[0]
+        assert_eq!(charters[0].actions.len(), 3);
+        let live_tokens: Vec<_> = charters[0]
             .actions
             .iter()
-            .filter(|sa| !is_resolved(sa.action.state))
+            .filter(|sa| sa.action.scheduled_at.is_some() && !is_resolved(sa.action.state))
             .collect();
-        assert_eq!(live.len(), 1, "exactly one live token at any time");
+        assert_eq!(live_tokens.len(), 1, "exactly one live token at any time");
         assert!(
-            live[0].action.scheduled_at.unwrap() > first_slot,
+            live_tokens[0].action.scheduled_at.unwrap() > first_slot,
             "advanced forward, not backward"
         );
     }
