@@ -25,7 +25,7 @@ use super::sync_store::{
 use crate::domain::{Action, ActionState, DomainModel};
 use crate::workspace::action_files::completed_actions_path;
 use crate::workspace::actions::format::require_actions_formatting;
-use crate::workspace::charter::{MarkdownCharter, implicit_charter};
+use crate::workspace::charter::MarkdownCharter;
 use crate::workspace::durability::{PendingBatch, WorkspaceLock, atomic_write, recover_pending};
 use crate::workspace::sidecar::{
     ActionMeta, CHARTER_METADATA_SCHEMA_URL, OccurrenceSnapshot, read_sidecar, sidecar_path,
@@ -440,7 +440,7 @@ pub fn apply_sync(
     let mut applied = AppliedSync::default();
 
     for import in &report.imports {
-        let charter_idx = locate_or_create_import_charter(&mut workspace.charters, import);
+        let charter_idx = locate_import_charter(&workspace.charters, import)?;
         let actions_relative = import_actions_file(&mut workspace.charters[charter_idx], import);
         let action = action_from_vtodo(&import.action);
         workspace.charters[charter_idx].actions.push(SourcedAction {
@@ -968,21 +968,19 @@ fn parse_occurrence_key(key: &str) -> Option<DateTime<Local>> {
         .map(|naive| naive.and_utc().with_timezone(&Local))
 }
 
-fn locate_or_create_import_charter(
-    charters: &mut Vec<MarkdownCharter>,
+fn locate_import_charter(
+    charters: &[MarkdownCharter],
     import: &SyncImport,
-) -> usize {
-    if let Some(index) = charters
+) -> Result<usize, WorkspaceError> {
+    charters
         .iter()
-        .position(|charter| charter.plans_dir.as_deref() == Some(import.plans_dir.as_path()))
-    {
-        return index;
-    }
-
-    let mut charter = MarkdownCharter::from(implicit_charter(&import.charter_name));
-    charter.plans_dir = Some(import.plans_dir.clone());
-    charters.push(charter);
-    charters.len() - 1
+        .position(|charter| charter.plans_dir == import.plans_dir)
+        .ok_or_else(|| {
+            WorkspaceError::Parse(format!(
+                "calendar collection '{}' has no owning charter; run `clearhead doctor`",
+                import.plans_dir.display()
+            ))
+        })
 }
 
 fn import_actions_file(charter: &mut MarkdownCharter, import: &SyncImport) -> PathBuf {
@@ -1508,7 +1506,7 @@ mod tests {
             actions: Vec::new(),
             md_file: None,
             actions_file: Some(PathBuf::from("health.actions")),
-            plans_dir: None,
+            plans_dir: PathBuf::from("weekly"),
         };
         (vec![charter], plan_id, uid)
     }

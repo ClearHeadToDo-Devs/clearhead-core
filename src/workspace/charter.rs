@@ -44,7 +44,9 @@ pub struct MarkdownCharter {
 
     pub md_file: Option<PathBuf>,
     pub actions_file: Option<PathBuf>,
-    pub plans_dir: Option<PathBuf>,
+    /// Canonical collection path relative to the configured plans root.
+    /// Calculated from the charter anchor; the directory need not exist.
+    pub plans_dir: PathBuf,
 }
 
 impl From<MarkdownCharter> for Charter {
@@ -65,6 +67,15 @@ impl From<MarkdownCharter> for Charter {
 
 impl From<Charter> for MarkdownCharter {
     fn from(c: Charter) -> MarkdownCharter {
+        let collection_key = c.alias.as_deref().unwrap_or(&c.title);
+        let plans_dir = match c.parent.as_deref() {
+            Some(parent) => PathBuf::from(format!(
+                "{}-{}",
+                crate::workspace::slugify(parent),
+                crate::workspace::slugify(collection_key)
+            )),
+            None => PathBuf::from(crate::workspace::slugify(collection_key)),
+        };
         MarkdownCharter {
             id: c.id,
             title: c.title,
@@ -93,7 +104,7 @@ impl From<Charter> for MarkdownCharter {
                 .collect(),
             md_file: None,
             actions_file: None,
-            plans_dir: None,
+            plans_dir,
         }
     }
 }

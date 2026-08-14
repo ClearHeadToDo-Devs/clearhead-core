@@ -23,17 +23,22 @@ pub(crate) fn infer_charter_name_for_workspace(
 /// Workspace construction assigns this once for every charter. Consumers then
 /// attach calendar resources by exact path instead of reconstructing ownership
 /// from aliases, titles, or action-file basenames.
-pub(crate) fn infer_plans_collection(relative_path: &Path) -> Option<PathBuf> {
-    let filename = relative_path.file_name()?.to_str()?;
+pub fn charter_collection_from_anchor(relative_path: &Path) -> PathBuf {
+    let filename = relative_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .expect("a discovered charter anchor has a UTF-8 filename");
     let components: Vec<_> = relative_path.components().collect();
 
     if components.len() == 1 && is_primary_filename(filename) {
-        return Some(PathBuf::from("next"));
+        return PathBuf::from("next");
     }
 
     let named_owner;
     let owner = if is_primary_filename(filename) {
-        relative_path.parent()?
+        relative_path
+            .parent()
+            .expect("a nested primary charter anchor has a parent")
     } else {
         named_owner = relative_path.with_extension("");
         &named_owner
@@ -47,7 +52,11 @@ pub(crate) fn infer_plans_collection(relative_path: &Path) -> Option<PathBuf> {
         .collect::<Vec<_>>()
         .join("-");
 
-    (!slug.is_empty()).then(|| PathBuf::from(slug))
+    assert!(
+        !slug.is_empty(),
+        "a charter anchor produces a collection path"
+    );
+    PathBuf::from(slug)
 }
 
 /// Infer the charter name from a relative file path.
@@ -173,24 +182,20 @@ mod tests {
     #[test]
     fn plans_collection_is_derived_from_the_workspace_anchor() {
         assert_eq!(
-            infer_plans_collection(Path::new("next.actions")),
-            Some(PathBuf::from("next"))
+            charter_collection_from_anchor(Path::new("next.actions")),
+            PathBuf::from("next")
         );
         assert_eq!(
-            infer_plans_collection(Path::new("linux/next.actions")),
-            Some(PathBuf::from("linux"))
+            charter_collection_from_anchor(Path::new("linux/next.actions")),
+            PathBuf::from("linux")
         );
         assert_eq!(
-            infer_plans_collection(Path::new("work/feature/next.actions")),
-            Some(PathBuf::from("work-feature"))
+            charter_collection_from_anchor(Path::new("work/feature/next.actions")),
+            PathBuf::from("work-feature")
         );
         assert_eq!(
-            infer_plans_collection(Path::new("inbox.actions")),
-            Some(PathBuf::from("inbox"))
-        );
-        assert_eq!(
-            infer_plans_collection(Path::new("next.actions")),
-            Some(PathBuf::from("next"))
+            charter_collection_from_anchor(Path::new("inbox.actions")),
+            PathBuf::from("inbox")
         );
     }
 

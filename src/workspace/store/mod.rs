@@ -37,7 +37,7 @@ pub use load::{
     load_workspace_with_plans, load_workspaces, read_workspace, read_workspace_with_plans,
 };
 pub use manifest::{ManifestSourceType, WorkspaceManifestEntry, collect_workspace_manifest};
-pub use pathing::{infer_charter_name, infer_parent_charter_name};
+pub use pathing::{charter_collection_from_anchor, infer_charter_name, infer_parent_charter_name};
 pub use save::save_domain_model;
 
 /// Returns the workspace root directory (`.clearhead/` for project layout).

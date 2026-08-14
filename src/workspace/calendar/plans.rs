@@ -48,20 +48,9 @@ pub fn plan_file_name(plan: &Plan) -> String {
 
 /// Relative plans directory for a charter under `plans_root`.
 ///
-/// Workspace-loaded charters already carry this ownership. The fallback exists
-/// only for synthetic authoring inputs that have not passed through workspace
-/// construction yet.
+/// Return collection ownership established when the charter was constructed.
 pub fn charter_plans_dir_relative(charter: &MarkdownCharter) -> PathBuf {
-    if let Some(path) = &charter.plans_dir {
-        return path.clone();
-    }
-
-    let key = charter.alias.as_deref().unwrap_or(&charter.title);
-    let dir = match charter.parent.as_deref() {
-        Some(parent) => format!("{}-{}", slugify(parent), slugify(key)),
-        None => slugify(key),
-    };
-    PathBuf::from(dir)
+    charter.plans_dir.clone()
 }
 
 /// Absolute output path for a plan's `.ics` file under `plans_root`.
@@ -313,13 +302,12 @@ mod tests {
         };
         assert_eq!(plan_file_name(&plan), "weekly-review-and-notes.ics");
 
-        let mut top = MarkdownCharter::from(implicit_charter("Team & Ops"));
-        top.plans_dir = None;
+        let top = MarkdownCharter::from(implicit_charter("Team & Ops"));
         assert_eq!(charter_plans_dir_relative(&top), Path::new("team-and-ops"));
 
-        let mut child = MarkdownCharter::from(implicit_charter("Release Notes"));
-        child.parent = Some("Team & Ops".to_string());
-        child.plans_dir = None;
+        let mut child_domain = implicit_charter("Release Notes");
+        child_domain.parent = Some("Team & Ops".to_string());
+        let child = MarkdownCharter::from(child_domain);
         assert_eq!(
             charter_plans_dir_relative(&child),
             Path::new("team-and-ops-release-notes")
@@ -329,7 +317,8 @@ mod tests {
             Path::new("/plans/team-and-ops-release-notes/weekly-review-and-notes.ics")
         );
 
-        top.plans_dir = Some(PathBuf::from("next"));
+        let mut top = top;
+        top.plans_dir = PathBuf::from("next");
         assert_eq!(charter_plans_dir_relative(&top), Path::new("next"));
     }
 

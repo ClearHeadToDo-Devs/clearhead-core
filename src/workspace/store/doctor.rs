@@ -47,13 +47,24 @@ impl Diagnosis {
 /// the loader's per-file findings plus doctor's cross-file ones.
 pub fn diagnose(root: &Path, plan_override: Option<&Path>) -> Result<Diagnosis, WorkspaceError> {
     let read = read_workspace_with_plans(root, plan_override)?;
-    Ok(diagnose_read(root, &read))
+    let layout = resolve_workspace_layout(root);
+    let plans_root = plan_override.unwrap_or(&layout.plans_root);
+    Ok(diagnose_read_with_plans(root, &read, plans_root))
 }
 
 /// Like [`diagnose`], but over a workspace the caller already read — for
 /// read-only surfaces (e.g. `debug`) that need the workspace *and* its
 /// diagnosis without reading twice.
 pub fn diagnose_read(root: &Path, read: &super::load::WorkspaceRead) -> Diagnosis {
+    let layout = resolve_workspace_layout(root);
+    diagnose_read_with_plans(root, read, &layout.plans_root)
+}
+
+fn diagnose_read_with_plans(
+    root: &Path,
+    read: &super::load::WorkspaceRead,
+    plans_root: &Path,
+) -> Diagnosis {
     let layout = resolve_workspace_layout(root);
     let mut findings = read.findings.clone();
 
@@ -87,8 +98,7 @@ pub fn diagnose_read(root: &Path, read: &super::load::WorkspaceRead) -> Diagnosi
         check_orphaned_sidecars(&layout.charter_root, &known_action_ids, &mut findings);
     }
     check_sidecar_created_sanity(&layout.charter_root, charters, &mut findings);
-    check_charterless_plans(charters, &mut findings);
-    check_durability_residue(&layout.charter_root, &layout.plans_root, &mut findings);
+    check_durability_residue(&layout.charter_root, plans_root, &mut findings);
 
     findings.sort_by(|a, b| {
         b.severity
@@ -539,28 +549,6 @@ fn check_orphaned_sidecars(
                 "orphaned-sidecar",
                 relative,
                 format!("sidecar has no matching {stem}.actions file"),
-            ));
-        }
-    }
-}
-
-/// A `plans/<slug>/` directory that matched no charter — the loader invents
-/// an implicit charter for it rather than telling anyone (load.rs).
-fn check_charterless_plans(charters: &[MarkdownCharter], findings: &mut Vec<Finding>) {
-    for charter in charters {
-        if !charter.plans.is_empty() && charter.actions_file.is_none() && charter.md_file.is_none()
-        {
-            let dir = charter
-                .plans_dir
-                .clone()
-                .unwrap_or_else(|| PathBuf::from(&charter.title));
-            findings.push(Finding::warning(
-                "charterless-plans",
-                dir,
-                format!(
-                    "plans directory matches no charter; an implicit charter '{}' is invented on load",
-                    charter.title
-                ),
             ));
         }
     }

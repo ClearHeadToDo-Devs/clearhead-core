@@ -1,8 +1,8 @@
 use super::discovery::{discover_action_files, discover_charter_files};
 use super::findings::Finding;
 use super::pathing::{
-    infer_charter_name_for_workspace, infer_parent_charter_name_for_workspace,
-    infer_plans_collection,
+    charter_collection_from_anchor, infer_charter_name_for_workspace,
+    infer_parent_charter_name_for_workspace,
 };
 use super::{WorkspaceError, resolve_workspace_layout};
 use crate::domain::{Charter, DomainModel};
@@ -13,8 +13,7 @@ use crate::workspace::calendar::ics::parse_ics_file;
 use crate::workspace::calendar::plans::collect_plan_files_in;
 use crate::workspace::calendar::sync_store::read_plans_sync_store;
 use crate::workspace::charter::{
-    MarkdownCharter, frontmatter_has_id_key, frontmatter_has_parent_key, implicit_charter,
-    parse_charter,
+    MarkdownCharter, frontmatter_has_id_key, frontmatter_has_parent_key, parse_charter,
 };
 use crate::workspace::durability::recover_pending;
 use crate::workspace::manifest::WorkspaceManifest;
@@ -300,7 +299,7 @@ pub fn read_workspace_with_plans(
         );
         let mut mc = MarkdownCharter::from(base);
         mc.actions_file = Some(relative.clone());
-        mc.plans_dir = infer_plans_collection(&relative);
+        mc.plans_dir = charter_collection_from_anchor(&relative);
         mc.actions = sourced.clone();
 
         // The sidecar at the conventional path is still checked for corruption,
@@ -414,13 +413,10 @@ pub fn read_workspace_with_plans(
                     implicit.state = explicit.state;
                 }
                 implicit.md_file = Some(md_relative.clone());
-                if implicit.plans_dir.is_none() {
-                    implicit.plans_dir = infer_plans_collection(&md_relative);
-                }
             })
             .or_insert_with(|| {
                 let mut mc = MarkdownCharter::from(explicit);
-                mc.plans_dir = infer_plans_collection(&md_relative);
+                mc.plans_dir = charter_collection_from_anchor(&md_relative);
                 mc.md_file = Some(md_relative);
                 mc
             });
@@ -505,14 +501,32 @@ pub fn read_workspace_with_plans(
 
     let mut charters_by_name = charters;
 
-    // Load ICS schedules: each recurring component becomes a Plan in the matching charter.
-    // entry.relative_path is relative to plans_root (e.g. "inbox/uid.ics").
-    // entry.charter_name is the slug used as the directory name (e.g. "work-feature").
-    // Match against charters via computed slug: parent-alias + "-" + alias.
-    // A configured plan_path overrides where the .ics live; otherwise use the
-    // workspace's own plans/ directory.
+    // Attach calendar resources to the collection ownership established while
+    // constructing charters above. The configured plan_path changes only the
+    // physical root; relative collection ownership remains workspace-derived.
     let plans_root = plan_override.unwrap_or(&layout.plans_root);
+    let mut reported_unowned =
+        report_unowned_plan_collections(plans_root, &charters_by_name, &mut findings);
     for entry in collect_plan_files_in(plans_root, layout.project_root_charter.as_deref())? {
+        let plans_dir = entry
+            .relative_path
+            .parent()
+            .map(std::path::Path::to_path_buf)
+            .ok_or_else(|| WorkspaceError::InvalidPath(entry.relative_path.clone()))?;
+        let Some(charter) = charters_by_name
+            .values_mut()
+            .find(|charter| charter.plans_dir == plans_dir)
+        else {
+            if reported_unowned.insert(plans_dir.clone()) {
+                findings.push(Finding::violation(
+                    "unowned-plans-collection",
+                    &plans_dir,
+                    "calendar collection has no owning charter; resources are quarantined. `clearhead doctor --fix` can remove the local collection, which may propagate deletion through vdirsyncer",
+                ));
+            }
+            continue;
+        };
+
         let plans = match parse_ics_file(&entry.path) {
             Ok(plans) => plans,
             Err(e) => {
@@ -524,30 +538,7 @@ pub fn read_workspace_with_plans(
                 continue;
             }
         };
-        if plans.is_empty() {
-            continue;
-        }
-        // plans_dir: the charter's subdirectory relative to plans_root (e.g. "inbox")
-        let plans_dir = entry
-            .relative_path
-            .parent()
-            .map(std::path::Path::to_path_buf)
-            .ok_or_else(|| WorkspaceError::InvalidPath(entry.relative_path.clone()))?;
-        if let Some(charter) = charters_by_name
-            .values_mut()
-            .find(|charter| charter.plans_dir.as_deref() == Some(plans_dir.as_path()))
-        {
-            charter.plans.extend(plans);
-        } else {
-            let mut charter = MarkdownCharter::from(implicit_charter(&entry.charter_name));
-            charter.parent = entry.inferred_parent.clone();
-            charter.plans_dir = Some(plans_dir.clone());
-            charter.plans = plans;
-            path_for_name
-                .entry(entry.charter_name.clone())
-                .or_insert(plans_dir);
-            charters_by_name.insert(entry.charter_name.clone(), charter);
-        }
+        charter.plans.extend(plans);
     }
 
     let mut charters: Vec<MarkdownCharter> = charters_by_name.into_values().collect();
@@ -555,6 +546,42 @@ pub fn read_workspace_with_plans(
     hydrate_occurrence_links(&mut charters, root, plans_root);
 
     Ok(WorkspaceRead { charters, findings })
+}
+
+fn report_unowned_plan_collections(
+    plans_root: &Path,
+    charters: &HashMap<String, MarkdownCharter>,
+    findings: &mut Vec<Finding>,
+) -> std::collections::HashSet<PathBuf> {
+    let owned: std::collections::HashSet<&Path> = charters
+        .values()
+        .map(|charter| charter.plans_dir.as_path())
+        .collect();
+    let mut reported = std::collections::HashSet::new();
+    let Ok(entries) = std::fs::read_dir(plans_root) else {
+        return reported;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Some(relative) = path.strip_prefix(plans_root).ok() else {
+            continue;
+        };
+        let hidden = relative
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.starts_with('.'));
+        if hidden || !path.is_dir() || owned.contains(relative) {
+            continue;
+        }
+        let relative = relative.to_path_buf();
+        reported.insert(relative.clone());
+        findings.push(Finding::violation(
+            "unowned-plans-collection",
+            relative,
+            "calendar collection has no owning charter; resources are quarantined. `clearhead doctor --fix` can remove the local collection, which may propagate deletion through vdirsyncer",
+        ));
+    }
+    reported
 }
 
 /// Hydrate the live occurrence→plan linkage onto materialized occurrence tokens.

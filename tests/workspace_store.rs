@@ -3,6 +3,7 @@
 //! These tests exercise the full path: `.actions` files on disk → `DomainModel` → back to disk.
 //! Each test creates an isolated temp workspace so there are no shared-state concerns.
 
+use clearhead_core::workspace::read_workspace;
 use clearhead_core::{
     ManifestSourceType, collect_workspace_manifest, load_domain_model, load_workspace,
     render_occurrences,
@@ -267,7 +268,7 @@ fn workspace_construction_assigns_collection_ownership_without_ics_resources() {
         .map(|charter| {
             (
                 charter.actions_file.as_deref().unwrap(),
-                charter.plans_dir.as_deref().unwrap(),
+                charter.plans_dir.as_path(),
             )
         })
         .collect();
@@ -283,6 +284,34 @@ fn workspace_construction_assigns_collection_ownership_without_ics_resources() {
     assert_eq!(
         ownership.get(Path::new("work/feature/next.actions")),
         Some(&Path::new("work-feature"))
+    );
+}
+
+#[test]
+fn unowned_calendar_collection_is_quarantined_instead_of_creating_a_charter() {
+    let (_outer, project) = make_named_project(
+        "my-project",
+        &[(
+            "next.actions",
+            "[ ] Root task #01951111-0000-7000-0000-000000000056\n",
+        )],
+    );
+    let unknown = project.join(".clearhead/plans/surprise");
+    fs::create_dir_all(&unknown).expect("create unowned collection");
+    fs::write(
+        unknown.join("task.ics"),
+        "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VTODO\r\nUID:surprise\r\nSUMMARY:Surprise\r\nEND:VTODO\r\nEND:VCALENDAR\r\n",
+    )
+    .expect("write unowned resource");
+
+    let read = read_workspace(&project).expect("read failed");
+    assert_eq!(read.charters.len(), 1, "must not invent a charter");
+    assert!(
+        read.findings.iter().any(|finding| {
+            finding.code == "unowned-plans-collection" && finding.path == Path::new("surprise")
+        }),
+        "unowned collection should be a typed finding: {:?}",
+        read.findings
     );
 }
 

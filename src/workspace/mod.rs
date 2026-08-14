@@ -67,10 +67,10 @@ pub use sidecar::{
 pub use detection::check_for_workspace;
 pub use store::{
     Diagnosis, Finding, FindingSeverity, ManifestSourceType, Workspace, WorkspaceError,
-    WorkspaceManifestEntry, WorkspaceRead, charter_root, collect_workspace_manifest, diagnose,
-    diagnose_read, infer_charter_name, infer_parent_charter_name, list_action_files,
-    load_domain_model, load_domain_model_with_plans, load_workspace, load_workspace_with_plans,
-    load_workspaces, plans_root, read_workspace, read_workspace_with_plans, save_domain_model,
-    workspace_data_root,
+    WorkspaceManifestEntry, WorkspaceRead, charter_collection_from_anchor, charter_root,
+    collect_workspace_manifest, diagnose, diagnose_read, infer_charter_name,
+    infer_parent_charter_name, list_action_files, load_domain_model, load_domain_model_with_plans,
+    load_workspace, load_workspace_with_plans, load_workspaces, plans_root, read_workspace,
+    read_workspace_with_plans, save_domain_model, workspace_data_root,
 };
 pub use templates::{instantiate_template, resolve_template};
