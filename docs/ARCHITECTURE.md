@@ -4,18 +4,14 @@ Attempts have been made to make the CLI as thin as possible.
 
 We do this by making many of the _core_ functionalities availabile through the `clearhead-core` crate, which is a shared Rust library that handles all shared concerns between this project and other projects that work with the workspaces. This allows us to keep the CLI focused on the user interface and how it leverages core functionality as it becomes available.
 
-This allows for a layer of control between core and the cli but also allows the
-cli to own how the different possibilities become well
+This allows for a layer of control between core and the cli but also allows the cli to own how the different possibilities become well
 
 ## Conceptual Model
 
 The **Rust struct (IR) is the canonical representation**. Everything else is a view or persistence mechanism.
 
 - Workspace is all the plaintext files that users interact with directly. These files are the durable source of truth and are parsed into the IR.
-- analytics tools such as our own graphd are expected to read the workspace
-files like any other consumer to get their information, which is why much of
-this functionality is within core so that all tools can leverage the same
-language of configuration and workspace layout
+- analytics tools such as our own graphd are expected to read the workspace files like any other consumer to get their information, which is why much of this functionality is within core so that all tools can leverage the same language of configuration and workspace layout
 
 ## Workspace Architecture
 
@@ -43,9 +39,7 @@ In particular, its important to know how the different domain models translate t
 - `Charters` -> `.md` files within the workspace root or any subdirectory and is written according to the [Charter File Specification][Charter File Specification]
 - `Plans` -> `.ics` files that conform to the VTODO standard
 - `Planned Acts` -> `.actions` files that conform to the action file specification
-- `Sidecar` -> finally, we have a data sidecar in the form of a JSON that is
-intended to capture data that does not currently belong in the Actions DSL and
-scoped to one sidecar per charter
+- `Sidecar` -> finally, we have a data sidecar in the form of a JSON that is intended to capture data that does not currently belong in the Actions DSL and scoped to one sidecar per charter
 
 These four file formats come together to allow us to form and update the `DomainModel` in memory, which will enable the core of what we are doing here
 
@@ -82,7 +76,4 @@ Project-local workspaces (those with a `.clearhead/` directory at the project ro
 
 ## Reference
 
-[Process Specification]: https://github.com/ClearHeadToDo-Devs/specifications/blob/master/process.md
-[Naming Conventions]: https://github.com/ClearHeadToDo-Devs/specifications/blob/master/naming_conventions.md
-[Charter File Specification]: https://github.com/ClearHeadToDo-Devs/specifications/blob/master/charters.md
-[Objectives File Specification]: https://github.com/ClearHeadToDo-Devs/specifications/blob/master/objectives.md
+[Process Specification]: https://github.com/ClearHeadToDo-Devs/specifications/blob/master/process.md [Naming Conventions]: https://github.com/ClearHeadToDo-Devs/specifications/blob/master/naming_conventions.md [Charter File Specification]: https://github.com/ClearHeadToDo-Devs/specifications/blob/master/charters.md [Objectives File Specification]: https://github.com/ClearHeadToDo-Devs/specifications/blob/master/objectives.md

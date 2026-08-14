@@ -1,15 +1,12 @@
 # ClearHead Core
 
-Shared Rust library implementing ClearHead specifications for reuse by clients
-without requiring implementation coordination.
+Shared Rust library implementing ClearHead specifications for reuse by clients without requiring implementation coordination.
 
 ## Overview
 
-ClearHead Core is the foundational library for the ClearHead ecosystem. It
-provides shared logic for managing actions, plans, charters, and objectives.
+ClearHead Core is the foundational library for the ClearHead ecosystem. It provides shared logic for managing actions, plans, charters, and objectives.
 
-The workspace backend is currently the only implementation. Future backends,
-such as SQLite, can be introduced as explicit capabilities.
+The workspace backend is currently the only implementation. Future backends, such as SQLite, can be introduced as explicit capabilities.
 
 ## Features
 
@@ -22,8 +19,7 @@ such as SQLite, can be introduced as explicit capabilities.
 
 This makes it suitable for use in:
 
-- CLI tools such as
-  [clearhead-cli](https://github.com/ClearHeadToDo-Devs/clearhead-cli)
+- CLI tools such as [clearhead-cli](https://github.com/ClearHeadToDo-Devs/clearhead-cli)
 - LSP servers
 - Web services and APIs
 - WebAssembly (WASM) environments
@@ -32,18 +28,13 @@ This makes it suitable for use in:
 
 ## Cargo features
 
-The default `formatting` feature provides canonical `.actions` source formatting
-through Topiary. Clients that write or format action files, including the CLI
-and LSP, should enable it explicitly. Read-only consumers can disable default
-features to avoid Topiary and its async runtime dependency closure:
+The default `formatting` feature provides canonical `.actions` source formatting through Topiary. Clients that write or format action files, including the CLI and LSP, should enable it explicitly. Read-only consumers can disable default features to avoid Topiary and its async runtime dependency closure:
 
 ```toml
 clearhead_core = { version = "0.2.0", default-features = false }
 ```
 
-Without `formatting`, parsing, workspace loading, and domain operations remain
-available, while attempts to format `.actions` source return a capability
-error. JSON and XML serialization do not require the feature.
+Without `formatting`, parsing, workspace loading, and domain operations remain available, while attempts to format `.actions` source return a capability error. JSON and XML serialization do not require the feature.
 
 ## Usage
 
@@ -62,12 +53,9 @@ MIT License - see [LICENSE](LICENSE) file for details.
 
 - [clearhead-cli](https://github.com/ClearHeadToDo-Devs/clearhead-cli) — CLI client
 - [clearhead-lsp](https://github.com/ClearHeadToDo-Devs/clearhead-lsp) — LSP server
-- [tree-sitter-actions](https://github.com/ClearHeadToDo-Devs/tree-sitter-actions)
-  — `.actions` parser
-- [ontology](https://github.com/ClearHeadToDo-Devs/ontology) — BFO/CCO-aligned
-  ontology
-- [specifications](https://github.com/ClearHeadToDo-Devs/specifications) — file
-  format specifications
+- [tree-sitter-actions](https://github.com/ClearHeadToDo-Devs/tree-sitter-actions) — `.actions` parser
+- [ontology](https://github.com/ClearHeadToDo-Devs/ontology) — BFO/CCO-aligned ontology
+- [specifications](https://github.com/ClearHeadToDo-Devs/specifications) — file format specifications
 
 ## Links
 
