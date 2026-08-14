@@ -52,41 +52,57 @@ fn is_escapable(c: char) -> bool {
 
 /// Escape `reserved` sigils for the on-disk form, leaving `[[link]]` spans
 /// untouched (a URL's `:` or `=` must not be escaped or the link breaks).
-fn escape_field(s: &str, reserved: &[char]) -> String {
+fn escape_field(s: &str, reserved: &[char], preserve_links: bool) -> String {
+    let chars: Vec<char> = s.chars().collect();
     let mut out = String::with_capacity(s.len());
-    let mut chars = s.chars().peekable();
-    while let Some(c) = chars.next() {
-        // A `[[` opens a link — copy through the closing `]]` verbatim.
-        if c == '[' && chars.peek() == Some(&'[') {
-            out.push('[');
-            out.push('[');
-            chars.next();
-            while let Some(n) = chars.next() {
-                out.push(n);
-                if n == ']' && chars.peek() == Some(&']') {
-                    out.push(']');
-                    chars.next();
-                    break;
+    let mut index = 0;
+    while index < chars.len() {
+        if preserve_links && chars[index] == '[' && chars.get(index + 1) == Some(&'[') {
+            let close = (index + 2..chars.len().saturating_sub(1))
+                .find(|&candidate| chars[candidate] == ']' && chars[candidate + 1] == ']');
+            if let Some(close) = close {
+                let content: String = chars[index + 2..close].iter().collect();
+                if valid_link_content(&content) {
+                    out.extend(&chars[index..=close + 1]);
+                    index = close + 2;
+                    continue;
                 }
             }
-            continue;
         }
-        if reserved.contains(&c) {
+        let character = chars[index];
+        if reserved.contains(&character) {
             out.push('\\');
         }
-        out.push(c);
+        out.push(character);
+        index += 1;
     }
     out
 }
 
+fn valid_link_content(content: &str) -> bool {
+    if content.is_empty() || content.contains(['[', ']']) {
+        return false;
+    }
+    match content.split_once('|') {
+        Some((text, url)) => !text.is_empty() && !url.is_empty() && !url.contains('|'),
+        None => true,
+    }
+}
+
 /// Escape a `safe_text` field — name, story/charter ref, predecessor ref.
 pub(crate) fn escape_name(s: &str) -> String {
-    escape_field(s, NAME_ESCAPE)
+    escape_field(s, NAME_ESCAPE, true)
+}
+
+/// Escape a story or predecessor reference. Unlike an action name, these
+/// grammar fields do not admit structured `[[link]]` nodes.
+fn escape_reference(s: &str) -> String {
+    escape_field(s, NAME_ESCAPE, false)
 }
 
 /// Escape a description body while leaving complete `[[link]]` spans intact.
 pub(crate) fn escape_description(s: &str) -> String {
-    escape_field(s, DESC_ESCAPE)
+    escape_field(s, DESC_ESCAPE, true)
 }
 
 /// Inverse of the escape functions: drop a backslash that escapes an escapable
@@ -123,7 +139,7 @@ impl Action {
             write!(f, " !{}", priority)?;
         }
         if let Some(charter) = &self.charter {
-            write!(f, " *{}", escape_name(charter))?;
+            write!(f, " *{}", escape_reference(charter))?;
         }
         if let Some(contexts) = &self.contexts {
             write!(f, " +{}", contexts.join(","))?;
@@ -137,12 +153,15 @@ impl Action {
         if let Some(due_date) = &self.due_date {
             write!(f, " :{}", due_date.format("%Y-%m-%dT%H:%M"))?;
         }
+        if let Some(created_at) = &self.created_at {
+            write!(f, " ^{}", created_at.format("%Y-%m-%dT%H:%M"))?;
+        }
         if let Some(completed_at) = &self.completed_at {
             write!(f, " %{}", completed_at.format("%Y-%m-%dT%H:%M"))?;
         }
         if let Some(predecessors) = &self.predecessors {
             for pred in predecessors {
-                write!(f, " <{}", escape_name(&pred.raw_ref))?;
+                write!(f, " <{}", escape_reference(&pred.raw_ref))?;
             }
         }
         if include_id {

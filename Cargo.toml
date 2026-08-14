@@ -43,6 +43,7 @@ features = [
 ]
 
 [dev-dependencies]
+proptest = "1.7"
 ron = "0.8"
 
 [dependencies.tempfile]
