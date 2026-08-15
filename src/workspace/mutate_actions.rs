@@ -14,6 +14,7 @@ use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
 use crate::domain::collect_subtree_ids;
+use crate::domain::update::{ActionUpdate, apply_updates, disallowed_terminal_update};
 use crate::workspace::action_files::read_actions;
 use crate::workspace::actions::format::require_actions_formatting;
 use crate::workspace::actions::{Action, ActionList};
@@ -110,6 +111,71 @@ pub fn insert_action(
             InsertActionResult {
                 action_id,
                 parent_id,
+                source_path: source_path.to_path_buf(),
+            },
+        ))
+    })
+}
+
+/// Result of durably updating one action's fields.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UpdateActionResult {
+    pub action_id: Uuid,
+    pub source_path: PathBuf,
+}
+
+/// Update one action's fields in an active `.actions` file as a single locked,
+/// journaled mutation.
+///
+/// Runs on the shared [`with_locked_mutation`] seam, mirroring
+/// [`insert_action`]: the target `selector` is re-resolved under the lock (an
+/// id-less line's in-memory UUID changes across reloads), the update is applied
+/// in place, and the single file is staged in one journaled batch.
+///
+/// A terminal `state` is rejected before the lock is taken:
+/// [`disallowed_terminal_update`] steers those requests to `complete`/`cancel`,
+/// which cascade to the subtree and archive it. A field update only edits the
+/// one action, so it must never leave the tree half-closed.
+pub fn update_action(
+    workspace_root: &Path,
+    source_path: &Path,
+    selector: &CloseActionSelector,
+    update: ActionUpdate,
+) -> Result<UpdateActionResult, WorkspaceError> {
+    if let Some(state) = disallowed_terminal_update(&update) {
+        return Err(WorkspaceError::Actions(format!(
+            "cannot set state to {state:?} via update; use complete/cancel, which cascade to the \
+             subtree and archive it"
+        )));
+    }
+
+    let layout = resolve_workspace_layout(workspace_root);
+    validate_source_path(source_path, &layout.charter_root)?;
+    require_actions_formatting().map_err(WorkspaceError::Actions)?;
+
+    with_locked_mutation(&layout, |_layout| {
+        let mut active = read_actions(source_path)?;
+
+        let action_id = unique_selector_match(&active, selector)?.ok_or_else(|| {
+            WorkspaceError::Actions(format!(
+                "open action not found in source file: {}",
+                selector.name
+            ))
+        })?;
+
+        let target = active
+            .iter_mut()
+            .find(|action| action.id == action_id)
+            .expect("selected action came from active list");
+        apply_updates(target, update);
+
+        let mut writes = WriteSet::new();
+        writes.stage(source_path.to_path_buf(), render(&active)?);
+
+        Ok((
+            writes,
+            UpdateActionResult {
+                action_id,
                 source_path: source_path.to_path_buf(),
             },
         ))

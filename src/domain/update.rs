@@ -53,6 +53,25 @@ pub struct ActionUpdate {
     pub duration: Option<u32>,
 }
 
+/// Reject a field update that would drive an action to a terminal state.
+///
+/// Returns the offending state when `update` sets `state` to `Completed` or
+/// `Cancelled`. Completion and cancellation are not field edits: they cascade to
+/// the whole subtree, stamp `completed_at`, and archive the tree to
+/// `.completed.actions`. A bare `update` does none of that, so honoring a
+/// terminal `state` here would strand a "completed" action in the active file
+/// with open children — a shape the close and archive paths can never produce.
+/// The `update` verb points such requests at `complete`/`cancel` instead.
+///
+/// Pure and infallible so every caller — the `update` verb today, the
+/// transaction surface later — shares one definition of the rule.
+pub fn disallowed_terminal_update(update: &ActionUpdate) -> Option<ActionState> {
+    match update.state {
+        Some(state @ (ActionState::Completed | ActionState::Cancelled)) => Some(state),
+        _ => None,
+    }
+}
+
 /// Apply updates to an action
 ///
 /// Only fields that are `Some` in the update are changed.
@@ -114,6 +133,36 @@ mod tests {
             alias: alias.map(|s| s.to_string()),
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn terminal_states_are_rejected_non_terminal_pass() {
+        for terminal in [ActionState::Completed, ActionState::Cancelled] {
+            let update = ActionUpdate {
+                state: Some(terminal),
+                ..Default::default()
+            };
+            assert_eq!(disallowed_terminal_update(&update), Some(terminal));
+        }
+        for ok in [
+            ActionState::NotStarted,
+            ActionState::InProgress,
+            ActionState::BlockedOrAwaiting,
+        ] {
+            let update = ActionUpdate {
+                state: Some(ok),
+                ..Default::default()
+            };
+            assert_eq!(disallowed_terminal_update(&update), None);
+        }
+        // A field-only update with no state change is always allowed.
+        assert_eq!(
+            disallowed_terminal_update(&ActionUpdate {
+                priority: Some(1),
+                ..Default::default()
+            }),
+            None
+        );
     }
 
     #[test]
