@@ -1367,7 +1367,6 @@ name = "tree-sitter-actions"
 version = "0.10.0"
 dependencies = [
  "cc",
- "serde_json",
  "tree-sitter-language",
 ]
 
