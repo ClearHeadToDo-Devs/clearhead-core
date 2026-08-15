@@ -82,6 +82,10 @@ pub use domain::{
 };
 pub use workspace::{PlansSyncStore, Reconcile, SyncEntry, SyncReport, SyncTally};
 
+/// Canonical JSON projection of domain actions, matching the specifications
+/// repo's `schemas/actions.schema.json`.
+pub mod schema_export;
+
 pub mod reference;
 #[doc(inline)]
 pub use reference::{
