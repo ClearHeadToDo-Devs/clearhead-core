@@ -27,6 +27,12 @@ tracing = "0.1.44"
 uuid = "1.0"
 tracing-subscriber = { version = "0.3.22", features = ["env-filter"] }
 
+[features]
+# Opt-in conformance of graphd's real query output against the specification's
+# published JSON Schemas. Bare `cargo test` stays independent of a
+# specifications checkout; the super-repo runs this with CLEARHEAD_SPEC_DIR.
+spec-conformance = []
+
 [dev-dependencies]
 assert_cmd = "2.0"
 # Local schema validation does not need HTTP/file reference resolution or its
