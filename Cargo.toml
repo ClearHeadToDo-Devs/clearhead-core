@@ -12,10 +12,10 @@ default = ["formatting"]
 # Canonical .actions source formatting. Read-only consumers can disable default
 # features to avoid Topiary and its async runtime dependency closure.
 formatting = ["dep:topiary-core", "dep:topiary-tree-sitter-facade"]
-# Runs the end-to-end conformance test that validates Core's canonical JSON
-# projection against the specifications repo's actions schema. Off by default so
-# a bare `cargo test` needs neither jsonschema nor a specifications checkout.
-spec-conformance = ["dep:jsonschema"]
+# Runs the opt-in semantic, formatting, lint, and schema conformance suite
+# against inert oracle data from a specifications checkout. Off by default so a
+# bare `cargo test` needs neither jsonschema nor the test-only spec repository.
+spec-conformance = ["formatting", "dep:jsonschema"]
 
 [dependencies]
 # Shared domain, workspace, persistence, and configuration dependencies

@@ -1,7 +1,8 @@
 use chrono::{DateTime, Duration, Local, NaiveDate, TimeZone};
+use clearhead_core::workspace::actions::lint_document;
 use clearhead_core::{
     Action, ActionState, OutputFormat, PredecessorRef, close_subtree, collect_subtree_ids, format,
-    parse_actions,
+    parse_actions, parse_document,
 };
 use proptest::prelude::*;
 use proptest::test_runner::FileFailurePersistence;
@@ -332,6 +333,48 @@ proptest! {
             .expect("reparsed actions should format");
 
         prop_assert_eq!(twice, once);
+    }
+
+    #[test]
+    fn tree_consistency_codes_follow_planted_closedness(
+        parent_closed in any::<bool>(),
+        child_closed in any::<bool>(),
+        cancelled in any::<bool>(),
+    ) {
+        let closed_state = if cancelled {
+            ActionState::Cancelled
+        } else {
+            ActionState::Completed
+        };
+        let parent_id = Uuid::from_u128(1);
+        let completed_at = generated_datetime(4_000, 0);
+        let actions = vec![
+            Action {
+                id: parent_id,
+                name: "parent".to_string(),
+                state: if parent_closed { closed_state } else { ActionState::NotStarted },
+                completed_at: parent_closed.then_some(completed_at),
+                ..Action::default()
+            },
+            Action {
+                id: Uuid::from_u128(2),
+                parent_id: Some(parent_id),
+                name: "child".to_string(),
+                state: if child_closed { closed_state } else { ActionState::NotStarted },
+                completed_at: child_closed.then_some(completed_at),
+                ..Action::default()
+            },
+        ];
+        let rendered = format(&actions, OutputFormat::Actions, None, None)
+            .expect("planted tree should format");
+        let document = parse_document(&rendered).expect("planted tree should parse");
+        let codes: HashSet<_> = lint_document(&document)
+            .into_iter()
+            .map(|diagnostic| diagnostic.code)
+            .collect();
+
+        prop_assert_eq!(codes.contains("W002"), parent_closed && !child_closed);
+        prop_assert_eq!(codes.contains("W003"), !parent_closed && child_closed);
     }
 
     #[test]
