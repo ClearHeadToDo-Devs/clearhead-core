@@ -18,8 +18,8 @@ use crate::domain::update::{ActionUpdate, apply_updates, disallowed_terminal_upd
 use crate::workspace::action_files::read_actions;
 use crate::workspace::actions::format::require_actions_formatting;
 use crate::workspace::actions::{Action, ActionList};
-use crate::workspace::archive_actions::{CloseActionSelector, unique_selector_match};
 use crate::workspace::mutation::{WriteSet, render, validate_source_path, with_locked_mutation};
+use crate::workspace::selector::{ActionSelector, unique_selector_match};
 use crate::workspace::store::{WorkspaceError, resolve_workspace_layout};
 
 /// Result of durably inserting one action into an active file.
@@ -81,7 +81,7 @@ pub fn insert_action(
     workspace_root: &Path,
     source_path: &Path,
     new_action: Action,
-    parent: Option<&CloseActionSelector>,
+    parent: Option<&ActionSelector>,
 ) -> Result<InsertActionResult, WorkspaceError> {
     let layout = resolve_workspace_layout(workspace_root);
     validate_source_path(source_path, &layout.charter_root)?;
@@ -139,7 +139,7 @@ pub struct UpdateActionResult {
 pub fn update_action(
     workspace_root: &Path,
     source_path: &Path,
-    selector: &CloseActionSelector,
+    selector: &ActionSelector,
     update: ActionUpdate,
 ) -> Result<UpdateActionResult, WorkspaceError> {
     if let Some(state) = disallowed_terminal_update(&update) {

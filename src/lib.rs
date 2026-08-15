@@ -43,9 +43,9 @@ pub use config::WorkspaceConfig;
 pub use workspace::calendar::expand::render_occurrences;
 #[doc(inline)]
 pub use workspace::{
-    Action, ActionArchivePlan, ActionArchiveResult, ActionList, AppliedSync, ArchiveCharterError,
-    ArchiveCharterOptions, ArchiveCharterResult, ArchivedActionFact, CloseActionResult,
-    CloseActionSelector, Diff, ICSPlan, InsertActionResult, IntegrityError, MarkdownCharter,
+    Action, ActionArchivePlan, ActionArchiveResult, ActionList, ActionSelector, AppliedSync,
+    ArchiveCharterError, ArchiveCharterOptions, ArchiveCharterResult, ArchivedActionFact,
+    CloseActionResult, Diff, ICSPlan, InsertActionResult, IntegrityError, MarkdownCharter,
     OccurrenceOp, OccurrenceSnapshot, OutcomeKind, OutputFormat, ParseFailure, ParseMode,
     ParseOutcome, ParsedDocument, RecoveryReport, SourceMetadata, SourceRange, SyncField,
     SyncImport, TrustedDocument, UpdateActionResult, VTodoAction, VTodoResource, Workspace,

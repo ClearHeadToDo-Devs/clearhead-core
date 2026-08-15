@@ -19,6 +19,7 @@ pub mod durability;
 pub mod manifest;
 pub mod mutate_actions;
 pub mod mutation;
+pub mod selector;
 pub mod sidecar;
 pub mod store;
 pub mod templates;
@@ -34,8 +35,8 @@ pub use actions::{
     parse_actions_with_mode, parse_document, parse_tree, parse_trusted_document, patch_action_list,
 };
 pub use archive_actions::{
-    ActionArchivePlan, ActionArchiveResult, CloseActionResult, CloseActionSelector,
-    archive_actions, close_action_subtree, plan_action_archive,
+    ActionArchivePlan, ActionArchiveResult, CloseActionResult, archive_actions,
+    close_action_subtree, plan_action_archive,
 };
 pub use archive_charter::{
     ArchiveCharterError, ArchiveCharterOptions, ArchiveCharterResult, archive_charter,
@@ -64,6 +65,7 @@ pub use manifest::WorkspaceManifest;
 pub use mutate_actions::{
     InsertActionResult, UpdateActionResult, insert_action, plan_action_insert, update_action,
 };
+pub use selector::ActionSelector;
 pub use sidecar::{
     ActionMeta, CharterMeta, CharterMetadata, OccurrenceSnapshot, hydrate_actions, read_sidecar,
     sidecar_path, write_sidecar,

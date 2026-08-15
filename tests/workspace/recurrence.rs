@@ -229,8 +229,8 @@ fn resolving_a_materialized_occurrence_writes_the_deviation_and_advances() {
 #[test]
 fn closing_a_materialized_occurrence_snapshots_lineage_to_completed_sidecar() {
     use clearhead_core::{
-        CloseActionSelector, OccurrenceOp, apply_sync, close_action_subtree,
-        completed_actions_path, plan_sync, read_actions, read_plans_sync_store, read_vtodo_actions,
+        ActionSelector, OccurrenceOp, apply_sync, close_action_subtree, completed_actions_path,
+        plan_sync, read_actions, read_plans_sync_store, read_vtodo_actions,
         resolve_materialized_occurrence,
     };
 
@@ -261,7 +261,7 @@ fn closing_a_materialized_occurrence_snapshots_lineage_to_completed_sidecar() {
     close_action_subtree(
         root,
         &actions_path,
-        &CloseActionSelector::from(&token),
+        &ActionSelector::from(&token),
         clearhead_core::ActionState::Completed,
         now,
     )

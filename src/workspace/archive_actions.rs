@@ -16,6 +16,7 @@ use crate::workspace::action_files::{completed_actions_path, read_actions};
 use crate::workspace::actions::format::require_actions_formatting;
 use crate::workspace::actions::{Action, ActionList, ActionState};
 use crate::workspace::mutation::{WriteSet, render, validate_source_path, with_locked_mutation};
+use crate::workspace::selector::{ActionSelector, unique_selector_match};
 use crate::workspace::store::{WorkspaceError, resolve_workspace_layout};
 
 /// Pure result of partitioning an active action file for archival.
@@ -35,26 +36,6 @@ pub struct ActionArchiveResult {
     pub archived_count: usize,
     pub source_path: PathBuf,
     pub completed_path: PathBuf,
-}
-
-/// Stable-enough handoff from a client-side resolution to core's locked read.
-/// Inline UUID is preferred; alias/name let legacy id-less lines survive the
-/// second parse without making the binary own the filesystem mutation.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CloseActionSelector {
-    pub id: Uuid,
-    pub alias: Option<String>,
-    pub name: String,
-}
-
-impl From<&Action> for CloseActionSelector {
-    fn from(action: &Action) -> Self {
-        Self {
-            id: action.id,
-            alias: action.alias.clone(),
-            name: action.name.clone(),
-        }
-    }
 }
 
 /// Result of durably closing one selected action subtree.
@@ -187,7 +168,7 @@ pub fn archive_actions(
 pub fn close_action_subtree(
     workspace_root: &Path,
     source_path: &Path,
-    selector: &CloseActionSelector,
+    selector: &ActionSelector,
     closing_state: ActionState,
     completed_at: DateTime<Local>,
 ) -> Result<CloseActionResult, WorkspaceError> {
@@ -279,52 +260,6 @@ pub fn close_action_subtree(
     })
 }
 
-/// Resolve a selector to a unique action id against a freshly-read list.
-///
-/// Exposed to the sibling insert verb so an `add --parent` handoff resolves its
-/// parent under the same locked reload as a close resolves its target. The
-/// `CloseActionSelector` name is a temporary misnomer here — the later
-/// generalize-selector leaf renames it to a verb-neutral `ActionSelector`.
-pub(crate) fn unique_selector_match(
-    actions: &[Action],
-    selector: &CloseActionSelector,
-) -> Result<Option<uuid::Uuid>, WorkspaceError> {
-    if actions.iter().any(|action| action.id == selector.id) {
-        return Ok(Some(selector.id));
-    }
-
-    let unique = |matches: Vec<uuid::Uuid>, field: &str| match matches.as_slice() {
-        [] => Ok(None),
-        [id] => Ok(Some(*id)),
-        _ => Err(WorkspaceError::Actions(format!(
-            "action selector {field} is ambiguous after locked reload: {}",
-            selector.id
-        ))),
-    };
-
-    if let Some(alias) = &selector.alias
-        && let Some(id) = unique(
-            actions
-                .iter()
-                .filter(|action| action.alias.as_ref() == Some(alias))
-                .map(|action| action.id)
-                .collect(),
-            "alias",
-        )?
-    {
-        return Ok(Some(id));
-    }
-
-    unique(
-        actions
-            .iter()
-            .filter(|action| action.name == selector.name)
-            .map(|action| action.id)
-            .collect(),
-        "name",
-    )
-}
-
 fn is_terminal(action: &Action) -> bool {
     matches!(
         action.state,
@@ -366,8 +301,8 @@ mod tests {
     }
 
     #[cfg(feature = "formatting")]
-    fn selector(id: Uuid, name: &str) -> CloseActionSelector {
-        CloseActionSelector {
+    fn selector(id: Uuid, name: &str) -> ActionSelector {
+        ActionSelector {
             id,
             alias: None,
             name: name.to_string(),
@@ -569,7 +504,7 @@ mod tests {
         std::fs::create_dir_all(&charters).unwrap();
         let source = charters.join("work.actions");
         std::fs::write(&source, "[ ] Unique task\n").unwrap();
-        let selector = CloseActionSelector::from(&read_actions(&source).unwrap()[0]);
+        let selector = ActionSelector::from(&read_actions(&source).unwrap()[0]);
 
         let result = close_action_subtree(
             temp.path(),
@@ -594,7 +529,7 @@ mod tests {
 
         let name_source = charters.join("names.actions");
         std::fs::write(&name_source, "[ ] Duplicate\n[ ] Duplicate\n").unwrap();
-        let name_selector = CloseActionSelector::from(&read_actions(&name_source).unwrap()[0]);
+        let name_selector = ActionSelector::from(&read_actions(&name_source).unwrap()[0]);
         let name_error = close_action_subtree(
             temp.path(),
             &name_source,
@@ -621,7 +556,7 @@ mod tests {
         let alias_error = close_action_subtree(
             temp.path(),
             &alias_source,
-            &CloseActionSelector {
+            &ActionSelector {
                 id: Uuid::now_v7(),
                 alias: first.alias.clone(),
                 name: "does not match".to_string(),
