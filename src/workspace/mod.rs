@@ -17,6 +17,7 @@ pub mod charter;
 pub mod detection;
 pub mod durability;
 pub mod manifest;
+pub mod mutate_actions;
 pub mod mutation;
 pub mod sidecar;
 pub mod store;
@@ -60,6 +61,7 @@ pub use calendar::reconcile::{
 pub use calendar::sync_store::{PlansSyncStore, plans_sync_store_path, read_plans_sync_store};
 pub use charter::{MarkdownCharter, format_charter, implicit_charter, parse_charter};
 pub use manifest::WorkspaceManifest;
+pub use mutate_actions::{InsertActionResult, insert_action, plan_action_insert};
 pub use sidecar::{
     ActionMeta, CharterMeta, CharterMetadata, OccurrenceSnapshot, hydrate_actions, read_sidecar,
     sidecar_path, write_sidecar,

@@ -13,8 +13,9 @@
 //! edit. This seam is deliberately dumber than all three: it does not know why
 //! the files changed, only how to commit them atomically.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
+use crate::workspace::actions::{Action, OutputFormat, format};
 use crate::workspace::durability::{PendingBatch, WorkspaceLock, recover_pending};
 use crate::workspace::store::{WorkspaceError, WorkspaceLayout};
 
@@ -77,4 +78,35 @@ pub(crate) fn with_locked_mutation<T>(
     }
 
     Ok(outcome)
+}
+
+/// Render an action list to its `.actions` file contents.
+///
+/// Verb-agnostic: every durable action mutation stages the same on-disk format,
+/// so the rendering lives on the seam rather than in any one verb.
+pub(crate) fn render(actions: &[Action]) -> Result<String, WorkspaceError> {
+    format(&actions.to_vec(), OutputFormat::Actions, None, None).map_err(WorkspaceError::Actions)
+}
+
+/// Guard that a mutation's source path is a real active `.actions` file inside
+/// the workspace's charter root — never a completed sidecar or an out-of-tree
+/// path. Verb-agnostic: it protects the write target before any lock is taken.
+pub(crate) fn validate_source_path(
+    source_path: &Path,
+    charter_root: &Path,
+) -> Result<(), WorkspaceError> {
+    let is_within_charters = source_path
+        .canonicalize()
+        .ok()
+        .zip(charter_root.canonicalize().ok())
+        .is_some_and(|(source, root)| source.starts_with(root));
+    if !is_within_charters
+        || source_path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_none_or(|name| !name.ends_with(".actions") || name.ends_with(".completed.actions"))
+    {
+        return Err(WorkspaceError::InvalidPath(source_path.to_path_buf()));
+    }
+    Ok(())
 }

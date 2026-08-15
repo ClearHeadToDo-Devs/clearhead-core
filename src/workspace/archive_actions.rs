@@ -14,8 +14,8 @@ use uuid::Uuid;
 use crate::domain::{close_subtree, collect_subtree_ids};
 use crate::workspace::action_files::{completed_actions_path, read_actions};
 use crate::workspace::actions::format::require_actions_formatting;
-use crate::workspace::actions::{Action, ActionList, ActionState, OutputFormat, format};
-use crate::workspace::mutation::{WriteSet, with_locked_mutation};
+use crate::workspace::actions::{Action, ActionList, ActionState};
+use crate::workspace::mutation::{WriteSet, render, validate_source_path, with_locked_mutation};
 use crate::workspace::store::{WorkspaceError, resolve_workspace_layout};
 
 /// Pure result of partitioning an active action file for archival.
@@ -279,7 +279,13 @@ pub fn close_action_subtree(
     })
 }
 
-fn unique_selector_match(
+/// Resolve a selector to a unique action id against a freshly-read list.
+///
+/// Exposed to the sibling insert verb so an `add --parent` handoff resolves its
+/// parent under the same locked reload as a close resolves its target. The
+/// `CloseActionSelector` name is a temporary misnomer here — the later
+/// generalize-selector leaf renames it to a verb-neutral `ActionSelector`.
+pub(crate) fn unique_selector_match(
     actions: &[Action],
     selector: &CloseActionSelector,
 ) -> Result<Option<uuid::Uuid>, WorkspaceError> {
@@ -317,27 +323,6 @@ fn unique_selector_match(
             .collect(),
         "name",
     )
-}
-
-fn validate_source_path(source_path: &Path, charter_root: &Path) -> Result<(), WorkspaceError> {
-    let is_within_charters = source_path
-        .canonicalize()
-        .ok()
-        .zip(charter_root.canonicalize().ok())
-        .is_some_and(|(source, root)| source.starts_with(root));
-    if !is_within_charters
-        || source_path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .is_none_or(|name| !name.ends_with(".actions") || name.ends_with(".completed.actions"))
-    {
-        return Err(WorkspaceError::InvalidPath(source_path.to_path_buf()));
-    }
-    Ok(())
-}
-
-fn render(actions: &[Action]) -> Result<String, WorkspaceError> {
-    format(&actions.to_vec(), OutputFormat::Actions, None, None).map_err(WorkspaceError::Actions)
 }
 
 fn is_terminal(action: &Action) -> bool {
