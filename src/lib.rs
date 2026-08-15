@@ -76,6 +76,8 @@ pub use domain::diff::{
 #[doc(inline)]
 pub use domain::filter::{ActionFilter, apply_filter};
 #[doc(inline)]
+pub use domain::update::{ActionUpdate, CharterUpdate, apply_charter_update, apply_updates};
+#[doc(inline)]
 pub use domain::{
     ActionState, Charter, CharterState, DomainModel, Metric, Objective, Plan, PredecessorRef,
     Recurrence, WorkspaceCharter, close_subtree, collect_subtree_ids,

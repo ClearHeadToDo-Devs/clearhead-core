@@ -17,6 +17,7 @@ pub mod charter;
 pub mod detection;
 pub mod durability;
 pub mod manifest;
+pub mod mutation;
 pub mod sidecar;
 pub mod store;
 pub mod templates;

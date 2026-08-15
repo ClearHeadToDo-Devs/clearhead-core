@@ -15,7 +15,7 @@ use crate::domain::{close_subtree, collect_subtree_ids};
 use crate::workspace::action_files::{completed_actions_path, read_actions};
 use crate::workspace::actions::format::require_actions_formatting;
 use crate::workspace::actions::{Action, ActionList, ActionState, OutputFormat, format};
-use crate::workspace::durability::{PendingBatch, WorkspaceLock, recover_pending};
+use crate::workspace::mutation::{WriteSet, with_locked_mutation};
 use crate::workspace::store::{WorkspaceError, resolve_workspace_layout};
 
 /// Pure result of partitioning an active action file for archival.
@@ -143,10 +143,11 @@ fn plan_action_archive_at(
 
 /// Atomically archive terminal action trees from one workspace action file.
 ///
-/// The workspace lock is mandatory for this read-plan-write operation. Any
-/// journal left by an interrupted mutation is recovered before files are read,
-/// then the active and completed projections are committed in one
-/// [`PendingBatch`]. A zero-count plan performs no writes.
+/// Runs on the shared [`with_locked_mutation`] seam: the workspace lock is
+/// mandatory for this read-plan-write operation, any journal left by an
+/// interrupted mutation is recovered before files are read, and the active and
+/// completed projections are committed in one batch. A zero-count plan stages
+/// no writes, so the seam commits nothing.
 pub fn archive_actions(
     workspace_root: &Path,
     source_path: &Path,
@@ -155,30 +156,26 @@ pub fn archive_actions(
     validate_source_path(source_path, &layout.charter_root)?;
     require_actions_formatting().map_err(WorkspaceError::Actions)?;
 
-    std::fs::create_dir_all(&layout.charter_root)?;
-    let _lock = WorkspaceLock::try_acquire(&layout.data_root)?
-        .ok_or_else(|| WorkspaceError::WorkspaceLocked(layout.data_root.clone()))?;
-
-    recover_pending(&layout.charter_root)?;
-
     let completed_path = completed_actions_path(source_path);
-    let active = read_actions(source_path)?;
-    let completed = read_actions(&completed_path)?;
-    let plan = plan_action_archive(&active, &completed);
+    with_locked_mutation(&layout, |_layout| {
+        let active = read_actions(source_path)?;
+        let completed = read_actions(&completed_path)?;
+        let plan = plan_action_archive(&active, &completed);
 
-    if plan.archived_count > 0 {
-        let active_text = render(&plan.active_actions)?;
-        let completed_text = render(&plan.completed_actions)?;
-        let mut batch = PendingBatch::new(layout.charter_root);
-        batch.stage(source_path.to_path_buf(), active_text.as_bytes())?;
-        batch.stage(completed_path.clone(), completed_text.as_bytes())?;
-        batch.commit()?;
-    }
+        let mut writes = WriteSet::new();
+        if plan.archived_count > 0 {
+            writes.stage(source_path.to_path_buf(), render(&plan.active_actions)?);
+            writes.stage(completed_path.clone(), render(&plan.completed_actions)?);
+        }
 
-    Ok(ActionArchiveResult {
-        archived_count: plan.archived_count,
-        source_path: source_path.to_path_buf(),
-        completed_path,
+        Ok((
+            writes,
+            ActionArchiveResult {
+                archived_count: plan.archived_count,
+                source_path: source_path.to_path_buf(),
+                completed_path: completed_path.clone(),
+            },
+        ))
     })
 }
 
@@ -206,78 +203,79 @@ pub fn close_action_subtree(
     let layout = resolve_workspace_layout(workspace_root);
     validate_source_path(source_path, &layout.charter_root)?;
     require_actions_formatting().map_err(WorkspaceError::Actions)?;
-    std::fs::create_dir_all(&layout.charter_root)?;
-    let _lock = WorkspaceLock::try_acquire(&layout.data_root)?
-        .ok_or_else(|| WorkspaceError::WorkspaceLocked(layout.data_root.clone()))?;
-    recover_pending(&layout.charter_root)?;
 
     let completed_path = completed_actions_path(source_path);
-    let mut active = read_actions(source_path)?;
-    let mut completed = read_actions(&completed_path)?;
+    with_locked_mutation(&layout, |_layout| {
+        let mut active = read_actions(source_path)?;
+        let mut completed = read_actions(&completed_path)?;
 
-    // The caller resolves aliases/names before entering this locked read-plan-apply
-    // boundary. UUID remains authoritative. A unique alias/name fallback supports
-    // ID-less plaintext actions whose generated in-memory UUID changes on reload;
-    // ambiguity is rejected rather than selecting by file order.
-    let action_id = unique_selector_match(&active, selector)?;
+        // The caller resolves aliases/names before entering this locked read-plan-apply
+        // boundary. UUID remains authoritative. A unique alias/name fallback supports
+        // ID-less plaintext actions whose generated in-memory UUID changes on reload;
+        // ambiguity is rejected rather than selecting by file order.
+        let action_id = unique_selector_match(&active, selector)?;
 
-    let Some(action_id) = action_id else {
-        if let Some(completed_id) = unique_selector_match(&completed, selector)? {
-            return Ok(CloseActionResult {
-                action_id: completed_id,
-                closed_count: 0,
-                source_path: source_path.to_path_buf(),
-                completed_path,
-                already_closed: true,
-            });
+        let Some(action_id) = action_id else {
+            if let Some(completed_id) = unique_selector_match(&completed, selector)? {
+                return Ok((
+                    WriteSet::new(),
+                    CloseActionResult {
+                        action_id: completed_id,
+                        closed_count: 0,
+                        source_path: source_path.to_path_buf(),
+                        completed_path: completed_path.clone(),
+                        already_closed: true,
+                    },
+                ));
+            }
+            return Err(WorkspaceError::Actions(format!(
+                "open action not found in source file: {}",
+                selector.id
+            )));
+        };
+
+        let target = active
+            .iter()
+            .find(|action| action.id == action_id)
+            .expect("selected action came from active list");
+        if matches!(
+            target.state,
+            ActionState::Completed | ActionState::Cancelled
+        ) {
+            return Err(WorkspaceError::Actions(format!(
+                "action is already terminal in the active file: {action_id}"
+            )));
         }
-        return Err(WorkspaceError::Actions(format!(
-            "open action not found in source file: {}",
-            selector.id
-        )));
-    };
 
-    let target = active
-        .iter()
-        .find(|action| action.id == action_id)
-        .expect("selected action came from active list");
-    if matches!(
-        target.state,
-        ActionState::Completed | ActionState::Cancelled
-    ) {
-        return Err(WorkspaceError::Actions(format!(
-            "action is already terminal in the active file: {action_id}"
-        )));
-    }
+        let subtree_ids = collect_subtree_ids(&active, action_id);
+        if completed
+            .iter()
+            .any(|action| subtree_ids.contains(&action.id))
+        {
+            return Err(WorkspaceError::Actions(format!(
+                "completed history already contains part of subtree: {action_id}"
+            )));
+        }
 
-    let subtree_ids = collect_subtree_ids(&active, action_id);
-    if completed
-        .iter()
-        .any(|action| subtree_ids.contains(&action.id))
-    {
-        return Err(WorkspaceError::Actions(format!(
-            "completed history already contains part of subtree: {action_id}"
-        )));
-    }
+        let mut closed = close_subtree(&active, action_id, closing_state, completed_at);
+        active.retain(|action| !subtree_ids.contains(&action.id));
+        let closed_count = closed.len();
+        completed.append(&mut closed);
 
-    let mut closed = close_subtree(&active, action_id, closing_state, completed_at);
-    active.retain(|action| !subtree_ids.contains(&action.id));
-    let closed_count = closed.len();
-    completed.append(&mut closed);
+        let mut writes = WriteSet::new();
+        writes.stage(source_path.to_path_buf(), render(&active)?);
+        writes.stage(completed_path.clone(), render(&completed)?);
 
-    let active_text = render(&active)?;
-    let completed_text = render(&completed)?;
-    let mut batch = PendingBatch::new(layout.charter_root);
-    batch.stage(source_path.to_path_buf(), active_text.as_bytes())?;
-    batch.stage(completed_path.clone(), completed_text.as_bytes())?;
-    batch.commit()?;
-
-    Ok(CloseActionResult {
-        action_id,
-        closed_count,
-        source_path: source_path.to_path_buf(),
-        completed_path,
-        already_closed: false,
+        Ok((
+            writes,
+            CloseActionResult {
+                action_id,
+                closed_count,
+                source_path: source_path.to_path_buf(),
+                completed_path: completed_path.clone(),
+                already_closed: false,
+            },
+        ))
     })
 }
 
@@ -370,6 +368,7 @@ fn descendants(actions: &[Action], root_id: uuid::Uuid) -> Vec<&Action> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::workspace::durability::WorkspaceLock;
     use uuid::Uuid;
 
     fn action(name: &str, state: ActionState, parent_id: Option<Uuid>) -> Action {

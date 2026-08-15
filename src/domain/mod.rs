@@ -12,6 +12,7 @@
 
 pub mod diff;
 pub mod filter;
+pub mod update;
 
 use chrono::{DateTime, Local, Utc};
 use serde::{Deserialize, Serialize};
