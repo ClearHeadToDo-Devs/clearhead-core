@@ -152,9 +152,7 @@ impl LanguageServer for Backend {
         // Clear diagnostics. Once a document closes the server no longer owns its
         // truth (the on-disk version may differ from the buffer we last saw), so
         // stale squiggles must not linger in the client.
-        self.client
-            .publish_diagnostics(uri, Vec::new(), None)
-            .await;
+        self.client.publish_diagnostics(uri, Vec::new(), None).await;
     }
 
     async fn code_action(&self, params: CodeActionParams) -> Result<Option<CodeActionResponse>> {
