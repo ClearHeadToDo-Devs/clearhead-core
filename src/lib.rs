@@ -90,6 +90,10 @@ pub use workspace::{PlansSyncStore, Reconcile, SyncEntry, SyncReport, SyncTally}
 /// repo's `schemas/actions.schema.json`.
 pub mod schema_export;
 
+pub mod verb_result;
+#[doc(inline)]
+pub use verb_result::{VerbError, VerbOutcome, canonical_id};
+
 pub mod reference;
 #[doc(inline)]
 pub use reference::{
