@@ -23,6 +23,7 @@ pub mod selector;
 pub mod sidecar;
 pub mod store;
 pub mod templates;
+pub mod transaction;
 
 // Re-export key types at workspace level
 pub use action_files::{
@@ -70,6 +71,10 @@ pub use selector::ActionSelector;
 pub use sidecar::{
     ActionMeta, CharterMeta, CharterMetadata, OccurrenceSnapshot, hydrate_actions, read_sidecar,
     sidecar_path, write_sidecar,
+};
+pub use transaction::{
+    ActionUpdateSet, FileState, NormalizedOperation, Operation, TransactionError, TransactionModel,
+    TransactionOutcome, TransactionRequest, apply_operations, normalize_request, transact,
 };
 
 pub use detection::check_for_workspace;
