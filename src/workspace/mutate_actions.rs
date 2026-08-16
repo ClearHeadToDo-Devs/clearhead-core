@@ -402,4 +402,132 @@ mod tests {
             "the active file is untouched"
         );
     }
+
+    // ── crash-point recovery ────────────────────────────────────────────────
+    //
+    // Each verb runs `recover_pending` at the top of `with_locked_mutation`,
+    // before it reads. These tests plant an interrupted batch (a tmp file plus a
+    // `.pending` journal) for a *prior* crashed invocation, then run the verb
+    // with a non-conflicting operation. Recovery must complete the interrupted
+    // write exactly once — no lost or duplicated bytes — and the verb must then
+    // plan against the recovered file, not a torn one.
+
+    /// Plant a `.pending` journal in `charters` that renames `content` into
+    /// `dest` on the next recovery, simulating a crash after the journal was
+    /// written but before the rename completed.
+    #[cfg(feature = "formatting")]
+    fn plant_interrupted_batch(charters: &std::path::Path, dest: &std::path::Path, content: &str) {
+        let tmp = charters.join(".tmp.recover");
+        std::fs::write(&tmp, content).unwrap();
+        std::fs::write(
+            charters.join(".pending"),
+            format!("{}\t{}\n", tmp.display(), dest.display()),
+        )
+        .unwrap();
+    }
+
+    #[cfg(feature = "formatting")]
+    #[test]
+    fn add_recovers_an_interrupted_batch_before_inserting() {
+        let temp = tempfile::tempdir().unwrap();
+        let charters = temp.path().join("charters");
+        std::fs::create_dir_all(&charters).unwrap();
+        let source = charters.join("work.actions");
+        std::fs::write(
+            &source,
+            "[ ] Existing #019f733d-4600-7000-8000-000000000001\n",
+        )
+        .unwrap();
+
+        // A crashed `add X`: the post-add file is staged but never renamed in.
+        plant_interrupted_batch(
+            &charters,
+            &source,
+            "[ ] Existing #019f733d-4600-7000-8000-000000000001\n\
+             [ ] X #019f733d-4600-7000-8000-000000000002\n",
+        );
+
+        // A fresh, different add. Recovery lands X first, then Y appends on top.
+        let y = Action {
+            id: Uuid::new_v4(),
+            name: "Y".to_string(),
+            state: ActionState::NotStarted,
+            ..Default::default()
+        };
+        insert_action(temp.path(), &source, y, None).unwrap();
+
+        let names: Vec<String> = read_actions(&source)
+            .unwrap()
+            .into_iter()
+            .map(|a| a.name)
+            .collect();
+        assert_eq!(
+            names,
+            ["Existing", "X", "Y"],
+            "recovered X exactly once, then appended Y"
+        );
+        assert!(!charters.join(".pending").exists());
+    }
+
+    #[cfg(feature = "formatting")]
+    #[test]
+    fn update_recovers_an_interrupted_batch_before_applying() {
+        let temp = tempfile::tempdir().unwrap();
+        let charters = temp.path().join("charters");
+        std::fs::create_dir_all(&charters).unwrap();
+        let source = charters.join("work.actions");
+        let id: Uuid = "019f733d-4600-7000-8000-000000000001".parse().unwrap();
+        std::fs::write(&source, format!("[ ] Task #{id}\n")).unwrap();
+
+        // A crashed `update --name Renamed`, staged but not renamed in.
+        plant_interrupted_batch(&charters, &source, &format!("[ ] Renamed #{id}\n"));
+
+        // A fresh update of a different field; the target resolves by id even
+        // though recovery changed its name.
+        update_action(
+            temp.path(),
+            &source,
+            &selector(id, "Task"),
+            ActionUpdate {
+                priority: Some(2),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+        let actions = read_actions(&source).unwrap();
+        assert_eq!(actions.len(), 1);
+        assert_eq!(actions[0].name, "Renamed", "recovery applied the rename");
+        assert_eq!(
+            actions[0].priority,
+            Some(2),
+            "the fresh update applied on top"
+        );
+        assert!(!charters.join(".pending").exists());
+    }
+
+    #[cfg(feature = "formatting")]
+    #[test]
+    fn delete_recovers_an_interrupted_batch_before_deleting() {
+        let temp = tempfile::tempdir().unwrap();
+        let charters = temp.path().join("charters");
+        std::fs::create_dir_all(&charters).unwrap();
+        let source = charters.join("work.actions");
+        let id_a: Uuid = "019f733d-4600-7000-8000-000000000001".parse().unwrap();
+        let id_b: Uuid = "019f733d-4600-7000-8000-000000000002".parse().unwrap();
+        std::fs::write(&source, format!("[ ] A #{id_a}\n[ ] B #{id_b}\n")).unwrap();
+
+        // A crashed `delete A`: the post-delete file (B only) is staged.
+        plant_interrupted_batch(&charters, &source, &format!("[ ] B #{id_b}\n"));
+
+        // A fresh delete of B. Recovery removes A first, then the body removes B.
+        let result = delete_action(temp.path(), &source, &selector(id_b, "B")).unwrap();
+
+        assert_eq!(result.deleted_count, 1, "only B is deleted by this call");
+        assert!(
+            read_actions(&source).unwrap().is_empty(),
+            "A recovered-and-gone, B deleted — nothing left, nothing duplicated"
+        );
+        assert!(!charters.join(".pending").exists());
+    }
 }
