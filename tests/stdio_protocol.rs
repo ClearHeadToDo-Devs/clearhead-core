@@ -231,5 +231,21 @@ fn stdio_lifecycle_diagnostics_formatting_and_save() {
         "didSave must not persist UUID attachment from recovered source: {sidecar_content}"
     );
 
+    // didClose releases document state and clears any lingering diagnostics: the
+    // server no longer owns a closed file's truth.
+    lsp.send(json!({
+        "jsonrpc": "2.0",
+        "method": "textDocument/didClose",
+        "params": {"textDocument": {"uri": source_uri}}
+    }));
+    let closed_diagnostics = lsp.receive_until(|message| {
+        message.get("method") == Some(&json!("textDocument/publishDiagnostics"))
+    });
+    assert_eq!(
+        closed_diagnostics["params"]["diagnostics"],
+        json!([]),
+        "didClose must clear diagnostics for the closed document: {closed_diagnostics}"
+    );
+
     lsp.stop();
 }

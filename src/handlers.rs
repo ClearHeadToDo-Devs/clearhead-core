@@ -140,6 +140,23 @@ impl LanguageServer for Backend {
         }
     }
 
+    async fn did_close(&self, params: DidCloseTextDocumentParams) {
+        let uri = params.text_document.uri;
+        debug!(uri = ?uri, "Releasing document state on didClose");
+
+        // Drop the in-memory state so the DashMap doesn't grow unbounded across
+        // an editing session. No telemetry is emitted: any changes since the
+        // last save were never persisted, so there is nothing durable to record.
+        self.documents.remove(&uri);
+
+        // Clear diagnostics. Once a document closes the server no longer owns its
+        // truth (the on-disk version may differ from the buffer we last saw), so
+        // stale squiggles must not linger in the client.
+        self.client
+            .publish_diagnostics(uri, Vec::new(), None)
+            .await;
+    }
+
     async fn code_action(&self, params: CodeActionParams) -> Result<Option<CodeActionResponse>> {
         let uri = params.text_document.uri;
         if let Some(doc) = self.documents.get(&uri)

@@ -1,0 +1,1 @@
+[x] Release document state on didClose $The server never removes entries from its DashMap or clears diagnostics when a document closes. Implement didClose and add stdio protocol coverage.$ !2 %2026-08-15T21:49 #019f738f-7c5a-7e63-933a-f5e5389f1fc8

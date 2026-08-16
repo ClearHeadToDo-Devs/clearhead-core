@@ -178,6 +178,35 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_did_close_releases_document_state() {
+        use tower_lsp_server::LanguageServer;
+
+        let (service, _) = LspService::new(|client| Backend {
+            client,
+            documents: DashMap::new(),
+            workspace_roots: OnceCell::new(),
+        });
+        let backend = service.inner();
+        let uri = Uri::from_file_path("/test.actions").unwrap();
+
+        backend
+            .update_document(uri.clone(), "[ ] Task 1".to_string(), true)
+            .await;
+        assert!(backend.documents.contains_key(&uri));
+
+        backend
+            .did_close(DidCloseTextDocumentParams {
+                text_document: TextDocumentIdentifier { uri: uri.clone() },
+            })
+            .await;
+
+        assert!(
+            !backend.documents.contains_key(&uri),
+            "didClose must drop the in-memory document entry"
+        );
+    }
+
+    #[tokio::test]
     async fn test_initialize_does_not_advertise_archive_commands() {
         use tower_lsp_server::LanguageServer;
 
