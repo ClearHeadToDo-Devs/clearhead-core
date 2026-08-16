@@ -63,7 +63,8 @@ pub use calendar::sync_store::{PlansSyncStore, plans_sync_store_path, read_plans
 pub use charter::{MarkdownCharter, format_charter, implicit_charter, parse_charter};
 pub use manifest::WorkspaceManifest;
 pub use mutate_actions::{
-    InsertActionResult, UpdateActionResult, insert_action, plan_action_insert, update_action,
+    DeleteActionResult, InsertActionResult, UpdateActionResult, delete_action, insert_action,
+    plan_action_insert, update_action,
 };
 pub use selector::ActionSelector;
 pub use sidecar::{

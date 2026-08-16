@@ -15,11 +15,12 @@ use uuid::Uuid;
 
 use crate::domain::collect_subtree_ids;
 use crate::domain::update::{ActionUpdate, apply_updates, disallowed_terminal_update};
-use crate::workspace::action_files::read_actions;
+use crate::workspace::action_files::{completed_actions_path, read_actions};
 use crate::workspace::actions::format::require_actions_formatting;
 use crate::workspace::actions::{Action, ActionList};
 use crate::workspace::mutation::{WriteSet, render, validate_source_path, with_locked_mutation};
 use crate::workspace::selector::{ActionSelector, unique_selector_match};
+use crate::workspace::sidecar::{read_sidecar, render_sidecar, sidecar_path};
 use crate::workspace::store::{WorkspaceError, resolve_workspace_layout};
 
 /// Result of durably inserting one action into an active file.
@@ -182,6 +183,99 @@ pub fn update_action(
     })
 }
 
+/// Result of durably deleting one action subtree.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeleteActionResult {
+    pub action_id: Uuid,
+    /// Actions removed, including the selected root.
+    pub deleted_count: usize,
+    /// The file the subtree was removed from (active or completed).
+    pub source_path: PathBuf,
+    /// True when the target lived in the `.completed.actions` file.
+    pub from_completed: bool,
+}
+
+/// Delete one action and its subtree as a single locked, journaled mutation.
+///
+/// Deletion removes *every sign* of an action, so unlike the other verbs it is
+/// not confined to the active file: the target is resolved in the active file
+/// first, then the completed file (archived subtrees preserve their hierarchy,
+/// so a completed tree cascades too). The matching file's sidecar entries for
+/// the deleted ids are pruned in the same batch, leaving no orphaned metadata.
+///
+/// `source_path` is always the active `.actions` path; the completed sibling is
+/// derived. Both files are read under the lock and only the one that owned the
+/// subtree — plus its sidecar — is staged.
+pub fn delete_action(
+    workspace_root: &Path,
+    source_path: &Path,
+    selector: &ActionSelector,
+) -> Result<DeleteActionResult, WorkspaceError> {
+    let layout = resolve_workspace_layout(workspace_root);
+    validate_source_path(source_path, &layout.charter_root)?;
+    require_actions_formatting().map_err(WorkspaceError::Actions)?;
+
+    let completed_path = completed_actions_path(source_path);
+
+    with_locked_mutation(&layout, |_layout| {
+        let mut active = read_actions(source_path)?;
+        let mut completed = read_actions(&completed_path)?;
+
+        let (from_completed, action_id) = match unique_selector_match(&active, selector)? {
+            Some(id) => (false, id),
+            None => match unique_selector_match(&completed, selector)? {
+                Some(id) => (true, id),
+                None => {
+                    return Err(WorkspaceError::Actions(format!(
+                        "action not found in active or completed file: {}",
+                        selector.name
+                    )));
+                }
+            },
+        };
+
+        let (list, file_path) = if from_completed {
+            (&mut completed, completed_path.as_path())
+        } else {
+            (&mut active, source_path)
+        };
+
+        let subtree_ids = collect_subtree_ids(list, action_id);
+        list.retain(|action| !subtree_ids.contains(&action.id));
+        let deleted_count = subtree_ids.len();
+
+        let mut writes = WriteSet::new();
+        writes.stage(file_path.to_path_buf(), render(list)?);
+
+        // Prune the deleted ids from that file's sidecar — an action's created
+        // stamp and archived-occurrence lineage are signs too. Stage the sidecar
+        // only if an entry actually went away, so a metadata-less delete stays a
+        // one-file write.
+        let sc_path = sidecar_path(file_path);
+        let mut meta = read_sidecar(&sc_path)?;
+        let before = meta.actions.len();
+        meta.actions.retain(|id_str, _| {
+            id_str
+                .parse::<Uuid>()
+                .map(|id| !subtree_ids.contains(&id))
+                .unwrap_or(true)
+        });
+        if meta.actions.len() != before {
+            writes.stage(sc_path, render_sidecar(&meta)?);
+        }
+
+        Ok((
+            writes,
+            DeleteActionResult {
+                action_id,
+                deleted_count,
+                source_path: file_path.to_path_buf(),
+                from_completed,
+            },
+        ))
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -227,5 +321,85 @@ mod tests {
             ["parent", "existing child", "new child", "later root"]
         );
         assert_eq!(planned[2].parent_id, Some(parent.id));
+    }
+
+    #[cfg(feature = "formatting")]
+    fn selector(id: Uuid, name: &str) -> ActionSelector {
+        ActionSelector {
+            id,
+            alias: None,
+            name: name.to_string(),
+        }
+    }
+
+    #[cfg(feature = "formatting")]
+    #[test]
+    fn delete_removes_an_active_subtree_and_prunes_its_sidecar() {
+        use crate::workspace::sidecar::{ActionMeta, CharterMetadata, write_sidecar};
+
+        let temp = tempfile::tempdir().unwrap();
+        let charters = temp.path().join("charters");
+        std::fs::create_dir_all(&charters).unwrap();
+        let source = charters.join("work.actions");
+        let parent_id: Uuid = "019f733d-45b2-7f21-bcad-5610887b7230".parse().unwrap();
+        let child_id: Uuid = "019f733d-45c2-7dd2-91dc-8631f33c6b77".parse().unwrap();
+        std::fs::write(
+            &source,
+            format!("[ ] Parent #{parent_id}\n    >[ ] Child #{child_id}\n"),
+        )
+        .unwrap();
+
+        // Both actions carry sidecar metadata — a sign that must go with them.
+        let mut meta = CharterMetadata::default();
+        for id in [parent_id, child_id] {
+            meta.actions.insert(
+                id.to_string(),
+                ActionMeta {
+                    created: Some(chrono::Local::now()),
+                    occurrence: None,
+                },
+            );
+        }
+        write_sidecar(&sidecar_path(&source), &meta).unwrap();
+
+        let result = delete_action(temp.path(), &source, &selector(parent_id, "Parent")).unwrap();
+
+        assert_eq!(result.deleted_count, 2, "parent + child cascade");
+        assert!(!result.from_completed);
+        assert!(read_actions(&source).unwrap().is_empty());
+        let after = read_sidecar(&sidecar_path(&source)).unwrap();
+        assert!(
+            after.actions.is_empty(),
+            "sidecar entries for the deleted ids must be pruned"
+        );
+    }
+
+    #[cfg(feature = "formatting")]
+    #[test]
+    fn delete_reaches_a_completed_subtree_and_leaves_the_active_file_alone() {
+        let temp = tempfile::tempdir().unwrap();
+        let charters = temp.path().join("charters");
+        std::fs::create_dir_all(&charters).unwrap();
+        let source = charters.join("work.actions");
+        let completed = charters.join("work.completed.actions");
+        let done_id: Uuid = "019f733d-45b2-7f21-bcad-5610887b7230".parse().unwrap();
+        let sub_id: Uuid = "019f733d-45c2-7dd2-91dc-8631f33c6b77".parse().unwrap();
+        std::fs::write(&source, "[ ] Live #019f733d-4600-7000-8000-000000000001\n").unwrap();
+        std::fs::write(
+            &completed,
+            format!("[x] Done #{done_id}\n    >[x] Sub #{sub_id}\n"),
+        )
+        .unwrap();
+
+        let result = delete_action(temp.path(), &source, &selector(done_id, "Done")).unwrap();
+
+        assert!(result.from_completed);
+        assert_eq!(result.deleted_count, 2, "completed subtree cascades");
+        assert!(read_actions(&completed).unwrap().is_empty());
+        assert_eq!(
+            read_actions(&source).unwrap().len(),
+            1,
+            "the active file is untouched"
+        );
     }
 }

@@ -264,12 +264,20 @@ fn created_from_uuid(id: uuid::Uuid) -> Option<DateTime<Local>> {
 /// Always stamps `$schema` to [`CHARTER_METADATA_SCHEMA_URL`] before writing,
 /// overwriting whatever value (or absence) the in-memory metadata carried in.
 pub fn write_sidecar(path: &Path, metadata: &CharterMetadata) -> Result<(), WorkspaceError> {
-    let mut metadata = metadata.clone();
-    metadata.schema = Some(CHARTER_METADATA_SCHEMA_URL.to_string());
-    let content = serde_json::to_string_pretty(&metadata)
-        .map_err(|e| WorkspaceError::Parse(e.to_string()))?;
+    let content = render_sidecar(metadata)?;
     super::durability::atomic_write(path, content.as_bytes())?;
     Ok(())
+}
+
+/// Serialize sidecar metadata to its canonical on-disk JSON, schema-stamped.
+///
+/// Shared by [`write_sidecar`] and the durable `delete` verb: delete stages the
+/// pruned sidecar through the journaled mutation batch rather than writing it
+/// directly, so it needs the exact bytes `write_sidecar` would produce.
+pub(crate) fn render_sidecar(metadata: &CharterMetadata) -> Result<String, WorkspaceError> {
+    let mut metadata = metadata.clone();
+    metadata.schema = Some(CHARTER_METADATA_SCHEMA_URL.to_string());
+    serde_json::to_string_pretty(&metadata).map_err(|e| WorkspaceError::Parse(e.to_string()))
 }
 
 #[cfg(test)]
