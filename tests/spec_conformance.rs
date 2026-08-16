@@ -219,6 +219,123 @@ fn completed_tree_fixture_is_archive_ready() {
     assert!(diagnostics(relative).is_empty());
 }
 
+fn schema_validator(relative: &str) -> jsonschema::JSONSchema {
+    let path = spec_dir().join(relative);
+    assert!(
+        path.exists(),
+        "spec schema not found at {path:?}; set CLEARHEAD_SPEC_DIR to a specifications checkout"
+    );
+    let schema: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    jsonschema::JSONSchema::compile(&schema).expect("spec schema compiles")
+}
+
+fn transaction_fixture(relative: &str) -> serde_json::Value {
+    let path = spec_dir().join("examples/transactions").join(relative);
+    serde_json::from_str(&std::fs::read_to_string(&path).unwrap())
+        .unwrap_or_else(|error| panic!("failed to read transaction fixture {path:?}: {error}"))
+}
+
+#[test]
+fn transaction_request_fixtures_match_schema_and_parse_in_core() {
+    let validator = schema_validator("schemas/transaction_request.schema.json");
+
+    // The valid fixture satisfies the schema and round-trips through core's
+    // request types and its state-free normalization.
+    let valid = transaction_fixture("request/valid_multi_op.json");
+    assert!(
+        validator.validate(&valid).is_ok(),
+        "valid_multi_op must satisfy the request schema"
+    );
+    let request: clearhead_core::TransactionRequest = serde_json::from_value(valid).unwrap();
+    clearhead_core::workspace::normalize_request(request).expect("valid request normalizes");
+
+    // The schema is the front gate: it must reject the invalid fixtures.
+    for name in [
+        "request/invalid_empty_set.json",
+        "request/invalid_unknown_op.json",
+    ] {
+        assert!(
+            validator.validate(&transaction_fixture(name)).is_err(),
+            "{name} must be rejected by the request schema"
+        );
+    }
+}
+
+#[test]
+fn transaction_result_fixtures_match_schema() {
+    let validator = schema_validator("schemas/transaction_result.schema.json");
+    for name in [
+        "result/committed.json",
+        "result/dry_run.json",
+        "result/rejected_not_found.json",
+    ] {
+        assert!(
+            validator.validate(&transaction_fixture(name)).is_ok(),
+            "{name} must satisfy the result schema"
+        );
+    }
+    assert!(
+        validator
+            .validate(&transaction_fixture(
+                "result/invalid_updated_with_children.json"
+            ))
+            .is_err(),
+        "invalid_updated_with_children must be rejected by the result schema"
+    );
+}
+
+#[test]
+fn core_emitted_transaction_result_conforms_to_schema() {
+    // Producer-boundary guard: whatever `transact` actually serializes must
+    // validate against the published result schema — for every variant and
+    // every VerbOutcome shape — so the Rust types cannot silently drift.
+    use clearhead_core::{TransactionOutcome, VerbError, VerbOutcome, canonical_id};
+
+    let validator = schema_validator("schemas/transaction_result.schema.json");
+    let id = canonical_id(uuid::Uuid::now_v7());
+
+    let samples = [
+        TransactionOutcome::Committed {
+            operations: vec![
+                VerbOutcome::Updated { id: id.clone() },
+                VerbOutcome::Completed {
+                    id: id.clone(),
+                    children: 2,
+                },
+            ],
+            files: vec![
+                "/ws/charters/work.actions".into(),
+                "/ws/charters/work.completed.actions".into(),
+            ],
+        },
+        TransactionOutcome::DryRun {
+            operations: vec![VerbOutcome::Cancelled {
+                id: id.clone(),
+                children: 0,
+            }],
+            files: vec!["/ws/charters/work.actions".into()],
+        },
+        TransactionOutcome::Rejected {
+            operation: 1,
+            error: VerbError::NotFound { query: id.clone() },
+        },
+    ];
+
+    for outcome in samples {
+        let value = serde_json::to_value(&outcome).unwrap();
+        if let Err(errors) = validator.validate(&value) {
+            let detail: Vec<String> = errors
+                .map(|error| format!("  - {} (at {})", error, error.instance_path))
+                .collect();
+            panic!(
+                "core-emitted result {value} violates the schema:\n{}",
+                detail.join("\n")
+            );
+        }
+    }
+}
+
 #[test]
 fn semantic_corpus_formats_idempotently_and_round_trips() {
     for path in semantic_fixtures() {
