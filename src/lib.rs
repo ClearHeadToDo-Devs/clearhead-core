@@ -42,6 +42,8 @@ pub mod config;
 pub use config::WorkspaceConfig;
 pub use workspace::calendar::expand::render_occurrences;
 #[doc(inline)]
+pub use workspace::transaction::{TransactionOutcome, TransactionRequest};
+#[doc(inline)]
 pub use workspace::{
     Action, ActionArchivePlan, ActionArchiveResult, ActionList, ActionSelector, AppliedSync,
     ArchiveCharterError, ArchiveCharterOptions, ArchiveCharterResult, ArchivedActionFact,
@@ -63,8 +65,8 @@ pub use workspace::{
     plan_file_name, plan_output_path, plan_sync, plan_to_vtodo, plans_root, plans_sync_store_path,
     plans_to_icalendar, read_action_file, read_actions, read_archived_action_facts, read_ics_dates,
     read_plans_sync_store, read_vtodo_actions, reconcile, resolve_materialized_occurrence,
-    save_domain_model, slugify, sync_master_rollforwards, update_action, workspace_data_root,
-    write_actions, write_master_rollforward, write_occurrence_deviation,
+    save_domain_model, slugify, sync_master_rollforwards, transact, update_action,
+    workspace_data_root, write_actions, write_master_rollforward, write_occurrence_deviation,
 };
 
 pub mod domain;

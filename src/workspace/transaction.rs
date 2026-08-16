@@ -21,7 +21,7 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, Local};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::domain::update::{ActionUpdate, apply_updates, disallowed_terminal_update};
@@ -357,8 +357,11 @@ fn close_in_file(
 // ============================================================================
 
 /// The result of running a transaction, mirroring the `transaction_result`
-/// schema's three shapes.
-#[derive(Debug, Clone)]
+/// schema's three shapes. `files` lists the absolute paths of the `.actions`
+/// files written (or, for a dry-run, that would be written) — active and
+/// completed both count; derived sidecars are not transaction-written.
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum TransactionOutcome {
     /// Every operation applied and the changed files were committed.
     Committed {
@@ -407,17 +410,26 @@ pub fn transact(
             }
         };
 
-        let dirty: Vec<usize> = model
+        // One source of truth for both the staged writes and the reported
+        // `files`: each dirty active/completed list, in file-discovery order.
+        let staged: Vec<(PathBuf, &[Action])> = model
             .files
             .iter()
-            .enumerate()
-            .filter(|(_, file)| file.active_dirty || file.completed_dirty)
-            .map(|(index, _)| index)
+            .flat_map(|file| {
+                let mut entries: Vec<(PathBuf, &[Action])> = Vec::new();
+                if file.active_dirty {
+                    entries.push((file.source_path.clone(), file.active.as_slice()));
+                }
+                if file.completed_dirty {
+                    entries.push((
+                        completed_actions_path(&file.source_path),
+                        file.completed.as_slice(),
+                    ));
+                }
+                entries
+            })
             .collect();
-        let files: Vec<PathBuf> = dirty
-            .iter()
-            .map(|&index| model.files[index].source_path.clone())
-            .collect();
+        let files: Vec<PathBuf> = staged.iter().map(|(path, _)| path.clone()).collect();
 
         if dry_run {
             return Ok((
@@ -430,17 +442,8 @@ pub fn transact(
         }
 
         let mut writes = WriteSet::new();
-        for &index in &dirty {
-            let file = &model.files[index];
-            if file.active_dirty {
-                writes.stage(file.source_path.clone(), render(&file.active)?);
-            }
-            if file.completed_dirty {
-                writes.stage(
-                    completed_actions_path(&file.source_path),
-                    render(&file.completed)?,
-                );
-            }
+        for (path, list) in &staged {
+            writes.stage(path.clone(), render(list)?);
         }
 
         Ok((
@@ -648,7 +651,11 @@ mod tests {
         match outcome {
             TransactionOutcome::Committed { operations, files } => {
                 assert_eq!(operations.len(), 2);
-                assert_eq!(files.len(), 1);
+                assert_eq!(
+                    files.len(),
+                    2,
+                    "work.actions + work.completed.actions both written"
+                );
             }
             other => panic!("expected committed, got {other:?}"),
         }
@@ -710,7 +717,7 @@ mod tests {
         match transact(temp.path(), request, true).unwrap() {
             TransactionOutcome::DryRun { operations, files } => {
                 assert_eq!(operations.len(), 2, "the fold ran, validating every op");
-                assert_eq!(files.len(), 1, "one file would change");
+                assert_eq!(files.len(), 2, "active + completed both change");
             }
             other => panic!("expected dry-run, got {other:?}"),
         }
