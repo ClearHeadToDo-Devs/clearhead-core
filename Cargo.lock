@@ -282,6 +282,8 @@ dependencies = [
  "dirs",
  "fs2",
  "icalendar",
+ "oxrdf",
+ "oxttl",
  "quick-xml 0.31.0",
  "rrule",
  "serde",
