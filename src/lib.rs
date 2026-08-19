@@ -32,8 +32,10 @@
 //!   precedence stack; clients may extend these settings with tool-specific fields.
 //! - [`telemetry`]: Structured event emission for action lifecycle observability.
 //!
-//! Graph execution and linked-data export deliberately live in the separate
-//! `clearhead-graphd` crate, which consumes this crate's domain/workspace API.
+//! The canonical RDF *publication* of the domain model lives in [`rdf`] — a
+//! database-free projection to quads and their serializations, depending only on
+//! `oxrdf` and `oxttl`. SPARQL evaluation and any Oxigraph store deliberately
+//! stay out of this crate (they belong to the optional CLI `sparql` feature).
 
 pub mod workspace;
 pub use workspace::store::{ManifestSourceType, WorkspaceManifestEntry};
@@ -104,6 +106,10 @@ pub use reference::{
     filter_model_for_charter, filter_model_for_plan, match_entity_reference, match_uuid_reference,
     resolve_reference, resolve_reference_in_workspaces, select_reference, select_reference_where,
 };
+
+/// Canonical RDF publication of the domain model: `DomainModel` → quads and
+/// their TriG / N-Quads / Turtle / JSON-LD serializations. Database-free.
+pub mod rdf;
 
 pub mod telemetry;
 #[doc(inline)]
