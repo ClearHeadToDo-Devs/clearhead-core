@@ -12,7 +12,11 @@ name = "clearhead-lsp"
 path = "src/main.rs"
 
 [dependencies]
-clearhead_core = { path = "../clearhead-core", version = "0.2.0", default-features = false, features = ["formatting"] }
+# Consumed from canonical repositories so a standalone LSP checkout builds
+# without sibling checkouts. The pinned platform composition and local sibling
+# development override these to adjacent paths via the platform
+# `.cargo/config.toml` `[patch]` table; see the README.
+clearhead_core = { git = "https://github.com/ClearHeadToDo-Devs/clearhead-core.git", rev = "cdb579787ea7863961ad97c04c174757fbb9a7f7", version = "0.2.0", default-features = false, features = ["formatting"] }
 chrono = "0.4"
 dashmap = "6.1.0"
 serde_json = "1.0"
@@ -23,7 +27,7 @@ tower-lsp-server = "0.23.0"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.22", features = ["env-filter"] }
 tree-sitter = "0.26.3"
-tree-sitter-actions = { path = "../tree-sitter-actions", version = "0.10.0" }
+tree-sitter-actions = { git = "https://github.com/ClearHeadToDo-Devs/tree-sitter-actions.git", rev = "b6a2579f49df113f2f1a0069b54c05780960ee19", version = "0.10.0" }
 uuid = "1.0"
 
 [dev-dependencies]
