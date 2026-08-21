@@ -1,0 +1,7 @@
+# Default configuration file for the application
+# Uncomment and modify the following lines as needed
+# We default to non-debug mode for visual clarity
+# debug = 0 
+
+# The path to the action file
+# action_path = XDG_DATA_HOME/clearhead_cli/active.actions

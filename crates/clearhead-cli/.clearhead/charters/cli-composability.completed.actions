@@ -1,0 +1,9 @@
+[x] Update Decision 29 — remove --json, add TTY-awareness mechanism, fix count %2026-05-23T18:35 #019e579b-d5c7-7763-aa21-f2d72e47c6d3
+[x] Fix read charters to output markdown by default instead of JSON %2026-05-23T18:45 #019e579b-d5d2-7780-b862-3c19b1d0c4a0
+[x] Implement TTY detection in read commands — table in terminal, native format when piped %2026-05-23T18:45 #019e579b-d5d9-75e3-aadc-5e25831c8ff5
+[x] Add --ids flag to all read commands %2026-05-23T18:45 #019e579b-d5de-7342-8e5b-fa12f2a9e03b
+[x] Add --jsonld flag to all read commands %2026-05-23T18:45 #019e579b-d5e5-7053-a574-ff658facfedb
+[_] Make mutations accept native format on stdin for clearhead-to-clearhead pipes %2026-05-23T19:24 #019e579b-d5f0-79f2-8c2b-053eb3a5569c
+[x] add --sequential (and --context) flags to 'add action'/'update action' $add action has no way to set the ~ sequential marker or context tags (+foo) at creation time; both require a hand-edit after the fact. Found while implementing implicit sequential-chain edges (clearhead-core c339009) and hand-editing a scratch workspace to test it.$ !3 %2026-07-12T18:47 #019f57b9-40a6-7c71-872c-4f7fc4b0947b
+[x] Insert --parent children after their parent's descendant block $add action --parent currently appends the new line at EOF; because DSL parentage is structural, children for earlier roots rebind under the final root after reparse. Insert adjacent to the resolved parent subtree and add a multi-root regression test.$ !1 +bug %2026-07-17T23:07 #019f733f-fe3e-74c0-b6b2-cdf7618572c1
+[x] add \< predecessor flag to add action / update action $neither add action nor update action can author a < predecessor; the DSL supports < <ref> (parser.rs) but no flag sets it, so every cross-action and cross-charter dependency needs a hand-edit. Found while wiring the identity charter dependencies in the platform workspace; sibling to the --sequential/--context gap.$ !3 %2026-07-17T23:07 #019f6ec5-481d-7b40-b0ec-ed2bbc507997

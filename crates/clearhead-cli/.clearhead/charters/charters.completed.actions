@@ -1,0 +1,5 @@
+[x] figure out why the close is failing $ when i tried closing `cli-composibility` they returned a "cannot find charter for this actions file" $+bug  %2026-05-25T11:32#019e604a-817a-7680-a55e-8fdf103ab348
+[x] explore lack of formatting $ right now when we save the files arent formatted like they are supposed to from the formatting hook $+bug,lsp  %2026-05-25T11:32#019e6055-c61a-7fe0-ae13-927884e980e9
+[x] add workspace_for_file to CommandContext — routes file path to owning workspace from configured list  %2026-05-25T11:52#019e607a-f0c6-7cf3-8dbb-630726a76873
+[x] expand archive to include cancelled actions $ right now we only sweep the closed actions but cancelled is an alternate version of closed $+cli  %2026-05-25T11:54#019e6052-0917-7fc1-8ddf-0e2dc5142a33
+[x] fix the error where things are being archived to charter.completed.actions $ there is something going on where we are having the root project file be put into the charters charter which says its just failing to see the root one $ %2026-05-25T14:28#019e6089-27cc-7252-b0ca-b9f6d76b48cc

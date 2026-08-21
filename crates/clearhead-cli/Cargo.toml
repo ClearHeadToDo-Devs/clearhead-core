@@ -1,0 +1,47 @@
+[package]
+name = "clearhead_cli"
+description = "A CLI tool and library for working with the clearhead framework"
+version = "0.2.1"
+authors = ["Darrion Burgess <darrionburgess@gmail.com>"]
+edition = "2024"
+license = "MIT"
+repository = "https://github.com/ClearHeadToDo-Devs/clearhead_cli.git"
+
+[[bin]]
+name = "clearhead"
+path = "src/main.rs"
+
+[dependencies]
+# Shared domain, workspace, persistence, and configuration services
+clearhead_core = { path = "../clearhead-core", version = "0.2.0", default-features = false, features = ["formatting"] }
+
+# CLI-specific dependencies
+clap = { version = "4.0", features = ["derive"] }
+clap_complete = "4.0"
+anyhow = "1.0"
+comfy-table = "7.1"
+termtree = "1.0.0"
+config = { version = "0.15.19", default-features = false, features = ["json"] }
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.22", features = ["env-filter"] }
+chrono = "0.4"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tree-sitter = "0.26.3"
+tree-sitter-actions = { path = "../tree-sitter-actions", version = "0.10.0" }
+
+[dependencies.uuid]
+version = "1.0"
+# Lets you generate random UUIDs
+features = [
+  "serde",
+  "v4",
+  "v7",
+]
+
+[dev-dependencies]
+assert_cmd = "2.1"
+clap_mangen = "0.3"
+insta = { version = "1.45.1", features = ["filters", "redactions", "ron"] }
+predicates = "3.0"
+tempfile = "3.8"

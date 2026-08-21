@@ -1,0 +1,29 @@
+---
+source: tests/snapshots_from_examples.rs
+expression: actions
+---
+[
+  Action(
+    id: "[uuid]",
+    parent_id: "[uuid]",
+    state: not_started,
+    name: "send email",
+    description: None,
+    priority: None,
+    contexts: Some([
+      "office",
+      "computer",
+    ]),
+    scheduled_at: None,
+    duration: None,
+    due_date: None,
+    completed_at: None,
+    created_at: None,
+    predecessors: None,
+    charter: None,
+    alias: None,
+    is_sequential: None,
+    plan_id: None,
+    external_occurrence_key: None,
+  ),
+]

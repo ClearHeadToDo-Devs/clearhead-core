@@ -1,0 +1,1144 @@
+.\" Hand-authored canonical man page for clearhead.
+.\" src/bin/gen_man.rs produces a structural skeleton from clap definitions;
+.\" this file is the authoritative reference and should not be overwritten.
+.ie \n(.g .ds Aq \(aq
+.el       .ds Aq '
+.TH clearhead 1 "2026-05-17" "clearhead 0.2.1" "ClearHead Manual"
+.\" ====================================================================
+.SH NAME
+.\" ====================================================================
+clearhead \- plaintext action management: read, write, query, and archive .actions workspaces
+.\" ====================================================================
+.SH SYNOPSIS
+.\" ====================================================================
+.B clearhead
+[\fB\-c\fR \fIFILE\fR]
+[\fB\-d\fR]
+.I verb
+.I noun
+[\fIoptions\fR]
+[\fIarguments\fR]
+.PP
+.B clearhead
+\fBread\fR \fBactions\fR|\fBplans\fR|\fBcharters\fR [\fIoptions\fR]
+.br
+.B clearhead
+\fBshow\fR \fBaction\fR|\fBplan\fR|\fBcharter\fR \fIquery\fR
+.br
+.B clearhead
+\fBadd\fR \fBaction\fR|\fBplan\fR|\fBcharter\fR \fIname\fR [\fIoptions\fR]
+.br
+.B clearhead
+\fBupdate\fR \fBaction\fR|\fBplan\fR|\fBcharter\fR \fIquery\fR [\fIoptions\fR]
+.br
+.B clearhead
+\fBcomplete\fR \fBaction\fR \fIquery\fR
+.br
+.B clearhead
+\fBcancel\fR \fBaction\fR \fIquery\fR
+.br
+.B clearhead
+\fBdelete\fR \fBaction\fR|\fBplan\fR \fIquery\fR
+.br
+.B clearhead
+\fBarchive\fR \fBactions\fR|\fBcharter\fR [\fIoptions\fR]
+.br
+.B clearhead
+\fBformat\fR|\fBlint\fR|\fBnormalize\fR \fBfile\fR [\fIpath\fR] [\fIoptions\fR]
+.br
+.B clearhead
+\fBquery\fR \fBrun\fR|\fBnamed\fR|\fBlist\fR [\fIoptions\fR]
+.br
+.B clearhead
+\fBdebug\fR
+.\" ====================================================================
+.SH DESCRIPTION
+.\" ====================================================================
+ClearHead is a plaintext-first personal action management system.
+Work items (\fIactions\fR) live in \fB.actions\fR files that any text editor can read and write.
+Recurring schedules live in \fB.ics\fR (vdir) files.
+Completed history is accumulated in a single \fBarchive.ttl\fR Turtle file.
+.PP
+\fBclearhead\fR is the command-line interface and LSP server for the workspace.
+It follows a \fIverb\-noun\fR command structure:
+.EX
+    clearhead read actions
+    clearhead add action "Buy oat milk" \-\-charter inbox
+    clearhead archive charter financial
+.EE
+.PP
+All commands operate on the workspace rooted at \fBdata_dir\fR (see
+.BR CONFIGURATION ).
+Most commands accept \fB\-\-file\fR as an escape hatch to target an arbitrary file
+outside the workspace.
+.PP
+Reference arguments (\fIquery\fR) accept any of:
+full UUID, 8-character UUID prefix, alias (case-insensitive), or name
+(case-insensitive, first match wins).
+See
+.B REFERENCE RESOLUTION
+for details.
+.\" ====================================================================
+.SH GLOBAL OPTIONS
+.\" ====================================================================
+.TP
+\fB\-c\fR, \fB\-\-config\fR \fIFILE\fR
+Load configuration from \fIFILE\fR instead of the default
+\fI~/.config/clearhead/config.json\fR.
+.TP
+\fB\-d\fR, \fB\-\-debug\fR
+Increase log verbosity.
+Repeatable: \fB\-d\fR = DEBUG, \fB\-dd\fR = TRACE.
+Diagnostic output is written to \fBstderr\fR.
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help for the current command or subcommand.
+.TP
+\fB\-V\fR, \fB\-\-version\fR
+Print version and exit.
+.\" ====================================================================
+.SH REFERENCE RESOLUTION
+.\" ====================================================================
+Wherever a \fIquery\fR argument is accepted, ClearHead resolves it in this order:
+.RS 4
+.TP 4
+1.
+Full UUID (\fI019eabcd\-1234\-7abc\-8def\-000000000000\fR)
+.TP 4
+2.
+Short UUID prefix \(em first 8 characters (\fI019eabcd\fR)
+.TP 4
+3.
+Alias \(em the \fB=alias\fR field on the item (case-insensitive)
+.TP 4
+4.
+Name \(em the action or plan name (case-insensitive, first match)
+.RE
+.PP
+Unresolved references produce a lint warning.
+Ambiguous short UUIDs (more than one match) produce lint warning \fBW011\fR.
+.\" ====================================================================
+.SH SUBCOMMANDS
+.\" ====================================================================
+.SS "read \(em list items"
+.PP
+.B clearhead read actions
+[\fB\-\-format\fR \fIfmt\fR]
+[\fB\-\-charter\fR \fIname\fR]
+[\fB\-\-plan\fR \fIref\fR]
+[\fB\-\-context\fR \fItag\fR]...
+[\fB\-\-open\-only\fR]
+[\fB\-\-file\fR \fIpath\fR]
+.PP
+List actions across the workspace (default) or scoped to a charter, plan,
+context, or explicit file.
+.RS 4
+.TP
+\fB\-f\fR, \fB\-\-format\fR \fIfmt\fR
+Output format: \fBtable\fR (default), \fBjson\fR.
+.TP
+\fB\-\-charter\fR \fIname\fR
+Scope to one charter (name, alias, or UUID).
+.TP
+\fB\-\-plan\fR \fIref\fR
+Filter to actions belonging to a specific plan.
+.TP
+\fB\-\-context\fR \fItag\fR
+Filter by context tag.
+Repeatable.
+Includes tag hierarchy ancestors.
+.TP
+\fB\-\-open\-only\fR
+Exclude Completed and Cancelled actions.
+.TP
+\fB\-\-file\fR \fIpath\fR
+Read from an explicit \fB.actions\fR file instead of the workspace.
+.TP
+\fB\-\-columns\fR \fIcols\fR
+Show only these columns (comma-separated: \fBname,state,priority\fR).
+.TP
+\fB\-\-hide\-columns\fR \fIcols\fR
+Hide these columns.
+.TP
+\fB\-\-list\-columns\fR
+List all available column names and exit.
+.RE
+.PP
+.B clearhead read plans
+[\fB\-\-format\fR \fIfmt\fR]
+[\fB\-\-charter\fR \fIname\fR]
+[\fB\-\-recursive\fR]
+[\fB\-\-file\fR \fIpath\fR]
+[\fB\-\-stdio\fR]
+.PP
+List recurring schedule Plans (\fB.ics\fR VTODOs) across the workspace or scoped to a charter.
+.RS 4
+.TP
+\fB\-\-charter\fR \fIname\fR
+Scope to one charter's \fBplans/\fR directory.
+.TP
+\fB\-\-recursive\fR
+Include sub-charter plans (requires \fB\-\-charter\fR).
+.TP
+\fB\-\-stdio\fR
+Read from standard input.
+.RE
+.PP
+.B clearhead read charters
+[\fB\-\-format\fR \fIfmt\fR]
+[\fB\-\-explicit\-only\fR]
+.PP
+List all discovered charters in the workspace, shown hierarchically.
+.RS 4
+.TP
+\fB\-\-explicit\-only\fR
+Show only charters backed by a \fB.md\fR or \fBREADME.md\fR file;
+omit charters inferred from \fB.actions\fR file stems alone.
+.RE
+.PP
+Graph queries are provided by the separate \fBclearhead-graphd\fR tool. For
+example, run \fBclearhead-graphd query index agenda\fR for the daily agenda.
+.\" --------------------------------------------------------------------
+.SS "show \(em inspect a single item"
+.PP
+.B clearhead show action
+\fIquery\fR
+[\fB\-\-file\fR \fIpath\fR]
+.PP
+Print all fields of a single action identified by \fIquery\fR.
+Searches open actions first, then \fB.completed.actions\fR.
+.PP
+.B clearhead show plan
+\fIquery\fR
+[\fB\-\-file\fR \fIpath\fR]
+[\fB\-F\fR \fIfmt\fR]
+.PP
+Print all fields of a single recurring VTODO Plan.
+.PP
+.B clearhead show charter
+\fIquery\fR
+.PP
+Print metadata for a charter (title, alias, state, description).
+.\" --------------------------------------------------------------------
+.SS "add \(em create new items"
+.PP
+.B clearhead add action
+\fIname\fR
+[\fB\-\-charter\fR \fIname\fR | \fB\-\-file\fR \fIpath\fR]
+[\fB\-\-parent\fR \fIref\fR]
+[\fB\-p\fR \fIn\fR]
+[\fB\-s\fR \fIstate\fR]
+[\fB\-a\fR \fIalias\fR]
+[\fB\-\-scheduled\-at\fR \fIdatetime\fR]
+[\fB\-\-dry\-run\fR]
+.PP
+Add a new action to a charter's \fB.actions\fR file.
+A UUIDv7 and creation timestamp are assigned automatically.
+.RS 4
+.TP
+\fB\-\-charter\fR \fIname\fR
+Route to the named charter's \fB.actions\fR file.
+Mutually exclusive with \fB\-\-file\fR.
+.TP
+\fB\-\-file\fR \fIpath\fR
+Write to an explicit \fB.actions\fR file.
+.TP
+\fB\-\-parent\fR \fIref\fR
+Attach as a child of the given action (UUID or short UUID).
+.TP
+\fB\-p\fR, \fB\-\-priority\fR \fIn\fR
+Priority 1\(en9 (1 = highest urgency).
+.TP
+\fB\-s\fR, \fB\-\-state\fR \fIstate\fR
+Initial state: \fBnot\-started\fR (default), \fBin\-progress\fR, \fBblocked\fR.
+.TP
+\fB\-a\fR, \fB\-\-alias\fR \fIalias\fR
+Stable short name for cross-references.
+.TP
+\fB\-\-scheduled\-at\fR \fIdatetime\fR
+Do date/time in RFC 3339 format (e.g. \fI2026-06-01T09:00:00-07:00\fR).
+.TP
+\fB\-\-dry\-run\fR
+Print what would be added without writing.
+.RE
+.PP
+.B clearhead add plan
+\fIname\fR
+[\fB\-\-charter\fR \fIname\fR | \fB\-\-file\fR \fIpath\fR]
+[\fB\-\-scheduled\-at\fR \fIdatetime\fR]
+[\fB\-\-rrule\fR \fIRRULE\fR]
+[\fB\-\-template\fR \fIname\fR]
+[\fB\-\-dry\-run\fR]
+.PP
+Add a new schedule plan as a single-event \fB.ics\fR file inside the charter's
+\fBplans/\fR directory.
+Plans describe \fIwhen\fR actions should be generated; they do not hold action state.
+.RS 4
+.TP
+\fB\-\-scheduled\-at\fR \fIdatetime\fR
+DTSTART for the VTODO (RFC 3339).
+.TP
+\fB\-\-rrule\fR \fIRRULE\fR
+RFC 5545 recurrence rule, e.g. \fIFREQ=WEEKLY;BYDAY=MO\fR.
+.TP
+\fB\-\-template\fR \fIname\fR
+Template to bind via VTODO DESCRIPTION (stem of a \fBtemplates/\fR file).
+.RE
+.PP
+.B clearhead add charter
+\fItitle\fR
+[\fB\-a\fR \fIalias\fR]
+[\fB\-p\fR \fIparent\fR]
+[\fB\-\-template\fR \fIname\fR]
+[\fB\-\-dry\-run\fR]
+.PP
+Create a new charter.
+A flat charter produces \fI<alias>.actions\fR and \fI<alias>.md\fR.
+If a parent is given and the parent uses directory form, a subdirectory is
+created instead.
+.RS 4
+.TP
+\fB\-a\fR, \fB\-\-alias\fR \fIalias\fR
+Short name; used as the file/directory stem.
+Defaults to a slugified form of \fItitle\fR.
+.TP
+\fB\-p\fR, \fB\-\-parent\fR \fIref\fR
+Parent charter reference; places the new charter as a sub-charter.
+.TP
+\fB\-\-template\fR \fIname\fR
+Scaffold the new charter's \fB.actions\fR file from a template.
+.RE
+.\" --------------------------------------------------------------------
+.SS "update \(em modify existing items"
+.PP
+.B clearhead update action
+\fIquery\fR
+[\fB\-n\fR \fIname\fR]
+[\fB\-p\fR \fIn\fR]
+[\fB\-s\fR \fIstate\fR]
+[\fB\-a\fR \fIalias\fR]
+[\fB\-\-scheduled\-at\fR \fIdatetime\fR]
+[\fB\-\-file\fR \fIpath\fR]
+[\fB\-\-dry\-run\fR]
+.PP
+Update one or more fields on an existing action.
+Only supplied flags are changed; all other fields are left intact.
+.RS 4
+.TP
+\fB\-s\fR, \fB\-\-state\fR \fIstate\fR
+New state: \fBnot\-started\fR, \fBin\-progress\fR, \fBblocked\fR,
+\fBcompleted\fR, \fBcancelled\fR.
+.RE
+.PP
+.B clearhead update plan
+\fIquery\fR
+[\fB\-n\fR \fIname\fR]
+[\fB\-\-scheduled\-at\fR \fIdatetime\fR]
+[\fB\-\-rrule\fR \fIRRULE\fR]
+[\fB\-\-template\fR \fIname\fR]
+[\fB\-\-file\fR \fIpath\fR]
+[\fB\-\-dry\-run\fR]
+.PP
+Update fields on a recurring VTODO Plan.
+.PP
+.B clearhead update charter
+\fIquery\fR
+[\fB\-s\fR \fIstate\fR]
+[\fB\-\-title\fR \fItitle\fR]
+[\fB\-\-alias\fR \fIalias\fR]
+[\fB\-\-dry\-run\fR]
+.PP
+Update a charter's metadata.
+Setting \fB\-\-state closed\fR is the prerequisite for \fBarchive charter\fR.
+.RS 4
+.TP
+\fB\-s\fR, \fB\-\-state\fR \fIstate\fR
+Lifecycle state: \fBnew\fR, \fBactive\fR, \fBblocked\fR, \fBclosed\fR.
+.RE
+.\" --------------------------------------------------------------------
+.SS "complete \(em mark an action done"
+.PP
+.B clearhead complete action
+\fIquery\fR
+[\fB\-\-file\fR \fIpath\fR]
+[\fB\-\-dry\-run\fR]
+.PP
+Set the action's state to \fBCompleted\fR and append a \fB%\fR completion
+timestamp.
+The action is moved from \fB<charter>.actions\fR to
+\fB<charter>.completed.actions\fR.
+.\" --------------------------------------------------------------------
+.SS "cancel \(em mark an action cancelled"
+.PP
+.B clearhead cancel action
+\fIquery\fR
+[\fB\-\-file\fR \fIpath\fR]
+[\fB\-\-dry\-run\fR]
+.PP
+Set the action's state to \fBCancelled\fR without deleting it.
+The action is moved to \fB<charter>.completed.actions\fR.
+.\" --------------------------------------------------------------------
+.SS "delete \(em remove an item"
+.PP
+.B clearhead delete action
+\fIquery\fR
+[\fB\-\-file\fR \fIpath\fR]
+[\fB\-\-dry\-run\fR]
+.PP
+Permanently remove an action from the workspace.
+Searches open actions first, then \fB.completed.actions\fR.
+This is destructive; prefer \fBcancel\fR for audit-trail preservation.
+.PP
+.B clearhead delete plan
+\fIquery\fR
+[\fB\-\-file\fR \fIpath\fR]
+[\fB\-\-dry\-run\fR]
+.PP
+Remove a recurring VTODO Plan resource from the workspace.
+.\" --------------------------------------------------------------------
+.SS "archive \(em move completed work out of active files"
+.PP
+.B clearhead archive actions
+[\fIscope\fR]
+[\fB\-\-file\fR \fIpath\fR]
+[\fB\-\-dry\-run\fR]
+.PP
+Sweep Completed and Cancelled actions from \fB<charter>.actions\fR into
+\fB<charter>.completed.actions\fR across the whole workspace (default) or
+within a scoped charter path.
+This is a routine housekeeping step; it does not delete history.
+.RS 4
+.TP
+\fIscope\fR
+Optional charter domain path: \fIhealth\fR, \fIwork/clearhead\fR, etc.
+Workspace-wide if omitted.
+.TP
+\fB\-\-file\fR \fIpath\fR
+Target a specific \fB.actions\fR file directly (out-of-workspace use).
+.TP
+\fB\-\-dry\-run\fR
+Print action counts without writing.
+.RE
+.PP
+.B clearhead archive charter
+[\fIquery\fR | \fB\-\-closed\fR]
+[\fB\-\-force\fR]
+[\fB\-\-dry\-run\fR]
+.PP
+Sweep a fully closed charter's artifacts into \fBarchive.ttl\fR and remove
+its source files.
+The charter must carry \fBstate: Closed\fR in its frontmatter (set with
+\fBupdate charter \-\-state closed\fR).
+.RS 4
+.TP
+\fIquery\fR
+Charter to archive (name, alias, or UUID prefix).
+.TP
+\fB\-\-closed\fR
+Archive all charters whose frontmatter carries \fBstate: Closed\fR in one
+pass.
+Mutually exclusive with \fIquery\fR.
+.TP
+\fB\-\-force\fR
+Archive even if open actions remain in the primary \fB.actions\fR file
+(they are cancelled and swept).
+.TP
+\fB\-\-dry\-run\fR
+Print what would be archived without writing or deleting.
+.RE
+.PP
+What \fBarchive charter\fR does:
+.RS 4
+.IP \(bu 4
+Completed actions from \fB<charter>.completed.actions\fR \(-> \fBarchive.ttl\fR
+.IP \(bu 4
+Plan VTODOs from \fBplans/<charter>/\fR \(-> \fBarchive.ttl\fR
+.IP \(bu 4
+Charter metadata itself \(-> \fBarchive.ttl\fR
+.IP \(bu 4
+Empty source files and directories are removed
+.RE
+.\" --------------------------------------------------------------------
+.SS "format \(em normalise file layout"
+.PP
+.B clearhead format file
+[\fIpath\fR]
+[\fB\-w\fR]
+[\fB\-\-style\fR \fIstyle\fR]
+[\fB\-\-indent\-style\fR \fIindent\fR]
+[\fB\-\-indent\-width\fR \fIn\fR]
+.PP
+Format a \fB.actions\fR file: sort fields into canonical order, normalise
+spacing, and reindent children.
+If \fIpath\fR is omitted, reads from \fBstdin\fR and writes to \fBstdout\fR.
+.RS 4
+.TP
+\fB\-w\fR, \fB\-\-write\fR
+Overwrite the input file with the formatted output.
+.TP
+\fB\-\-style\fR \fIstyle\fR
+\fBcompact\fR (default): all metadata on one line.
+\fBlist\fR: each metadata field on its own indented line.
+.TP
+\fB\-\-indent\-style\fR \fIindent\fR
+\fBspaces\fR (default) or \fBtabs\fR.
+.TP
+\fB\-\-indent\-width\fR \fIn\fR
+Number of spaces (or tabs) for child indentation (default 4).
+.RE
+.\" --------------------------------------------------------------------
+.SS "lint \(em validate a file"
+.PP
+.B clearhead lint file
+[\fIpath\fR]
+.PP
+Check a \fB.actions\fR file for errors and convention violations.
+Reads from \fBstdin\fR if \fIpath\fR is omitted.
+Exits non-zero if any errors are found.
+.PP
+Diagnostic codes are prefixed \fBE\fR (error), \fBI\fR (info/warning), or \fBW\fR (warning).
+See
+.B DIAGNOSTICS
+for the full list.
+.\" --------------------------------------------------------------------
+.SS "normalize \(em assign missing UUIDs"
+.PP
+.B clearhead normalize file
+[\fIpath\fR]
+[\fB\-w\fR]
+[\fB\-\-no\-format\fR]
+.PP
+Assign UUIDv7 identifiers to any action that lacks a \fB#\fR field, then
+format the result.
+Idempotent: existing UUIDs are never changed.
+.RS 4
+.TP
+\fB\-w\fR, \fB\-\-write\fR
+Overwrite the input file.
+.TP
+\fB\-\-no\-format\fR
+Skip the formatting step after assigning UUIDs.
+.RE
+.\" --------------------------------------------------------------------
+.SS "patch \(em merge two versions of a file"
+.PP
+.B clearhead patch file
+\fB\-p\fR \fIprimary\fR
+\fB\-s\fR \fIsecondary\fR
+[\fB\-w\fR]
+.PP
+Apply changes from \fIsecondary\fR onto \fIprimary\fR using UUID-keyed
+three-way merge semantics.
+Useful for reconciling edits made in two editors simultaneously.
+.RS 4
+.TP
+\fB\-p\fR, \fB\-\-primary\fR \fIpath\fR
+Source of truth file.
+.TP
+\fB\-s\fR, \fB\-\-secondary\fR \fIpath\fR
+File containing updates to apply.
+.TP
+\fB\-w\fR, \fB\-\-write\fR
+Overwrite \fIprimary\fR with the merged result.
+.RE
+.\" --------------------------------------------------------------------
+.SS "expand \(em materialise scheduled instances"
+.PP
+.B clearhead expand actions
+[\fIfile\fR]
+[\fB\-\-dry\-run\fR]
+.PP
+Expand recurring Plans (\fB.ics\fR VTODOs) into concrete action instances in
+the corresponding \fB.actions\fR files.
+Generates up to \fBexpansion_primary_instances\fR actions into the primary
+\fB.actions\fR file and additional instances into \fB.upcoming.actions\fR.
+.\" --------------------------------------------------------------------
+.SS "apply \(em instantiate a template"
+.PP
+.B clearhead apply template
+\fIname\fR
+[\fB\-\-charter\fR \fIname\fR | \fB\-\-file\fR \fIpath\fR]
+[\fB\-\-dry\-run\fR]
+.PP
+Append the actions defined in \fIname\fR.actions (from the workspace
+\fBtemplates/\fR directory) into a charter's \fB.actions\fR file.
+New UUIDs are assigned to all appended actions.
+.\" --------------------------------------------------------------------
+.SS "export \(em convert to external formats"
+.PP
+.B clearhead export plans
+[\fIreference\fR]
+[\fB\-o\fR \fIpath\fR]
+[\fB\-\-open\-only\fR]
+[\fB\-\-recursive\fR]
+.PP
+Export Actions as standalone iCalendar VTODO components. Unscheduled and
+due-only Actions are representable; \fB\-\-open\-only\fR excludes terminal states.
+.RS 4
+.TP
+\fIreference\fR
+Charter, plan, or action alias/UUID to scope the export.
+Exports the entire workspace if omitted.
+.TP
+\fB\-o\fR, \fB\-\-output\fR \fIpath\fR
+Output file.
+Writes to \fBstdout\fR if omitted.
+.TP
+\fB\-\-open\-only\fR
+Exclude Completed and Cancelled items.
+.TP
+\fB\-\-recursive\fR
+Include sub-charter plans (requires \fIreference\fR).
+.RE
+.\" --------------------------------------------------------------------
+.SS "import \(em ingest external formats"
+.PP
+.B clearhead import plans
+\fIsource\fR
+[\fB\-\-charter\fR \fIname\fR]
+[\fB\-\-overwrite\fR]
+[\fB\-\-dry\-run\fR]
+.PP
+Import recurring VTODO schedules and write individual VTODO+RRULE resources
+inside the target charter's \fBplans/\fR vdir.
+.RS 4
+.TP
+\fIsource\fR
+\fB.ics\fR file to import (e.g. a Google Calendar export).
+.TP
+\fB\-\-charter\fR \fIname\fR
+Target charter.
+Defaults to the source filename stem.
+.TP
+\fB\-\-overwrite\fR
+Replace existing \fI<UID>.ics\fR files when a UID collision occurs.
+.RE
+.\" --------------------------------------------------------------------
+.SS "graph queries"
+.PP
+SPARQL execution, saved query families, validation, and query output formats
+belong to the independently installed \fBclearhead-graphd\fR tool. The CLI does
+not proxy that interface. See \fBclearhead-graphd --help\fR.
+.\" --------------------------------------------------------------------
+.SS "sync \(em synchronise with external systems"
+.PP
+.B clearhead sync events
+[\fIfile\fR]
+[\fB\-\-dry\-run\fR]
+.PP
+Backfill action-created telemetry records for existing actions.
+.PP
+.B clearhead sync calendar
+[\fB\-\-dry\-run\fR]
+[\fB\-\-conflict\fR \fIaction|calendar\fR]
+.PP
+Synchronize standalone Action VTODOs through the configured plans vdir.
+Calendar-created VTODOs become Actions; missing projections are recreated.
+No CalDAV server or transport implementation is assumed.
+.\" --------------------------------------------------------------------
+.SS "start \(em launch services"
+.PP
+.B clearhead start lsp
+.PP
+Start the Language Server Protocol server on \fBstdin\fR/\fBstdout\fR using
+the LSP 3.17 JSON-RPC protocol.
+Editors attach to it automatically; invoke directly only for debugging.
+See
+.B LSP
+below.
+.\" --------------------------------------------------------------------
+.SS "debug \(em inspect resolved configuration"
+.PP
+.B clearhead debug
+.PP
+Print the fully resolved configuration (data_dir, config_dir, binary path,
+workspace roots discovered) and any workspace-level diagnostics.
+Useful for verifying setup after installation.
+.\" ====================================================================
+.SH "THE .ACTIONS FORMAT"
+.\" ====================================================================
+A \fB.actions\fR file is a list of actions, one per line (plus optional
+continuation lines for descriptions).
+Every action starts with a \fIstate marker\fR.
+.PP
+.B States
+.RS 4
+.TP 10
+\fB[ ]\fR
+Not started
+.TP 10
+\fB[-]\fR
+In progress
+.TP 10
+\fB[=]\fR
+Blocked / awaiting
+.TP 10
+\fB[x]\fR
+Completed
+.TP 10
+\fB[_]\fR
+Cancelled
+.RE
+.PP
+.B Fields
+(all optional except state and name; canonical order shown)
+.RS 4
+.TP
+\fB=\fR\fIalias\fR
+Stable short name for cross-references.
+.TP
+\fB$ ... $\fR
+Description block.
+Opens and closes with \fB$\fR; may span multiple lines.
+.TP
+\fB~\fR
+Sequential children marker: direct children must be completed in order.
+.TP
+\fB!\fR\fIn\fR
+Priority (1\(en9; 1 = highest urgency).
+.TP
+\fB*\fR\fIref\fR
+Objective or parent reference.
+Supports path notation: \fB*work/clearhead/docs\fR.
+.TP
+\fB+\fR\fItag\fR[,\fItag\fR]...
+Context tags.
+.TP
+\fB@\fR\fIdatetime\fR
+Do date/time \(em when you intend to work on this.
+.TP
+\fB:\fR\fIdatetime\fR
+Due date/time \(em hard deadline.
+.TP
+\fB^\fR\fIdatetime\fR
+Created timestamp (assigned automatically on first normalize/save).
+.TP
+\fB%\fR\fIdatetime\fR
+Completed timestamp (assigned automatically on \fBcomplete\fR).
+.TP
+\fB#\fR\fIuuid\fR
+Stable identifier (UUIDv7; assigned automatically on normalize/save).
+.TP
+\fB<\fR\fIref\fR
+Predecessor: must be closed before this action is dependency-clean.
+.RE
+.PP
+.B Children
+.PP
+Actions nest with \fB>\fR depth markers.
+One \fB>\fR = depth 1, \fB>>\fR = depth 2, and so on.
+Leading whitespace is cosmetic and ignored by the parser.
+.EX
+    [ ] Plan offsite
+    > [ ] Book venue @2026-07-01
+    > [ ] Arrange travel ~
+    >> [ ] Book flights
+    >> [ ] Book hotels
+    > [ ] Send invites
+.EE
+.PP
+.B Dates
+.PP
+ISO 8601 date/time forms are accepted.
+Time zones are optional; local time is assumed when omitted.
+.EX
+    @2026-05-17
+    @2026-05-17T14:30
+    @2026-05-17T14:30:00-07:00
+.EE
+.PP
+.B Full example
+.EX
+    [-] Ship v1.0 =ship-v1 !1 *clearhead @2026-06-01T09:00
+        $ Final release checklist. Sequential. $
+        ~ +work ^2026-05-01T10:00 #019eabcd-1234-7000-8000-000000000001
+    > [ ] Run tests !2 +ci
+    > [ ] Build binary !1 =build-binary
+    > [ ] Tag release !1 < build-binary
+    > [ ] Publish !1
+    > [ ] Announce !3
+.EE
+.\" ====================================================================
+.SH WORKSPACE
+.\" ====================================================================
+A ClearHead workspace is a directory that contains action files, schedule
+plans, objectives, and configuration.
+There are two workspace scopes:
+.TP
+.B Global (user) workspace
+\fI$XDG_DATA_HOME/clearhead/\fR (default: \fI~/.local/share/clearhead/\fR)
+.TP
+.B Project workspace
+The nearest ancestor directory containing a \fB.clearhead/\fR subdirectory.
+.PP
+.B Directory layout
+.EX
+    <workspace>/
+    ├── archive.ttl              # closed history (Turtle RDF)
+    ├── charters/
+    │   ├── inbox.actions        # default capture zone
+    │   ├── <charter>.actions    # flat charter actions
+    │   ├── <charter>.completed.actions
+    │   ├── <charter>.upcoming.actions
+    │   ├── <charter>.md         # charter metadata / description
+    │   └── <charter>/           # directory-form charter
+    │       ├── README.md
+    │       ├── next.actions
+    │       └── <sub>.actions
+    ├── objectives/
+    │   └── <alias>.md
+    ├── plans/
+    │   └── <charter>/
+    │       └── <resource>.ics   # one primary component per vdir resource
+    └── templates/
+        └── <name>.actions
+.EE
+.PP
+For a project workspace, all of the above lives inside \fB.clearhead/\fR at
+the project root.
+The root charter's actions are at \fB.clearhead/charters/next.actions\fR.
+.PP
+\fBarchive.ttl\fR is the only file written by \fBarchive charter\fR.
+It accumulates all closed history and is never deleted.
+Query workspace graph data directly with \fBclearhead-graphd\fR using SPARQL.
+.\" ====================================================================
+.SH WORKFLOW
+.\" ====================================================================
+A typical daily workflow:
+.PP
+.B 1. Capture
+.PP
+Dump everything into the inbox without worrying about organisation:
+.EX
+    clearhead add action "Reply to Alice" --charter inbox +work
+    clearhead add action "Pick up prescription" +health \\
+        --scheduled-at "2026-05-18T10:00:00"
+.EE
+.PP
+Or open the inbox in your editor (\fB:ClearheadInbox\fR in Neovim) and type
+actions directly.
+.PP
+.B 2. Triage
+.PP
+Move actions to their home charters, set priorities, add dates:
+.EX
+    clearhead update action "Reply to Alice" --charter work -p 2
+    clearhead update action "Pick up prescription" -p 1
+.EE
+.PP
+.B 3. Act
+.PP
+Mark items in progress, then complete them:
+.EX
+    clearhead update action buy-oat-milk --state in-progress
+    clearhead complete action buy-oat-milk
+.EE
+.PP
+.B 4. Housekeep
+.PP
+Archive completed actions out of active files periodically:
+.EX
+    clearhead archive actions              # workspace-wide
+    clearhead archive actions health       # one charter
+.EE
+.PP
+.B 5. Review and close
+.PP
+When a charter's work is done, close and archive it:
+.EX
+    clearhead update charter financial --state closed
+    clearhead archive charter financial --dry-run   # preview
+    clearhead archive charter financial             # for real
+.EE
+.\" ====================================================================
+.SH "LSP"
+.\" ====================================================================
+ClearHead includes a built-in Language Server Protocol (LSP 3.17) server.
+Start it with:
+.EX
+    clearhead start lsp
+.EE
+Editors attach over \fBstdin\fR/\fBstdout\fR.
+The official Neovim plugin (\fBclearhead.nvim\fR) configures this automatically
+when \fBnvim_lsp_enable = true\fR.
+.PP
+Capabilities provided:
+.RS 4
+.IP \(bu 4
+Completions for \fB@\fR, \fB%\fR, \fB^\fR date fields ("now", "today", "tomorrow")
+.IP \(bu 4
+Code actions: assign UUID, set completion date, backfill creation date
+.IP \(bu 4
+Semantic tokens: state, name, priority, dates, UUID, tags, references
+.IP \(bu 4
+Inlay hints: due-date countdown, completion age
+.IP \(bu 4
+Go to definition / find references for objectives and context tags
+.IP \(bu 4
+Document formatting (delegates to \fBformat file\fR)
+.IP \(bu 4
+Diagnostics: all lint rules evaluated on every change
+.IP \(bu 4
+Workspace command \fBclearhead/archive\fR: returns a WorkspaceEdit
+.RE
+.\" ====================================================================
+.SH DIAGNOSTICS
+.\" ====================================================================
+\fBclearhead lint\fR and the LSP server both emit diagnostics using these codes.
+Errors (\fBE\fR) block normalization; infos (\fBI\fR) and warnings (\fBW\fR)
+are advisory.
+.PP
+.B Errors
+.RS 4
+.TP
+\fBE001\fR
+Duration field present without a do date (\fB@\fR).
+.TP
+\fBE003\fR
+Empty context tag (\fB+\fR with no name).
+.TP
+\fBE004\fR
+Orphaned child marker: \fB>\fR with no parent action above it.
+.TP
+\fBE005\fR
+Skipped hierarchy level (e.g. root action followed directly by depth 2).
+.TP
+\fBE006\fR
+Malformed UUID \(em not a valid UUID string.
+.RE
+.PP
+.B Informational
+.RS 4
+.TP
+\fBI001\fR
+Completed action missing a completion date (\fB%\fR).
+.TP
+\fBI002\fR
+Completion date present on a non-completed action.
+.TP
+\fBI003\fR
+Invalid priority value (must be 1\(en9).
+.TP
+\fBI004\fR
+Duplicate UUID in the workspace.
+.TP
+\fBI006\fR
+Fields out of canonical order.
+.TP
+\fBI007\fR
+High-priority action (1 or 2) without a do date.
+.TP
+\fBI008\fR
+Blocked action (\fB[=]\fR) without a description explaining the blocker.
+.TP
+\fBI009\fR
+Child action has higher priority than its parent.
+.TP
+\fBI010\fR
+Duration exceeds a reasonable threshold.
+.TP
+\fBI011\fR
+Do date is in the past.
+.TP
+\fBI012\fR
+Alias does not match the required slug format.
+.TP
+\fBI013\fR
+Redundant tag (already present via tag hierarchy ancestor).
+.TP
+\fBI014\fR
+Objective path depth exceeds configured maximum.
+.TP
+\fBI015\fR
+Empty alias (\fB=\fR with no name).
+.RE
+.PP
+.B Warnings
+.RS 4
+.TP
+\fBW001\fR
+Hierarchy depth exceeded (more than the configured max nesting level).
+.TP
+\fBW002\fR
+Completed parent action with one or more uncompleted children.
+.TP
+\fBW003\fR
+All children are completed but the parent action is not.
+.TP
+\fBW004\fR
+Action missing a creation date (\fB^\fR).
+.TP
+\fBW005\fR
+Creation date is in the future.
+.TP
+\fBW006\fR
+Completion timestamp is earlier than creation timestamp.
+.TP
+\fBW010\fR
+Duplicate alias in the workspace.
+.TP
+\fBW011\fR
+Ambiguous short UUID: more than one action matches the 8-char prefix.
+.TP
+\fBW012\fR
+Sequential marker (\fB~\fR) on an action with no children.
+.TP
+\fBW013\fR
+Incomplete UUID: a \fB#\fR id that is a well-formed prefix of a full UUID but stops short \(em a uuid still being typed. Contrast \fBE006\fR, a genuinely malformed id.
+.RE
+.\" ====================================================================
+.SH CONFIGURATION
+.\" ====================================================================
+Configuration is resolved in this order (later sources win):
+.RS 4
+.IP "1." 4
+Built-in defaults
+.IP "2." 4
+\fI~/.config/clearhead/config.json\fR
+.IP "3." 4
+Environment variables (see
+.BR ENVIRONMENT )
+.IP "4." 4
+Command-line flags
+.RE
+.PP
+\fBconfig.json\fR example:
+.EX
+    {
+      "data_dir": "~/.local/share/clearhead",
+      "default_file": "inbox.actions",
+      "cli_format": "table",
+      "expansion_primary_instances": 3
+    }
+.EE
+.\" ====================================================================
+.SH ENVIRONMENT
+.\" ====================================================================
+.TP
+\fBCLEARHEAD_DATA_DIR\fR
+Override the workspace data directory.
+.TP
+\fBCLEARHEAD_CONFIG_DIR\fR
+Override the configuration directory.
+.TP
+\fBCLEARHEAD_DEFAULT_FILE\fR
+Override the default actions file stem (default: \fBinbox.actions\fR).
+.TP
+\fBXDG_DATA_HOME\fR
+Base for \fI$XDG_DATA_HOME/clearhead\fR (default: \fI~/.local/share\fR).
+.TP
+\fBXDG_CONFIG_HOME\fR
+Base for \fI$XDG_CONFIG_HOME/clearhead\fR (default: \fI~/.config\fR).
+.\" ====================================================================
+.SH FILES
+.\" ====================================================================
+.TP
+\fI~/.config/clearhead/config.json\fR
+User configuration file.
+.TP
+\fI~/.local/share/clearhead/\fR
+Default global workspace data directory.
+.TP
+\fI~/.local/share/clearhead/charters/inbox.actions\fR
+Default inbox (uncategorised captures).
+.TP
+\fI~/.local/share/clearhead/archive.ttl\fR
+Permanent closed history in Turtle RDF format.
+.TP
+\fI<project>/.clearhead/\fR
+Project-local workspace root.
+.TP
+\fI~/.clearhead/queries/\fR
+User-level named SPARQL queries.
+.TP
+\fI<project>/.clearhead/queries/\fR
+Project-level named SPARQL queries.
+.\" ====================================================================
+.SH EXAMPLES
+.\" ====================================================================
+.B Daily capture
+.EX
+    # Open inbox in editor (clearhead.nvim)
+    # Or add from the shell:
+    clearhead add action "Review PR #412" --charter work +review -p 2
+    clearhead add action "Call dentist" +health @2026-05-18T10:00
+.EE
+.PP
+.B List open actions for a charter
+.EX
+    clearhead read actions --charter work --open-only
+    clearhead read actions --charter work --format json | jq '.[] | .name'
+.EE
+.PP
+.B Complete and archive
+.EX
+    clearhead complete action "Review PR #412"
+    clearhead archive actions work
+.EE
+.PP
+.B Close a charter
+.EX
+    clearhead update charter work --state closed
+    clearhead archive charter work --dry-run
+    clearhead archive charter work
+.EE
+.PP
+.B Add a recurring weekly plan
+.EX
+    clearhead add plan "Weekly review" \\
+        --charter inbox \\
+        --scheduled-at "2026-05-19T09:00:00-07:00" \\
+        --rrule "FREQ=WEEKLY;BYDAY=MO" \\
+        --template weekly-review
+    clearhead expand actions
+.EE
+.PP
+.B Query blocked actions with SPARQL
+.EX
+    clearhead-graphd query raw --where '
+        ?action a actions:Action ;
+                cco:ont00001868 actions:Blocked ;
+                rdfs:label ?name .
+    '
+.EE
+.PP
+.B Lint before committing
+.EX
+    clearhead lint file .clearhead/charters/next.actions
+    echo $?   # 0 = clean, 1 = errors found
+.EE
+.PP
+.B Export a charter's schedule to Apple Calendar
+.EX
+    clearhead export plans work -o work.ics
+    open work.ics   # macOS: imports into Calendar.app
+.EE
+.\" ====================================================================
+.SH "SEE ALSO"
+.\" ====================================================================
+.B clearhead.nvim
+\(em Neovim plugin with LSP integration, state cycling, and pickers
+.br
+.I https://github.com/ClearHeadToDo-Devs/clearhead.nvim
+.PP
+.B Action file format specification
+.br
+.I https://github.com/ClearHeadToDo-Devs/specifications/blob/master/action_file_format.md
+.PP
+.B Workspace and naming conventions
+.br
+.I https://github.com/ClearHeadToDo-Devs/specifications/blob/master/naming_conventions.md
+.PP
+.B Process specification
+.br
+.I https://github.com/ClearHeadToDo-Devs/specifications/blob/master/process.md
+.\" ====================================================================
+.SH VERSION
+.\" ====================================================================
+clearhead 0.2.1
+.\" ====================================================================
+.SH AUTHOR
+.\" ====================================================================
+Darrion Burgess and contributors.
+.br
+MIT License.

@@ -1,0 +1,26 @@
+---
+source: tests/snapshots_from_examples.rs
+expression: actions
+---
+[
+  Action(
+    id: "[uuid]",
+    parent_id: "[uuid]",
+    state: completed,
+    name: "Daily medication",
+    description: None,
+    priority: None,
+    contexts: None,
+    scheduled_at: Some("2019-01-01T00:01:00[local-offset]"),
+    duration: Some(120),
+    due_date: None,
+    completed_at: None,
+    created_at: None,
+    predecessors: None,
+    charter: None,
+    alias: None,
+    is_sequential: None,
+    plan_id: None,
+    external_occurrence_key: None,
+  ),
+]

@@ -1,0 +1,3 @@
+[submodule "tree-sitter-actions"]
+	path = tree-sitter-actions
+	url = https://github.com/ClearHeadToDo-Devs/tree-sitter-actions

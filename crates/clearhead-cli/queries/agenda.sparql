@@ -1,0 +1,23 @@
+PREFIX actions: <https://clearhead.us/vocab/actions/v3#>
+PREFIX cco: <https://www.commoncoreontologies.org/>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+PREFIX schema: <http://schema.org/>
+
+SELECT ?id ?name ?priority
+WHERE {
+  ?s a actions:RootActionPlan ;
+     actions:id ?id ;
+     schema:name ?name .
+  
+  OPTIONAL { ?s actions:hasPriority ?priority }
+
+  # Filter out completed/cancelled
+  ?s actions:hasState ?state .
+  FILTER (?state != actions:Completed && ?state != actions:Cancelled)
+
+  # Check do date (if exists, must be <= NOW)
+  # Note: NOW is injected or we assume query time
+  # FILTER (NOT EXISTS { ?s actions:hasDoDateTime ?doDate } || ?doDate <= NOW())
+}
+ORDER BY ?priority
+LIMIT 20

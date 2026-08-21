@@ -1,0 +1,19 @@
+#!/bin/sh
+#
+# Pre-push gate for a Rust crate: refuse to push unless it is formatted,
+# lint-clean, and green. This is the local half of the tech-debt #2 quality
+# baseline; CI re-runs the same checks in a clean environment as the source of
+# truth. Bypass in a genuine emergency with:  git push --no-verify
+#
+set -eu
+
+echo "pre-push > cargo fmt --check"
+cargo fmt --check
+
+echo "pre-push > cargo clippy --all-targets -- -D warnings"
+cargo clippy --all-targets --no-deps -- -D warnings
+
+echo "pre-push > cargo test"
+cargo test --quiet
+
+echo "pre-push > all checks passed"

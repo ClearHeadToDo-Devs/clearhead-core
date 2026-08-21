@@ -1,0 +1,2 @@
+[x] extract shared action-file walker from find_definition and find_references !2 %2026-07-11T19:47 #019e608f-4575-74b1-8f09-3749600368f3
+[x] move date_completion_items to providers.rs — it is pure computation like all other providers %2026-07-11T21:16 #019e608f-4570-7ca0-a989-245a3b36c408

@@ -1,0 +1,113 @@
+---
+source: tests/snapshots_from_examples.rs
+expression: actions
+---
+[
+  Action(
+    id: "[uuid]",
+    parent_id: "[uuid]",
+    state: not_started,
+    name: "Deploy to production",
+    description: Some("Monitor logs after deployment"),
+    priority: Some(1),
+    contexts: Some([
+      "Work",
+      "DevOps",
+      "Critical",
+    ]),
+    scheduled_at: Some("2025-02-15T14:00:00[local-offset]"),
+    duration: Some(30),
+    due_date: None,
+    completed_at: None,
+    created_at: Some("2026-01-24T17:48:00[local-offset]"),
+    predecessors: Some([
+      PredecessorRef(
+        raw_ref: "[predecessor_ref]",
+      ),
+      PredecessorRef(
+        raw_ref: "[predecessor_ref]",
+      ),
+    ]),
+    charter: Some("Release Management"),
+    alias: None,
+    is_sequential: None,
+    plan_id: None,
+    external_occurrence_key: None,
+  ),
+  Action(
+    id: "[uuid]",
+    parent_id: "[uuid]",
+    state: not_started,
+    name: "Tests passing",
+    description: Some("This task verifies deployment readiness"),
+    priority: Some(1),
+    contexts: Some([
+      "Work",
+      "Testing",
+    ]),
+    scheduled_at: Some("2025-02-15T10:00:00[local-offset]"),
+    duration: Some(90),
+    due_date: None,
+    completed_at: None,
+    created_at: Some("2026-01-24T17:48:00[local-offset]"),
+    predecessors: Some([
+      PredecessorRef(
+        raw_ref: "[predecessor_ref]",
+      ),
+    ]),
+    charter: Some("Release Management"),
+    alias: Some("tests"),
+    is_sequential: None,
+    plan_id: None,
+    external_occurrence_key: None,
+  ),
+  Action(
+    id: "[uuid]",
+    parent_id: "[uuid]",
+    state: not_started,
+    name: "Code review complete",
+    description: Some("Review coding standards and security"),
+    priority: Some(2),
+    contexts: Some([
+      "Work",
+      "CodeReview",
+    ]),
+    scheduled_at: Some("2025-02-15T11:00:00[local-offset]"),
+    duration: Some(60),
+    due_date: None,
+    completed_at: None,
+    created_at: Some("2026-01-24T17:48:00[local-offset]"),
+    predecessors: Some([
+      PredecessorRef(
+        raw_ref: "[predecessor_ref]",
+      ),
+    ]),
+    charter: Some("Release Management"),
+    alias: Some("code_review"),
+    is_sequential: None,
+    plan_id: None,
+    external_occurrence_key: None,
+  ),
+  Action(
+    id: "[uuid]",
+    parent_id: "[uuid]",
+    state: not_started,
+    name: "PR submitted",
+    description: Some("Merge to production after tests pass"),
+    priority: Some(3),
+    contexts: Some([
+      "Work",
+    ]),
+    scheduled_at: Some("2025-02-14T17:00:00[local-offset]"),
+    duration: None,
+    due_date: None,
+    completed_at: None,
+    created_at: Some("2026-01-24T17:48:00[local-offset]"),
+    predecessors: None,
+    charter: Some("Release Management"),
+    alias: None,
+    is_sequential: None,
+    plan_id: None,
+    external_occurrence_key: None,
+  ),
+]

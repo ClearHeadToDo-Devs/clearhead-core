@@ -1,0 +1,11 @@
+{
+  "_comment": "Example configuration file for clearhead_cli",
+  "_comment2": "Copy this to ~/.config/clearhead/config.json and customize as needed",
+  "_comment3": "data_dir and config_dir default to XDG directories - only set if you want custom locations",
+
+  "default_file": "inbox.actions",
+
+  "cli_format": "actions",
+  "cli_indent_style": "spaces",
+  "cli_indent_width": 4
+}

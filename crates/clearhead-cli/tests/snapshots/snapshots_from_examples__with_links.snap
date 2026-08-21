@@ -1,0 +1,26 @@
+---
+source: tests/snapshots_from_examples.rs
+expression: actions
+---
+[
+  Action(
+    id: "[uuid]",
+    parent_id: "[uuid]",
+    state: not_started,
+    name: "Review pull request [[PR #456|https://github.com/org/repo/pull/456]]",
+    description: Some("Check the implementation against [[API docs|https://api.example.com/v2/docs]] and verify [[https://example.com/checklist]]"),
+    priority: None,
+    contexts: None,
+    scheduled_at: None,
+    duration: None,
+    due_date: None,
+    completed_at: None,
+    created_at: None,
+    predecessors: None,
+    charter: None,
+    alias: None,
+    is_sequential: None,
+    plan_id: None,
+    external_occurrence_key: None,
+  ),
+]

@@ -1,0 +1,26 @@
+---
+source: tests/snapshots_from_examples.rs
+expression: actions
+---
+[
+  Action(
+    id: "[uuid]",
+    parent_id: "[uuid]",
+    state: completed,
+    name: "meeting with team",
+    description: None,
+    priority: None,
+    contexts: None,
+    scheduled_at: Some("2025-01-20T14:30:00[local-offset]"),
+    duration: Some(90),
+    due_date: None,
+    completed_at: None,
+    created_at: None,
+    predecessors: None,
+    charter: None,
+    alias: None,
+    is_sequential: None,
+    plan_id: None,
+    external_occurrence_key: None,
+  ),
+]
