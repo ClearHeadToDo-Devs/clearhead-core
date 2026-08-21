@@ -272,8 +272,8 @@ impl CommandContext {
     /// Discover the primary workspace's plan `.ics` entries, honoring `plan_path`.
     pub fn collect_plan_files(
         &self,
-    ) -> anyhow::Result<Vec<clearhead_core::workspace::PlanFileEntry>> {
-        Ok(clearhead_core::collect_plan_files_with_plans(
+    ) -> anyhow::Result<Vec<clearhead_workspace_fs::CalendarResource>> {
+        Ok(clearhead_workspace_fs::read_calendar_resources(
             &self.data_dir,
             self.plan_override().as_deref(),
         )?)

@@ -2,6 +2,7 @@
 
 pub mod action_files;
 pub mod archive_charter;
+pub mod calendar;
 pub mod doctor;
 pub mod manifest;
 pub mod mounts;
@@ -11,6 +12,10 @@ pub use action_files::{read_action_file, read_actions, write_actions};
 pub use archive_charter::{
     ArchiveCharterError, ArchiveCharterOptions, ArchiveCharterResult, archive_charter,
     archive_terminal_charters, find_charter as find_markdown_charter,
+};
+pub use calendar::{
+    CalendarResource, plans_sync_store_path, read_calendar_resources, read_ics_file,
+    read_plans_sync_store, read_vtodo_actions, read_vtodo_file,
 };
 pub use doctor::{
     apply_doctor_repairs, diagnose_workspace, diagnose_workspace_read, observe_doctor,
@@ -421,7 +426,7 @@ fn parse_snapshot(
 }
 
 fn revision(bytes: &[u8]) -> ResourceRevision {
-    ResourceRevision::new(blake3::hash(bytes).to_hex().to_string())
+    mounts::content_revision(bytes)
 }
 
 fn logical_path(path: &Path) -> Result<WorkspacePath, WorkspaceError> {

@@ -11,8 +11,10 @@ use clearhead_core::workspace::resource::{
 };
 use clearhead_core::workspace::{
     MarkdownCharter, Workspace, WorkspaceAssemblyInput, WorkspaceError, WorkspaceRead,
-    assemble_workspace, plan_workspace_read, read_plans_sync_store,
+    assemble_workspace, plan_workspace_read,
 };
+
+use crate::calendar::read_plans_sync_store;
 
 /// Physical roots resolved by the native adapter.
 ///
@@ -267,7 +269,8 @@ fn read_mount(
                     });
                     continue;
                 }
-                snapshots.push(ResourceSnapshot::new(logical.clone(), bytes, before));
+                let revision = content_revision(&bytes);
+                snapshots.push(ResourceSnapshot::new(logical.clone(), bytes, revision));
             }
             Err(error) => failures.push(ResourceReadFailure {
                 path: logical.clone(),
@@ -290,6 +293,10 @@ fn logical_path(path: &Path) -> Result<WorkspacePath, WorkspaceError> {
         .ok_or_else(|| WorkspaceError::InvalidPath(path.to_path_buf()))?
         .join("/");
     WorkspacePath::new(logical).map_err(|_| WorkspaceError::InvalidPath(path.to_path_buf()))
+}
+
+pub(crate) fn content_revision(bytes: &[u8]) -> ResourceRevision {
+    ResourceRevision::new(blake3::hash(bytes).to_hex().to_string())
 }
 
 fn metadata_revision(metadata: &std::fs::Metadata) -> ResourceRevision {

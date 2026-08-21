@@ -102,6 +102,21 @@ fn collect_charter_tree(
     result
 }
 
+fn parse_calendar_resource(
+    resource: &clearhead_workspace_fs::CalendarResource,
+) -> anyhow::Result<Vec<clearhead_core::ICSPlan>> {
+    let source = std::str::from_utf8(&resource.bytes).with_context(|| {
+        format!(
+            "Calendar resource '{}' is not UTF-8",
+            resource.path.display()
+        )
+    })?;
+    Ok(clearhead_core::workspace::calendar::ics::parse_ics(
+        source,
+        &resource.relative_path,
+    )?)
+}
+
 pub fn read_plans(
     ctx: &CommandContext,
     format: &Option<argparser::OutputMode>,
@@ -111,17 +126,15 @@ pub fn read_plans(
     _stdio: bool,
     _table_options: &argparser::CliTableOptions,
 ) -> anyhow::Result<()> {
-    use clearhead_core::workspace::calendar::ics::parse_ics_file;
-
     let plans: Vec<(String, clearhead_core::Plan)> = if let Some(path) = file {
         let charter_name = path
             .file_stem()
             .and_then(|s| s.to_str())
             .unwrap_or("unknown")
             .to_string();
-        parse_ics_file(path)?
+        clearhead_workspace_fs::read_ics_file(path)?
             .into_iter()
-            .map(|ip| (charter_name.clone(), ip.plan))
+            .map(|plan| (charter_name.clone(), plan.plan))
             .collect()
     } else {
         let entries = ctx.collect_plan_files()?;
@@ -151,12 +164,15 @@ pub fn read_plans(
             {
                 continue;
             }
-            match parse_ics_file(&entry.path) {
-                Ok(ps) => result.extend(
-                    ps.into_iter()
-                        .map(|ip| (entry.charter_name.clone(), ip.plan)),
+            match parse_calendar_resource(&entry) {
+                Ok(plans) => result.extend(
+                    plans
+                        .into_iter()
+                        .map(|plan| (entry.charter_name.clone(), plan.plan)),
                 ),
-                Err(e) => eprintln!("Warning: skipping {}: {}", entry.path.display(), e),
+                Err(error) => {
+                    eprintln!("Warning: skipping {}: {}", entry.path.display(), error)
+                }
             }
         }
         result
@@ -275,8 +291,6 @@ pub fn show_plan(
     _format: &Option<argparser::OutputMode>,
     _table_options: &argparser::CliTableOptions,
 ) -> anyhow::Result<()> {
-    use clearhead_core::workspace::calendar::ics::parse_ics_file;
-
     debug!(query = %query, "Executing Show Plan");
 
     let candidates: Vec<(String, clearhead_core::Plan)> = if let Some(path) = file {
@@ -285,20 +299,23 @@ pub fn show_plan(
             .and_then(|s| s.to_str())
             .unwrap_or("unknown")
             .to_string();
-        parse_ics_file(path)?
+        clearhead_workspace_fs::read_ics_file(path)?
             .into_iter()
-            .map(|ip| (charter_name.clone(), ip.plan))
+            .map(|plan| (charter_name.clone(), plan.plan))
             .collect()
     } else {
         let entries = ctx.collect_plan_files()?;
         let mut result = Vec::new();
         for entry in entries {
-            match parse_ics_file(&entry.path) {
-                Ok(ps) => result.extend(
-                    ps.into_iter()
-                        .map(|ip| (entry.charter_name.clone(), ip.plan)),
+            match parse_calendar_resource(&entry) {
+                Ok(plans) => result.extend(
+                    plans
+                        .into_iter()
+                        .map(|plan| (entry.charter_name.clone(), plan.plan)),
                 ),
-                Err(e) => eprintln!("Warning: skipping {}: {}", entry.path.display(), e),
+                Err(error) => {
+                    eprintln!("Warning: skipping {}: {}", entry.path.display(), error)
+                }
             }
         }
         result
@@ -387,10 +404,8 @@ fn resolve_add_plan_output_path(
 
 fn load_plan_file(path: &Path) -> anyhow::Result<Vec<clearhead_core::Plan>> {
     if path.exists() {
-        Ok(
-            clearhead_core::workspace::calendar::ics::parse_ics_file(path)
-                .map(|plans| plans.into_iter().map(|ip| ip.plan).collect())?,
-        )
+        Ok(clearhead_workspace_fs::read_ics_file(path)
+            .map(|plans| plans.into_iter().map(|plan| plan.plan).collect())?)
     } else {
         Ok(Vec::new())
     }

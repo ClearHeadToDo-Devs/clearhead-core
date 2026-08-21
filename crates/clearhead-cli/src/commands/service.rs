@@ -104,8 +104,9 @@ pub fn sync_calendar(
     // `plan_sync` additionally excludes the materialized single-token occurrence
     // and its grafted template subtree from standalone reconciliation.
     let model = ctx.load_model()?;
-    let sync_store = clearhead_core::read_plans_sync_store(&ctx.data_dir, &plans_root)?;
-    let calendar_actions = clearhead_core::read_vtodo_actions(&plans_root)?;
+    let sync_store = clearhead_workspace_fs::read_plans_sync_store(&ctx.data_dir, &plans_root)?;
+    let calendar_actions =
+        clearhead_workspace_fs::read_vtodo_actions(&ctx.data_dir, ctx.plan_override().as_deref())?;
     let report = clearhead_core::plan_sync(&model, &sync_store, &calendar_actions)?;
     let report = resolve_conflicts(report, conflict);
 

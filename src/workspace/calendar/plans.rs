@@ -177,7 +177,7 @@ pub fn apply_occurrence_op(
 /// Infer charter name for an `.ics` path relative to `plans_root`, with project-root support.
 ///
 /// The slug `next` maps to `project_root_charter` when in a project workspace.
-pub(crate) fn infer_plan_charter_name_for_workspace(
+pub fn infer_plan_charter_name_for_workspace(
     relative_path: &Path,
     project_root_charter: Option<&str>,
 ) -> Option<String> {
@@ -200,7 +200,7 @@ pub fn infer_plan_charter_name(relative_path: &Path) -> Option<String> {
 ///
 /// Named charters in a project workspace are children of the root charter.
 /// Sub-charter hierarchy (e.g. `work-feature`) is resolved at load time via slug matching.
-pub(crate) fn infer_plan_parent_for_workspace(
+pub fn infer_plan_parent_for_workspace(
     relative_path: &Path,
     project_root_charter: Option<&str>,
 ) -> Option<String> {
