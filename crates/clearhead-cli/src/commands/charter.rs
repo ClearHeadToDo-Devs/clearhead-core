@@ -414,7 +414,7 @@ pub fn archive_charter(
     force: bool,
     dry_run: bool,
 ) -> anyhow::Result<()> {
-    use clearhead_core::{
+    use clearhead_workspace_fs::{
         ArchiveCharterOptions, archive_charter as do_archive, archive_terminal_charters,
     };
 
@@ -462,14 +462,14 @@ pub fn archive_charter(
                 print_archive_result(&result);
                 return Ok(());
             }
-            Err(clearhead_core::ArchiveCharterError::NotFound(_)) => continue,
+            Err(clearhead_workspace_fs::ArchiveCharterError::NotFound(_)) => continue,
             Err(e) => return Err(e.into()),
         }
     }
     anyhow::bail!("Charter '{}' not found in any workspace", q)
 }
 
-fn print_archive_result(r: &clearhead_core::ArchiveCharterResult) {
+fn print_archive_result(r: &clearhead_workspace_fs::ArchiveCharterResult) {
     let prefix = if r.was_dry_run {
         "[dry-run] Would archive"
     } else {

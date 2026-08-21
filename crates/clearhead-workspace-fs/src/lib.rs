@@ -1,12 +1,17 @@
 //! Native filesystem delivery for host-neutral Core workspace mutations.
 
 pub mod action_files;
+pub mod archive_charter;
 pub mod doctor;
 pub mod manifest;
 pub mod mounts;
 pub mod sidecar;
 pub mod templates;
 pub use action_files::{read_action_file, read_actions, write_actions};
+pub use archive_charter::{
+    ArchiveCharterError, ArchiveCharterOptions, ArchiveCharterResult, archive_charter,
+    archive_terminal_charters, find_charter as find_markdown_charter,
+};
 pub use doctor::{
     apply_doctor_repairs, diagnose_workspace, diagnose_workspace_read, observe_doctor,
 };

@@ -39,8 +39,9 @@ pub use archive_actions::{
     plan_action_archive, prepare_action_archive, prepare_close_action_subtree,
 };
 pub use archive_charter::{
-    ArchiveCharterError, ArchiveCharterOptions, ArchiveCharterResult, archive_charter,
-    archive_terminal_charters, find_charter as find_markdown_charter,
+    ArchivePolicyError, archive_charter_name, archive_charter_subtree,
+    has_terminal_archive_ancestor, materialize_archive_parent, resolve_archive_parent_uuid,
+    validate_archive_candidate,
 };
 pub use archive_facts::ArchivedActionFact;
 pub use calendar::ics::{

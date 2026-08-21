@@ -109,3 +109,51 @@ fn close_charter_unknown_file_fails() {
         .failure()
         .stderr(predicate::str::contains("No charter found"));
 }
+
+#[test]
+fn archive_charter_uses_the_native_adapter_end_to_end() {
+    let env = TestEnv::new();
+    let id = "019cffb8-0000-7000-8000-000000000010";
+    env.write_text(
+        "charters/done.md",
+        &format!("---\nid: {id}\nalias: done\nstate: Closed\n---\n# Done\n"),
+    );
+    env.write_actions(
+        "done.actions",
+        "[x] Finished #019cffb8-0000-7000-8000-000000000011\n",
+    );
+
+    env.command()
+        .args(["archive", "charter", "done"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Archived charter 'done'"));
+
+    assert!(!env.data_dir.join("charters/done.actions").exists());
+    assert!(env.data_dir.join(format!("archive/{id}.actions")).exists());
+    assert!(env.data_dir.join(format!("archive/{id}.md")).exists());
+}
+
+#[test]
+fn archive_closed_sweeps_terminal_charters_but_leaves_active_ones() {
+    let env = TestEnv::new();
+    env.write_text(
+        "charters/done.md",
+        "---\nid: 019cffb8-0000-7000-8000-000000000020\nalias: done\nstate: Closed\n---\n# Done\n",
+    );
+    env.write_actions("done.actions", "");
+    env.write_text(
+        "charters/live.md",
+        "---\nid: 019cffb8-0000-7000-8000-000000000021\nalias: live\nstate: Active\n---\n# Live\n",
+    );
+    env.write_actions("live.actions", "");
+
+    env.command()
+        .args(["archive", "charter", "--closed"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Archived charter 'done'"));
+
+    assert!(!env.data_dir.join("charters/done.md").exists());
+    assert!(env.data_dir.join("charters/live.md").exists());
+}

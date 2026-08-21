@@ -3,8 +3,9 @@
 //! Three levels of protection:
 //!
 //! - [`atomic_write`] — single-file: temp + fsync + rename + dir fsync.
-//! - [`PendingBatch`] — multi-file: stage all writes to temps, write a
-//!   `.pending` journal, rename in order, fsync, unlink journal. A present
+//! - [`PendingBatch`] — multi-file: stage writes, moves, and recover-forward
+//!   removals, write a `.pending` journal, converge in order, fsync, and unlink
+//!   the journal. A present
 //!   `.pending` on startup means an interrupted batch; [`recover_pending`]
 //!   replays it forward to completion.
 //! - [`WorkspaceLock`] — an OS-backed exclusive lock that serializes
@@ -49,23 +50,21 @@ pub fn atomic_write(path: &Path, content: impl AsRef<[u8]>) -> io::Result<()> {
 
 struct BatchEntry {
     /// The file to rename into `final_path` on commit. For [`stage`] this is a
-    /// freshly-written temp; for [`stage_move`] it is an existing source file
-    /// being relocated. Either way, commit renames `source_path -> final_path`
-    /// and recovery replays that same rename.
-    ///
-    /// [`stage`]: PendingBatch::stage
-    /// [`stage_move`]: PendingBatch::stage_move
+    /// freshly-written temp; for [`stage_move`] it is an existing source file.
+    /// [`stage_remove`] renames the source to a tombstone that commit/recovery
+    /// deletes only after every rename has converged.
     source_path: PathBuf,
     final_path: PathBuf,
+    remove_final: bool,
 }
 
 /// Staged multi-file commit.
 ///
 /// Usage:
-/// 1. Call [`stage`](PendingBatch::stage) for each file to write, and/or
-///    [`stage_move`](PendingBatch::stage_move) for each existing file to relocate.
-/// 2. Call [`commit`](PendingBatch::commit) to write the journal, rename all
-///    sources to their finals, and unlink the journal.
+/// 1. Call [`stage`](PendingBatch::stage), [`stage_move`](PendingBatch::stage_move),
+///    and/or [`stage_remove`](PendingBatch::stage_remove) for each effect.
+/// 2. Call [`commit`](PendingBatch::commit) to write the journal, converge all
+///    entries, and unlink the journal.
 ///
 /// The `journal_dir` receives the `.pending` file; all staged files should live
 /// on the same filesystem so renames are atomic.
@@ -96,6 +95,7 @@ impl PendingBatch {
         self.entries.push(BatchEntry {
             source_path: tmp_path,
             final_path,
+            remove_final: false,
         });
         Ok(())
     }
@@ -119,6 +119,23 @@ impl PendingBatch {
         self.entries.push(BatchEntry {
             source_path: src,
             final_path,
+            remove_final: false,
+        });
+        Ok(())
+    }
+
+    /// Stage an existing file for recover-forward removal.
+    ///
+    /// Commit first renames the source to a same-directory tombstone under
+    /// durable journal intent, then unlinks the tombstone after all batch
+    /// renames succeed. Recovery completes either step after a crash.
+    pub fn stage_remove(&mut self, src: PathBuf) -> io::Result<()> {
+        let parent = src.parent().unwrap_or(&self.journal_dir);
+        let tombstone = parent.join(format!(".tmp.remove.{}", uuid::Uuid::now_v7()));
+        self.entries.push(BatchEntry {
+            source_path: src,
+            final_path: tombstone,
+            remove_final: true,
         });
         Ok(())
     }
@@ -137,7 +154,18 @@ impl PendingBatch {
             let journal_content: String = self
                 .entries
                 .iter()
-                .map(|e| format!("{}\t{}\n", e.source_path.display(), e.final_path.display()))
+                .map(|entry| {
+                    format!(
+                        "{}\t{}\t{}\n",
+                        if entry.remove_final {
+                            "remove"
+                        } else {
+                            "rename"
+                        },
+                        entry.source_path.display(),
+                        entry.final_path.display()
+                    )
+                })
                 .collect();
             let mut jf = std::fs::File::create(&journal_path)?;
             jf.write_all(journal_content.as_bytes())?;
@@ -150,6 +178,8 @@ impl PendingBatch {
             std::fs::rename(&entry.source_path, &entry.final_path)?;
         }
 
+        sync_batch_directories(&self.entries, &self.journal_dir)?;
+        remove_batch_tombstones(&self.entries)?;
         sync_batch_directories(&self.entries, &self.journal_dir)?;
         std::fs::remove_file(&journal_path)?;
         // Persist removal of the recovery intent only after every rename and
@@ -178,15 +208,23 @@ pub fn recover_pending(journal_dir: &Path) -> io::Result<()> {
     let content = std::fs::read_to_string(&journal_path)?;
     let mut entries = Vec::new();
     for line in content.lines() {
-        let Some((source, final_path)) = line.split_once('\t') else {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("malformed pending journal entry: {line:?}"),
-            ));
+        let parts = line.split('\t').collect::<Vec<_>>();
+        let (source, final_path, remove_final) = match parts.as_slice() {
+            // Backward-compatible journal entries written before typed removes.
+            [source, final_path] => (*source, *final_path, false),
+            ["rename", source, final_path] => (*source, *final_path, false),
+            ["remove", source, final_path] => (*source, *final_path, true),
+            _ => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("malformed pending journal entry: {line:?}"),
+                ));
+            }
         };
         entries.push(BatchEntry {
             source_path: PathBuf::from(source),
             final_path: PathBuf::from(final_path),
+            remove_final,
         });
     }
 
@@ -197,8 +235,21 @@ pub fn recover_pending(journal_dir: &Path) -> io::Result<()> {
     }
 
     sync_batch_directories(&entries, journal_dir)?;
+    remove_batch_tombstones(&entries)?;
+    sync_batch_directories(&entries, journal_dir)?;
     std::fs::remove_file(&journal_path)?;
     std::fs::File::open(journal_dir)?.sync_all()?;
+    Ok(())
+}
+
+fn remove_batch_tombstones(entries: &[BatchEntry]) -> io::Result<()> {
+    for entry in entries.iter().filter(|entry| entry.remove_final) {
+        match std::fs::remove_file(&entry.final_path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
+        }
+    }
     Ok(())
 }
 
@@ -376,6 +427,53 @@ mod tests {
         assert!(!src.exists(), "recovery completes the move");
         assert_eq!(std::fs::read_to_string(&dest).unwrap(), "[x] done\n");
         assert!(!root.join(".pending").exists());
+    }
+
+    // ── PendingBatch::stage_remove ────────────────────────────────────────────
+
+    #[test]
+    fn stage_remove_unlinks_source_and_tombstone() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("obsolete.actions");
+        std::fs::write(&source, "obsolete").unwrap();
+
+        let mut batch = PendingBatch::new(dir.path().to_path_buf());
+        batch.stage_remove(source.clone()).unwrap();
+        batch.commit().unwrap();
+
+        assert!(!source.exists());
+        assert!(!dir.path().join(".pending").exists());
+        assert!(std::fs::read_dir(dir.path()).unwrap().all(|entry| {
+            !entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".tmp.remove")
+        }));
+    }
+
+    #[test]
+    fn stage_remove_recovers_before_or_after_tombstone_rename() {
+        for rename_completed in [false, true] {
+            let dir = tempfile::tempdir().unwrap();
+            let source = dir.path().join("obsolete.actions");
+            let tombstone = dir.path().join(".tmp.remove.test");
+            std::fs::write(&source, "obsolete").unwrap();
+            if rename_completed {
+                std::fs::rename(&source, &tombstone).unwrap();
+            }
+            std::fs::write(
+                dir.path().join(".pending"),
+                format!("remove\t{}\t{}\n", source.display(), tombstone.display()),
+            )
+            .unwrap();
+
+            recover_pending(dir.path()).unwrap();
+
+            assert!(!source.exists());
+            assert!(!tombstone.exists());
+            assert!(!dir.path().join(".pending").exists());
+        }
     }
 
     // ── recover_pending ───────────────────────────────────────────────────────
