@@ -119,7 +119,7 @@ pub fn load_workspace(
     let mounts = NativeWorkspaceMounts::resolve(workspace_root, external_plans);
     let charter_root = mounts.workspace.join("charters");
     if charter_root.is_dir() {
-        clearhead_core::workspace::durability::recover_pending(&charter_root)?;
+        crate::durability::recover_pending(&charter_root)?;
     }
     let read = assemble_native(workspace_root, external_plans)?;
     for finding in &read.findings {

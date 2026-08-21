@@ -67,8 +67,8 @@ pub use workspace::{
     parse_document, parse_tree, parse_trusted_document, parse_vtodo_actions_content,
     patch_action_list, plan_action_archive, plan_file_name, plan_output_path, plan_sync,
     plan_to_vtodo, plans_root, plans_to_icalendar, prepare_sync, read_action_file, read_actions,
-    reconcile, render_master_rollforward, render_occurrence_deviation, resolve_template,
-    save_domain_model, slugify, workspace_data_root, write_actions,
+    reconcile, render_master_rollforward, render_occurrence_deviation, resolve_template, slugify,
+    workspace_data_root,
 };
 
 pub mod domain;

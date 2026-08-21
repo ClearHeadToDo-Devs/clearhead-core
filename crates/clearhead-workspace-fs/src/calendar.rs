@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use chrono::Local;
 use uuid::Uuid;
 
+use crate::durability::{WorkspaceLock, recover_pending};
 use clearhead_core::domain::DomainModel;
 use clearhead_core::workspace::OccurrenceOp;
 use clearhead_core::workspace::calendar::ics::{
@@ -23,7 +24,6 @@ use clearhead_core::workspace::calendar::reconcile::{
     prepare_materialized_occurrence_resolution, prepare_sync, sync_import_actions_file,
 };
 use clearhead_core::workspace::calendar::sync_store::{PlansSyncStore, decode_plans_sync_store};
-use clearhead_core::workspace::durability::{WorkspaceLock, recover_pending};
 use clearhead_core::workspace::resource::{
     Effect, EffectBatch, ExpectedResource, MountId, MountInventory, ReadPlan, ResourceLocation,
     ResourcePrecondition, ResourceRevision, WorkspaceMounts, WorkspacePath,

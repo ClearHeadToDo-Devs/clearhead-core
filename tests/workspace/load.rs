@@ -3,33 +3,14 @@ use clearhead_core::workspace::read_workspace;
 use clearhead_core::{
     ManifestSourceType, collect_workspace_manifest, load_domain_model, load_workspace,
 };
-#[cfg(feature = "formatting")]
-use clearhead_core::{diff_domain_models, save_domain_model};
 use std::fs;
 use std::path::Path;
 
 // --- Tests ---
-
-#[cfg(feature = "formatting")]
-#[test]
-fn roundtrip_preserves_model() {
-    // Fixture uses explicit UUIDs so IDs are stable across loads.
-    let workspace = make_workspace(&[(
-        "tasks.actions",
-        "[ ] Task one #01951111-0000-7000-0000-000000000001\n\
-         [ ] Task two #01951111-0000-7000-0000-000000000002\n\
-         > [ ] Subtask of two #01951111-0000-7000-0000-000000000003\n",
-    )]);
-
-    let model_a = load_domain_model(workspace.path()).expect("first load failed");
-    save_domain_model(workspace.path(), &model_a).expect("save failed");
-    let model_b = load_domain_model(workspace.path()).expect("second load failed");
-
-    assert!(
-        diff_domain_models(&model_a, &model_b).is_empty(),
-        "model changed across a save/reload cycle"
-    );
-}
+//
+// Whole-model save/reload round-trip coverage moved out with `save_domain_model`:
+// bulk model saves no longer exist (the native adapter writes per-verb prepared
+// effects), so durability round-trips now live in `clearhead-workspace-fs` tests.
 
 #[test]
 fn load_discovers_all_action_files() {
@@ -297,29 +278,6 @@ fn user_layout_uses_filename_as_charter() {
 
     assert_eq!(model.charters.len(), 1);
     assert_eq!(model.charters[0].title, "next");
-}
-
-#[cfg(feature = "formatting")]
-#[test]
-fn roundtrip_is_stable_across_multiple_cycles() {
-    // Repeated save/reload should converge — not drift on each cycle.
-    let workspace = make_workspace(&[(
-        "tasks.actions",
-        "[ ] Stable task #01951111-0000-7000-0000-000000000040\n",
-    )]);
-
-    let model_a = load_domain_model(workspace.path()).expect("load failed");
-    save_domain_model(workspace.path(), &model_a).expect("first save failed");
-
-    let model_b = load_domain_model(workspace.path()).expect("second load failed");
-    save_domain_model(workspace.path(), &model_b).expect("second save failed");
-
-    let model_c = load_domain_model(workspace.path()).expect("third load failed");
-
-    assert!(
-        diff_domain_models(&model_b, &model_c).is_empty(),
-        "model drifted between save cycles"
-    );
 }
 
 // --- Explicit charter (.md) + implicit (.actions) merge tests ---

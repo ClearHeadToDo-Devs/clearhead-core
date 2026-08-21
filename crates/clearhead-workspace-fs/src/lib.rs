@@ -4,6 +4,7 @@ pub mod action_files;
 pub mod archive_charter;
 pub mod calendar;
 pub mod doctor;
+pub mod durability;
 pub mod manifest;
 pub mod mounts;
 pub mod sidecar;
@@ -31,10 +32,10 @@ pub use mounts::{
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
+use crate::durability::{PendingBatch, WorkspaceLock, recover_pending};
 use chrono::Local;
 pub use clearhead_core::TransactionOutcome;
 use clearhead_core::domain::update::ActionUpdate;
-use clearhead_core::workspace::durability::{PendingBatch, WorkspaceLock, recover_pending};
 use clearhead_core::workspace::resource::PreparedMutation;
 use clearhead_core::workspace::resource::{
     DeliveryError, Effect, ExpectedResource, ResourceConflict, ResourceRevision, ResourceSnapshot,

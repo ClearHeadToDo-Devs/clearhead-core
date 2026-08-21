@@ -98,7 +98,11 @@ fn unparseable_ics_is_a_finding_and_the_rest_still_loads() {
 }
 
 #[test]
-fn read_does_not_replay_pending_journal_but_load_does() {
+fn neither_read_nor_load_replays_pending_journal() {
+    // Pending-journal recovery is the native adapter's obligation (it runs
+    // recover_pending under the workspace lock before handing bytes to Core).
+    // Core's readers are pure: they observe the pre-crash bytes as-is and never
+    // mutate the workspace, so a `.pending` journal survives an in-Core read.
     let workspace = make_workspace(&[(
         "work.actions",
         "[ ] Old content #01951111-0000-7000-0000-000000000005\n",
@@ -122,7 +126,7 @@ fn read_does_not_replay_pending_journal_but_load_does() {
     let read = clearhead_core::workspace::read_workspace(workspace.path()).expect("read failed");
     assert!(
         charter_root.join(".pending").exists(),
-        "the pure reader must not replay the journal"
+        "the pure reader must never replay the journal"
     );
     let work = read
         .charters
@@ -131,13 +135,13 @@ fn read_does_not_replay_pending_journal_but_load_does() {
         .expect("work charter");
     assert_eq!(
         work.actions[0].action.name, "Old content",
-        "reader sees the pre-crash state as-is"
+        "read sees the pre-crash state as-is"
     );
 
     let model = load_domain_model(workspace.path()).expect("load failed");
     assert!(
-        !charter_root.join(".pending").exists(),
-        "loading replays the journal (recovery-to-consistency is loading's obligation)"
+        charter_root.join(".pending").exists(),
+        "load is a pure reader too — it must not replay the journal either"
     );
     let work = model
         .charters
@@ -145,7 +149,7 @@ fn read_does_not_replay_pending_journal_but_load_does() {
         .find(|c| c.title == "work")
         .expect("work charter");
     assert_eq!(
-        work.actions[0].name, "New content",
-        "load sees the recovered state"
+        work.actions[0].name, "Old content",
+        "load sees the pre-crash state as-is; recovery is the adapter's job"
     );
 }

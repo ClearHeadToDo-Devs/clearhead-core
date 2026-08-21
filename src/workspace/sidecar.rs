@@ -11,7 +11,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 /// The published contract for this file's shape. Stamped into every sidecar
-/// on save (see [`write_sidecar`]) so the file is self-describing and editors
+/// on render (see [`render_sidecar`]) so the file is self-describing and editors
 /// validate on write — the same declarative-filesystem theme as recording
 /// `charter.id`. Points at `master`; retargeting to a tagged release is
 /// tracked separately (see the schema-source-of-truth decision).
@@ -21,7 +21,7 @@ pub const CHARTER_METADATA_SCHEMA_URL: &str = "https://raw.githubusercontent.com
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct CharterMetadata {
     /// Schema contract pointer. Always overwritten with [`CHARTER_METADATA_SCHEMA_URL`]
-    /// by `write_sidecar` regardless of what a file previously carried, the same
+    /// by `render_sidecar` regardless of what a file previously carried, the same
     /// self-healing treatment the `acts` → `actions` key rename got.
     #[serde(rename = "$schema", default, skip_serializing_if = "Option::is_none")]
     pub schema: Option<String>,
@@ -209,20 +209,6 @@ pub fn hydrate_actions_map(
     }
 }
 
-/// Stamp `created` in the sidecar for any actions that don't already have an entry.
-///
-/// Uses the UUIDv7 embedded timestamp as the creation time — more accurate than
-/// wall-clock time at save because the UUID is generated when the action is first typed.
-pub fn stamp_sidecar_entries(
-    actions_path: &Path,
-    actions: &[crate::domain::Action],
-) -> Result<(), WorkspaceError> {
-    let sc_path = sidecar_path(actions_path);
-    let mut meta = read_sidecar(&sc_path)?;
-    stamp_metadata_entries(&mut meta, actions, Local::now());
-    write_sidecar(&sc_path, &meta)
-}
-
 /// Purely add missing action creation metadata.
 pub fn stamp_metadata_entries(
     metadata: &mut CharterMetadata,
@@ -236,21 +222,6 @@ pub fn stamp_metadata_entries(
             ..Default::default()
         });
     }
-}
-
-/// Record the charter's identity in its sidecar (`charter.id`).
-///
-/// This makes the sidecar self-identifying, so the loader resolves a charter's
-/// identity from the data rather than re-deriving it from the filename. Idempotent
-/// and freeze-preserving: it sets the id only when none is recorded, never
-/// overwriting a value already frozen by an earlier stamp.
-pub fn stamp_charter_id(actions_path: &Path, charter_id: uuid::Uuid) -> Result<(), WorkspaceError> {
-    let sc_path = sidecar_path(actions_path);
-    let mut meta = read_sidecar(&sc_path)?;
-    if record_charter_id(&mut meta, charter_id) {
-        write_sidecar(&sc_path, &meta)?;
-    }
-    Ok(())
 }
 
 /// Record a charter identity without overwriting an already frozen id.
@@ -282,21 +253,13 @@ fn created_from_uuid(id: uuid::Uuid) -> Option<DateTime<Local>> {
     .map(|dt| dt.into())
 }
 
-/// Write sidecar metadata to disk, atomically.
-///
-/// Always stamps `$schema` to [`CHARTER_METADATA_SCHEMA_URL`] before writing,
-/// overwriting whatever value (or absence) the in-memory metadata carried in.
-pub fn write_sidecar(path: &Path, metadata: &CharterMetadata) -> Result<(), WorkspaceError> {
-    let content = render_sidecar(metadata)?;
-    super::durability::atomic_write(path, content.as_bytes())?;
-    Ok(())
-}
-
 /// Serialize sidecar metadata to its canonical on-disk JSON, schema-stamped.
 ///
-/// Shared by [`write_sidecar`] and the durable `delete` verb: delete stages the
-/// pruned sidecar through the journaled mutation batch rather than writing it
-/// directly, so it needs the exact bytes `write_sidecar` would produce.
+/// Always stamps `$schema` to [`CHARTER_METADATA_SCHEMA_URL`], overwriting
+/// whatever value (or absence) the in-memory metadata carried in. The native
+/// adapter's `write_sidecar` and the durable `delete` verb both go through these
+/// exact bytes: delete stages the pruned sidecar through the journaled mutation
+/// batch rather than writing it directly.
 pub fn render_sidecar(metadata: &CharterMetadata) -> Result<String, WorkspaceError> {
     let mut metadata = metadata.clone();
     metadata.schema = Some(CHARTER_METADATA_SCHEMA_URL.to_string());
@@ -430,9 +393,7 @@ mod tests {
         .unwrap();
 
         let meta = read_sidecar(&path).unwrap();
-        write_sidecar(&path, &meta).unwrap();
-
-        let rewritten = std::fs::read_to_string(&path).unwrap();
+        let rewritten = render_sidecar(&meta).unwrap();
         assert!(rewritten.contains("\"actions\""));
         assert!(!rewritten.contains("\"acts\""));
     }
@@ -540,19 +501,17 @@ mod tests {
         use crate::domain::Action;
         use uuid::Uuid;
 
-        let dir = tempfile::tempdir().unwrap();
-        let actions_path = dir.path().join("next.actions");
         let v4 = Uuid::new_v4();
-        stamp_sidecar_entries(
-            &actions_path,
+        let mut meta = CharterMetadata::default();
+        stamp_metadata_entries(
+            &mut meta,
             &[Action {
                 id: v4,
                 ..Default::default()
             }],
-        )
-        .unwrap();
+            Local::now(),
+        );
 
-        let meta = read_sidecar(&sidecar_path(&actions_path)).unwrap();
         let created = meta.actions[&v4.to_string()].created.expect("stamped");
         // "The date we saw it", not a decoded far-future date.
         assert!((Local::now() - created).num_seconds().abs() < 5);
@@ -567,31 +526,20 @@ mod tests {
     }
 
     #[test]
-    fn write_sidecar_stamps_schema_pointer() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join(".test.json");
-
-        write_sidecar(&path, &CharterMetadata::default()).unwrap();
-
-        let raw = std::fs::read_to_string(&path).unwrap();
+    fn render_sidecar_stamps_schema_pointer() {
+        let raw = render_sidecar(&CharterMetadata::default()).unwrap();
         assert!(raw.contains(&format!("\"$schema\": \"{}\"", CHARTER_METADATA_SCHEMA_URL)));
 
-        let loaded = read_sidecar(&path).unwrap();
+        let loaded = parse_sidecar(&raw).unwrap();
         assert_eq!(loaded.schema.as_deref(), Some(CHARTER_METADATA_SCHEMA_URL));
     }
 
     #[test]
-    fn write_sidecar_overwrites_a_stale_schema_pointer() {
-        // A sidecar carrying an old/foreign $schema value gets corrected on save,
+    fn render_sidecar_overwrites_a_stale_schema_pointer() {
+        // A sidecar carrying an old/foreign $schema value gets corrected on render,
         // the same self-healing treatment the acts -> actions rename got.
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join(".test.json");
-        std::fs::write(&path, r#"{"$schema": "https://example.com/stale.json"}"#).unwrap();
-
-        let meta = read_sidecar(&path).unwrap();
-        write_sidecar(&path, &meta).unwrap();
-
-        let reloaded = read_sidecar(&path).unwrap();
+        let meta = parse_sidecar(r#"{"$schema": "https://example.com/stale.json"}"#).unwrap();
+        let reloaded = parse_sidecar(&render_sidecar(&meta).unwrap()).unwrap();
         assert_eq!(
             reloaded.schema.as_deref(),
             Some(CHARTER_METADATA_SCHEMA_URL)
@@ -599,10 +547,7 @@ mod tests {
     }
 
     #[test]
-    fn write_and_read_sidecar_roundtrip() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join(".test.json");
-
+    fn render_and_parse_sidecar_roundtrip() {
         let mut meta = CharterMetadata::default();
         meta.actions.insert(
             "test-uuid".to_string(),
@@ -612,8 +557,7 @@ mod tests {
             },
         );
 
-        write_sidecar(&path, &meta).unwrap();
-        let loaded = read_sidecar(&path).unwrap();
+        let loaded = parse_sidecar(&render_sidecar(&meta).unwrap()).unwrap();
         assert_eq!(loaded.actions.len(), 1);
         assert!(loaded.actions.contains_key("test-uuid"));
     }

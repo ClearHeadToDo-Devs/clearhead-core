@@ -1,9 +1,9 @@
-//! Guards the write-durability seam (core-seam charter): every write in
-//! `src/commands/` should route through core's atomic write primitives
-//! (`action_files::write_actions`, `durability::atomic_write`), not raw
-//! `std::fs::write` — a crash mid-write can truncate a source-of-truth file.
-//! New call sites must either route through those primitives or be added to
-//! `EXEMPT` below with a one-line reason, never silently.
+//! Guards the write-durability seam (pure-core-split charter): every write in
+//! `src/commands/` should route through the native adapter's atomic write
+//! primitives (`clearhead_workspace_fs::durability::atomic_write` and the
+//! mutation batch), not raw `std::fs::write` — a crash mid-write can truncate a
+//! source-of-truth file. New call sites must either route through those
+//! primitives or be added to `EXEMPT` below with a one-line reason, never silently.
 
 use std::fs;
 use std::path::Path;
@@ -26,7 +26,7 @@ fn no_naive_fs_write_outside_exemptions() {
     assert!(
         violations.is_empty(),
         "found fs::write outside the durability seam's exemption list — route through \
-         action_files::write_actions / durability::atomic_write, or add a reviewed \
+         clearhead_workspace_fs::durability::atomic_write, or add a reviewed \
          exemption to EXEMPT in tests/no_naive_writes.rs with a reason:\n{}",
         violations.join("\n")
     );

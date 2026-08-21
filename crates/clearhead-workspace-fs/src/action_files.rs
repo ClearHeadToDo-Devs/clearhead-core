@@ -31,7 +31,7 @@ pub fn read_action_file(path: &Path) -> Result<ActionsFile, WorkspaceError> {
 pub fn write_actions(actions: &[Action], path: &Path) -> Result<(), WorkspaceError> {
     let content = format(&actions.to_vec(), OutputFormat::Actions, None, None)
         .map_err(WorkspaceError::Actions)?;
-    clearhead_core::workspace::durability::atomic_write(path, content.as_bytes())?;
+    crate::durability::atomic_write(path, content.as_bytes())?;
     Ok(())
 }
 

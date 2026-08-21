@@ -21,7 +21,7 @@ pub fn read_sidecar(path: &Path) -> Result<CharterMetadata, WorkspaceError> {
 
 pub fn write_sidecar(path: &Path, metadata: &CharterMetadata) -> Result<(), WorkspaceError> {
     let content = render_sidecar(metadata)?;
-    clearhead_core::workspace::durability::atomic_write(path, content.as_bytes())?;
+    crate::durability::atomic_write(path, content.as_bytes())?;
     Ok(())
 }
 

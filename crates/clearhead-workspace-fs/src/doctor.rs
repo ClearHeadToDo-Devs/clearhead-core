@@ -3,8 +3,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
+use crate::durability::{WorkspaceLock, recover_pending};
 use chrono::Local;
-use clearhead_core::workspace::durability::{WorkspaceLock, recover_pending};
 use clearhead_core::workspace::resource::{
     MountId, ResourceLocation, ResourceRevision, WorkspacePath,
 };

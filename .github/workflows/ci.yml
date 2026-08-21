@@ -37,6 +37,15 @@ jobs:
           cargo check -p clearhead_core --no-default-features --locked
           cargo test -p clearhead_core --no-default-features --locked
 
+      # Core must stay buildable for a WebAssembly host: its portable dependency
+      # graph may pull no native-only capability (fs locking/staging, temp files,
+      # user dirs, process config, async runtime). This resolves the graph as
+      # wasm32 sees it and fails on any forbidden crate. It is a dependency gate,
+      # not a full wasm compile — the tree-sitter grammar's C parser still needs a
+      # wasm libc sysroot, tracked separately toward the compile-level done gate.
+      - name: WASM dependency gate
+        run: sh scripts/wasm-dependency-gate.sh
+
       # JSON-LD is intentionally an out-of-process graphd capability. CLI tests
       # compose the real sibling binary from the shared workspace target dir.
       - name: Build graphd integration dependency

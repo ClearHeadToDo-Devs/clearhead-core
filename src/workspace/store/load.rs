@@ -13,7 +13,6 @@ use crate::workspace::calendar::ics::parse_ics;
 use crate::workspace::charter::{
     MarkdownCharter, frontmatter_has_id_key, frontmatter_has_parent_key, parse_charter,
 };
-use crate::workspace::durability::recover_pending;
 use crate::workspace::manifest::WorkspaceManifest;
 use crate::workspace::sidecar::{
     collect_sidecar_actions, hydrate_actions_map, read_sidecar, sidecar_path,
@@ -170,15 +169,8 @@ pub fn load_workspace_with_plans(
     root: &Path,
     plan_override: Option<&Path>,
 ) -> Result<Vec<MarkdownCharter>, WorkspaceError> {
-    let layout = resolve_workspace_layout(root);
-
-    // Replay any journal left by an interrupted save before reading any files.
-    // Recovery-to-consistency is loading's obligation (Decision 34); the pure
-    // reader below never mutates.
-    if layout.charter_root.exists() {
-        recover_pending(&layout.charter_root)?;
-    }
-
+    // Pending-journal recovery is the native host's obligation (it runs before
+    // any read via the workspace adapter); this pure reader never mutates.
     let read = read_workspace_with_plans(root, plan_override)?;
     for finding in &read.findings {
         eprintln!("warning: [{}] {}", finding.path.display(), finding.message);

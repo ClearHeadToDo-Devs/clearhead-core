@@ -1,4 +1,4 @@
-//! Per-charter `.actions` / `.completed.actions` read/write.
+//! Per-charter `.actions` / `.completed.actions` reads.
 //!
 //! Each charter's actions are stored across two DSL files:
 //! - `<charter>.actions`           — active actions (recurring occurrences are
@@ -13,9 +13,8 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::workspace::actions::format::{OutputFormat, format};
 use crate::workspace::actions::repository::SourcedAction;
-use crate::workspace::actions::{Action, ActionList, parse_actions};
+use crate::workspace::actions::{ActionList, parse_actions};
 use crate::workspace::store::WorkspaceError;
 
 /// A parsed `.actions` file — the workspace-layer representation of a charter's actions.
@@ -143,16 +142,6 @@ pub fn read_action_file(path: &Path) -> Result<ActionsFile, WorkspaceError> {
     })
 }
 
-/// Write [`Action`]s to a `.actions` or `.completed.actions` file.
-///
-/// Writes atomically: temp file in the same directory, fsync, rename.
-pub fn write_actions(actions: &[Action], path: &Path) -> Result<(), WorkspaceError> {
-    let list: ActionList = actions.to_vec();
-    let content =
-        format(&list, OutputFormat::Actions, None, None).map_err(WorkspaceError::Actions)?;
-    super::durability::atomic_write(path, content.as_bytes()).map_err(WorkspaceError::Io)
-}
-
 // ============================================================================
 // Tests
 // ============================================================================
@@ -194,7 +183,7 @@ mod tests {
     }
 
     // ========================================================================
-    // Round-trip I/O
+    // Reads
     // ========================================================================
 
     #[test]
@@ -202,52 +191,5 @@ mod tests {
         let result = read_actions(Path::new("/nonexistent/path.actions"));
         assert!(result.is_ok());
         assert!(result.unwrap().is_empty());
-    }
-
-    #[cfg(feature = "formatting")]
-    #[test]
-    fn test_roundtrip() {
-        use crate::workspace::actions::{Action, ActionState};
-
-        let action = Action {
-            name: "Write tests".to_string(),
-            state: ActionState::NotStarted,
-            ..Default::default()
-        };
-
-        let actions = vec![action.clone()];
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let path = tmp.path().join("health.actions");
-
-        write_actions(&actions, &path).expect("write");
-        let loaded = read_actions(&path).expect("read");
-
-        assert_eq!(loaded.len(), 1);
-        assert_eq!(loaded[0].id, action.id);
-        assert_eq!(loaded[0].name, action.name);
-        assert_eq!(loaded[0].state, ActionState::NotStarted);
-    }
-
-    #[cfg(feature = "formatting")]
-    #[test]
-    fn test_completed_roundtrip() {
-        use crate::workspace::actions::{Action, ActionState};
-        use chrono::Local;
-
-        let action = Action {
-            name: "Finished task".to_string(),
-            state: ActionState::Completed,
-            completed_at: Some(Local::now()),
-            ..Default::default()
-        };
-
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let path = tmp.path().join("health.completed.actions");
-
-        write_actions(std::slice::from_ref(&action), &path).expect("write");
-        let loaded = read_actions(&path).expect("read");
-
-        assert_eq!(loaded.len(), 1);
-        assert_eq!(loaded[0].state, ActionState::Completed);
     }
 }

@@ -14,7 +14,6 @@ pub mod archive_charter;
 pub mod archive_facts;
 pub mod calendar;
 pub mod charter;
-pub mod durability;
 pub mod manifest;
 pub mod mutate_actions;
 pub mod resource;
@@ -25,9 +24,7 @@ pub mod templates;
 pub mod transaction;
 
 // Re-export key types at workspace level
-pub use action_files::{
-    ActionsFile, completed_actions_path, read_action_file, read_actions, write_actions,
-};
+pub use action_files::{ActionsFile, completed_actions_path, read_action_file, read_actions};
 pub use actions::{
     Action, ActionList, ActionState, Diff, IntegrityError, OutputFormat, ParseFailure, ParseMode,
     ParseOutcome, ParsedDocument, RecoveryReport, SourceMetadata, SourceRange, SourcedAction,
@@ -79,7 +76,6 @@ pub use selector::ActionSelector;
 pub use sidecar::{
     ActionMeta, CharterMeta, CharterMetadata, OccurrenceSnapshot, hydrate_actions, parse_sidecar,
     read_sidecar, record_charter_id, render_sidecar, sidecar_path, stamp_metadata_entries,
-    write_sidecar,
 };
 pub use transaction::{
     ActionUpdateSet, FileState, NormalizedOperation, Operation, PreparedTransactionOutcome,
@@ -95,6 +91,6 @@ pub use store::{
     charter_root, collect_workspace_manifest, diagnose, infer_charter_name,
     infer_parent_charter_name, list_action_files, load_domain_model, load_domain_model_with_plans,
     load_workspace, load_workspace_with_plans, load_workspaces, plans_root, read_workspace,
-    read_workspace_with_plans, save_domain_model, workspace_data_root,
+    read_workspace_with_plans, workspace_data_root,
 };
 pub use templates::{instantiate_template, resolve_template, template_candidates};

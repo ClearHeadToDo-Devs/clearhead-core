@@ -67,9 +67,10 @@ fn collect_completed_actions_files(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sidecar::write_sidecar;
     use chrono::TimeZone;
     use clearhead_core::workspace::sidecar::{
-        ActionMeta, CharterMetadata, OccurrenceSnapshot, sidecar_path, write_sidecar,
+        ActionMeta, CharterMetadata, OccurrenceSnapshot, sidecar_path,
     };
     use uuid::Uuid;
 

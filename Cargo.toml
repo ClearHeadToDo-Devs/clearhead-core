@@ -34,7 +34,6 @@ jsonschema = { version = "0.18", optional = true }
 # oxigraph 0.5.x resolves, so a graphd/CLI composition shares one copy.
 oxrdf = "0.3.3"
 oxttl = "0.2.3"
-fs2 = "0.4"
 quick-xml = { version = "0.31", features = ["serialize"] }
 rrule = "0.14.0"
 serde = { version = "1.0", features = ["derive"] }
@@ -59,9 +58,15 @@ features = [
   "v7",
 ]
 
+# UUID v4/v7 minting needs a randomness source. Native targets get one from the
+# OS; a WASM host supplies it through JS crypto. Selecting getrandom's `wasm_js`
+# backend keeps Core portable without pulling any native-only capability — it
+# still requires `--cfg getrandom_backend="wasm_js"` at build time (see the
+# `wasm` dependency gate in the pre-push hook).
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom = { version = "0.3", features = ["wasm_js"] }
+
 [dev-dependencies]
 proptest = "1.7"
 ron = "0.8"
-
-[dependencies.tempfile]
-version = "3.8"
+tempfile = "3.8"

@@ -17,4 +17,10 @@ cargo clippy --workspace --all-targets --no-deps -- -D warnings
 echo "pre-push > cargo test --workspace"
 cargo test --workspace --quiet
 
+echo "pre-push > cargo check -p clearhead_core --no-default-features (portable capability set)"
+cargo check -p clearhead_core --no-default-features
+
+echo "pre-push > wasm dependency gate"
+sh scripts/wasm-dependency-gate.sh
+
 echo "pre-push > all checks passed"

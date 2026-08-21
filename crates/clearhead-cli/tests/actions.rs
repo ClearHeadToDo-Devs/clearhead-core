@@ -542,7 +542,7 @@ fn test_archive_actions_keeps_a_terminal_parent_with_an_open_child() {
 fn test_archive_actions_refuses_to_race_an_existing_writer() {
     let env = TestEnv::new();
     env.write_actions("inbox.actions", "[x] Done\n");
-    let _lock = clearhead_core::workspace::durability::WorkspaceLock::try_acquire(&env.data_dir)
+    let _lock = clearhead_workspace_fs::durability::WorkspaceLock::try_acquire(&env.data_dir)
         .unwrap()
         .unwrap();
 

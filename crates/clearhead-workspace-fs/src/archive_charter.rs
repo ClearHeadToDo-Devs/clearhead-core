@@ -45,6 +45,7 @@
 use std::collections::{BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
 
+use crate::durability::{PendingBatch, WorkspaceLock, recover_pending};
 use clearhead_core::domain::ActionState;
 use clearhead_core::workspace::action_files::completed_actions_path;
 use clearhead_core::workspace::archive_charter::{
@@ -54,7 +55,6 @@ use clearhead_core::workspace::archive_charter::{
     materialize_archive_parent as set_frontmatter_parent,
     resolve_archive_parent_uuid as resolve_parent_uuid, validate_archive_candidate,
 };
-use clearhead_core::workspace::durability::{PendingBatch, WorkspaceLock, recover_pending};
 use clearhead_core::workspace::resource::{
     DeliveryError, Effect, EffectBatch, ExpectedResource, ResourceLocation, ResourcePrecondition,
     ResourceRevision, WorkspacePath,

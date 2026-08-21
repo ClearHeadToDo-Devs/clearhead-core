@@ -93,7 +93,7 @@ pub fn run(config_path_override: Option<PathBuf>) -> anyhow::Result<()> {
     // parent and routes the plan into a charterless vdir slug.
     let root_actions = charters_dir.join("next.actions");
     if !root_actions.exists() {
-        clearhead_core::workspace::durability::atomic_write(&root_actions, "")
+        clearhead_workspace_fs::durability::atomic_write(&root_actions, "")
             .context("Failed to create root charter actions file")?;
     }
     clearhead_workspace_fs::sidecar::stamp_charter_id(&root_actions, uuid::Uuid::now_v7())
@@ -145,7 +145,7 @@ mod tests {
     fn config_pointing_at(data_dir: &Path) -> (TempDir, PathBuf) {
         let tmp = TempDir::new().unwrap();
         let config_path = tmp.path().join("config.json");
-        clearhead_core::workspace::durability::atomic_write(
+        clearhead_workspace_fs::durability::atomic_write(
             &config_path,
             format!(r#"{{"data_dir": "{}"}}"#, data_dir.display()),
         )
