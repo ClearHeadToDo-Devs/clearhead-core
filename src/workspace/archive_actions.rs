@@ -9,7 +9,7 @@ use crate::domain::{close_subtree, collect_subtree_ids};
 use crate::workspace::actions::{Action, ActionList, ActionState, OutputFormat, format};
 use crate::workspace::mutate_actions::{ActionPrepareError, ActionResourceState};
 use crate::workspace::resource::{
-    Effect, EffectBatch, PreparedMutation, ResourcePrecondition, WorkspacePath,
+    Effect, EffectBatch, PreparedMutation, ResourceLocation, ResourcePrecondition, WorkspacePath,
 };
 use crate::workspace::selector::{ActionSelector, unique_selector_match};
 
@@ -133,11 +133,11 @@ pub fn prepare_action_archive(
         effects,
         vec![
             ResourcePrecondition {
-                path: active.path.clone(),
+                path: ResourceLocation::workspace(active.path.clone()),
                 expected: active.expected,
             },
             ResourcePrecondition {
-                path: completed.path.clone(),
+                path: ResourceLocation::workspace(completed.path.clone()),
                 expected: completed.expected,
             },
         ],
@@ -184,11 +184,11 @@ pub fn prepare_close_action_subtree(
                 Vec::new(),
                 vec![
                     ResourcePrecondition {
-                        path: active.path.clone(),
+                        path: ResourceLocation::workspace(active.path.clone()),
                         expected: active.expected,
                     },
                     ResourcePrecondition {
-                        path: completed.path.clone(),
+                        path: ResourceLocation::workspace(completed.path.clone()),
                         expected: completed.expected,
                     },
                 ],
@@ -246,11 +246,11 @@ pub fn prepare_close_action_subtree(
         ],
         vec![
             ResourcePrecondition {
-                path: active.path.clone(),
+                path: ResourceLocation::workspace(active.path.clone()),
                 expected: active.expected,
             },
             ResourcePrecondition {
-                path: completed.path.clone(),
+                path: ResourceLocation::workspace(completed.path.clone()),
                 expected: completed.expected,
             },
         ],
@@ -277,7 +277,7 @@ fn write_effect(path: &WorkspacePath, actions: &[Action]) -> Result<Effect, Acti
         .map_err(ActionPrepareError::Domain)?
         .into_bytes();
     Ok(Effect::Write {
-        path: path.clone(),
+        path: ResourceLocation::workspace(path.clone()),
         bytes,
     })
 }

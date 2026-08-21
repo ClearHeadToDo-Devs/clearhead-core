@@ -197,6 +197,26 @@ impl ResourceLocation {
     pub fn new(mount: MountId, path: WorkspacePath) -> Self {
         Self { mount, path }
     }
+
+    /// Identify a resource in the primary workspace mount.
+    pub fn workspace(path: WorkspacePath) -> Self {
+        Self::new(MountId::Workspace, path)
+    }
+
+    /// Identify a resource in the configured external plans mount.
+    pub fn external_plans(path: WorkspacePath) -> Self {
+        Self::new(MountId::ExternalPlans, path)
+    }
+}
+
+impl fmt::Display for ResourceLocation {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mount = match self.mount {
+            MountId::Workspace => "workspace",
+            MountId::ExternalPlans => "external-plans",
+        };
+        write!(f, "{mount}:{}", self.path)
+    }
 }
 
 /// The two native workspace inputs accepted by Core.
@@ -353,21 +373,21 @@ pub enum SnapshotError {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Effect {
     Write {
-        path: WorkspacePath,
+        path: ResourceLocation,
         bytes: Vec<u8>,
     },
     Remove {
-        path: WorkspacePath,
+        path: ResourceLocation,
     },
     /// Relocate a resource without assigning filesystem rename semantics.
     Move {
-        source: WorkspacePath,
-        destination: WorkspacePath,
+        source: ResourceLocation,
+        destination: ResourceLocation,
     },
 }
 
 impl Effect {
-    fn affected_paths(&self) -> impl Iterator<Item = &WorkspacePath> {
+    fn affected_paths(&self) -> impl Iterator<Item = &ResourceLocation> {
         let (first, second) = match self {
             Self::Write { path, .. } | Self::Remove { path } => (path, None),
             Self::Move {
@@ -388,7 +408,7 @@ pub enum ExpectedResource {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ResourcePrecondition {
-    pub path: WorkspacePath,
+    pub path: ResourceLocation,
     pub expected: ExpectedResource,
 }
 
@@ -448,17 +468,17 @@ impl EffectBatch {
 #[derive(Clone, Debug, Error, Eq, PartialEq)]
 pub enum EffectBatchError {
     #[error("resource {0} is affected more than once in one batch")]
-    DuplicateEffect(WorkspacePath),
+    DuplicateEffect(ResourceLocation),
     #[error("effect on {0} has no prior-state precondition")]
-    MissingPrecondition(WorkspacePath),
+    MissingPrecondition(ResourceLocation),
     #[error("resource {0} has more than one precondition")]
-    DuplicatePrecondition(WorkspacePath),
+    DuplicatePrecondition(ResourceLocation),
 }
 
 /// A stale-state conflict found immediately before execution.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ResourceConflict {
-    pub path: WorkspacePath,
+    pub path: ResourceLocation,
     pub expected: ExpectedResource,
     pub actual: Option<ResourceRevision>,
 }
@@ -615,27 +635,27 @@ mod tests {
     #[test]
     fn every_affected_resource_requires_revision_evidence() {
         let effects = vec![Effect::Move {
-            source: path("charters/work.md"),
-            destination: path("archive/work.md"),
+            source: ResourceLocation::workspace(path("charters/work.md")),
+            destination: ResourceLocation::workspace(path("archive/work.md")),
         }];
         let source_only = vec![ResourcePrecondition {
-            path: path("charters/work.md"),
+            path: ResourceLocation::workspace(path("charters/work.md")),
             expected: ExpectedResource::Revision(ResourceRevision::new("r1")),
         }];
         assert_eq!(
             EffectBatch::new(effects.clone(), source_only),
-            Err(EffectBatchError::MissingPrecondition(path(
-                "archive/work.md"
-            )))
+            Err(EffectBatchError::MissingPrecondition(
+                ResourceLocation::workspace(path("archive/work.md"))
+            ))
         );
 
         let complete = vec![
             ResourcePrecondition {
-                path: path("charters/work.md"),
+                path: ResourceLocation::workspace(path("charters/work.md")),
                 expected: ExpectedResource::Revision(ResourceRevision::new("r1")),
             },
             ResourcePrecondition {
-                path: path("archive/work.md"),
+                path: ResourceLocation::workspace(path("archive/work.md")),
                 expected: ExpectedResource::Missing,
             },
         ];

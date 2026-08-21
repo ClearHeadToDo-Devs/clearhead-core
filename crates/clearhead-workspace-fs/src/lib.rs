@@ -26,7 +26,6 @@ use std::path::{Path, PathBuf};
 
 use chrono::Local;
 pub use clearhead_core::TransactionOutcome;
-use clearhead_core::charter_root;
 use clearhead_core::domain::update::ActionUpdate;
 use clearhead_core::workspace::durability::{PendingBatch, WorkspaceLock, recover_pending};
 use clearhead_core::workspace::resource::PreparedMutation;
@@ -89,8 +88,9 @@ pub fn insert_action(
     new_action: Action,
     parent: Option<&ActionSelector>,
 ) -> Result<InsertActionResult, WorkspaceError> {
-    let (data_root, journal_dir, _lock) = begin_mutation(workspace_root, source_path)?;
-    let (snapshot, expected) = snapshot(&data_root, source_path)?;
+    let (mounts, journal_dir, _lock) = begin_mutation(workspace_root, source_path)?;
+    let data_root = &mounts.workspace;
+    let (snapshot, expected) = snapshot(data_root, source_path)?;
     let source = ActionResourceState {
         path: snapshot.path().clone(),
         actions: parse_snapshot(&snapshot)?,
@@ -98,8 +98,8 @@ pub fn insert_action(
     };
     let prepared = prepare_action_insert(source, new_action, parent)
         .map_err(|error| WorkspaceError::Actions(error.to_string()))?;
-    let outcome = deliver(&data_root, &journal_dir, prepared)?;
-    Ok(map_insert(&data_root, outcome))
+    let outcome = deliver(&mounts, &journal_dir, prepared)?;
+    Ok(map_insert(data_root, outcome))
 }
 
 pub fn update_action(
@@ -108,8 +108,9 @@ pub fn update_action(
     selector: &ActionSelector,
     update: ActionUpdate,
 ) -> Result<UpdateActionResult, WorkspaceError> {
-    let (data_root, journal_dir, _lock) = begin_mutation(workspace_root, source_path)?;
-    let (snapshot, expected) = snapshot(&data_root, source_path)?;
+    let (mounts, journal_dir, _lock) = begin_mutation(workspace_root, source_path)?;
+    let data_root = &mounts.workspace;
+    let (snapshot, expected) = snapshot(data_root, source_path)?;
     let source = ActionResourceState {
         path: snapshot.path().clone(),
         actions: parse_snapshot(&snapshot)?,
@@ -117,8 +118,8 @@ pub fn update_action(
     };
     let prepared = prepare_action_update(source, selector, update)
         .map_err(|error| WorkspaceError::Actions(error.to_string()))?;
-    let outcome = deliver(&data_root, &journal_dir, prepared)?;
-    Ok(map_update(&data_root, outcome))
+    let outcome = deliver(&mounts, &journal_dir, prepared)?;
+    Ok(map_update(data_root, outcome))
 }
 
 pub fn delete_action(
@@ -126,16 +127,17 @@ pub fn delete_action(
     source_path: &Path,
     selector: &ActionSelector,
 ) -> Result<DeleteActionResult, WorkspaceError> {
-    let (data_root, journal_dir, _lock) = begin_mutation(workspace_root, source_path)?;
+    let (mounts, journal_dir, _lock) = begin_mutation(workspace_root, source_path)?;
+    let data_root = &mounts.workspace;
     let completed_path = completed_actions_path(source_path);
     let active_sidecar_path = sidecar_path(source_path);
     let completed_sidecar_path = sidecar_path(&completed_path);
-    let (active_snapshot, active_expected) = snapshot(&data_root, source_path)?;
-    let (completed_snapshot, completed_expected) = snapshot(&data_root, &completed_path)?;
+    let (active_snapshot, active_expected) = snapshot(data_root, source_path)?;
+    let (completed_snapshot, completed_expected) = snapshot(data_root, &completed_path)?;
     let (active_sidecar_snapshot, active_sidecar_expected) =
-        snapshot(&data_root, &active_sidecar_path)?;
+        snapshot(data_root, &active_sidecar_path)?;
     let (completed_sidecar_snapshot, completed_sidecar_expected) =
-        snapshot(&data_root, &completed_sidecar_path)?;
+        snapshot(data_root, &completed_sidecar_path)?;
     let prepared = prepare_action_delete(
         ActionResourceState {
             path: active_snapshot.path().clone(),
@@ -160,26 +162,27 @@ pub fn delete_action(
         selector,
     )
     .map_err(|error| WorkspaceError::Actions(error.to_string()))?;
-    let outcome = deliver(&data_root, &journal_dir, prepared)?;
-    Ok(map_delete(&data_root, outcome))
+    let outcome = deliver(&mounts, &journal_dir, prepared)?;
+    Ok(map_delete(data_root, outcome))
 }
 
 pub fn archive_actions(
     workspace_root: &Path,
     source_path: &Path,
 ) -> Result<ActionArchiveResult, WorkspaceError> {
-    let (data_root, journal_dir, _lock) = begin_mutation(workspace_root, source_path)?;
+    let (mounts, journal_dir, _lock) = begin_mutation(workspace_root, source_path)?;
+    let data_root = &mounts.workspace;
     let completed_path = completed_actions_path(source_path);
-    let (active_snapshot, active_expected) = snapshot(&data_root, source_path)?;
-    let (completed_snapshot, completed_expected) = snapshot(&data_root, &completed_path)?;
+    let (active_snapshot, active_expected) = snapshot(data_root, source_path)?;
+    let (completed_snapshot, completed_expected) = snapshot(data_root, &completed_path)?;
     let prepared = prepare_action_archive(
         action_state(active_snapshot, active_expected)?,
         action_state(completed_snapshot, completed_expected)?,
         Local::now(),
     )
     .map_err(|error| WorkspaceError::Actions(error.to_string()))?;
-    let outcome = deliver(&data_root, &journal_dir, prepared)?;
-    Ok(map_archive(&data_root, outcome))
+    let outcome = deliver(&mounts, &journal_dir, prepared)?;
+    Ok(map_archive(data_root, outcome))
 }
 
 pub fn close_action_subtree(
@@ -189,10 +192,11 @@ pub fn close_action_subtree(
     closing_state: clearhead_core::ActionState,
     completed_at: chrono::DateTime<Local>,
 ) -> Result<CloseActionResult, WorkspaceError> {
-    let (data_root, journal_dir, _lock) = begin_mutation(workspace_root, source_path)?;
+    let (mounts, journal_dir, _lock) = begin_mutation(workspace_root, source_path)?;
+    let data_root = &mounts.workspace;
     let completed_path = completed_actions_path(source_path);
-    let (active_snapshot, active_expected) = snapshot(&data_root, source_path)?;
-    let (completed_snapshot, completed_expected) = snapshot(&data_root, &completed_path)?;
+    let (active_snapshot, active_expected) = snapshot(data_root, source_path)?;
+    let (completed_snapshot, completed_expected) = snapshot(data_root, &completed_path)?;
     let prepared = prepare_close_action_subtree(
         action_state(active_snapshot, active_expected)?,
         action_state(completed_snapshot, completed_expected)?,
@@ -201,8 +205,8 @@ pub fn close_action_subtree(
         completed_at,
     )
     .map_err(|error| WorkspaceError::Actions(error.to_string()))?;
-    let outcome = deliver(&data_root, &journal_dir, prepared)?;
-    Ok(map_close(&data_root, outcome))
+    let outcome = deliver(&mounts, &journal_dir, prepared)?;
+    Ok(map_close(data_root, outcome))
 }
 
 fn action_state(
@@ -220,15 +224,15 @@ fn action_state(
 fn begin_mutation(
     workspace_root: &Path,
     source_path: &Path,
-) -> Result<(PathBuf, PathBuf, WorkspaceLock), WorkspaceError> {
-    let data_root = workspace_data_root(workspace_root);
-    let journal_dir = charter_root(workspace_root);
+) -> Result<(NativeWorkspaceMounts, PathBuf, WorkspaceLock), WorkspaceError> {
+    let mounts = NativeWorkspaceMounts::resolve(workspace_root, None);
+    let journal_dir = mounts.workspace.join("charters");
     validate_source_path(source_path, &journal_dir)?;
     std::fs::create_dir_all(&journal_dir)?;
-    let lock = WorkspaceLock::try_acquire(&data_root)?
-        .ok_or_else(|| WorkspaceError::WorkspaceLocked(data_root.clone()))?;
+    let lock = WorkspaceLock::try_acquire(&mounts.workspace)?
+        .ok_or_else(|| WorkspaceError::WorkspaceLocked(mounts.workspace.clone()))?;
     recover_pending(&journal_dir)?;
-    Ok((data_root, journal_dir, lock))
+    Ok((mounts, journal_dir, lock))
 }
 
 fn validate_source_path(source_path: &Path, charter_root: &Path) -> Result<(), WorkspaceError> {
@@ -257,12 +261,12 @@ fn parse_sidecar_snapshot(snapshot: &ResourceSnapshot) -> Result<CharterMetadata
 }
 
 fn deliver<S, O>(
-    data_root: &Path,
+    mounts: &NativeWorkspaceMounts,
     journal_dir: &Path,
     prepared: PreparedMutation<S, O>,
 ) -> Result<O, WorkspaceError> {
-    validate_preconditions(data_root, prepared.effects().preconditions())?;
-    execute_effects(data_root, journal_dir, prepared.effects().effects())?;
+    validate_preconditions(mounts, prepared.effects().preconditions())?;
+    execute_effects(mounts, journal_dir, prepared.effects().effects())?;
     Ok(prepared
         .adopt::<String>(Ok(()))
         .expect("successful native delivery releases prepared state")
@@ -324,26 +328,27 @@ pub fn transact(
         .iter()
         .map(|operation| operation.target())
         .collect();
-    let data_root = workspace_data_root(workspace_root);
-    let journal_dir = charter_root(workspace_root);
+    let mounts = NativeWorkspaceMounts::resolve(workspace_root, None);
+    let data_root = &mounts.workspace;
+    let journal_dir = data_root.join("charters");
     std::fs::create_dir_all(&journal_dir)?;
-    let _lock = WorkspaceLock::try_acquire(&data_root)?
+    let _lock = WorkspaceLock::try_acquire(data_root)?
         .ok_or_else(|| WorkspaceError::WorkspaceLocked(data_root.clone()))?;
     recover_pending(&journal_dir)?;
 
-    let model = load_target_files(workspace_root, &data_root, &target_ids)?;
+    let model = load_target_files(workspace_root, data_root, &target_ids)?;
     let prepared = prepare_transaction(model, &operations, Local::now(), dry_run)
         .map_err(|error| WorkspaceError::Actions(error.to_string()))?;
 
     if !prepared.effects().is_empty() {
-        validate_preconditions(&data_root, prepared.effects().preconditions())?;
-        execute_effects(&data_root, &journal_dir, prepared.effects().effects())?;
+        validate_preconditions(&mounts, prepared.effects().preconditions())?;
+        execute_effects(&mounts, &journal_dir, prepared.effects().effects())?;
     }
 
     let applied = prepared
         .adopt::<String>(Ok(()))
         .expect("successful native delivery releases prepared state");
-    Ok(map_outcome(&data_root, applied.outcome))
+    Ok(map_outcome(data_root, applied.outcome))
 }
 
 fn load_target_files(
@@ -430,11 +435,11 @@ fn logical_path(path: &Path) -> Result<WorkspacePath, WorkspaceError> {
 }
 
 fn validate_preconditions(
-    data_root: &Path,
+    mounts: &NativeWorkspaceMounts,
     preconditions: &[clearhead_core::workspace::resource::ResourcePrecondition],
 ) -> Result<(), WorkspaceError> {
     for precondition in preconditions {
-        let path = data_root.join(precondition.path.as_str());
+        let path = mounts.physical_path(&precondition.path)?;
         let actual = match std::fs::read(&path) {
             Ok(bytes) => Some(revision(&bytes)),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
@@ -458,19 +463,22 @@ fn validate_preconditions(
 }
 
 fn execute_effects(
-    data_root: &Path,
+    mounts: &NativeWorkspaceMounts,
     journal_dir: &Path,
     effects: &[Effect],
 ) -> Result<(), WorkspaceError> {
     let mut batch = PendingBatch::new(journal_dir.to_path_buf());
     for effect in effects {
         match effect {
-            Effect::Write { path, bytes } => batch.stage(data_root.join(path.as_str()), bytes)?,
-            Effect::Move { .. } | Effect::Remove { .. } => {
-                return Err(WorkspaceError::Actions(
-                    "transaction preparation emitted an unsupported non-write effect".into(),
-                ));
-            }
+            Effect::Write { path, bytes } => batch.stage(mounts.physical_path(path)?, bytes)?,
+            Effect::Move {
+                source,
+                destination,
+            } => batch.stage_move(
+                mounts.physical_path(source)?,
+                mounts.physical_path(destination)?,
+            )?,
+            Effect::Remove { path } => batch.stage_remove(mounts.physical_path(path)?)?,
         }
     }
     batch.commit()?;
@@ -507,3 +515,68 @@ pub mod detection;
 pub mod telemetry;
 pub use archive_facts::read_archived_action_facts;
 pub use detection::check_for_workspace;
+
+#[cfg(test)]
+mod mounted_effect_tests {
+    use super::*;
+    use clearhead_core::workspace::resource::{
+        EffectBatch, MountId, ResourceLocation, ResourcePrecondition, WorkspaceScope,
+    };
+
+    fn location(mount: MountId, path: &str) -> ResourceLocation {
+        ResourceLocation::new(mount, WorkspacePath::new(path).unwrap())
+    }
+
+    #[test]
+    fn one_pending_batch_delivers_workspace_and_external_plan_writes() {
+        let temp = tempfile::tempdir().unwrap();
+        let workspace = temp.path().join("workspace");
+        let external = temp.path().join("external-plans");
+        let journal = workspace.join("charters");
+        std::fs::create_dir_all(&journal).unwrap();
+        std::fs::create_dir_all(&external).unwrap();
+        let mounts = NativeWorkspaceMounts {
+            workspace: workspace.clone(),
+            external_plans: Some(external.clone()),
+            scope: WorkspaceScope::User,
+        };
+        let workspace_location = location(MountId::Workspace, "sync/plans.json");
+        let external_location = location(MountId::ExternalPlans, "inbox/action.ics");
+        let batch = EffectBatch::new(
+            vec![
+                Effect::Write {
+                    path: workspace_location.clone(),
+                    bytes: b"store".to_vec(),
+                },
+                Effect::Write {
+                    path: external_location.clone(),
+                    bytes: b"calendar".to_vec(),
+                },
+            ],
+            vec![
+                ResourcePrecondition {
+                    path: workspace_location,
+                    expected: ExpectedResource::Missing,
+                },
+                ResourcePrecondition {
+                    path: external_location,
+                    expected: ExpectedResource::Missing,
+                },
+            ],
+        )
+        .unwrap();
+
+        validate_preconditions(&mounts, batch.preconditions()).unwrap();
+        execute_effects(&mounts, &journal, batch.effects()).unwrap();
+
+        assert_eq!(
+            std::fs::read(workspace.join("sync/plans.json")).unwrap(),
+            b"store"
+        );
+        assert_eq!(
+            std::fs::read(external.join("inbox/action.ics")).unwrap(),
+            b"calendar"
+        );
+        assert!(!journal.join(".pending").exists());
+    }
+}

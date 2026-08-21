@@ -382,6 +382,17 @@ pub fn write_occurrence_deviation(
     op: &OccurrenceOp,
 ) -> Result<(), WorkspaceError> {
     let content = fs::read_to_string(master_path).map_err(WorkspaceError::Io)?;
+    let rendered = render_occurrence_deviation(&content, master_uid, occurrence_key, op)?;
+    atomic_write(master_path, rendered.as_bytes()).map_err(WorkspaceError::Io)
+}
+
+/// Render one occurrence deviation from host-supplied calendar bytes.
+pub fn render_occurrence_deviation(
+    content: &str,
+    master_uid: &str,
+    occurrence_key: &str,
+    op: &OccurrenceOp,
+) -> Result<String, WorkspaceError> {
     let mut calendar: Calendar = content.parse().map_err(WorkspaceError::Parse)?;
 
     match op {
@@ -411,7 +422,7 @@ pub fn write_occurrence_deviation(
         }
     }
 
-    atomic_write(master_path, calendar.to_string().as_bytes()).map_err(WorkspaceError::Io)
+    Ok(calendar.to_string())
 }
 
 /// Ingest a foreign roll-forward: reset the recurring master `master_uid` back to
@@ -432,6 +443,17 @@ pub fn write_master_rollforward(
     completed_slots: &[(String, DateTime<Local>)],
 ) -> Result<(), WorkspaceError> {
     let content = fs::read_to_string(master_path).map_err(WorkspaceError::Io)?;
+    let rendered = render_master_rollforward(&content, master_uid, base_dtstart, completed_slots)?;
+    atomic_write(master_path, rendered.as_bytes()).map_err(WorkspaceError::Io)
+}
+
+/// Render a canonical recurring-master roll-forward from host-supplied bytes.
+pub fn render_master_rollforward(
+    content: &str,
+    master_uid: &str,
+    base_dtstart: DateTime<Local>,
+    completed_slots: &[(String, DateTime<Local>)],
+) -> Result<String, WorkspaceError> {
     let mut calendar: Calendar = content.parse().map_err(WorkspaceError::Parse)?;
 
     // Reset the master anchor to the canonical origin.
@@ -466,7 +488,7 @@ pub fn write_master_rollforward(
         })?;
     }
 
-    atomic_write(master_path, calendar.to_string().as_bytes()).map_err(WorkspaceError::Io)
+    Ok(calendar.to_string())
 }
 
 /// Index of the recurring master VTODO for `uid` — the one carrying `RRULE` and
@@ -571,6 +593,11 @@ pub struct VTodoAction {
 /// or SUMMARY are ignored because they cannot form a stable Action.
 pub fn parse_vtodo_actions(path: &Path) -> Result<Vec<VTodoAction>, WorkspaceError> {
     let content = fs::read_to_string(path).map_err(WorkspaceError::Io)?;
+    parse_vtodo_actions_content(&content)
+}
+
+/// Parse standalone VTODO projections from host-supplied calendar bytes.
+pub fn parse_vtodo_actions_content(content: &str) -> Result<Vec<VTodoAction>, WorkspaceError> {
     let calendar: Calendar = content
         .parse()
         .map_err(|e: String| WorkspaceError::Parse(e))?;

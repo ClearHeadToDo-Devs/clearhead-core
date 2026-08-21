@@ -56,8 +56,8 @@ use clearhead_core::workspace::archive_charter::{
 };
 use clearhead_core::workspace::durability::{PendingBatch, WorkspaceLock, recover_pending};
 use clearhead_core::workspace::resource::{
-    DeliveryError, Effect, EffectBatch, ExpectedResource, ResourcePrecondition, ResourceRevision,
-    WorkspacePath,
+    DeliveryError, Effect, EffectBatch, ExpectedResource, ResourceLocation, ResourcePrecondition,
+    ResourceRevision, WorkspacePath,
 };
 use clearhead_core::workspace::sidecar::{record_charter_id, render_sidecar, sidecar_path};
 use clearhead_core::workspace::{MarkdownCharter, WorkspaceError};
@@ -403,6 +403,8 @@ fn prepare_move_effects(
                 format!("archive destination already exists: {destination}"),
             )));
         }
+        let source = ResourceLocation::workspace(source);
+        let destination = ResourceLocation::workspace(destination);
         preconditions.push(ResourcePrecondition {
             path: source.clone(),
             expected: ExpectedResource::Revision(source_revision),
@@ -434,7 +436,7 @@ fn deliver_move_effects(
     effects: &EffectBatch,
 ) -> Result<(), ArchiveCharterError> {
     for precondition in effects.preconditions() {
-        let actual = expected_resource(&data_root.join(precondition.path.as_str()))?;
+        let actual = expected_resource(&data_root.join(precondition.path.path.as_str()))?;
         if actual != precondition.expected {
             return Err(ArchiveCharterError::Workspace(WorkspaceError::Actions(
                 format!(
@@ -447,15 +449,17 @@ fn deliver_move_effects(
     let mut batch = PendingBatch::new(journal_dir.to_path_buf());
     for effect in effects.effects() {
         match effect {
-            Effect::Write { path, bytes } => batch.stage(data_root.join(path.as_str()), bytes)?,
+            Effect::Write { path, bytes } => {
+                batch.stage(data_root.join(path.path.as_str()), bytes)?
+            }
             Effect::Move {
                 source,
                 destination,
             } => batch.stage_move(
-                data_root.join(source.as_str()),
-                data_root.join(destination.as_str()),
+                data_root.join(source.path.as_str()),
+                data_root.join(destination.path.as_str()),
             )?,
-            Effect::Remove { path } => batch.stage_remove(data_root.join(path.as_str()))?,
+            Effect::Remove { path } => batch.stage_remove(data_root.join(path.path.as_str()))?,
         }
     }
     match batch.commit() {
@@ -703,8 +707,10 @@ mod tests {
         assert!(matches!(
             batch.effects(),
             [Effect::Move { source, destination }]
-                if source.as_str() == "charters/done.actions"
-                    && destination.as_str() == "archive/id.actions"
+                if source.mount == clearhead_core::workspace::resource::MountId::Workspace
+                    && source.path.as_str() == "charters/done.actions"
+                    && destination.mount == clearhead_core::workspace::resource::MountId::Workspace
+                    && destination.path.as_str() == "archive/id.actions"
         ));
         assert_eq!(batch.preconditions().len(), 2);
         assert!(matches!(

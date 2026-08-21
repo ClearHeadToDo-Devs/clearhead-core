@@ -7,7 +7,8 @@ use crate::domain::collect_subtree_ids;
 use crate::domain::update::{ActionUpdate, apply_updates, disallowed_terminal_update};
 use crate::workspace::actions::{Action, ActionList, OutputFormat, format};
 use crate::workspace::resource::{
-    Effect, EffectBatch, ExpectedResource, PreparedMutation, ResourcePrecondition, WorkspacePath,
+    Effect, EffectBatch, ExpectedResource, PreparedMutation, ResourceLocation,
+    ResourcePrecondition, WorkspacePath,
 };
 use crate::workspace::selector::{ActionSelector, unique_selector_match};
 use crate::workspace::sidecar::{CharterMetadata, render_sidecar};
@@ -212,30 +213,30 @@ pub fn prepare_action_delete(
     });
 
     let mut effects = vec![Effect::Write {
-        path: file.clone(),
+        path: ResourceLocation::workspace(file.clone()),
         bytes: render_actions(list)?.into_bytes(),
     }];
     let preconditions = vec![
         ResourcePrecondition {
-            path: active.path.clone(),
+            path: ResourceLocation::workspace(active.path.clone()),
             expected: active.expected,
         },
         ResourcePrecondition {
-            path: completed.path.clone(),
+            path: ResourceLocation::workspace(completed.path.clone()),
             expected: completed.expected,
         },
         ResourcePrecondition {
-            path: active_sidecar.path.clone(),
+            path: ResourceLocation::workspace(active_sidecar.path.clone()),
             expected: active_sidecar.expected,
         },
         ResourcePrecondition {
-            path: completed_sidecar.path.clone(),
+            path: ResourceLocation::workspace(completed_sidecar.path.clone()),
             expected: completed_sidecar.expected,
         },
     ];
     if meta.actions.len() != before {
         effects.push(Effect::Write {
-            path: meta_path.clone(),
+            path: ResourceLocation::workspace(meta_path.clone()),
             bytes: render_sidecar(meta)
                 .map_err(|error| ActionPrepareError::Domain(error.to_string()))?
                 .into_bytes(),
@@ -267,11 +268,11 @@ fn write_batch(
 ) -> Result<EffectBatch, ActionPrepareError> {
     EffectBatch::new(
         vec![Effect::Write {
-            path: path.clone(),
+            path: ResourceLocation::workspace(path.clone()),
             bytes: render_actions(actions)?.into_bytes(),
         }],
         vec![ResourcePrecondition {
-            path: path.clone(),
+            path: ResourceLocation::workspace(path.clone()),
             expected,
         }],
     )

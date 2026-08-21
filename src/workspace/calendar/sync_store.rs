@@ -159,12 +159,23 @@ pub fn read_plans_sync_store(
     plans_root: &Path,
 ) -> Result<PlansSyncStore, WorkspaceError> {
     let path = plans_sync_store_path(root);
-    if !path.exists() {
-        return Ok(PlansSyncStore::new(plans_root));
-    }
+    let content = match std::fs::read_to_string(&path) {
+        Ok(content) => Some(content),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => return Err(error.into()),
+    };
+    decode_plans_sync_store(content.as_deref(), plans_root)
+}
 
-    let content = std::fs::read_to_string(&path)?;
-    let store: PlansSyncStore = serde_json::from_str(&content)
+/// Decode host-supplied merge-base bytes for one plans projection.
+pub fn decode_plans_sync_store(
+    content: Option<&str>,
+    plans_root: &Path,
+) -> Result<PlansSyncStore, WorkspaceError> {
+    let Some(content) = content else {
+        return Ok(PlansSyncStore::new(plans_root));
+    };
+    let store: PlansSyncStore = serde_json::from_str(content)
         .map_err(|error| WorkspaceError::Parse(format!("plans sync store: {error}")))?;
     if store.version != STORE_VERSION {
         return Err(WorkspaceError::Parse(format!(
@@ -178,8 +189,12 @@ pub fn read_plans_sync_store(
     Ok(store)
 }
 
-pub(crate) fn serialize_plans_sync_store(store: &PlansSyncStore) -> Result<String, WorkspaceError> {
+pub fn encode_plans_sync_store(store: &PlansSyncStore) -> Result<String, WorkspaceError> {
     serde_json::to_string_pretty(store).map_err(|error| WorkspaceError::Parse(error.to_string()))
+}
+
+pub(crate) fn serialize_plans_sync_store(store: &PlansSyncStore) -> Result<String, WorkspaceError> {
+    encode_plans_sync_store(store)
 }
 
 #[cfg(test)]

@@ -5,9 +5,9 @@ use std::path::{Path, PathBuf};
 
 use clearhead_core::domain::DomainModel;
 use clearhead_core::workspace::resource::{
-    MountInventory, MountReadEvidence, ReadPlan, ResourceReadFailure, ResourceRevision,
-    ResourceSnapshot, WorkspaceInventory, WorkspaceMounts, WorkspacePath, WorkspaceScope,
-    WorkspaceSnapshot,
+    MountId, MountInventory, MountReadEvidence, ReadPlan, ResourceLocation, ResourceReadFailure,
+    ResourceRevision, ResourceSnapshot, WorkspaceInventory, WorkspaceMounts, WorkspacePath,
+    WorkspaceScope, WorkspaceSnapshot,
 };
 use clearhead_core::workspace::{
     MarkdownCharter, Workspace, WorkspaceAssemblyInput, WorkspaceError, WorkspaceRead,
@@ -44,6 +44,20 @@ impl NativeWorkspaceMounts {
             external_plans: external_plans.map(Path::to_path_buf),
             scope,
         }
+    }
+
+    /// Resolve a logical resource location to its native physical path.
+    pub fn physical_path(&self, location: &ResourceLocation) -> Result<PathBuf, WorkspaceError> {
+        let root = match location.mount {
+            MountId::Workspace => &self.workspace,
+            MountId::ExternalPlans => self.external_plans.as_ref().ok_or_else(|| {
+                WorkspaceError::Actions(
+                    "an external-plans resource was requested without an external plans mount"
+                        .into(),
+                )
+            })?,
+        };
+        Ok(root.join(location.path.as_str()))
     }
 
     pub fn inventory(&self) -> Result<WorkspaceMounts<MountInventory>, WorkspaceError> {

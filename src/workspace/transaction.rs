@@ -25,7 +25,8 @@ use crate::verb_result::{VerbError, VerbOutcome, canonical_id};
 use crate::workspace::actions::format::require_actions_formatting;
 use crate::workspace::actions::{Action, ActionState};
 use crate::workspace::resource::{
-    Effect, EffectBatch, ExpectedResource, PreparedMutation, ResourcePrecondition, WorkspacePath,
+    Effect, EffectBatch, ExpectedResource, PreparedMutation, ResourceLocation,
+    ResourcePrecondition, WorkspacePath,
 };
 
 // ============================================================================
@@ -458,13 +459,13 @@ pub fn prepare_transaction(
     for file in &model.files {
         if file.active_dirty {
             effects.push(Effect::Write {
-                path: file.source_path.clone(),
+                path: ResourceLocation::workspace(file.source_path.clone()),
                 bytes: render_actions(&file.active)?.into_bytes(),
             });
         }
         if file.completed_dirty {
             effects.push(Effect::Write {
-                path: file.completed_path.clone(),
+                path: ResourceLocation::workspace(file.completed_path.clone()),
                 bytes: render_actions(&file.completed)?.into_bytes(),
             });
         }
@@ -472,11 +473,11 @@ pub fn prepare_transaction(
         // Protect the complete trusted read set, including a companion file
         // whose bytes influenced resolution but did not itself become dirty.
         preconditions.push(ResourcePrecondition {
-            path: file.source_path.clone(),
+            path: ResourceLocation::workspace(file.source_path.clone()),
             expected: file.active_expected.clone(),
         });
         preconditions.push(ResourcePrecondition {
-            path: file.completed_path.clone(),
+            path: ResourceLocation::workspace(file.completed_path.clone()),
             expected: file.completed_expected.clone(),
         });
     }
