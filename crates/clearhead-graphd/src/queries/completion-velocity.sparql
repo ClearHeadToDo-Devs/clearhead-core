@@ -1,0 +1,27 @@
+# =============================================================================
+# Query: Completion Velocity
+# =============================================================================
+# Purpose: Count completed actions per context — productivity by area
+# Returns: context, completed_count
+# Notes:
+#   Actions without a context are grouped under "(none)".
+#   For date-range filtering, add: FILTER(?completion_date >= ... && ... <= ...)
+# =============================================================================
+
+PREFIX actions: <https://clearhead.us/vocab/actions/v4#>
+PREFIX cco: <https://www.commoncoreontologies.org/>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+
+SELECT ?context (COUNT(?action) AS ?completed_count) WHERE {
+    ?action a actions:Action ;
+         cco:ont00001868 actions:Completed ;
+         actions:hasCompletedDateTime ?completion_date .
+
+    OPTIONAL {
+        ?action actions:requiresContext ?ctx .
+        ?ctx actions:hasContextIdentifier ?raw_context .
+    }
+    BIND(COALESCE(?raw_context, "(none)") AS ?context)
+}
+GROUP BY ?context
+ORDER BY DESC(?completed_count)

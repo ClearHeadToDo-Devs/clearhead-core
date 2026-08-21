@@ -1,0 +1,23 @@
+# =============================================================================
+# Query: Open Actions (Backlog)
+# =============================================================================
+# Purpose: All actions that are not complete or cancelled — full backlog view
+# Returns: name, state, priority, due_date
+# =============================================================================
+
+PREFIX actions: <https://clearhead.us/vocab/actions/v4#>
+PREFIX cco: <https://www.commoncoreontologies.org/>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+
+SELECT ?name ?state ?priority ?due_date WHERE {
+    ?action a actions:Action ;
+         rdfs:label ?name ;
+         cco:ont00001868 ?raw_state .
+
+    FILTER(?raw_state != actions:Completed && ?raw_state != actions:Cancelled)
+    BIND(STRAFTER(STR(?raw_state), "#") AS ?state)
+
+    OPTIONAL { ?action actions:hasPriority ?priority }
+    OPTIONAL { ?action actions:hasDueDateTime ?due_date }
+}
+ORDER BY ?priority ?due_date ?name

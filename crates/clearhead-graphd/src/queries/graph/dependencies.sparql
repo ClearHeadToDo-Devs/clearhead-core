@@ -1,0 +1,41 @@
+# Action dependency network as a standard RDF graph.
+# The result preserves ontology predicates and can be consumed unchanged by
+# JSON-LD, Turtle, N-Triples, or any external SPARQL/RDF tool.
+
+PREFIX actions: <https://clearhead.us/vocab/actions/v4#>
+PREFIX bfo: <http://purl.obolibrary.org/obo/>
+PREFIX cco: <https://www.commoncoreontologies.org/>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+
+CONSTRUCT {
+    ?action a actions:Action ;
+            rdfs:label ?name ;
+            cco:ont00001868 ?status .
+    ?action actions:hasPriority ?priority .
+    ?action cco:ont00001775 ?predecessor .
+    ?predecessor a actions:Action ;
+                 rdfs:label ?predecessor_name ;
+                 cco:ont00001868 ?predecessor_status .
+    ?charter a actions:Charter ;
+             rdfs:label ?charter_name ;
+             bfo:BFO_0000051 ?action .
+}
+WHERE {
+    GRAPH ?g {
+        ?action a actions:Action ;
+                rdfs:label ?name ;
+                cco:ont00001868 ?status .
+        OPTIONAL { ?action actions:hasPriority ?priority }
+        OPTIONAL {
+            ?action cco:ont00001775 ?predecessor .
+            ?predecessor a actions:Action ;
+                         rdfs:label ?predecessor_name ;
+                         cco:ont00001868 ?predecessor_status .
+        }
+        OPTIONAL {
+            ?charter a actions:Charter ;
+                     rdfs:label ?charter_name ;
+                     bfo:BFO_0000051 ?action .
+        }
+    }
+}

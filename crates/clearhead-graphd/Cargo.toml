@@ -1,0 +1,42 @@
+[package]
+name = "clearhead-graphd"
+version = "0.1.0"
+edition = "2024"
+description = "Standalone graph/query binary for ClearHead"
+license = "MIT"
+
+[[bin]]
+name = "clearhead-graphd"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1.0"
+clap = { version = "4.0", features = ["derive"] }
+# graphd is read-only and does not need canonical .actions source formatting.
+clearhead_core = { path = "../clearhead-core", version = "0.2.0", default-features = false }
+comfy-table = "7.1"
+chrono = "0.4"
+config = { version = "0.15.19", default-features = false, features = ["json"] }
+# graphd uses only Oxigraph's in-memory store; RocksDB is not part of its
+# runtime or persistence contract.
+oxigraph = { version = "0.5.3", default-features = false }
+petgraph = "0.8"
+serde_json = "1.0"
+thiserror = "2.0"
+tracing = "0.1.44"
+uuid = "1.0"
+tracing-subscriber = { version = "0.3.22", features = ["env-filter"] }
+
+[features]
+# Opt-in conformance of graphd's real query output against the specification's
+# published JSON Schemas. Bare `cargo test` stays independent of a
+# specifications checkout; the super-repo runs this with CLEARHEAD_SPEC_DIR.
+spec-conformance = []
+
+[dev-dependencies]
+assert_cmd = "2.0"
+# Local schema validation does not need HTTP/file reference resolution or its
+# async networking stack.
+jsonschema = { version = "0.18", default-features = false }
+predicates = "3.1"
+tempfile = "3.0"

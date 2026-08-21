@@ -1,0 +1,33 @@
+# =============================================================================
+# Query: Overdue Actions
+# =============================================================================
+# Purpose: Open actions past their due date
+# Parameters:
+#   ?CUTOFF_DATE — injected as current UTC datetime at query time
+# Returns: name, due_date, scheduled_at, state, priority
+# =============================================================================
+
+PREFIX actions: <https://clearhead.us/vocab/actions/v4#>
+PREFIX cco: <https://www.commoncoreontologies.org/>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+PREFIX ws: <https://clearhead.us/vocab/workspace/v1#>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+
+SELECT ?name ?due_date ?scheduled_at ?state ?priority ?source_file ?source_line WHERE {
+    VALUES ?cutoff { ?CUTOFF_DATE }
+
+    ?action a actions:Action ;
+         rdfs:label ?name ;
+         cco:ont00001868 ?raw_state ;
+         actions:hasDueDateTime ?due_date .
+
+    FILTER(?raw_state != actions:Completed && ?raw_state != actions:Cancelled)
+    FILTER(?due_date <= ?cutoff)
+    BIND(STRAFTER(STR(?raw_state), "#") AS ?state)
+
+    OPTIONAL { ?action actions:hasScheduledDateTime ?scheduled_at }
+    OPTIONAL { ?action actions:hasPriority ?priority }
+    OPTIONAL { ?action ws:hasSourceFile ?source_file }
+    OPTIONAL { ?action ws:hasSourceLine ?source_line }
+}
+ORDER BY ?priority ?due_date

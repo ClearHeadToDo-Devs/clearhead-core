@@ -1,0 +1,69 @@
+# =============================================================================
+# Query: Agenda (index)
+# =============================================================================
+# The daily "just do it" list (charter: agenda-view). An action appears when
+# it is actionable *now*:
+#   - open or in-progress (blocked belongs to the weekly horizon)
+#   - first in its dependency chain: no open predecessor, at this action or
+#     any ancestor — a blocked parent blocks every descendant beneath it
+#   - the lowest open child: parents with open work below are containers,
+#     you act on the leaf
+#   - scheduled or due on or before end of today (includes overdue);
+#     undated items never appear regardless of priority
+# Sorted by priority (unset sorts last), then due, scheduled, name.
+# Context relevance (+tags) is deferred until the context-parameter story
+# exists.
+# Parameters:
+#   ?END_OF_TODAY — injected as today at 23:59:59 UTC
+# Returns: index contract columns (id, name, status, source_file, source_line,
+#          charter_root) + priority/scheduled_at/due_date sort keys,
+#          parent/parent_name edge (denormalized, unset for root actions)
+#          per specifications/query_output.md
+# =============================================================================
+
+PREFIX actions: <https://clearhead.us/vocab/actions/v4#>
+PREFIX bfo: <http://purl.obolibrary.org/obo/>
+PREFIX cco: <https://www.commoncoreontologies.org/>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+PREFIX ws: <https://clearhead.us/vocab/workspace/v1#>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+
+SELECT (?action AS ?id) ?name ?status ?source_file ?source_line ?charter_root ?priority ?scheduled_at ?due_date ?parent ?parent_name WHERE {
+    GRAPH ?g {
+        ?action a actions:Action ;
+             rdfs:label ?name ;
+             cco:ont00001868 ?raw_state ;
+             ws:hasSourceFile ?source_file ;
+             ws:hasSourceLine ?source_line .
+        ?workspace_node a ws:Workspace ;
+                        ws:charterRoot ?charter_root .
+        FILTER(?raw_state = actions:NotStarted || ?raw_state = actions:InProgress)
+        OPTIONAL { ?action actions:hasScheduledDateTime ?scheduled_at }
+        OPTIONAL { ?action actions:hasDueDateTime ?due_date }
+        OPTIONAL { ?action actions:hasPriority ?priority }
+        OPTIONAL { ?action bfo:BFO_0000050 ?parent . ?parent rdfs:label ?parent_name }
+
+        # First in the dependency chain: no predecessor still open, at this
+        # action or any ancestor (bfo:BFO_0000050* = part-of, zero-or-more,
+        # includes ?action itself at zero hops).
+        FILTER NOT EXISTS {
+            ?action bfo:BFO_0000050* ?gated .
+            ?gated cco:ont00001775 ?predecessor .
+            ?predecessor cco:ont00001868 ?pred_state .
+            FILTER(?pred_state != actions:Completed && ?pred_state != actions:Cancelled)
+        }
+
+        # Act on the lowest open child: hide parents with open work below.
+        FILTER NOT EXISTS {
+            ?child bfo:BFO_0000050 ?action ;
+                   cco:ont00001868 ?child_state .
+            FILTER(?child_state != actions:Completed && ?child_state != actions:Cancelled)
+        }
+    }
+    BIND(STRAFTER(STR(?raw_state), "#") AS ?status)
+    FILTER(
+        (BOUND(?scheduled_at) && ?scheduled_at <= ?END_OF_TODAY) ||
+        (BOUND(?due_date) && ?due_date <= ?END_OF_TODAY)
+    )
+}
+ORDER BY ASC(COALESCE(?priority, 99)) ?due_date ?scheduled_at ?name

@@ -1,0 +1,66 @@
+# =============================================================================
+# Query: Unscheduled (index)
+# =============================================================================
+# The date-light working view (charter: agenda-view): what could I pick up,
+# given nothing on the calendar demands it? The complement of the agenda —
+# an action appears when it is actionable now and *unplanned*:
+#   - open or in-progress (blocked is not actionable)
+#   - first in its dependency chain: no open predecessor, at this action or
+#     any ancestor — a blocked parent blocks every descendant beneath it
+#   - the lowest open child: parents with open work below are containers,
+#     you act on the leaf
+#   - undated in scope: no scheduled or due date on the action *or any
+#     ancestor* — a child of a dated parent is planned work, not unscheduled
+# Sorted by priority (unset sorts last), then name.
+# Returns: index contract columns (id, name, status, source_file, source_line,
+#          charter_root) + priority sort key, parent/parent_name edge
+#          (denormalized, unset for root actions) per specifications/query_output.md
+# =============================================================================
+
+PREFIX actions: <https://clearhead.us/vocab/actions/v4#>
+PREFIX bfo: <http://purl.obolibrary.org/obo/>
+PREFIX cco: <https://www.commoncoreontologies.org/>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+PREFIX ws: <https://clearhead.us/vocab/workspace/v1#>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+
+SELECT (?action AS ?id) ?name ?status ?source_file ?source_line ?charter_root ?priority ?parent ?parent_name WHERE {
+    GRAPH ?g {
+        ?action a actions:Action ;
+             rdfs:label ?name ;
+             cco:ont00001868 ?raw_state ;
+             ws:hasSourceFile ?source_file ;
+             ws:hasSourceLine ?source_line .
+        ?workspace_node a ws:Workspace ;
+                        ws:charterRoot ?charter_root .
+        FILTER(?raw_state = actions:NotStarted || ?raw_state = actions:InProgress)
+        OPTIONAL { ?action actions:hasPriority ?priority }
+        OPTIONAL { ?action bfo:BFO_0000050 ?parent . ?parent rdfs:label ?parent_name }
+
+        # Undated in scope: neither the action nor any ancestor carries a
+        # scheduled or due date (bfo:BFO_0000050* = part-of, zero-or-more).
+        FILTER NOT EXISTS {
+            ?action bfo:BFO_0000050* ?scope .
+            ?scope actions:hasScheduledDateTime|actions:hasDueDateTime ?when .
+        }
+
+        # First in the dependency chain: no predecessor still open, at this
+        # action or any ancestor (bfo:BFO_0000050* = part-of, zero-or-more,
+        # includes ?action itself at zero hops).
+        FILTER NOT EXISTS {
+            ?action bfo:BFO_0000050* ?gated .
+            ?gated cco:ont00001775 ?predecessor .
+            ?predecessor cco:ont00001868 ?pred_state .
+            FILTER(?pred_state != actions:Completed && ?pred_state != actions:Cancelled)
+        }
+
+        # Act on the lowest open child: hide parents with open work below.
+        FILTER NOT EXISTS {
+            ?child bfo:BFO_0000050 ?action ;
+                   cco:ont00001868 ?child_state .
+            FILTER(?child_state != actions:Completed && ?child_state != actions:Cancelled)
+        }
+    }
+    BIND(STRAFTER(STR(?raw_state), "#") AS ?status)
+}
+ORDER BY ASC(COALESCE(?priority, 99)) ?name

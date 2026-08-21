@@ -1,0 +1,37 @@
+# =============================================================================
+# Query: Next Actions (GTD Style)
+# =============================================================================
+# Purpose: Open actions with all dependencies satisfied — safe to start now
+# Returns: name, context, priority, scheduled_at, due_date
+# Notes:
+#   Dependency check uses cco:ont00001775 (is_successor_of) directly on Action.
+#   An action is actionable when none of its dependencies are still open.
+# =============================================================================
+
+PREFIX actions: <https://clearhead.us/vocab/actions/v4#>
+PREFIX cco: <https://www.commoncoreontologies.org/>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+PREFIX ws: <https://clearhead.us/vocab/workspace/v1#>
+
+SELECT DISTINCT ?name ?context ?priority ?scheduled_at ?due_date ?source_file ?source_line WHERE {
+    ?action a actions:Action ;
+         rdfs:label ?name ;
+         cco:ont00001868 actions:NotStarted .
+
+    FILTER NOT EXISTS {
+        ?action cco:ont00001775 ?dep .
+        ?dep cco:ont00001868 ?dep_state .
+        FILTER(?dep_state != actions:Completed && ?dep_state != actions:Cancelled)
+    }
+
+    OPTIONAL {
+        ?action actions:requiresContext ?ctx .
+        ?ctx actions:hasContextIdentifier ?context .
+    }
+    OPTIONAL { ?action actions:hasPriority ?priority }
+    OPTIONAL { ?action actions:hasScheduledDateTime ?scheduled_at }
+    OPTIONAL { ?action actions:hasDueDateTime ?due_date }
+    OPTIONAL { ?action ws:hasSourceFile ?source_file }
+    OPTIONAL { ?action ws:hasSourceLine ?source_line }
+}
+ORDER BY ?priority ?scheduled_at ?due_date ?name
