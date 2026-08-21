@@ -19,6 +19,7 @@ pub mod durability;
 pub mod manifest;
 pub mod mutate_actions;
 pub mod mutation;
+pub mod resource;
 pub mod selector;
 pub mod sidecar;
 pub mod store;
@@ -66,6 +67,12 @@ pub use manifest::WorkspaceManifest;
 pub use mutate_actions::{
     DeleteActionResult, InsertActionResult, UpdateActionResult, delete_action, insert_action,
     plan_action_insert, update_action,
+};
+pub use resource::{
+    AppliedMutation, DeliveryError, Effect, EffectBatch, EffectBatchError, ExpectedResource,
+    PreparedMutation, ReadPlan, ResourceConflict, ResourcePrecondition, ResourceRevision,
+    ResourceSnapshot, SnapshotError, WorkspaceInventory, WorkspacePath, WorkspacePathError,
+    WorkspaceSnapshot,
 };
 pub use selector::ActionSelector;
 pub use sidecar::{
