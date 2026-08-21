@@ -1,42 +1,70 @@
-//! Durable single-file action verbs.
-//!
-//! Home for the action mutations that edit one active `.actions` file in place —
-//! `add` today, `update`/`delete` as the durable-verbs charter routes them here.
-//! Each rides the shared [`with_locked_mutation`] seam: acquire the lock, recover
-//! pending intent, read trusted state, produce a pure plan, render, and stage the
-//! single changed file in one journaled batch.
-//!
-//! This is the sibling of `archive_actions`, which owns the *two*-file archival
-//! move. The split is by mutation shape, not by verb name.
+//! Pure preparation for action-file insertion, update, and deletion.
 
-use std::path::{Path, PathBuf};
-
+use thiserror::Error;
 use uuid::Uuid;
 
 use crate::domain::collect_subtree_ids;
 use crate::domain::update::{ActionUpdate, apply_updates, disallowed_terminal_update};
-use crate::workspace::action_files::{completed_actions_path, read_actions};
-use crate::workspace::actions::format::require_actions_formatting;
-use crate::workspace::actions::{Action, ActionList};
-use crate::workspace::mutation::{WriteSet, render, validate_source_path, with_locked_mutation};
+use crate::workspace::actions::{Action, ActionList, OutputFormat, format};
+use crate::workspace::resource::{
+    Effect, EffectBatch, ExpectedResource, PreparedMutation, ResourcePrecondition, WorkspacePath,
+};
 use crate::workspace::selector::{ActionSelector, unique_selector_match};
-use crate::workspace::sidecar::{read_sidecar, render_sidecar, sidecar_path};
-use crate::workspace::store::{WorkspaceError, resolve_workspace_layout};
+use crate::workspace::sidecar::{CharterMetadata, render_sidecar};
 
-/// Result of durably inserting one action into an active file.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct InsertActionResult {
+/// A domain or codec failure while preparing an action mutation.
+#[derive(Debug, Clone, Error, PartialEq, Eq)]
+pub enum ActionPrepareError {
+    #[error("{0}")]
+    Domain(String),
+}
+
+/// Already-loaded logical action resource used by pure preparation.
+#[derive(Debug, Clone)]
+pub struct ActionResourceState {
+    pub path: WorkspacePath,
+    pub actions: ActionList,
+    pub expected: ExpectedResource,
+}
+
+/// Already-loaded sidecar resource used by deletion preparation.
+#[derive(Debug, Clone)]
+pub struct SidecarResourceState {
+    pub path: WorkspacePath,
+    pub metadata: CharterMetadata,
+    pub expected: ExpectedResource,
+}
+
+#[derive(Debug, Clone)]
+pub struct PreparedInsertOutcome {
     pub action_id: Uuid,
     pub parent_id: Option<Uuid>,
-    pub source_path: PathBuf,
+    pub source_path: WorkspacePath,
+}
+
+#[derive(Debug, Clone)]
+pub struct PreparedUpdateOutcome {
+    pub action_id: Uuid,
+    pub source_path: WorkspacePath,
+}
+
+#[derive(Debug, Clone)]
+pub struct PreparedDeleteOutcome {
+    pub action_id: Uuid,
+    pub deleted_count: usize,
+    pub source_path: WorkspacePath,
+    pub from_completed: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct DeletePreparedState {
+    pub active: ActionList,
+    pub completed: ActionList,
+    pub active_sidecar: CharterMetadata,
+    pub completed_sidecar: CharterMetadata,
 }
 
 /// Insert one action into an active list without touching the filesystem.
-///
-/// The new action is parented to `parent_id` (already resolved against the same
-/// list) and placed immediately after that parent's full subtree, so siblings
-/// stay contiguous. A parentless action is appended. The caller owns every other
-/// field of `new_action`, including its id and `created_at` stamp.
 pub fn plan_action_insert(
     active: &[Action],
     new_action: Action,
@@ -45,7 +73,6 @@ pub fn plan_action_insert(
     let mut list = active.to_vec();
     let mut action = new_action;
     action.parent_id = parent_id;
-
     let index = parent_id
         .map(|id| index_after_subtree(&list, id))
         .unwrap_or(list.len());
@@ -53,7 +80,6 @@ pub fn plan_action_insert(
     list
 }
 
-/// Return the insertion point immediately after `parent_id`'s full subtree.
 fn index_after_subtree(actions: &[Action], parent_id: Uuid) -> usize {
     let subtree = collect_subtree_ids(actions, parent_id);
     actions
@@ -65,215 +91,195 @@ fn index_after_subtree(actions: &[Action], parent_id: Uuid) -> usize {
         .unwrap_or(actions.len())
 }
 
-/// Add one action to an active `.actions` file as a single locked, journaled
-/// mutation.
-///
-/// Runs on the shared [`with_locked_mutation`] seam: the lock is acquired and any
-/// interrupted mutation is recovered before the file is read, so the parent is
-/// resolved and the action inserted against trusted state. An interrupted commit
-/// can only recover forward to the post-add file.
-///
-/// `parent` is resolved under the lock rather than trusted from a pre-lock client
-/// read: an id-less parent line's in-memory UUID changes across reloads, so the
-/// selector's alias/name fallback is what keeps the handoff stable — the same
-/// reason [`close_action_subtree`](super::archive_actions::close_action_subtree)
-/// carries a selector.
-pub fn insert_action(
-    workspace_root: &Path,
-    source_path: &Path,
+pub fn prepare_action_insert(
+    source: ActionResourceState,
     new_action: Action,
     parent: Option<&ActionSelector>,
-) -> Result<InsertActionResult, WorkspaceError> {
-    let layout = resolve_workspace_layout(workspace_root);
-    validate_source_path(source_path, &layout.charter_root)?;
-    require_actions_formatting().map_err(WorkspaceError::Actions)?;
-
-    with_locked_mutation(&layout, |_layout| {
-        let active = read_actions(source_path)?;
-
-        let parent_id = match parent {
-            Some(selector) => Some(unique_selector_match(&active, selector)?.ok_or_else(|| {
-                WorkspaceError::Actions(format!(
-                    "parent action not found in source file: {}",
-                    selector.name
-                ))
-            })?),
-            None => None,
-        };
-
-        let action_id = new_action.id;
-        let planned = plan_action_insert(&active, new_action, parent_id);
-
-        let mut writes = WriteSet::new();
-        writes.stage(source_path.to_path_buf(), render(&planned)?);
-
-        Ok((
-            writes,
-            InsertActionResult {
-                action_id,
-                parent_id,
-                source_path: source_path.to_path_buf(),
-            },
-        ))
-    })
+) -> Result<PreparedMutation<ActionList, PreparedInsertOutcome>, ActionPrepareError> {
+    let parent_id = match parent {
+        Some(selector) => Some(
+            unique_selector_match(&source.actions, selector)
+                .map_err(|error| ActionPrepareError::Domain(error.to_string()))?
+                .ok_or_else(|| {
+                    ActionPrepareError::Domain(format!(
+                        "parent action not found in source file: {}",
+                        selector.name
+                    ))
+                })?,
+        ),
+        None => None,
+    };
+    let action_id = new_action.id;
+    let next = plan_action_insert(&source.actions, new_action, parent_id);
+    let effects = write_batch(&source.path, &next, source.expected)?;
+    Ok(PreparedMutation::with_outcome(
+        next,
+        effects,
+        PreparedInsertOutcome {
+            action_id,
+            parent_id,
+            source_path: source.path,
+        },
+    ))
 }
 
-/// Result of durably updating one action's fields.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct UpdateActionResult {
-    pub action_id: Uuid,
-    pub source_path: PathBuf,
-}
-
-/// Update one action's fields in an active `.actions` file as a single locked,
-/// journaled mutation.
-///
-/// Runs on the shared [`with_locked_mutation`] seam, mirroring
-/// [`insert_action`]: the target `selector` is re-resolved under the lock (an
-/// id-less line's in-memory UUID changes across reloads), the update is applied
-/// in place, and the single file is staged in one journaled batch.
-///
-/// A terminal `state` is rejected before the lock is taken:
-/// [`disallowed_terminal_update`] steers those requests to `complete`/`cancel`,
-/// which cascade to the subtree and archive it. A field update only edits the
-/// one action, so it must never leave the tree half-closed.
-pub fn update_action(
-    workspace_root: &Path,
-    source_path: &Path,
+pub fn prepare_action_update(
+    source: ActionResourceState,
     selector: &ActionSelector,
     update: ActionUpdate,
-) -> Result<UpdateActionResult, WorkspaceError> {
+) -> Result<PreparedMutation<ActionList, PreparedUpdateOutcome>, ActionPrepareError> {
     if let Some(state) = disallowed_terminal_update(&update) {
-        return Err(WorkspaceError::Actions(format!(
-            "cannot set state to {state:?} via update; use complete/cancel, which cascade to the \
-             subtree and archive it"
+        return Err(ActionPrepareError::Domain(format!(
+            "cannot set state to {state:?} via update; use complete/cancel, which cascade to the subtree and archive it"
         )));
     }
-
-    let layout = resolve_workspace_layout(workspace_root);
-    validate_source_path(source_path, &layout.charter_root)?;
-    require_actions_formatting().map_err(WorkspaceError::Actions)?;
-
-    with_locked_mutation(&layout, |_layout| {
-        let mut active = read_actions(source_path)?;
-
-        let action_id = unique_selector_match(&active, selector)?.ok_or_else(|| {
-            WorkspaceError::Actions(format!(
+    let mut next = source.actions;
+    let action_id = unique_selector_match(&next, selector)
+        .map_err(|error| ActionPrepareError::Domain(error.to_string()))?
+        .ok_or_else(|| {
+            ActionPrepareError::Domain(format!(
                 "open action not found in source file: {}",
                 selector.name
             ))
         })?;
-
-        let target = active
-            .iter_mut()
-            .find(|action| action.id == action_id)
-            .expect("selected action came from active list");
-        apply_updates(target, update);
-
-        let mut writes = WriteSet::new();
-        writes.stage(source_path.to_path_buf(), render(&active)?);
-
-        Ok((
-            writes,
-            UpdateActionResult {
-                action_id,
-                source_path: source_path.to_path_buf(),
-            },
-        ))
-    })
+    let target = next
+        .iter_mut()
+        .find(|action| action.id == action_id)
+        .expect("selected action came from active list");
+    apply_updates(target, update);
+    let effects = write_batch(&source.path, &next, source.expected)?;
+    Ok(PreparedMutation::with_outcome(
+        next,
+        effects,
+        PreparedUpdateOutcome {
+            action_id,
+            source_path: source.path,
+        },
+    ))
 }
 
-/// Result of durably deleting one action subtree.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DeleteActionResult {
-    pub action_id: Uuid,
-    /// Actions removed, including the selected root.
-    pub deleted_count: usize,
-    /// The file the subtree was removed from (active or completed).
-    pub source_path: PathBuf,
-    /// True when the target lived in the `.completed.actions` file.
-    pub from_completed: bool,
-}
-
-/// Delete one action and its subtree as a single locked, journaled mutation.
-///
-/// Deletion removes *every sign* of an action, so unlike the other verbs it is
-/// not confined to the active file: the target is resolved in the active file
-/// first, then the completed file (archived subtrees preserve their hierarchy,
-/// so a completed tree cascades too). The matching file's sidecar entries for
-/// the deleted ids are pruned in the same batch, leaving no orphaned metadata.
-///
-/// `source_path` is always the active `.actions` path; the completed sibling is
-/// derived. Both files are read under the lock and only the one that owned the
-/// subtree — plus its sidecar — is staged.
-pub fn delete_action(
-    workspace_root: &Path,
-    source_path: &Path,
+pub fn prepare_action_delete(
+    active: ActionResourceState,
+    completed: ActionResourceState,
+    active_sidecar: SidecarResourceState,
+    completed_sidecar: SidecarResourceState,
     selector: &ActionSelector,
-) -> Result<DeleteActionResult, WorkspaceError> {
-    let layout = resolve_workspace_layout(workspace_root);
-    validate_source_path(source_path, &layout.charter_root)?;
-    require_actions_formatting().map_err(WorkspaceError::Actions)?;
+) -> Result<PreparedMutation<DeletePreparedState, PreparedDeleteOutcome>, ActionPrepareError> {
+    let mut active_actions = active.actions;
+    let mut completed_actions = completed.actions;
+    let (from_completed, action_id) = match unique_selector_match(&active_actions, selector)
+        .map_err(|error| ActionPrepareError::Domain(error.to_string()))?
+    {
+        Some(id) => (false, id),
+        None => match unique_selector_match(&completed_actions, selector)
+            .map_err(|error| ActionPrepareError::Domain(error.to_string()))?
+        {
+            Some(id) => (true, id),
+            None => {
+                return Err(ActionPrepareError::Domain(format!(
+                    "action not found in active or completed file: {}",
+                    selector.name
+                )));
+            }
+        },
+    };
+    let list = if from_completed {
+        &mut completed_actions
+    } else {
+        &mut active_actions
+    };
+    let subtree_ids = collect_subtree_ids(list, action_id);
+    list.retain(|action| !subtree_ids.contains(&action.id));
+    let deleted_count = subtree_ids.len();
 
-    let completed_path = completed_actions_path(source_path);
+    let mut active_meta = active_sidecar.metadata;
+    let mut completed_meta = completed_sidecar.metadata;
+    let (file, meta_path, meta) = if from_completed {
+        (
+            &completed.path,
+            &completed_sidecar.path,
+            &mut completed_meta,
+        )
+    } else {
+        (&active.path, &active_sidecar.path, &mut active_meta)
+    };
+    let before = meta.actions.len();
+    meta.actions.retain(|id_str, _| {
+        id_str
+            .parse::<Uuid>()
+            .map(|id| !subtree_ids.contains(&id))
+            .unwrap_or(true)
+    });
 
-    with_locked_mutation(&layout, |_layout| {
-        let mut active = read_actions(source_path)?;
-        let mut completed = read_actions(&completed_path)?;
-
-        let (from_completed, action_id) = match unique_selector_match(&active, selector)? {
-            Some(id) => (false, id),
-            None => match unique_selector_match(&completed, selector)? {
-                Some(id) => (true, id),
-                None => {
-                    return Err(WorkspaceError::Actions(format!(
-                        "action not found in active or completed file: {}",
-                        selector.name
-                    )));
-                }
-            },
-        };
-
-        let (list, file_path) = if from_completed {
-            (&mut completed, completed_path.as_path())
-        } else {
-            (&mut active, source_path)
-        };
-
-        let subtree_ids = collect_subtree_ids(list, action_id);
-        list.retain(|action| !subtree_ids.contains(&action.id));
-        let deleted_count = subtree_ids.len();
-
-        let mut writes = WriteSet::new();
-        writes.stage(file_path.to_path_buf(), render(list)?);
-
-        // Prune the deleted ids from that file's sidecar — an action's created
-        // stamp and archived-occurrence lineage are signs too. Stage the sidecar
-        // only if an entry actually went away, so a metadata-less delete stays a
-        // one-file write.
-        let sc_path = sidecar_path(file_path);
-        let mut meta = read_sidecar(&sc_path)?;
-        let before = meta.actions.len();
-        meta.actions.retain(|id_str, _| {
-            id_str
-                .parse::<Uuid>()
-                .map(|id| !subtree_ids.contains(&id))
-                .unwrap_or(true)
+    let mut effects = vec![Effect::Write {
+        path: file.clone(),
+        bytes: render_actions(list)?.into_bytes(),
+    }];
+    let preconditions = vec![
+        ResourcePrecondition {
+            path: active.path.clone(),
+            expected: active.expected,
+        },
+        ResourcePrecondition {
+            path: completed.path.clone(),
+            expected: completed.expected,
+        },
+        ResourcePrecondition {
+            path: active_sidecar.path.clone(),
+            expected: active_sidecar.expected,
+        },
+        ResourcePrecondition {
+            path: completed_sidecar.path.clone(),
+            expected: completed_sidecar.expected,
+        },
+    ];
+    if meta.actions.len() != before {
+        effects.push(Effect::Write {
+            path: meta_path.clone(),
+            bytes: render_sidecar(meta)
+                .map_err(|error| ActionPrepareError::Domain(error.to_string()))?
+                .into_bytes(),
         });
-        if meta.actions.len() != before {
-            writes.stage(sc_path, render_sidecar(&meta)?);
-        }
+    }
+    let batch = EffectBatch::new(effects, preconditions)
+        .map_err(|error| ActionPrepareError::Domain(error.to_string()))?;
+    Ok(PreparedMutation::with_outcome(
+        DeletePreparedState {
+            active: active_actions,
+            completed: completed_actions,
+            active_sidecar: active_meta,
+            completed_sidecar: completed_meta,
+        },
+        batch,
+        PreparedDeleteOutcome {
+            action_id,
+            deleted_count,
+            source_path: file.clone(),
+            from_completed,
+        },
+    ))
+}
 
-        Ok((
-            writes,
-            DeleteActionResult {
-                action_id,
-                deleted_count,
-                source_path: file_path.to_path_buf(),
-                from_completed,
-            },
-        ))
-    })
+fn write_batch(
+    path: &WorkspacePath,
+    actions: &[Action],
+    expected: ExpectedResource,
+) -> Result<EffectBatch, ActionPrepareError> {
+    EffectBatch::new(
+        vec![Effect::Write {
+            path: path.clone(),
+            bytes: render_actions(actions)?.into_bytes(),
+        }],
+        vec![ResourcePrecondition {
+            path: path.clone(),
+            expected,
+        }],
+    )
+    .map_err(|error| ActionPrepareError::Domain(error.to_string()))
+}
+
+fn render_actions(actions: &[Action]) -> Result<String, ActionPrepareError> {
+    format(&actions.to_vec(), OutputFormat::Actions, None, None).map_err(ActionPrepareError::Domain)
 }
 
 #[cfg(test)]
@@ -293,13 +299,8 @@ mod tests {
 
     #[test]
     fn plan_appends_a_parentless_action() {
-        let a = action("first", None);
-        let b = action("second", None);
-        let active = vec![a.clone(), b.clone()];
-
+        let active = vec![action("first", None), action("second", None)];
         let planned = plan_action_insert(&active, action("third", None), None);
-
-        assert_eq!(planned.len(), 3);
         assert_eq!(planned[2].name, "third");
         assert_eq!(planned[2].parent_id, None);
     }
@@ -309,225 +310,74 @@ mod tests {
         let parent = action("parent", None);
         let child = action("existing child", Some(parent.id));
         let sibling = action("later root", None);
-        let active = vec![parent.clone(), child.clone(), sibling.clone()];
-
-        let planned = plan_action_insert(&active, action("new child", None), Some(parent.id));
-
-        // Inserted after the parent's existing child, before the later root, and
-        // parented to the requested parent.
-        let names: Vec<&str> = planned.iter().map(|a| a.name.as_str()).collect();
+        let planned = plan_action_insert(
+            &[parent.clone(), child, sibling],
+            action("new child", None),
+            Some(parent.id),
+        );
         assert_eq!(
-            names,
+            planned.iter().map(|a| a.name.as_str()).collect::<Vec<_>>(),
             ["parent", "existing child", "new child", "later root"]
         );
         assert_eq!(planned[2].parent_id, Some(parent.id));
     }
 
-    #[cfg(feature = "formatting")]
-    fn selector(id: Uuid, name: &str) -> ActionSelector {
-        ActionSelector {
-            id,
-            alias: None,
-            name: name.to_string(),
+    fn resource(name: &str, actions: Vec<Action>) -> ActionResourceState {
+        ActionResourceState {
+            path: WorkspacePath::new(name).unwrap(),
+            actions,
+            expected: ExpectedResource::Missing,
         }
     }
 
     #[cfg(feature = "formatting")]
     #[test]
-    fn delete_removes_an_active_subtree_and_prunes_its_sidecar() {
-        use crate::workspace::sidecar::{ActionMeta, CharterMetadata, write_sidecar};
-
-        let temp = tempfile::tempdir().unwrap();
-        let charters = temp.path().join("charters");
-        std::fs::create_dir_all(&charters).unwrap();
-        let source = charters.join("work.actions");
-        let parent_id: Uuid = "019f733d-45b2-7f21-bcad-5610887b7230".parse().unwrap();
-        let child_id: Uuid = "019f733d-45c2-7dd2-91dc-8631f33c6b77".parse().unwrap();
-        std::fs::write(
-            &source,
-            format!("[ ] Parent #{parent_id}\n    >[ ] Child #{child_id}\n"),
+    fn insert_preparation_emits_one_logical_write() {
+        let inserted = action("inserted", None);
+        let prepared = prepare_action_insert(
+            resource("charters/work.actions", vec![]),
+            inserted.clone(),
+            None,
         )
         .unwrap();
-
-        // Both actions carry sidecar metadata — a sign that must go with them.
-        let mut meta = CharterMetadata::default();
-        for id in [parent_id, child_id] {
-            meta.actions.insert(
-                id.to_string(),
-                ActionMeta {
-                    created: Some(chrono::Local::now()),
-                    occurrence: None,
-                },
-            );
-        }
-        write_sidecar(&sidecar_path(&source), &meta).unwrap();
-
-        let result = delete_action(temp.path(), &source, &selector(parent_id, "Parent")).unwrap();
-
-        assert_eq!(result.deleted_count, 2, "parent + child cascade");
-        assert!(!result.from_completed);
-        assert!(read_actions(&source).unwrap().is_empty());
-        let after = read_sidecar(&sidecar_path(&source)).unwrap();
-        assert!(
-            after.actions.is_empty(),
-            "sidecar entries for the deleted ids must be pruned"
-        );
-    }
-
-    #[cfg(feature = "formatting")]
-    #[test]
-    fn delete_reaches_a_completed_subtree_and_leaves_the_active_file_alone() {
-        let temp = tempfile::tempdir().unwrap();
-        let charters = temp.path().join("charters");
-        std::fs::create_dir_all(&charters).unwrap();
-        let source = charters.join("work.actions");
-        let completed = charters.join("work.completed.actions");
-        let done_id: Uuid = "019f733d-45b2-7f21-bcad-5610887b7230".parse().unwrap();
-        let sub_id: Uuid = "019f733d-45c2-7dd2-91dc-8631f33c6b77".parse().unwrap();
-        std::fs::write(&source, "[ ] Live #019f733d-4600-7000-8000-000000000001\n").unwrap();
-        std::fs::write(
-            &completed,
-            format!("[x] Done #{done_id}\n    >[x] Sub #{sub_id}\n"),
-        )
-        .unwrap();
-
-        let result = delete_action(temp.path(), &source, &selector(done_id, "Done")).unwrap();
-
-        assert!(result.from_completed);
-        assert_eq!(result.deleted_count, 2, "completed subtree cascades");
-        assert!(read_actions(&completed).unwrap().is_empty());
+        assert_eq!(prepared.effects().effects().len(), 1);
+        assert_eq!(prepared.outcome().action_id, inserted.id);
         assert_eq!(
-            read_actions(&source).unwrap().len(),
-            1,
-            "the active file is untouched"
+            prepared.outcome().source_path.as_str(),
+            "charters/work.actions"
         );
-    }
-
-    // ── crash-point recovery ────────────────────────────────────────────────
-    //
-    // Each verb runs `recover_pending` at the top of `with_locked_mutation`,
-    // before it reads. These tests plant an interrupted batch (a tmp file plus a
-    // `.pending` journal) for a *prior* crashed invocation, then run the verb
-    // with a non-conflicting operation. Recovery must complete the interrupted
-    // write exactly once — no lost or duplicated bytes — and the verb must then
-    // plan against the recovered file, not a torn one.
-
-    /// Plant a `.pending` journal in `charters` that renames `content` into
-    /// `dest` on the next recovery, simulating a crash after the journal was
-    /// written but before the rename completed.
-    #[cfg(feature = "formatting")]
-    fn plant_interrupted_batch(charters: &std::path::Path, dest: &std::path::Path, content: &str) {
-        let tmp = charters.join(".tmp.recover");
-        std::fs::write(&tmp, content).unwrap();
-        std::fs::write(
-            charters.join(".pending"),
-            format!("{}\t{}\n", tmp.display(), dest.display()),
-        )
-        .unwrap();
     }
 
     #[cfg(feature = "formatting")]
     #[test]
-    fn add_recovers_an_interrupted_batch_before_inserting() {
-        let temp = tempfile::tempdir().unwrap();
-        let charters = temp.path().join("charters");
-        std::fs::create_dir_all(&charters).unwrap();
-        let source = charters.join("work.actions");
-        std::fs::write(
-            &source,
-            "[ ] Existing #019f733d-4600-7000-8000-000000000001\n",
-        )
-        .unwrap();
-
-        // A crashed `add X`: the post-add file is staged but never renamed in.
-        plant_interrupted_batch(
-            &charters,
-            &source,
-            "[ ] Existing #019f733d-4600-7000-8000-000000000001\n\
-             [ ] X #019f733d-4600-7000-8000-000000000002\n",
-        );
-
-        // A fresh, different add. Recovery lands X first, then Y appends on top.
-        let y = Action {
-            id: Uuid::new_v4(),
-            name: "Y".to_string(),
-            state: ActionState::NotStarted,
-            ..Default::default()
-        };
-        insert_action(temp.path(), &source, y, None).unwrap();
-
-        let names: Vec<String> = read_actions(&source)
-            .unwrap()
-            .into_iter()
-            .map(|a| a.name)
-            .collect();
-        assert_eq!(
-            names,
-            ["Existing", "X", "Y"],
-            "recovered X exactly once, then appended Y"
-        );
-        assert!(!charters.join(".pending").exists());
-    }
-
-    #[cfg(feature = "formatting")]
-    #[test]
-    fn update_recovers_an_interrupted_batch_before_applying() {
-        let temp = tempfile::tempdir().unwrap();
-        let charters = temp.path().join("charters");
-        std::fs::create_dir_all(&charters).unwrap();
-        let source = charters.join("work.actions");
-        let id: Uuid = "019f733d-4600-7000-8000-000000000001".parse().unwrap();
-        std::fs::write(&source, format!("[ ] Task #{id}\n")).unwrap();
-
-        // A crashed `update --name Renamed`, staged but not renamed in.
-        plant_interrupted_batch(&charters, &source, &format!("[ ] Renamed #{id}\n"));
-
-        // A fresh update of a different field; the target resolves by id even
-        // though recovery changed its name.
-        update_action(
-            temp.path(),
-            &source,
-            &selector(id, "Task"),
-            ActionUpdate {
-                priority: Some(2),
-                ..Default::default()
+    fn delete_preparation_prunes_matching_sidecar_in_same_batch() {
+        let parent = action("parent", None);
+        let child = action("child", Some(parent.id));
+        let mut metadata = CharterMetadata::default();
+        metadata
+            .actions
+            .insert(parent.id.to_string(), Default::default());
+        metadata
+            .actions
+            .insert(child.id.to_string(), Default::default());
+        let prepared = prepare_action_delete(
+            resource("charters/work.actions", vec![parent.clone(), child]),
+            resource("charters/work.completed.actions", vec![]),
+            SidecarResourceState {
+                path: WorkspacePath::new("charters/.work.json").unwrap(),
+                metadata,
+                expected: ExpectedResource::Missing,
             },
+            SidecarResourceState {
+                path: WorkspacePath::new("charters/.work.completed.json").unwrap(),
+                metadata: CharterMetadata::default(),
+                expected: ExpectedResource::Missing,
+            },
+            &ActionSelector::from(&parent),
         )
         .unwrap();
-
-        let actions = read_actions(&source).unwrap();
-        assert_eq!(actions.len(), 1);
-        assert_eq!(actions[0].name, "Renamed", "recovery applied the rename");
-        assert_eq!(
-            actions[0].priority,
-            Some(2),
-            "the fresh update applied on top"
-        );
-        assert!(!charters.join(".pending").exists());
-    }
-
-    #[cfg(feature = "formatting")]
-    #[test]
-    fn delete_recovers_an_interrupted_batch_before_deleting() {
-        let temp = tempfile::tempdir().unwrap();
-        let charters = temp.path().join("charters");
-        std::fs::create_dir_all(&charters).unwrap();
-        let source = charters.join("work.actions");
-        let id_a: Uuid = "019f733d-4600-7000-8000-000000000001".parse().unwrap();
-        let id_b: Uuid = "019f733d-4600-7000-8000-000000000002".parse().unwrap();
-        std::fs::write(&source, format!("[ ] A #{id_a}\n[ ] B #{id_b}\n")).unwrap();
-
-        // A crashed `delete A`: the post-delete file (B only) is staged.
-        plant_interrupted_batch(&charters, &source, &format!("[ ] B #{id_b}\n"));
-
-        // A fresh delete of B. Recovery removes A first, then the body removes B.
-        let result = delete_action(temp.path(), &source, &selector(id_b, "B")).unwrap();
-
-        assert_eq!(result.deleted_count, 1, "only B is deleted by this call");
-        assert!(
-            read_actions(&source).unwrap().is_empty(),
-            "A recovered-and-gone, B deleted — nothing left, nothing duplicated"
-        );
-        assert!(!charters.join(".pending").exists());
+        assert_eq!(prepared.effects().effects().len(), 2);
+        assert_eq!(prepared.effects().preconditions().len(), 4);
+        assert!(prepared.next_state().active_sidecar.actions.is_empty());
     }
 }

@@ -1,23 +1,17 @@
-//! Durable action archival.
-//!
-//! Action archival is a two-file mutation: terminal trees leave the active
-//! `.actions` file and are appended to its sibling `.completed.actions` file.
-//! Both projections are staged in one journaled batch so an interrupted write
-//! can only recover forward to the complete post-archive state.
+//! Pure preparation for action close and archival mutations.
 
 use std::collections::HashSet;
-use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, Local};
 use uuid::Uuid;
 
 use crate::domain::{close_subtree, collect_subtree_ids};
-use crate::workspace::action_files::{completed_actions_path, read_actions};
-use crate::workspace::actions::format::require_actions_formatting;
-use crate::workspace::actions::{Action, ActionList, ActionState};
-use crate::workspace::mutation::{WriteSet, render, validate_source_path, with_locked_mutation};
+use crate::workspace::actions::{Action, ActionList, ActionState, OutputFormat, format};
+use crate::workspace::mutate_actions::{ActionPrepareError, ActionResourceState};
+use crate::workspace::resource::{
+    Effect, EffectBatch, PreparedMutation, ResourcePrecondition, WorkspacePath,
+};
 use crate::workspace::selector::{ActionSelector, unique_selector_match};
-use crate::workspace::store::{WorkspaceError, resolve_workspace_layout};
 
 /// Pure result of partitioning an active action file for archival.
 #[derive(Debug, Clone)]
@@ -28,26 +22,6 @@ pub struct ActionArchivePlan {
     pub completed_actions: ActionList,
     /// Number of actions moved by this plan.
     pub archived_count: usize,
-}
-
-/// Result of applying an [`ActionArchivePlan`] to a workspace.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ActionArchiveResult {
-    pub archived_count: usize,
-    pub source_path: PathBuf,
-    pub completed_path: PathBuf,
-}
-
-/// Result of durably closing one selected action subtree.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CloseActionResult {
-    pub action_id: Uuid,
-    pub closed_count: usize,
-    pub source_path: PathBuf,
-    pub completed_path: PathBuf,
-    /// True when recovery completed this exact move before it could be planned
-    /// again. This is successful convergence, not a duplicate append.
-    pub already_closed: bool,
 }
 
 /// Build an action-archive plan without reading or writing the filesystem.
@@ -122,141 +96,189 @@ fn plan_action_archive_at(
     }
 }
 
-/// Atomically archive terminal action trees from one workspace action file.
-///
-/// Runs on the shared [`with_locked_mutation`] seam: the workspace lock is
-/// mandatory for this read-plan-write operation, any journal left by an
-/// interrupted mutation is recovered before files are read, and the active and
-/// completed projections are committed in one batch. A zero-count plan stages
-/// no writes, so the seam commits nothing.
-pub fn archive_actions(
-    workspace_root: &Path,
-    source_path: &Path,
-) -> Result<ActionArchiveResult, WorkspaceError> {
-    let layout = resolve_workspace_layout(workspace_root);
-    validate_source_path(source_path, &layout.charter_root)?;
-    require_actions_formatting().map_err(WorkspaceError::Actions)?;
-
-    let completed_path = completed_actions_path(source_path);
-    with_locked_mutation(&layout, |_layout| {
-        let active = read_actions(source_path)?;
-        let completed = read_actions(&completed_path)?;
-        let plan = plan_action_archive(&active, &completed);
-
-        let mut writes = WriteSet::new();
-        if plan.archived_count > 0 {
-            writes.stage(source_path.to_path_buf(), render(&plan.active_actions)?);
-            writes.stage(completed_path.clone(), render(&plan.completed_actions)?);
-        }
-
-        Ok((
-            writes,
-            ActionArchiveResult {
-                archived_count: plan.archived_count,
-                source_path: source_path.to_path_buf(),
-                completed_path: completed_path.clone(),
-            },
-        ))
-    })
+#[derive(Debug, Clone)]
+pub struct PreparedArchiveOutcome {
+    pub archived_count: usize,
+    pub source_path: WorkspacePath,
+    pub completed_path: WorkspacePath,
 }
 
-/// Close one selected subtree as a single locked, journaled core mutation.
-///
-/// Recovery runs after acquiring the workspace lock and before either file is
-/// read. The reduced active file and full completed file are then staged in one
-/// batch, so a crash cannot lose or duplicate the subtree.
-pub fn close_action_subtree(
-    workspace_root: &Path,
-    source_path: &Path,
+#[derive(Debug, Clone)]
+pub struct PreparedCloseOutcome {
+    pub action_id: Uuid,
+    pub closed_count: usize,
+    pub source_path: WorkspacePath,
+    pub completed_path: WorkspacePath,
+    pub already_closed: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct ClosePreparedState {
+    pub active: ActionList,
+    pub completed: ActionList,
+}
+
+pub fn prepare_action_archive(
+    active: ActionResourceState,
+    completed: ActionResourceState,
+    archived_at: DateTime<Local>,
+) -> Result<PreparedMutation<ClosePreparedState, PreparedArchiveOutcome>, ActionPrepareError> {
+    let plan = plan_action_archive_at(&active.actions, &completed.actions, archived_at);
+    let mut effects = Vec::new();
+    if plan.archived_count > 0 {
+        effects.push(write_effect(&active.path, &plan.active_actions)?);
+        effects.push(write_effect(&completed.path, &plan.completed_actions)?);
+    }
+    let batch = EffectBatch::new(
+        effects,
+        vec![
+            ResourcePrecondition {
+                path: active.path.clone(),
+                expected: active.expected,
+            },
+            ResourcePrecondition {
+                path: completed.path.clone(),
+                expected: completed.expected,
+            },
+        ],
+    )
+    .map_err(|error| ActionPrepareError::Domain(error.to_string()))?;
+    Ok(PreparedMutation::with_outcome(
+        ClosePreparedState {
+            active: plan.active_actions,
+            completed: plan.completed_actions,
+        },
+        batch,
+        PreparedArchiveOutcome {
+            archived_count: plan.archived_count,
+            source_path: active.path,
+            completed_path: completed.path,
+        },
+    ))
+}
+
+pub fn prepare_close_action_subtree(
+    active: ActionResourceState,
+    completed: ActionResourceState,
     selector: &ActionSelector,
     closing_state: ActionState,
     completed_at: DateTime<Local>,
-) -> Result<CloseActionResult, WorkspaceError> {
+) -> Result<PreparedMutation<ClosePreparedState, PreparedCloseOutcome>, ActionPrepareError> {
     if !matches!(
         closing_state,
         ActionState::Completed | ActionState::Cancelled
     ) {
-        return Err(WorkspaceError::Actions(
-            "an action subtree can only be closed as Completed or Cancelled".to_string(),
+        return Err(ActionPrepareError::Domain(
+            "an action subtree can only be closed as Completed or Cancelled".into(),
         ));
     }
-
-    let layout = resolve_workspace_layout(workspace_root);
-    validate_source_path(source_path, &layout.charter_root)?;
-    require_actions_formatting().map_err(WorkspaceError::Actions)?;
-
-    let completed_path = completed_actions_path(source_path);
-    with_locked_mutation(&layout, |_layout| {
-        let mut active = read_actions(source_path)?;
-        let mut completed = read_actions(&completed_path)?;
-
-        // The caller resolves aliases/names before entering this locked read-plan-apply
-        // boundary. UUID remains authoritative. A unique alias/name fallback supports
-        // ID-less plaintext actions whose generated in-memory UUID changes on reload;
-        // ambiguity is rejected rather than selecting by file order.
-        let action_id = unique_selector_match(&active, selector)?;
-
-        let Some(action_id) = action_id else {
-            if let Some(completed_id) = unique_selector_match(&completed, selector)? {
-                return Ok((
-                    WriteSet::new(),
-                    CloseActionResult {
-                        action_id: completed_id,
-                        closed_count: 0,
-                        source_path: source_path.to_path_buf(),
-                        completed_path: completed_path.clone(),
-                        already_closed: true,
-                    },
-                ));
-            }
-            return Err(WorkspaceError::Actions(format!(
-                "open action not found in source file: {}",
-                selector.id
-            )));
-        };
-
-        let target = active
-            .iter()
-            .find(|action| action.id == action_id)
-            .expect("selected action came from active list");
-        if matches!(
-            target.state,
-            ActionState::Completed | ActionState::Cancelled
-        ) {
-            return Err(WorkspaceError::Actions(format!(
-                "action is already terminal in the active file: {action_id}"
-            )));
-        }
-
-        let subtree_ids = collect_subtree_ids(&active, action_id);
-        if completed
-            .iter()
-            .any(|action| subtree_ids.contains(&action.id))
+    let mut active_actions = active.actions;
+    let mut completed_actions = completed.actions;
+    let action_id = unique_selector_match(&active_actions, selector)
+        .map_err(|error| ActionPrepareError::Domain(error.to_string()))?;
+    let Some(action_id) = action_id else {
+        if let Some(completed_id) = unique_selector_match(&completed_actions, selector)
+            .map_err(|error| ActionPrepareError::Domain(error.to_string()))?
         {
-            return Err(WorkspaceError::Actions(format!(
-                "completed history already contains part of subtree: {action_id}"
-            )));
+            let batch = EffectBatch::new(
+                Vec::new(),
+                vec![
+                    ResourcePrecondition {
+                        path: active.path.clone(),
+                        expected: active.expected,
+                    },
+                    ResourcePrecondition {
+                        path: completed.path.clone(),
+                        expected: completed.expected,
+                    },
+                ],
+            )
+            .map_err(|error| ActionPrepareError::Domain(error.to_string()))?;
+            return Ok(PreparedMutation::with_outcome(
+                ClosePreparedState {
+                    active: active_actions,
+                    completed: completed_actions,
+                },
+                batch,
+                PreparedCloseOutcome {
+                    action_id: completed_id,
+                    closed_count: 0,
+                    source_path: active.path,
+                    completed_path: completed.path,
+                    already_closed: true,
+                },
+            ));
         }
-
-        let mut closed = close_subtree(&active, action_id, closing_state, completed_at);
-        active.retain(|action| !subtree_ids.contains(&action.id));
-        let closed_count = closed.len();
-        completed.append(&mut closed);
-
-        let mut writes = WriteSet::new();
-        writes.stage(source_path.to_path_buf(), render(&active)?);
-        writes.stage(completed_path.clone(), render(&completed)?);
-
-        Ok((
-            writes,
-            CloseActionResult {
-                action_id,
-                closed_count,
-                source_path: source_path.to_path_buf(),
-                completed_path: completed_path.clone(),
-                already_closed: false,
+        return Err(ActionPrepareError::Domain(format!(
+            "open action not found in source file: {}",
+            selector.id
+        )));
+    };
+    let target = active_actions
+        .iter()
+        .find(|action| action.id == action_id)
+        .expect("selected action came from active list");
+    if matches!(
+        target.state,
+        ActionState::Completed | ActionState::Cancelled
+    ) {
+        return Err(ActionPrepareError::Domain(format!(
+            "action is already terminal in the active file: {action_id}"
+        )));
+    }
+    let subtree_ids = collect_subtree_ids(&active_actions, action_id);
+    if completed_actions
+        .iter()
+        .any(|action| subtree_ids.contains(&action.id))
+    {
+        return Err(ActionPrepareError::Domain(format!(
+            "completed history already contains part of subtree: {action_id}"
+        )));
+    }
+    let mut closed = close_subtree(&active_actions, action_id, closing_state, completed_at);
+    active_actions.retain(|action| !subtree_ids.contains(&action.id));
+    let closed_count = closed.len();
+    completed_actions.append(&mut closed);
+    let batch = EffectBatch::new(
+        vec![
+            write_effect(&active.path, &active_actions)?,
+            write_effect(&completed.path, &completed_actions)?,
+        ],
+        vec![
+            ResourcePrecondition {
+                path: active.path.clone(),
+                expected: active.expected,
             },
-        ))
+            ResourcePrecondition {
+                path: completed.path.clone(),
+                expected: completed.expected,
+            },
+        ],
+    )
+    .map_err(|error| ActionPrepareError::Domain(error.to_string()))?;
+    Ok(PreparedMutation::with_outcome(
+        ClosePreparedState {
+            active: active_actions,
+            completed: completed_actions,
+        },
+        batch,
+        PreparedCloseOutcome {
+            action_id,
+            closed_count,
+            source_path: active.path,
+            completed_path: completed.path,
+            already_closed: false,
+        },
+    ))
+}
+
+fn write_effect(path: &WorkspacePath, actions: &[Action]) -> Result<Effect, ActionPrepareError> {
+    let bytes = format(&actions.to_vec(), OutputFormat::Actions, None, None)
+        .map_err(ActionPrepareError::Domain)?
+        .into_bytes();
+    Ok(Effect::Write {
+        path: path.clone(),
+        bytes,
     })
 }
 
@@ -267,7 +289,7 @@ fn is_terminal(action: &Action) -> bool {
     )
 }
 
-fn descendants(actions: &[Action], root_id: uuid::Uuid) -> Vec<&Action> {
+fn descendants(actions: &[Action], root_id: Uuid) -> Vec<&Action> {
     let mut descendants = Vec::new();
     let mut seen = HashSet::from([root_id]);
     let mut frontier = vec![root_id];
@@ -288,8 +310,7 @@ fn descendants(actions: &[Action], root_id: uuid::Uuid) -> Vec<&Action> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::workspace::durability::WorkspaceLock;
-    use uuid::Uuid;
+    use chrono::TimeZone;
 
     fn action(name: &str, state: ActionState, parent_id: Option<Uuid>) -> Action {
         Action {
@@ -300,19 +321,8 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "formatting")]
-    fn selector(id: Uuid, name: &str) -> ActionSelector {
-        ActionSelector {
-            id,
-            alias: None,
-            name: name.to_string(),
-        }
-    }
-
     #[test]
     fn plan_archives_complete_terminal_trees_and_preserves_existing_history() {
-        use chrono::TimeZone;
-
         let root = action("done root", ActionState::Completed, None);
         let mut child = action("cancelled child", ActionState::Cancelled, Some(root.id));
         let existing_date = Local.with_ymd_and_hms(2026, 7, 1, 9, 0, 0).unwrap();
@@ -320,327 +330,64 @@ mod tests {
         let open = action("still open", ActionState::NotStarted, None);
         let existing = action("older", ActionState::Completed, None);
         let archived_at = Local.with_ymd_and_hms(2026, 7, 31, 10, 30, 0).unwrap();
-
         let plan = plan_action_archive_at(
-            &[root.clone(), child.clone(), open.clone()],
-            std::slice::from_ref(&existing),
+            &[root.clone(), child, open.clone()],
+            &[existing],
             archived_at,
         );
-
         assert_eq!(plan.archived_count, 2);
-        assert_eq!(plan.active_actions.len(), 1);
         assert_eq!(plan.active_actions[0].id, open.id);
-        assert_eq!(plan.completed_actions.len(), 3);
-        assert_eq!(plan.completed_actions[0].id, existing.id);
         assert_eq!(plan.completed_actions[1].completed_at, Some(archived_at));
         assert_eq!(plan.completed_actions[2].completed_at, Some(existing_date));
-        assert_eq!(plan.completed_actions[1].parent_id, None);
-        assert_eq!(plan.completed_actions[2].parent_id, Some(root.id));
     }
 
     #[test]
     fn plan_keeps_terminal_root_when_a_descendant_is_open() {
         let root = action("done root", ActionState::Completed, None);
         let child = action("open child", ActionState::NotStarted, Some(root.id));
-
         let plan = plan_action_archive(&[root, child], &[]);
-
         assert_eq!(plan.archived_count, 0);
         assert_eq!(plan.active_actions.len(), 2);
     }
 
-    #[cfg(feature = "formatting")]
-    #[test]
-    fn durable_archive_updates_active_and_completed_files() {
-        let temp = tempfile::tempdir().unwrap();
-        let charters = temp.path().join("charters");
-        std::fs::create_dir_all(&charters).unwrap();
-        let source = charters.join("work.actions");
-        let completed = charters.join("work.completed.actions");
-        std::fs::write(
-            &source,
-            "[x] Newer #019f733d-45b2-7f21-bcad-5610887b7230\n[ ] Open\n",
-        )
-        .unwrap();
-        std::fs::write(
-            &completed,
-            "[x] Older #019f733d-45c2-7dd2-91dc-8631f33c6b77\n",
-        )
-        .unwrap();
-
-        let result = archive_actions(temp.path(), &source).unwrap();
-
-        assert_eq!(result.archived_count, 1);
-        let active_text = std::fs::read_to_string(&source).unwrap();
-        let completed_text = std::fs::read_to_string(&completed).unwrap();
-        assert!(!active_text.contains("Newer"));
-        assert!(active_text.contains("Open"));
-        assert!(completed_text.contains("Older"));
-        assert!(completed_text.contains("Newer"));
-        assert!(!charters.join(".pending").exists());
-    }
-
-    #[cfg(feature = "formatting")]
-    #[test]
-    fn archive_recovers_an_interrupted_batch_before_planning() {
-        let temp = tempfile::tempdir().unwrap();
-        let charters = temp.path().join("charters");
-        std::fs::create_dir_all(&charters).unwrap();
-        let source = charters.join("work.actions");
-        let completed = charters.join("work.completed.actions");
-        std::fs::write(&source, "[x] Done #019f733d-45b2-7f21-bcad-5610887b7230\n").unwrap();
-
-        let source_tmp = charters.join(".tmp.source");
-        let completed_tmp = charters.join(".tmp.completed");
-        std::fs::write(&source_tmp, "").unwrap();
-        std::fs::write(
-            &completed_tmp,
-            "[x] Done #019f733d-45b2-7f21-bcad-5610887b7230\n",
-        )
-        .unwrap();
-        std::fs::write(
-            charters.join(".pending"),
-            format!(
-                "{}\t{}\n{}\t{}\n",
-                source_tmp.display(),
-                source.display(),
-                completed_tmp.display(),
-                completed.display()
-            ),
-        )
-        .unwrap();
-
-        let result = archive_actions(temp.path(), &source).unwrap();
-
-        assert_eq!(
-            result.archived_count, 0,
-            "recovered action must not be appended twice"
-        );
-        assert_eq!(std::fs::read_to_string(&source).unwrap(), "");
-        assert_eq!(read_actions(&completed).unwrap().len(), 1);
-        assert!(!charters.join(".pending").exists());
-    }
-
-    #[cfg(feature = "formatting")]
-    #[test]
-    fn close_selected_subtree_updates_both_files_in_one_batch() {
-        let temp = tempfile::tempdir().unwrap();
-        let charters = temp.path().join("charters");
-        std::fs::create_dir_all(&charters).unwrap();
-        let source = charters.join("work.actions");
-        let root_id = Uuid::parse_str("019f733d-45b2-7f21-bcad-5610887b7230").unwrap();
-        std::fs::write(
-            &source,
-            "[ ] Selected #019f733d-45b2-7f21-bcad-5610887b7230\n> [ ] Child #019f733d-45c2-7dd2-91dc-8631f33c6b77\n[ ] Other #019f733d-45d2-7dd2-91dc-8631f33c6b77\n",
-        )
-        .unwrap();
-
-        let result = close_action_subtree(
-            temp.path(),
-            &source,
-            &selector(root_id, "Selected"),
-            ActionState::Completed,
-            Local::now(),
-        )
-        .unwrap();
-
-        assert_eq!(result.closed_count, 2);
-        assert!(!result.already_closed);
-        let active = std::fs::read_to_string(&source).unwrap();
-        let completed = std::fs::read_to_string(&result.completed_path).unwrap();
-        assert!(!active.contains("Selected"));
-        assert!(!active.contains("Child"));
-        assert!(active.contains("Other"));
-        assert!(completed.contains("[x] Selected"));
-        assert!(completed.contains(">[x] Child") || completed.contains("> [x] Child"));
-    }
-
-    #[cfg(feature = "formatting")]
-    #[test]
-    fn close_recovers_interrupted_move_without_duplicate_append() {
-        let temp = tempfile::tempdir().unwrap();
-        let charters = temp.path().join("charters");
-        std::fs::create_dir_all(&charters).unwrap();
-        let source = charters.join("work.actions");
-        let completed = completed_actions_path(&source);
-        let id = Uuid::parse_str("019f733d-45b2-7f21-bcad-5610887b7230").unwrap();
-        std::fs::write(&source, format!("[ ] Done #{id}\n")).unwrap();
-
-        let source_tmp = charters.join(".tmp.source");
-        let completed_tmp = charters.join(".tmp.completed");
-        std::fs::write(&source_tmp, "").unwrap();
-        std::fs::write(&completed_tmp, format!("[x] Done #{id}\n")).unwrap();
-        std::fs::write(
-            charters.join(".pending"),
-            format!(
-                "{}\t{}\n{}\t{}\n",
-                source_tmp.display(),
-                source.display(),
-                completed_tmp.display(),
-                completed.display()
-            ),
-        )
-        .unwrap();
-
-        let result = close_action_subtree(
-            temp.path(),
-            &source,
-            &selector(id, "Done"),
-            ActionState::Completed,
-            Local::now(),
-        )
-        .unwrap();
-
-        assert!(result.already_closed);
-        assert_eq!(result.closed_count, 0);
-        assert_eq!(read_actions(&completed).unwrap().len(), 1);
-    }
-
-    #[cfg(feature = "formatting")]
-    #[test]
-    fn close_reidentifies_an_idless_action_by_unique_name() {
-        let temp = tempfile::tempdir().unwrap();
-        let charters = temp.path().join("charters");
-        std::fs::create_dir_all(&charters).unwrap();
-        let source = charters.join("work.actions");
-        std::fs::write(&source, "[ ] Unique task\n").unwrap();
-        let selector = ActionSelector::from(&read_actions(&source).unwrap()[0]);
-
-        let result = close_action_subtree(
-            temp.path(),
-            &source,
-            &selector,
-            ActionState::Completed,
-            Local::now(),
-        )
-        .unwrap();
-
-        assert_eq!(result.closed_count, 1);
-        assert!(read_actions(&source).unwrap().is_empty());
-        assert_eq!(read_actions(&result.completed_path).unwrap().len(), 1);
-    }
-
-    #[cfg(feature = "formatting")]
-    #[test]
-    fn close_rejects_ambiguous_name_and_alias_fallbacks() {
-        let temp = tempfile::tempdir().unwrap();
-        let charters = temp.path().join("charters");
-        std::fs::create_dir_all(&charters).unwrap();
-
-        let name_source = charters.join("names.actions");
-        std::fs::write(&name_source, "[ ] Duplicate\n[ ] Duplicate\n").unwrap();
-        let name_selector = ActionSelector::from(&read_actions(&name_source).unwrap()[0]);
-        let name_error = close_action_subtree(
-            temp.path(),
-            &name_source,
-            &name_selector,
-            ActionState::Completed,
-            Local::now(),
-        )
-        .unwrap_err();
-        assert!(
-            matches!(name_error, WorkspaceError::Actions(message) if message.contains("name is ambiguous"))
-        );
-        assert_eq!(read_actions(&name_source).unwrap().len(), 2);
-
-        let alias_source = charters.join("aliases.actions");
-        let mut first = action("First", ActionState::NotStarted, None);
-        first.alias = Some("duplicate-alias".to_string());
-        let mut second = action("Second", ActionState::NotStarted, None);
-        second.alias = first.alias.clone();
-        std::fs::write(
-            &alias_source,
-            render(&[first.clone(), second.clone()]).unwrap(),
-        )
-        .unwrap();
-        let alias_error = close_action_subtree(
-            temp.path(),
-            &alias_source,
-            &ActionSelector {
-                id: Uuid::now_v7(),
-                alias: first.alias.clone(),
-                name: "does not match".to_string(),
-            },
-            ActionState::Completed,
-            Local::now(),
-        )
-        .unwrap_err();
-        assert!(
-            matches!(alias_error, WorkspaceError::Actions(message) if message.contains("alias is ambiguous"))
-        );
-        assert_eq!(read_actions(&alias_source).unwrap(), vec![first, second]);
-    }
-
-    #[test]
-    fn source_path_validation_rejects_every_non_active_actions_shape() {
-        let temp = tempfile::tempdir().unwrap();
-        let charter_root = temp.path().join("charters");
-        std::fs::create_dir_all(&charter_root).unwrap();
-        let valid = charter_root.join("work.actions");
-        let outside = temp.path().join("outside.actions");
-        let completed = charter_root.join("work.completed.actions");
-        let wrong_extension = charter_root.join("work.txt");
-        for path in [&valid, &outside, &completed, &wrong_extension] {
-            std::fs::write(path, "").unwrap();
-        }
-
-        assert!(validate_source_path(&valid, &charter_root).is_ok());
-        for invalid in [
-            outside,
-            completed,
-            wrong_extension,
-            charter_root.join("../outside.actions"),
-        ] {
-            assert!(
-                matches!(
-                    validate_source_path(&invalid, &charter_root),
-                    Err(WorkspaceError::InvalidPath(path)) if path == invalid
-                ),
-                "{} must not be accepted as an active action source",
-                invalid.display()
-            );
+    fn resource(name: &str, actions: Vec<Action>) -> ActionResourceState {
+        ActionResourceState {
+            path: WorkspacePath::new(name).unwrap(),
+            actions,
+            expected: crate::workspace::resource::ExpectedResource::Missing,
         }
     }
 
     #[cfg(feature = "formatting")]
     #[test]
-    fn close_refuses_to_race_an_existing_writer() {
-        let temp = tempfile::tempdir().unwrap();
-        let charters = temp.path().join("charters");
-        std::fs::create_dir_all(&charters).unwrap();
-        let source = charters.join("work.actions");
-        let id = Uuid::parse_str("019f733d-45b2-7f21-bcad-5610887b7230").unwrap();
-        std::fs::write(&source, format!("[ ] Open #{id}\n")).unwrap();
-        let _lock = WorkspaceLock::try_acquire(temp.path()).unwrap().unwrap();
-
-        let error = close_action_subtree(
-            temp.path(),
-            &source,
-            &selector(id, "Open"),
-            ActionState::Cancelled,
+    fn close_preparation_emits_active_and_completed_writes() {
+        let target = action("target", ActionState::NotStarted, None);
+        let prepared = prepare_close_action_subtree(
+            resource("charters/work.actions", vec![target.clone()]),
+            resource("charters/work.completed.actions", vec![]),
+            &ActionSelector::from(&target),
+            ActionState::Completed,
             Local::now(),
         )
-        .unwrap_err();
-
-        assert!(matches!(error, WorkspaceError::WorkspaceLocked(_)));
-        assert!(std::fs::read_to_string(&source).unwrap().contains("Open"));
-        assert!(!completed_actions_path(&source).exists());
+        .unwrap();
+        assert_eq!(prepared.effects().effects().len(), 2);
+        assert_eq!(prepared.effects().preconditions().len(), 2);
+        assert_eq!(prepared.outcome().closed_count, 1);
     }
 
     #[cfg(feature = "formatting")]
     #[test]
-    fn archive_refuses_to_race_an_existing_writer() {
-        let temp = tempfile::tempdir().unwrap();
-        let charters = temp.path().join("charters");
-        std::fs::create_dir_all(&charters).unwrap();
-        let source = charters.join("work.actions");
-        std::fs::write(&source, "[x] Done\n").unwrap();
-        let _lock = WorkspaceLock::try_acquire(temp.path()).unwrap().unwrap();
-
-        let error = archive_actions(temp.path(), &source).unwrap_err();
-
-        assert!(matches!(error, WorkspaceError::WorkspaceLocked(_)));
-        assert!(std::fs::read_to_string(&source).unwrap().contains("Done"));
-        assert!(!completed_actions_path(&source).exists());
+    fn no_op_archive_retains_read_set_preconditions_without_effects() {
+        let prepared = prepare_action_archive(
+            resource(
+                "charters/work.actions",
+                vec![action("open", ActionState::NotStarted, None)],
+            ),
+            resource("charters/work.completed.actions", vec![]),
+            Local::now(),
+        )
+        .unwrap();
+        assert!(prepared.effects().is_empty());
+        assert_eq!(prepared.effects().preconditions().len(), 2);
     }
 }

@@ -92,7 +92,7 @@ pub fn add_action(
     }
 
     let workspace_root = ctx.workspace_for_file(&actions_path);
-    let result = clearhead_core::insert_action(
+    let result = clearhead_workspace_fs::insert_action(
         &workspace_root,
         &actions_path,
         action,
@@ -222,7 +222,7 @@ fn close_action_subtree(
     }
 
     let workspace_root = ctx.workspace_for_file(&actions_path);
-    let result = clearhead_core::close_action_subtree(
+    let result = clearhead_workspace_fs::close_action_subtree(
         &workspace_root,
         &actions_path,
         &selector,
@@ -508,7 +508,8 @@ pub fn update_action(
     }
 
     let workspace_root = ctx.workspace_for_file(&actions_path);
-    let result = clearhead_core::update_action(&workspace_root, &actions_path, &selector, update)?;
+    let result =
+        clearhead_workspace_fs::update_action(&workspace_root, &actions_path, &selector, update)?;
     info!(action_id = %result.action_id, "Action updated");
     emit(&VerbOutcome::Updated {
         id: canonical_id(result.action_id),
@@ -580,7 +581,8 @@ pub fn delete_action(
         }
 
         let workspace_root = ctx.workspace_for_file(actions_path);
-        let result = clearhead_core::delete_action(&workspace_root, actions_path, &selector)?;
+        let result =
+            clearhead_workspace_fs::delete_action(&workspace_root, actions_path, &selector)?;
         let children = result.deleted_count.saturating_sub(1);
         info!(
             action_id = %result.action_id,
@@ -894,7 +896,7 @@ pub fn archive_actions(
             clearhead_core::plan_action_archive(&active, &completed).archived_count
         } else {
             let workspace_root = ctx.workspace_for_file(actions_path);
-            clearhead_core::archive_actions(&workspace_root, actions_path)?.archived_count
+            clearhead_workspace_fs::archive_actions(&workspace_root, actions_path)?.archived_count
         };
 
         if archived_count == 0 {

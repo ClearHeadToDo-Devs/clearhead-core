@@ -18,7 +18,6 @@ pub mod detection;
 pub mod durability;
 pub mod manifest;
 pub mod mutate_actions;
-pub mod mutation;
 pub mod resource;
 pub mod selector;
 pub mod sidecar;
@@ -37,8 +36,8 @@ pub use actions::{
     parse_actions_with_mode, parse_document, parse_tree, parse_trusted_document, patch_action_list,
 };
 pub use archive_actions::{
-    ActionArchivePlan, ActionArchiveResult, CloseActionResult, archive_actions,
-    close_action_subtree, plan_action_archive,
+    ActionArchivePlan, ClosePreparedState, PreparedArchiveOutcome, PreparedCloseOutcome,
+    plan_action_archive, prepare_action_archive, prepare_close_action_subtree,
 };
 pub use archive_charter::{
     ArchiveCharterError, ArchiveCharterOptions, ArchiveCharterResult, archive_charter,
@@ -65,8 +64,9 @@ pub use calendar::sync_store::{PlansSyncStore, plans_sync_store_path, read_plans
 pub use charter::{MarkdownCharter, format_charter, implicit_charter, parse_charter};
 pub use manifest::WorkspaceManifest;
 pub use mutate_actions::{
-    DeleteActionResult, InsertActionResult, UpdateActionResult, delete_action, insert_action,
-    plan_action_insert, update_action,
+    ActionPrepareError, ActionResourceState, DeletePreparedState, PreparedDeleteOutcome,
+    PreparedInsertOutcome, PreparedUpdateOutcome, SidecarResourceState, plan_action_insert,
+    prepare_action_delete, prepare_action_insert, prepare_action_update,
 };
 pub use resource::{
     AppliedMutation, DeliveryError, Effect, EffectBatch, EffectBatchError, ExpectedResource,

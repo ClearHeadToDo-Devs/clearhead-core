@@ -1,21 +1,293 @@
 //! Native filesystem delivery for host-neutral Core workspace mutations.
 
 use std::collections::HashSet;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use chrono::Local;
 pub use clearhead_core::TransactionOutcome;
 use clearhead_core::charter_root;
+use clearhead_core::domain::update::ActionUpdate;
 use clearhead_core::workspace::durability::{PendingBatch, WorkspaceLock, recover_pending};
+use clearhead_core::workspace::resource::PreparedMutation;
 use clearhead_core::workspace::resource::{
     DeliveryError, Effect, ExpectedResource, ResourceConflict, ResourceRevision, ResourceSnapshot,
     WorkspacePath,
 };
+use clearhead_core::workspace::sidecar::CharterMetadata;
 use clearhead_core::workspace::{
-    FileState, PreparedTransactionOutcome, TransactionModel, TransactionRequest, WorkspaceError,
-    completed_actions_path, list_action_files, normalize_request, parse_actions,
-    prepare_transaction, workspace_data_root,
+    ActionResourceState, FileState, PreparedArchiveOutcome, PreparedCloseOutcome,
+    PreparedDeleteOutcome, PreparedInsertOutcome, PreparedTransactionOutcome,
+    PreparedUpdateOutcome, SidecarResourceState, TransactionModel, TransactionRequest,
+    WorkspaceError, completed_actions_path, list_action_files, normalize_request, parse_actions,
+    prepare_action_archive, prepare_action_delete, prepare_action_insert, prepare_action_update,
+    prepare_close_action_subtree, prepare_transaction, sidecar_path, workspace_data_root,
 };
+use clearhead_core::{Action, ActionSelector};
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InsertActionResult {
+    pub action_id: uuid::Uuid,
+    pub parent_id: Option<uuid::Uuid>,
+    pub source_path: PathBuf,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UpdateActionResult {
+    pub action_id: uuid::Uuid,
+    pub source_path: PathBuf,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeleteActionResult {
+    pub action_id: uuid::Uuid,
+    pub deleted_count: usize,
+    pub source_path: PathBuf,
+    pub from_completed: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ActionArchiveResult {
+    pub archived_count: usize,
+    pub source_path: PathBuf,
+    pub completed_path: PathBuf,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CloseActionResult {
+    pub action_id: uuid::Uuid,
+    pub closed_count: usize,
+    pub source_path: PathBuf,
+    pub completed_path: PathBuf,
+    pub already_closed: bool,
+}
+
+pub fn insert_action(
+    workspace_root: &Path,
+    source_path: &Path,
+    new_action: Action,
+    parent: Option<&ActionSelector>,
+) -> Result<InsertActionResult, WorkspaceError> {
+    let (data_root, journal_dir, _lock) = begin_mutation(workspace_root, source_path)?;
+    let (snapshot, expected) = snapshot(&data_root, source_path)?;
+    let source = ActionResourceState {
+        path: snapshot.path().clone(),
+        actions: parse_snapshot(&snapshot)?,
+        expected,
+    };
+    let prepared = prepare_action_insert(source, new_action, parent)
+        .map_err(|error| WorkspaceError::Actions(error.to_string()))?;
+    let outcome = deliver(&data_root, &journal_dir, prepared)?;
+    Ok(map_insert(&data_root, outcome))
+}
+
+pub fn update_action(
+    workspace_root: &Path,
+    source_path: &Path,
+    selector: &ActionSelector,
+    update: ActionUpdate,
+) -> Result<UpdateActionResult, WorkspaceError> {
+    let (data_root, journal_dir, _lock) = begin_mutation(workspace_root, source_path)?;
+    let (snapshot, expected) = snapshot(&data_root, source_path)?;
+    let source = ActionResourceState {
+        path: snapshot.path().clone(),
+        actions: parse_snapshot(&snapshot)?,
+        expected,
+    };
+    let prepared = prepare_action_update(source, selector, update)
+        .map_err(|error| WorkspaceError::Actions(error.to_string()))?;
+    let outcome = deliver(&data_root, &journal_dir, prepared)?;
+    Ok(map_update(&data_root, outcome))
+}
+
+pub fn delete_action(
+    workspace_root: &Path,
+    source_path: &Path,
+    selector: &ActionSelector,
+) -> Result<DeleteActionResult, WorkspaceError> {
+    let (data_root, journal_dir, _lock) = begin_mutation(workspace_root, source_path)?;
+    let completed_path = completed_actions_path(source_path);
+    let active_sidecar_path = sidecar_path(source_path);
+    let completed_sidecar_path = sidecar_path(&completed_path);
+    let (active_snapshot, active_expected) = snapshot(&data_root, source_path)?;
+    let (completed_snapshot, completed_expected) = snapshot(&data_root, &completed_path)?;
+    let (active_sidecar_snapshot, active_sidecar_expected) =
+        snapshot(&data_root, &active_sidecar_path)?;
+    let (completed_sidecar_snapshot, completed_sidecar_expected) =
+        snapshot(&data_root, &completed_sidecar_path)?;
+    let prepared = prepare_action_delete(
+        ActionResourceState {
+            path: active_snapshot.path().clone(),
+            actions: parse_snapshot(&active_snapshot)?,
+            expected: active_expected,
+        },
+        ActionResourceState {
+            path: completed_snapshot.path().clone(),
+            actions: parse_snapshot(&completed_snapshot)?,
+            expected: completed_expected,
+        },
+        SidecarResourceState {
+            path: active_sidecar_snapshot.path().clone(),
+            metadata: parse_sidecar_snapshot(&active_sidecar_snapshot)?,
+            expected: active_sidecar_expected,
+        },
+        SidecarResourceState {
+            path: completed_sidecar_snapshot.path().clone(),
+            metadata: parse_sidecar_snapshot(&completed_sidecar_snapshot)?,
+            expected: completed_sidecar_expected,
+        },
+        selector,
+    )
+    .map_err(|error| WorkspaceError::Actions(error.to_string()))?;
+    let outcome = deliver(&data_root, &journal_dir, prepared)?;
+    Ok(map_delete(&data_root, outcome))
+}
+
+pub fn archive_actions(
+    workspace_root: &Path,
+    source_path: &Path,
+) -> Result<ActionArchiveResult, WorkspaceError> {
+    let (data_root, journal_dir, _lock) = begin_mutation(workspace_root, source_path)?;
+    let completed_path = completed_actions_path(source_path);
+    let (active_snapshot, active_expected) = snapshot(&data_root, source_path)?;
+    let (completed_snapshot, completed_expected) = snapshot(&data_root, &completed_path)?;
+    let prepared = prepare_action_archive(
+        action_state(active_snapshot, active_expected)?,
+        action_state(completed_snapshot, completed_expected)?,
+        Local::now(),
+    )
+    .map_err(|error| WorkspaceError::Actions(error.to_string()))?;
+    let outcome = deliver(&data_root, &journal_dir, prepared)?;
+    Ok(map_archive(&data_root, outcome))
+}
+
+pub fn close_action_subtree(
+    workspace_root: &Path,
+    source_path: &Path,
+    selector: &ActionSelector,
+    closing_state: clearhead_core::ActionState,
+    completed_at: chrono::DateTime<Local>,
+) -> Result<CloseActionResult, WorkspaceError> {
+    let (data_root, journal_dir, _lock) = begin_mutation(workspace_root, source_path)?;
+    let completed_path = completed_actions_path(source_path);
+    let (active_snapshot, active_expected) = snapshot(&data_root, source_path)?;
+    let (completed_snapshot, completed_expected) = snapshot(&data_root, &completed_path)?;
+    let prepared = prepare_close_action_subtree(
+        action_state(active_snapshot, active_expected)?,
+        action_state(completed_snapshot, completed_expected)?,
+        selector,
+        closing_state,
+        completed_at,
+    )
+    .map_err(|error| WorkspaceError::Actions(error.to_string()))?;
+    let outcome = deliver(&data_root, &journal_dir, prepared)?;
+    Ok(map_close(&data_root, outcome))
+}
+
+fn action_state(
+    snapshot: ResourceSnapshot,
+    expected: ExpectedResource,
+) -> Result<ActionResourceState, WorkspaceError> {
+    let actions = parse_snapshot(&snapshot)?;
+    Ok(ActionResourceState {
+        path: snapshot.path().clone(),
+        actions,
+        expected,
+    })
+}
+
+fn begin_mutation(
+    workspace_root: &Path,
+    source_path: &Path,
+) -> Result<(PathBuf, PathBuf, WorkspaceLock), WorkspaceError> {
+    let data_root = workspace_data_root(workspace_root);
+    let journal_dir = charter_root(workspace_root);
+    validate_source_path(source_path, &journal_dir)?;
+    std::fs::create_dir_all(&journal_dir)?;
+    let lock = WorkspaceLock::try_acquire(&data_root)?
+        .ok_or_else(|| WorkspaceError::WorkspaceLocked(data_root.clone()))?;
+    recover_pending(&journal_dir)?;
+    Ok((data_root, journal_dir, lock))
+}
+
+fn validate_source_path(source_path: &Path, charter_root: &Path) -> Result<(), WorkspaceError> {
+    let valid_location = source_path
+        .canonicalize()
+        .ok()
+        .zip(charter_root.canonicalize().ok())
+        .is_some_and(|(source, root)| source.starts_with(root));
+    let valid_name = source_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.ends_with(".actions") && !name.ends_with(".completed.actions"));
+    if valid_location && valid_name {
+        Ok(())
+    } else {
+        Err(WorkspaceError::InvalidPath(source_path.to_path_buf()))
+    }
+}
+
+fn parse_sidecar_snapshot(snapshot: &ResourceSnapshot) -> Result<CharterMetadata, WorkspaceError> {
+    if snapshot.bytes().is_empty() {
+        return Ok(CharterMetadata::default());
+    }
+    serde_json::from_slice(snapshot.bytes())
+        .map_err(|error| WorkspaceError::Parse(format!("sidecar: {error}")))
+}
+
+fn deliver<S, O>(
+    data_root: &Path,
+    journal_dir: &Path,
+    prepared: PreparedMutation<S, O>,
+) -> Result<O, WorkspaceError> {
+    validate_preconditions(data_root, prepared.effects().preconditions())?;
+    execute_effects(data_root, journal_dir, prepared.effects().effects())?;
+    Ok(prepared
+        .adopt::<String>(Ok(()))
+        .expect("successful native delivery releases prepared state")
+        .outcome)
+}
+
+fn map_archive(data_root: &Path, outcome: PreparedArchiveOutcome) -> ActionArchiveResult {
+    ActionArchiveResult {
+        archived_count: outcome.archived_count,
+        source_path: data_root.join(outcome.source_path.as_str()),
+        completed_path: data_root.join(outcome.completed_path.as_str()),
+    }
+}
+
+fn map_close(data_root: &Path, outcome: PreparedCloseOutcome) -> CloseActionResult {
+    CloseActionResult {
+        action_id: outcome.action_id,
+        closed_count: outcome.closed_count,
+        source_path: data_root.join(outcome.source_path.as_str()),
+        completed_path: data_root.join(outcome.completed_path.as_str()),
+        already_closed: outcome.already_closed,
+    }
+}
+
+fn map_insert(data_root: &Path, outcome: PreparedInsertOutcome) -> InsertActionResult {
+    InsertActionResult {
+        action_id: outcome.action_id,
+        parent_id: outcome.parent_id,
+        source_path: data_root.join(outcome.source_path.as_str()),
+    }
+}
+
+fn map_update(data_root: &Path, outcome: PreparedUpdateOutcome) -> UpdateActionResult {
+    UpdateActionResult {
+        action_id: outcome.action_id,
+        source_path: data_root.join(outcome.source_path.as_str()),
+    }
+}
+
+fn map_delete(data_root: &Path, outcome: PreparedDeleteOutcome) -> DeleteActionResult {
+    DeleteActionResult {
+        action_id: outcome.action_id,
+        deleted_count: outcome.deleted_count,
+        source_path: data_root.join(outcome.source_path.as_str()),
+        from_completed: outcome.from_completed,
+    }
+}
 
 /// Execute one ordered transaction while holding the native workspace lock
 /// across recovery, snapshot reads, pure preparation, validation, and commit.

@@ -274,7 +274,7 @@ pub fn write_sidecar(path: &Path, metadata: &CharterMetadata) -> Result<(), Work
 /// Shared by [`write_sidecar`] and the durable `delete` verb: delete stages the
 /// pruned sidecar through the journaled mutation batch rather than writing it
 /// directly, so it needs the exact bytes `write_sidecar` would produce.
-pub(crate) fn render_sidecar(metadata: &CharterMetadata) -> Result<String, WorkspaceError> {
+pub fn render_sidecar(metadata: &CharterMetadata) -> Result<String, WorkspaceError> {
     let mut metadata = metadata.clone();
     metadata.schema = Some(CHARTER_METADATA_SCHEMA_URL.to_string());
     serde_json::to_string_pretty(&metadata).map_err(|e| WorkspaceError::Parse(e.to_string()))
