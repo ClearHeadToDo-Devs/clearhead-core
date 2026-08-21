@@ -219,14 +219,23 @@ pub fn stamp_sidecar_entries(
 ) -> Result<(), WorkspaceError> {
     let sc_path = sidecar_path(actions_path);
     let mut meta = read_sidecar(&sc_path)?;
+    stamp_metadata_entries(&mut meta, actions, Local::now());
+    write_sidecar(&sc_path, &meta)
+}
+
+/// Purely add missing action creation metadata.
+pub fn stamp_metadata_entries(
+    metadata: &mut CharterMetadata,
+    actions: &[crate::domain::Action],
+    observed_at: DateTime<Local>,
+) {
     for action in actions {
         let key = action.id.to_string();
-        meta.actions.entry(key).or_insert_with(|| ActionMeta {
-            created: Some(created_from_uuid(action.id).unwrap_or_else(Local::now)),
+        metadata.actions.entry(key).or_insert_with(|| ActionMeta {
+            created: Some(created_from_uuid(action.id).unwrap_or(observed_at)),
             ..Default::default()
         });
     }
-    write_sidecar(&sc_path, &meta)
 }
 
 /// Record the charter's identity in its sidecar (`charter.id`).
@@ -238,12 +247,21 @@ pub fn stamp_sidecar_entries(
 pub fn stamp_charter_id(actions_path: &Path, charter_id: uuid::Uuid) -> Result<(), WorkspaceError> {
     let sc_path = sidecar_path(actions_path);
     let mut meta = read_sidecar(&sc_path)?;
-    let charter = meta.charter.get_or_insert_with(CharterMeta::default);
-    if charter.id.is_none() {
-        charter.id = Some(charter_id);
+    if record_charter_id(&mut meta, charter_id) {
         write_sidecar(&sc_path, &meta)?;
     }
     Ok(())
+}
+
+/// Record a charter identity without overwriting an already frozen id.
+/// Returns whether the metadata changed.
+pub fn record_charter_id(metadata: &mut CharterMetadata, charter_id: uuid::Uuid) -> bool {
+    let charter = metadata.charter.get_or_insert_with(CharterMeta::default);
+    if charter.id.is_some() {
+        return false;
+    }
+    charter.id = Some(charter_id);
+    true
 }
 
 /// Extract the creation timestamp embedded in a UUIDv7.

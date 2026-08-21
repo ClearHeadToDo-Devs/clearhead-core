@@ -414,7 +414,7 @@ pub fn load_file_for_mutation(path: &Path, command: &str) -> anyhow::Result<Acti
 /// Also updates the charter sidecar (best-effort — sidecar failures
 /// are logged but do not prevent the actions file from being saved).
 pub fn save_file(path: &Path, actions: &ActionList) -> anyhow::Result<()> {
-    clearhead_core::workspace::action_files::write_actions(actions, path)?;
+    clearhead_workspace_fs::write_actions(actions, path)?;
     if let Err(e) = update_sidecar(path, actions) {
         warn!(path = %path.display(), error = %e, "Failed to update sidecar");
     }
@@ -422,10 +422,11 @@ pub fn save_file(path: &Path, actions: &ActionList) -> anyhow::Result<()> {
 }
 
 /// Ensure every action in the list has an entry in the charter sidecar.
-/// Delegates to `clearhead_core::workspace::sidecar::stamp_sidecar_entries`.
 pub fn update_sidecar(actions_path: &Path, actions: &ActionList) -> anyhow::Result<()> {
-    use clearhead_core::workspace::sidecar;
-    Ok(sidecar::stamp_sidecar_entries(actions_path, actions)?)
+    Ok(clearhead_workspace_fs::sidecar::stamp_sidecar_entries(
+        actions_path,
+        actions,
+    )?)
 }
 
 /// Write content to a file if `write` is true, otherwise print to stdout.

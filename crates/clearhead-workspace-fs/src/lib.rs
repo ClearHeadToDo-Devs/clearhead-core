@@ -1,7 +1,11 @@
 //! Native filesystem delivery for host-neutral Core workspace mutations.
 
+pub mod action_files;
 pub mod manifest;
 pub mod mounts;
+pub mod sidecar;
+pub mod templates;
+pub use action_files::{read_action_file, read_actions, write_actions};
 pub use manifest::{read_workspace_manifest, workspace_manifest_path, write_workspace_manifest};
 pub use mounts::{
     NativeWorkspaceMounts, list_action_files, load_domain_model, load_workspace,

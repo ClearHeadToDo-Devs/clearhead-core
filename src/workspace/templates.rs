@@ -6,27 +6,25 @@ use uuid::Uuid;
 use crate::workspace::actions::{Action, ActionList};
 use crate::workspace::store::WorkspaceError;
 
-/// Resolve a template file by name, searching charter-local then data-root.
-///
-/// Returns `Ok(None)` if the template is not found in either location.
+/// Ordered template candidates: charter-local first, then workspace-global.
+pub fn template_candidates(charter_dir: &Path, data_root: &Path, name: &str) -> [PathBuf; 2] {
+    let filename = format!("{name}.actions");
+    [
+        charter_dir.join("templates").join(&filename),
+        data_root.join("templates").join(filename),
+    ]
+}
+
+/// Legacy native resolver. Native hosts should probe [`template_candidates`]
+/// through their filesystem adapter.
 pub fn resolve_template(
     charter_dir: &Path,
     data_root: &Path,
     name: &str,
 ) -> Result<Option<PathBuf>, WorkspaceError> {
-    let filename = format!("{}.actions", name);
-
-    let local = charter_dir.join("templates").join(&filename);
-    if local.is_file() {
-        return Ok(Some(local));
-    }
-
-    let root = data_root.join("templates").join(&filename);
-    if root.is_file() {
-        return Ok(Some(root));
-    }
-
-    Ok(None)
+    Ok(template_candidates(charter_dir, data_root, name)
+        .into_iter()
+        .find(|path| path.is_file()))
 }
 
 /// Instantiate a template, remapping all UUIDs and optionally reparenting root actions.

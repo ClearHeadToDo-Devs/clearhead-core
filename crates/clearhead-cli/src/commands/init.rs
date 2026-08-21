@@ -96,7 +96,7 @@ pub fn run(config_path_override: Option<PathBuf>) -> anyhow::Result<()> {
         clearhead_core::workspace::durability::atomic_write(&root_actions, "")
             .context("Failed to create root charter actions file")?;
     }
-    clearhead_core::workspace::sidecar::stamp_charter_id(&root_actions, uuid::Uuid::now_v7())
+    clearhead_workspace_fs::sidecar::stamp_charter_id(&root_actions, uuid::Uuid::now_v7())
         .context("Failed to record root charter id")?;
 
     // Idempotent on an existing identity: init never clobbers or re-mints a

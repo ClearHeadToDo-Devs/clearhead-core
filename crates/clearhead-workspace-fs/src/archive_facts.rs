@@ -7,8 +7,7 @@
 use std::path::{Path, PathBuf};
 
 use clearhead_core::ArchivedActionFact;
-use clearhead_core::workspace::action_files::read_actions;
-use clearhead_core::workspace::sidecar::{read_sidecar, sidecar_path};
+use clearhead_core::workspace::sidecar::sidecar_path;
 use clearhead_core::workspace::store::{WorkspaceError, charter_root, workspace_data_root};
 
 /// Read archived action facts from every completed-actions store the native workspace owns.
@@ -25,9 +24,9 @@ pub fn read_archived_action_facts(root: &Path) -> Result<Vec<ArchivedActionFact>
 
     let mut facts = Vec::new();
     for path in files {
-        let metadata = read_sidecar(&sidecar_path(&path))?;
+        let metadata = crate::sidecar::read_sidecar(&sidecar_path(&path))?;
         let source_path = path.strip_prefix(root).unwrap_or(&path).to_path_buf();
-        for action in read_actions(&path)? {
+        for action in crate::action_files::read_actions(&path)? {
             let occurrence = metadata
                 .actions
                 .get(&action.id.to_string())

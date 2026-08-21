@@ -130,11 +130,11 @@ fn repair_unowned_state(
 
     for (relative, ids) in entries {
         let path = charter_root.join(&relative);
-        let mut metadata = clearhead_core::workspace::sidecar::read_sidecar(&path)?;
+        let mut metadata = clearhead_workspace_fs::sidecar::read_sidecar(&path)?;
         for id in ids {
             metadata.actions.remove(&id);
         }
-        clearhead_core::workspace::sidecar::write_sidecar(&path, &metadata)?;
+        clearhead_workspace_fs::sidecar::write_sidecar(&path, &metadata)?;
     }
     for relative in files {
         let path = charter_root.join(relative);

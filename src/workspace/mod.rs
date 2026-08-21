@@ -77,7 +77,8 @@ pub use resource::{
 pub use selector::ActionSelector;
 pub use sidecar::{
     ActionMeta, CharterMeta, CharterMetadata, OccurrenceSnapshot, hydrate_actions, parse_sidecar,
-    read_sidecar, sidecar_path, write_sidecar,
+    read_sidecar, record_charter_id, render_sidecar, sidecar_path, stamp_metadata_entries,
+    write_sidecar,
 };
 pub use transaction::{
     ActionUpdateSet, FileState, NormalizedOperation, Operation, PreparedTransactionOutcome,
@@ -94,4 +95,4 @@ pub use store::{
     load_workspace, load_workspace_with_plans, load_workspaces, plans_root, read_workspace,
     read_workspace_with_plans, save_domain_model, workspace_data_root,
 };
-pub use templates::{instantiate_template, resolve_template};
+pub use templates::{instantiate_template, resolve_template, template_candidates};

@@ -7,8 +7,8 @@ use anyhow::Context;
 use chrono::Local;
 use tracing::{info, warn};
 
-use clearhead_core::workspace::action_files;
 use clearhead_core::{Action, ActionList, ActionState, PredecessorRef};
+use clearhead_workspace_fs::action_files;
 
 use super::CommandContext;
 use super::verb_result::{VerbError, VerbOutcome, canonical_id, emit};

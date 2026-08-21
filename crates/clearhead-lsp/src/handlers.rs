@@ -132,8 +132,7 @@ impl LanguageServer for Backend {
         {
             let actions = trusted.actions().clone();
             drop(doc);
-            if let Err(e) =
-                clearhead_core::workspace::sidecar::stamp_sidecar_entries(&path, &actions)
+            if let Err(e) = clearhead_workspace_fs::sidecar::stamp_sidecar_entries(&path, &actions)
             {
                 warn!(error = %e, "Failed to update sidecar on save");
             }

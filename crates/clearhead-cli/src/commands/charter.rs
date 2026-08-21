@@ -363,7 +363,7 @@ pub fn add_charter(
     // Record the charter's identity in the sidecar so it self-identifies in the
     // data, independent of the filename (best-effort — a sidecar failure must
     // never fail charter creation).
-    if let Err(e) = clearhead_core::workspace::sidecar::stamp_charter_id(&actions_path, id) {
+    if let Err(e) = clearhead_workspace_fs::sidecar::stamp_charter_id(&actions_path, id) {
         tracing::warn!(path = %actions_path.display(), error = %e, "Failed to record charter id in sidecar");
     }
 
@@ -373,12 +373,13 @@ pub fn add_charter(
     if let Some(tpl_name) = template {
         let charter_dir = file_path.parent().unwrap_or(std::path::Path::new(""));
 
-        let tpl_path = templates::resolve_template(charter_dir, &data_root, tpl_name)
-            .context("Failed to resolve template")?
-            .ok_or_else(|| anyhow::anyhow!("Template '{}' not found", tpl_name))?;
+        let tpl_path =
+            clearhead_workspace_fs::templates::resolve_template(charter_dir, &data_root, tpl_name)
+                .context("Failed to resolve template")?
+                .ok_or_else(|| anyhow::anyhow!("Template '{}' not found", tpl_name))?;
 
-        let tpl_acts = clearhead_core::workspace::read_actions(&tpl_path)
-            .context("Failed to read template")?;
+        let tpl_acts =
+            clearhead_workspace_fs::read_actions(&tpl_path).context("Failed to read template")?;
 
         let instantiated =
             templates::instantiate_template(&tpl_acts, |_| uuid::Uuid::now_v7(), None);
