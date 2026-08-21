@@ -57,20 +57,18 @@ pub use workspace::{
     SyncField, SyncImport, SyncMirrorResourceState, SyncPlanTemplate, TrustedDocument, VTodoAction,
     VTodoResource, Workspace, WorkspaceInventory, WorkspacePath, WorkspacePathError,
     WorkspaceSnapshot, action_id_from_vtodo_uid, action_mirror_path, action_to_vtodo,
-    actions_to_icalendar, apply_occurrence_op, archive_charter_name, archive_charter_subtree,
-    canonical_occurrence_key, charter_collection_from_anchor, charter_plans_dir_relative,
-    charter_root, collect_plan_files, collect_plan_files_with_plans, collect_workspace_manifest,
-    completed_actions_path, diff_actions, format, format_charter, format_trusted_source,
-    has_terminal_archive_ancestor, implicit_charter, infer_charter_name, infer_parent_charter_name,
-    infer_plan_charter_name, infer_plan_parent, list_action_files, load_domain_model,
-    load_domain_model_with_plans, load_workspace, load_workspace_with_plans, load_workspaces,
-    occurrence_action_id, parse_actions, parse_actions_with_mode, parse_charter, parse_document,
-    parse_tree, parse_trusted_document, parse_vtodo_actions, patch_action_list,
-    plan_action_archive, plan_file_name, plan_output_path, plan_sync, plan_to_vtodo, plans_root,
-    plans_sync_store_path, plans_to_icalendar, prepare_sync, read_action_file, read_actions,
-    read_ics_dates, read_plans_sync_store, read_vtodo_actions, reconcile, resolve_template,
-    save_domain_model, slugify, sync_master_rollforwards, workspace_data_root, write_actions,
-    write_master_rollforward, write_occurrence_deviation,
+    actions_to_icalendar, archive_charter_name, archive_charter_subtree, canonical_occurrence_key,
+    charter_collection_from_anchor, charter_plans_dir_relative, charter_root,
+    collect_workspace_manifest, completed_actions_path, diff_actions, format, format_charter,
+    format_trusted_source, has_terminal_archive_ancestor, implicit_charter, infer_charter_name,
+    infer_parent_charter_name, infer_plan_charter_name, infer_plan_parent, list_action_files,
+    load_domain_model, load_domain_model_with_plans, load_workspace, load_workspace_with_plans,
+    load_workspaces, occurrence_action_id, parse_actions, parse_actions_with_mode, parse_charter,
+    parse_document, parse_tree, parse_trusted_document, parse_vtodo_actions_content,
+    patch_action_list, plan_action_archive, plan_file_name, plan_output_path, plan_sync,
+    plan_to_vtodo, plans_root, plans_to_icalendar, prepare_sync, read_action_file, read_actions,
+    reconcile, render_master_rollforward, render_occurrence_deviation, resolve_template,
+    save_domain_model, slugify, workspace_data_root, write_actions,
 };
 
 pub mod domain;
@@ -90,7 +88,10 @@ pub use domain::{
     ActionState, Charter, CharterState, DomainModel, Metric, Objective, Plan, PredecessorRef,
     Recurrence, WorkspaceCharter, close_subtree, collect_subtree_ids,
 };
-pub use workspace::{PlansSyncStore, Reconcile, SyncEntry, SyncReport, SyncTally};
+pub use workspace::{
+    PlansSyncStore, Reconcile, SyncEntry, SyncReport, SyncTally, decode_plans_sync_store,
+    encode_plans_sync_store,
+};
 
 /// Canonical JSON projection of domain actions, matching the specifications
 /// repo's `schemas/actions.schema.json`.

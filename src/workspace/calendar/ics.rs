@@ -10,7 +10,6 @@
 //! standalone Action becomes one VTODO whose DTSTART and DUE remain optional.
 
 use crate::domain::{Action, ActionState, Plan, Recurrence};
-use crate::workspace::durability::atomic_write;
 use crate::workspace::store::WorkspaceError;
 use chrono::{DateTime, Local, NaiveDate, NaiveDateTime, TimeZone, Utc};
 use icalendar::{
@@ -18,7 +17,6 @@ use icalendar::{
     TodoStatus,
 };
 use std::collections::{BTreeMap, BTreeSet};
-use std::fs;
 use std::path::{Path, PathBuf};
 use uuid::{Uuid, uuid};
 
@@ -98,21 +96,6 @@ pub fn canonical_occurrence_key(slot: DateTime<Local>) -> String {
 /// UUIDv5 without rewriting the interoperable UID.
 pub fn action_id_from_vtodo_uid(uid: &str) -> Uuid {
     Uuid::parse_str(uid).unwrap_or_else(|_| Uuid::new_v5(&VTODO_ACTION_NAMESPACE, uid.as_bytes()))
-}
-
-/// Parse recurring VTODOs in an `.ics` file into [`Plan`] structs.
-/// Standalone VTODOs are read by [`parse_vtodo_actions`] instead.
-///
-/// Each accepted component becomes one Plan:
-/// - `Plan.id` — UUID v5 from the component's UID (deterministic across reloads)
-/// - `Plan.name` — SUMMARY
-/// - `Plan.recurrence` — parsed from RRULE
-/// - `Plan.dtstart` — DTSTART as local time (recurrence expansion anchor)
-/// - `Plan.external_id` — raw UID string
-/// - `Plan.template_name` — extracted from DESCRIPTION if it starts with `template: <name>`
-pub fn parse_ics_file(path: &Path) -> Result<Vec<ICSPlan>, WorkspaceError> {
-    let content = fs::read_to_string(path).map_err(WorkspaceError::Io)?;
-    parse_ics(&content, path)
 }
 
 /// Parse recurring VTODO resources from bytes already supplied by a host.
@@ -367,25 +350,6 @@ pub enum OccurrenceOp {
     },
 }
 
-/// Record `op` against the `occurrence_key` slot of recurring master
-/// `master_uid`, mutating `master_path` in place.
-///
-/// `Skip` adds a deduplicated `EXDATE`; `Complete`/`Reschedule` add or update
-/// the slot's `RECURRENCE-ID` override VTODO. Every other component and property
-/// in the file is preserved, and the write is atomic. The produced deviation
-/// round-trips through [`parse_exdates`] / [`override_from_todo`], so the next
-/// projection reflects it. `occurrence_key` must be a [`canonical_occurrence_key`].
-pub fn write_occurrence_deviation(
-    master_path: &Path,
-    master_uid: &str,
-    occurrence_key: &str,
-    op: &OccurrenceOp,
-) -> Result<(), WorkspaceError> {
-    let content = fs::read_to_string(master_path).map_err(WorkspaceError::Io)?;
-    let rendered = render_occurrence_deviation(&content, master_uid, occurrence_key, op)?;
-    atomic_write(master_path, rendered.as_bytes()).map_err(WorkspaceError::Io)
-}
-
 /// Render one occurrence deviation from host-supplied calendar bytes.
 pub fn render_occurrence_deviation(
     content: &str,
@@ -423,28 +387,6 @@ pub fn render_occurrence_deviation(
     }
 
     Ok(calendar.to_string())
-}
-
-/// Ingest a foreign roll-forward: reset the recurring master `master_uid` back to
-/// its canonical origin `base_dtstart`, and record each passed slot as a completed
-/// occurrence (a `RECURRENCE-ID` override with `STATUS:COMPLETED` + `COMPLETED`).
-///
-/// This translates a camp-B "advance the master to complete an occurrence"
-/// mutation into ClearHead's canonical fixed-anchor + deviation form (per RFC 5545
-/// a `RECURRENCE-ID` is only valid when its slot is on the series grid, so the
-/// anchor must sit at/before every override). Recording is **idempotent**: a slot
-/// that already carries any override is left untouched, so a client that re-advances
-/// forever churns only the anchor value, never the completion history. Preserves
-/// all other components/properties; atomic. Each tuple is `(canonical key, completed-at)`.
-pub fn write_master_rollforward(
-    master_path: &Path,
-    master_uid: &str,
-    base_dtstart: DateTime<Local>,
-    completed_slots: &[(String, DateTime<Local>)],
-) -> Result<(), WorkspaceError> {
-    let content = fs::read_to_string(master_path).map_err(WorkspaceError::Io)?;
-    let rendered = render_master_rollforward(&content, master_uid, base_dtstart, completed_slots)?;
-    atomic_write(master_path, rendered.as_bytes()).map_err(WorkspaceError::Io)
 }
 
 /// Render a canonical recurring-master roll-forward from host-supplied bytes.
@@ -585,15 +527,6 @@ pub struct VTodoAction {
     pub priority: Option<u32>,
     pub contexts: Option<Vec<String>>,
     pub completed_at: Option<DateTime<Local>>,
-}
-
-/// Read standalone (non-RRULE) VTODOs from one vdir resource.
-///
-/// Recurring VTODO masters are not Action projections. Components without UID
-/// or SUMMARY are ignored because they cannot form a stable Action.
-pub fn parse_vtodo_actions(path: &Path) -> Result<Vec<VTodoAction>, WorkspaceError> {
-    let content = fs::read_to_string(path).map_err(WorkspaceError::Io)?;
-    parse_vtodo_actions_content(&content)
 }
 
 /// Parse standalone VTODO projections from host-supplied calendar bytes.
@@ -881,6 +814,26 @@ mod tests {
         let mut f = NamedTempFile::new().unwrap();
         f.write_all(content.as_bytes()).unwrap();
         f
+    }
+
+    fn parse_ics_file(path: &Path) -> Result<Vec<ICSPlan>, WorkspaceError> {
+        parse_ics(&std::fs::read_to_string(path)?, path)
+    }
+
+    fn parse_vtodo_actions(path: &Path) -> Result<Vec<VTodoAction>, WorkspaceError> {
+        parse_vtodo_actions_content(&std::fs::read_to_string(path)?)
+    }
+
+    fn write_occurrence_deviation(
+        path: &Path,
+        uid: &str,
+        key: &str,
+        operation: &OccurrenceOp,
+    ) -> Result<(), WorkspaceError> {
+        let rendered =
+            render_occurrence_deviation(&std::fs::read_to_string(path)?, uid, key, operation)?;
+        std::fs::write(path, rendered)?;
+        Ok(())
     }
 
     #[test]

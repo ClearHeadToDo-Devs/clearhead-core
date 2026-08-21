@@ -708,7 +708,7 @@ fn test_sync_calendar_conflict_can_be_resolved_toward_action() {
         .join("plans")
         .join("inbox")
         .join(format!("{}.ics", uuid));
-    let actions = clearhead_core::parse_vtodo_actions(&ics_path).unwrap();
+    let actions = clearhead_workspace_fs::read_vtodo_file(&ics_path).unwrap();
     assert_eq!(actions.len(), 1);
     assert_eq!(actions[0].id.to_string(), uuid);
     let dt = actions[0].scheduled_at.unwrap();

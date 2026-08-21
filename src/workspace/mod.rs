@@ -47,22 +47,20 @@ pub use archive_facts::ArchivedActionFact;
 pub use calendar::ics::{
     ICSPlan, OccurrenceOp, OccurrenceOverride, VTodoAction, action_id_from_vtodo_uid,
     action_to_vtodo, actions_to_icalendar, canonical_occurrence_key, occurrence_action_id,
-    parse_ics, parse_vtodo_actions, plan_to_vtodo, plans_to_icalendar, write_master_rollforward,
-    write_occurrence_deviation,
+    parse_ics, parse_vtodo_actions_content, plan_to_vtodo, plans_to_icalendar,
+    render_master_rollforward, render_occurrence_deviation,
 };
 pub use calendar::plans::{
-    PlanFileEntry, action_mirror_path, apply_occurrence_op, charter_plans_dir_relative,
-    collect_plan_files, collect_plan_files_with_plans, infer_plan_charter_name, infer_plan_parent,
+    action_mirror_path, charter_plans_dir_relative, infer_plan_charter_name, infer_plan_parent,
     plan_file_name, plan_output_path, slugify,
 };
 pub use calendar::reconcile::{
     AppliedSync, CalendarSyncPreparationInput, CalendarSyncState, OutcomeKind, Reconcile,
     SyncActionResourceState, SyncConflictResolution, SyncEntry, SyncField, SyncImport,
     SyncMirrorResourceState, SyncPlanTemplate, SyncReport, SyncTally, VTodoResource, plan_sync,
-    prepare_sync, read_ics_dates, read_vtodo_actions, reconcile, sync_import_actions_file,
-    sync_master_rollforwards,
+    prepare_sync, reconcile, sync_import_actions_file,
 };
-pub use calendar::sync_store::{PlansSyncStore, plans_sync_store_path, read_plans_sync_store};
+pub use calendar::sync_store::{PlansSyncStore, decode_plans_sync_store, encode_plans_sync_store};
 pub use charter::{MarkdownCharter, format_charter, implicit_charter, parse_charter};
 pub use manifest::{WorkspaceManifest, parse_workspace_manifest, render_workspace_manifest};
 pub use mutate_actions::{

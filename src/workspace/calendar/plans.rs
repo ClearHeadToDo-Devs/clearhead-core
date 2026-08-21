@@ -1,28 +1,6 @@
 use crate::domain::{Action, Plan};
 use crate::workspace::charter::MarkdownCharter;
-use crate::workspace::store::{WorkspaceError, resolve_workspace_layout};
 use std::path::{Path, PathBuf};
-
-/// A discovered `.ics` file with inferred charter metadata.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PlanFileEntry {
-    pub path: PathBuf,
-    /// Path relative to `plans_root` — e.g. `inbox/uid.ics` or `work-feature/uid.ics`.
-    pub relative_path: PathBuf,
-    pub charter_name: String,
-    pub inferred_parent: Option<String>,
-}
-
-/// Discover all vdir `.ics` plan files and infer charter relationships.
-///
-/// Plans live in `<data_root>/plans/`, parallel to `charters/`.
-/// Each charter gets one flat subdirectory: `plans/<slug>/<uid>.ics`.
-/// Sub-charter hierarchy is encoded in the slug using `-` as a separator
-/// (e.g. `work-feature` for the `feature` charter under `work`).
-/// In project workspaces the root charter uses the reserved slug `next`.
-pub fn collect_plan_files(root: &Path) -> Result<Vec<PlanFileEntry>, WorkspaceError> {
-    collect_plan_files_with_plans(root, None)
-}
 
 /// Slug a user-facing value into the canonical directory/file form used by ClearHead.
 ///
@@ -72,106 +50,6 @@ pub fn action_mirror_path(
     plans_root
         .join(charter_plans_dir_relative(charter))
         .join(format!("{}.ics", slugify(&action.id.to_string())))
-}
-
-/// Like [`collect_plan_files`] but reads `.ics` from `plan_override` when given
-/// (the resolved `plan_path` config value), instead of the workspace's own
-/// `plans/` directory. Charter-slug inference still comes from `root`'s layout.
-pub fn collect_plan_files_with_plans(
-    root: &Path,
-    plan_override: Option<&Path>,
-) -> Result<Vec<PlanFileEntry>, WorkspaceError> {
-    let layout = resolve_workspace_layout(root);
-    let plans_root = plan_override.unwrap_or(&layout.plans_root);
-    collect_plan_files_in(plans_root, layout.project_root_charter.as_deref())
-}
-
-/// Leaf form of [`collect_plan_files`]: discover `.ics` plan files directly under
-/// `plans_root`, trusting the caller to have already resolved any `plan_path`
-/// override. `project_root_charter` maps the reserved `next` slug to the project's
-/// root charter (`None` for user workspaces).
-pub(crate) fn collect_plan_files_in(
-    plans_root: &Path,
-    project_root_charter: Option<&str>,
-) -> Result<Vec<PlanFileEntry>, WorkspaceError> {
-    let mut files = Vec::new();
-    discover_plan_paths(plans_root, &mut files)?;
-
-    let mut entries = Vec::new();
-    for path in files {
-        let Ok(relative_path) = path.strip_prefix(plans_root) else {
-            return Err(WorkspaceError::InvalidPath(path));
-        };
-
-        let relative_path = relative_path.to_path_buf();
-
-        let Some(charter_name) =
-            infer_plan_charter_name_for_workspace(&relative_path, project_root_charter)
-        else {
-            continue;
-        };
-
-        let inferred_parent = infer_plan_parent_for_workspace(&relative_path, project_root_charter);
-
-        entries.push(PlanFileEntry {
-            path,
-            relative_path,
-            charter_name,
-            inferred_parent,
-        });
-    }
-
-    entries.sort_by(|a, b| a.relative_path.cmp(&b.relative_path));
-    Ok(entries)
-}
-
-/// Apply an [`OccurrenceOp`] to one projected occurrence by recording a deviation
-/// on its recurring master.
-///
-/// This is the write channel for *projected* occurrences — the ones with no
-/// `.actions` line. The caller resolves an occurrence to its `plan_id` (which
-/// master) and `occurrence_key` (which slot, a [`canonical_occurrence_key`]);
-/// this locates that master's `.ics` in the plans vdir and writes the deviation
-/// via [`write_occurrence_deviation`]. Materialized actions never reach here —
-/// they are edited in place through the ordinary `.actions` path.
-///
-/// [`canonical_occurrence_key`]: super::ics::canonical_occurrence_key
-pub fn apply_occurrence_op(
-    root: &Path,
-    plan_override: Option<&Path>,
-    plan_id: uuid::Uuid,
-    occurrence_key: &str,
-    op: &super::ics::OccurrenceOp,
-) -> Result<(), WorkspaceError> {
-    let owned_root;
-    let plans_root = match plan_override {
-        Some(path) => path,
-        None => {
-            owned_root = resolve_workspace_layout(root).plans_root;
-            &owned_root
-        }
-    };
-
-    for entry in collect_plan_files_in(plans_root, None)? {
-        for ics_plan in super::ics::parse_ics_file(&entry.path)? {
-            if ics_plan.plan.id != plan_id {
-                continue;
-            }
-            let uid = ics_plan.plan.external_id.ok_or_else(|| {
-                WorkspaceError::Parse(format!("recurring plan {plan_id} has no UID to key on"))
-            })?;
-            return super::ics::write_occurrence_deviation(
-                &ics_plan.path,
-                &uid,
-                occurrence_key,
-                op,
-            );
-        }
-    }
-
-    Err(WorkspaceError::Parse(format!(
-        "recurring plan {plan_id} not found in the configured plans vdir"
-    )))
 }
 
 /// Infer charter name for an `.ics` path relative to `plans_root`, with project-root support.
@@ -254,38 +132,10 @@ fn plan_charter_slug(relative_path: &Path) -> Option<String> {
     }
 }
 
-fn discover_plan_paths(dir: &Path, files: &mut Vec<PathBuf>) -> Result<(), WorkspaceError> {
-    if !dir.is_dir() {
-        return Ok(());
-    }
-
-    let entries = std::fs::read_dir(dir).map_err(WorkspaceError::Io)?;
-    for entry in entries {
-        let path = entry.map_err(WorkspaceError::Io)?.path();
-
-        if path.is_dir() {
-            if let Some(name) = path.file_name()
-                && name.to_string_lossy().starts_with('.')
-            {
-                continue;
-            }
-            discover_plan_paths(&path, files)?;
-            continue;
-        }
-
-        if path.is_file() && path.extension().is_some_and(|ext| ext == "ics") {
-            files.push(path);
-        }
-    }
-
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::workspace::charter::implicit_charter;
-    use std::fs;
 
     #[test]
     fn canonical_slug_policy_is_stable() {
@@ -390,108 +240,6 @@ mod tests {
         assert_eq!(
             infer_plan_parent_for_workspace(Path::new("inbox/weekly.ics"), None),
             None
-        );
-    }
-
-    #[test]
-    fn collect_plan_files_uses_plans_root() {
-        let outer = tempfile::tempdir().expect("tempdir");
-        let project = outer.path().join("my-project");
-        let plans = project.join(".clearhead").join("plans");
-        fs::create_dir_all(plans.join("next")).expect("create next");
-        fs::create_dir_all(plans.join("work")).expect("create work");
-        fs::create_dir_all(plans.join("work-ops")).expect("create work-ops");
-
-        fs::write(
-            plans.join("next").join("root.ics"),
-            "BEGIN:VCALENDAR\nEND:VCALENDAR\n",
-        )
-        .expect("write");
-        fs::write(
-            plans.join("work").join("release.ics"),
-            "BEGIN:VCALENDAR\nEND:VCALENDAR\n",
-        )
-        .expect("write");
-        fs::write(
-            plans.join("work-ops").join("deploy.ics"),
-            "BEGIN:VCALENDAR\nEND:VCALENDAR\n",
-        )
-        .expect("write");
-        fs::create_dir_all(plans.join(".hidden")).expect("mkdir hidden");
-        fs::write(
-            plans.join(".hidden").join("ghost.ics"),
-            "BEGIN:VCALENDAR\nEND:VCALENDAR\n",
-        )
-        .expect("write");
-
-        let entries = collect_plan_files(&project).expect("collect failed");
-
-        let summarized: Vec<(String, String, Option<String>)> = entries
-            .into_iter()
-            .map(|entry| {
-                (
-                    entry.relative_path.display().to_string(),
-                    entry.charter_name,
-                    entry.inferred_parent,
-                )
-            })
-            .collect();
-
-        assert_eq!(
-            summarized,
-            vec![
-                ("next/root.ics".into(), "my-project".into(), None),
-                (
-                    "work/release.ics".into(),
-                    "work".into(),
-                    Some("my-project".into())
-                ),
-                (
-                    "work-ops/deploy.ics".into(),
-                    "work-ops".into(),
-                    Some("my-project".into())
-                ),
-            ]
-        );
-    }
-
-    #[test]
-    fn collect_plan_files_user_workspace() {
-        let outer = tempfile::tempdir().expect("tempdir");
-        let workspace = outer.path().join("clearhead");
-        let plans = workspace.join("plans");
-        fs::create_dir_all(plans.join("inbox")).expect("create inbox");
-        fs::create_dir_all(plans.join("work")).expect("create work");
-
-        fs::write(
-            plans.join("inbox").join("a1b2c3d4.ics"),
-            "BEGIN:VCALENDAR\nEND:VCALENDAR\n",
-        )
-        .expect("write");
-        fs::write(
-            plans.join("work").join("b2c3d4e5.ics"),
-            "BEGIN:VCALENDAR\nEND:VCALENDAR\n",
-        )
-        .expect("write");
-
-        let entries = collect_plan_files(&workspace).expect("collect failed");
-        let summarized: Vec<(String, String, Option<String>)> = entries
-            .into_iter()
-            .map(|e| {
-                (
-                    e.relative_path.display().to_string(),
-                    e.charter_name,
-                    e.inferred_parent,
-                )
-            })
-            .collect();
-
-        assert_eq!(
-            summarized,
-            vec![
-                ("inbox/a1b2c3d4.ics".into(), "inbox".into(), None),
-                ("work/b2c3d4e5.ics".into(), "work".into(), None),
-            ]
         );
     }
 }

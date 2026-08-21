@@ -14,24 +14,21 @@ use uuid::Uuid;
 use super::expand::{next_active_slot, render_occurrence};
 use super::ics::{
     OccurrenceOp, VTodoAction, action_to_vtodo, canonical_occurrence_key, parse_ics,
-    parse_ics_file, parse_vtodo_actions, render_master_rollforward, render_occurrence_deviation,
-    write_master_rollforward,
+    render_master_rollforward, render_occurrence_deviation,
 };
-use super::plans::collect_plan_files_in;
 use super::sync_store::{
     CONTEXTS_FIELD, DESCRIPTION_FIELD, DUE_DATE_FIELD, MASTER_DTSTART_FIELD, PRIORITY_FIELD,
-    PlansSyncStore, SCHEDULED_AT_FIELD, STATE_FIELD, TITLE_FIELD, UID_FIELD, plans_sync_store_path,
-    read_plans_sync_store, serialize_plans_sync_store,
+    PlansSyncStore, SCHEDULED_AT_FIELD, STATE_FIELD, TITLE_FIELD, UID_FIELD,
+    serialize_plans_sync_store,
 };
 use crate::domain::{Action, ActionState, DomainModel};
 use crate::workspace::actions::format::require_actions_formatting;
 use crate::workspace::charter::MarkdownCharter;
-use crate::workspace::durability::{WorkspaceLock, atomic_write};
 use crate::workspace::resource::{
     Effect, EffectBatch, ExpectedResource, PreparedMutation, ResourceLocation, ResourcePrecondition,
 };
 use crate::workspace::sidecar::{ActionMeta, CharterMetadata, OccurrenceSnapshot, render_sidecar};
-use crate::workspace::store::{Workspace, WorkspaceError, resolve_workspace_layout};
+use crate::workspace::store::{Workspace, WorkspaceError};
 use crate::workspace::templates::instantiate_template;
 use crate::workspace::{OutputFormat, SourcedAction, format};
 
@@ -255,45 +252,6 @@ impl SyncReport {
         }
         tally
     }
-}
-
-/// Read all standalone VTODO projections in the vdir, keyed by RFC 5545 UID.
-/// File names and vendor properties are irrelevant. Duplicate UIDs are rejected
-/// rather than resolved by traversal order.
-pub fn read_vtodo_actions(
-    plans_root: &Path,
-) -> Result<HashMap<Uuid, VTodoResource>, WorkspaceError> {
-    let mut actions = HashMap::new();
-    for entry in collect_plan_files_in(plans_root, None)? {
-        let plans_dir = entry
-            .relative_path
-            .parent()
-            .map(Path::to_path_buf)
-            .ok_or_else(|| WorkspaceError::InvalidPath(entry.relative_path.clone()))?;
-        for action in parse_vtodo_actions(&entry.path)? {
-            let resource = VTodoResource {
-                action: action.clone(),
-                path: entry.path.clone(),
-                plans_dir: plans_dir.clone(),
-                charter_name: entry.charter_name.clone(),
-            };
-            if actions.insert(action.id, resource).is_some() {
-                return Err(WorkspaceError::Parse(format!(
-                    "duplicate standalone VTODO Action identity {} in configured plans vdir",
-                    action.id
-                )));
-            }
-        }
-    }
-    Ok(actions)
-}
-
-/// Compatibility helper for callers interested only in DTSTART.
-pub fn read_ics_dates(plans_root: &Path) -> Result<HashMap<Uuid, Time>, WorkspaceError> {
-    Ok(read_vtodo_actions(plans_root)?
-        .into_iter()
-        .map(|(id, resource)| (id, resource.action.scheduled_at))
-        .collect())
 }
 
 /// Plan a field-wise sync without touching disk.
@@ -1535,94 +1493,6 @@ pub fn prepare_master_rollforwards(
     ))
 }
 
-/// Ingest foreign roll-forwards on recurring masters in the configured plans vdir.
-///
-/// Camp-B clients (Apple Reminders, etc.) complete a recurring VTODO by *advancing
-/// the master `DTSTART`* with no override. This pass detects that — the master's
-/// `DTSTART` moved forward onto a later point of its own recurrence grid, relative
-/// to the origin we hold in [`MASTER_DTSTART_FIELD`] — and translates it into
-/// ClearHead's canonical form: reset the anchor to the origin and record each
-/// passed slot as a completed occurrence (a `RECURRENCE-ID` override). See
-/// [`write_master_rollforward`] for the idempotency/spec rationale.
-///
-/// - **First sight** of a master establishes its origin; nothing is recorded.
-/// - An **off-grid** new `DTSTART` is a genuine series reschedule, not a
-///   roll-forward: the origin is updated and no completions are recorded.
-/// - Runs under the workspace lock. Returns the number of occurrences recorded.
-pub fn sync_master_rollforwards(
-    root: &Path,
-    plan_override: Option<&Path>,
-) -> Result<usize, WorkspaceError> {
-    let layout = resolve_workspace_layout(root);
-    let _lock = WorkspaceLock::try_acquire(&layout.data_root)?
-        .ok_or_else(|| WorkspaceError::WorkspaceLocked(layout.data_root.clone()))?;
-
-    let plans_root = plan_override.unwrap_or(&layout.plans_root);
-    let mut store = read_plans_sync_store(root, plans_root)?;
-    let bases: HashMap<Uuid, DateTime<Local>> = store.field_bases(MASTER_DTSTART_FIELD)?;
-
-    let mut recorded = 0usize;
-    let mut store_dirty = false;
-
-    for entry in collect_plan_files_in(plans_root, None)? {
-        for ics in parse_ics_file(&entry.path)? {
-            let (Some(plan_uid), Some(current)) =
-                (ics.plan.external_id.as_deref(), ics.plan.dtstart)
-            else {
-                continue;
-            };
-            if ics.plan.recurrence.is_none() {
-                continue;
-            }
-            let plan_id = ics.plan.id;
-
-            let Some(&base) = bases.get(&plan_id) else {
-                // First sight: establish the canonical origin, detect nothing.
-                store.stamp(plan_id, MASTER_DTSTART_FIELD, &current)?;
-                store_dirty = true;
-                continue;
-            };
-            if current == base {
-                continue;
-            }
-
-            // Is `current` a later point on the recurrence grid anchored at the
-            // origin? If not, it's a genuine reschedule — accept the new origin.
-            let grid: Vec<DateTime<Local>> = ics
-                .plan
-                .expand_occurrences(base, 1000)
-                .into_iter()
-                .map(|dt| dt.with_timezone(&Local))
-                .collect();
-            let Some(k) = grid.iter().position(|&d| d == current).filter(|&k| k >= 1) else {
-                store.stamp(plan_id, MASTER_DTSTART_FIELD, &current)?;
-                store_dirty = true;
-                continue;
-            };
-
-            // The passed slots grid[0..k] were completed by the advance. Skip any
-            // already excluded or overridden — recording stays idempotent.
-            let completed_slots: Vec<(String, DateTime<Local>)> = grid[..k]
-                .iter()
-                .map(|&slot| (canonical_occurrence_key(slot), slot))
-                .filter(|(key, _)| !ics.exdates.contains(key) && !ics.overrides.contains_key(key))
-                .collect();
-
-            // Reset the anchor to the origin (always) and record completions. The
-            // origin itself is unchanged, so the stored base is not restamped.
-            write_master_rollforward(&ics.path, plan_uid, base, &completed_slots)?;
-            recorded += completed_slots.len();
-        }
-    }
-
-    if store_dirty {
-        let content = serialize_plans_sync_store(&store)?;
-        atomic_write(&plans_sync_store_path(root), content.as_bytes())
-            .map_err(WorkspaceError::Io)?;
-    }
-    Ok(recorded)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1630,32 +1500,6 @@ mod tests {
 
     fn t(day: u32) -> DateTime<Local> {
         Local.with_ymd_and_hms(2026, 4, day, 10, 0, 0).unwrap()
-    }
-
-    #[cfg(not(feature = "formatting"))]
-    #[test]
-    fn mutation_entrypoints_refuse_before_calendar_or_workspace_changes() {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let root = temp.path();
-        let master = root.join(".clearhead/plans/master.ics");
-        std::fs::create_dir_all(master.parent().unwrap()).expect("create plans");
-        std::fs::write(&master, "calendar sentinel\n").expect("write master");
-
-        let resolve_error = resolve_materialized_occurrence(
-            root,
-            None,
-            Uuid::new_v4(),
-            &super::super::ics::OccurrenceOp::Complete { at: t(1) },
-            t(1),
-        )
-        .unwrap_err();
-        assert!(resolve_error.to_string().contains("`formatting` feature"));
-        assert_eq!(
-            std::fs::read_to_string(master).expect("read master"),
-            "calendar sentinel\n"
-        );
-        assert!(!root.join(".clearhead/charters").exists());
-        assert!(!plans_sync_store_path(root).exists());
     }
 
     #[test]

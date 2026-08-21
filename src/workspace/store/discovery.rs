@@ -1,5 +1,16 @@
 use super::WorkspaceError;
+use crate::workspace::calendar::plans::{
+    infer_plan_charter_name_for_workspace, infer_plan_parent_for_workspace,
+};
 use std::path::{Path, PathBuf};
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PlanFileEntry {
+    pub path: PathBuf,
+    pub relative_path: PathBuf,
+    pub charter_name: String,
+    pub inferred_parent: Option<String>,
+}
 
 /// Discover all `.actions` files recursively, skipping hidden directories.
 pub(crate) fn discover_action_files(dir: &Path) -> Result<Vec<PathBuf>, WorkspaceError> {
@@ -16,6 +27,35 @@ pub(crate) fn discover_action_files(dir: &Path) -> Result<Vec<PathBuf>, Workspac
     });
     files.sort();
     Ok(files)
+}
+
+/// Discover and classify legacy native `.ics` resources for the root loader.
+pub(crate) fn discover_plan_files(
+    plans_root: &Path,
+    project_root_charter: Option<&str>,
+) -> Result<Vec<PlanFileEntry>, WorkspaceError> {
+    let mut files = Vec::new();
+    discover_recursive(plans_root, "ics", &mut files)?;
+    let mut entries = Vec::new();
+    for path in files {
+        let relative_path = path
+            .strip_prefix(plans_root)
+            .map_err(|_| WorkspaceError::InvalidPath(path.clone()))?
+            .to_path_buf();
+        let Some(charter_name) =
+            infer_plan_charter_name_for_workspace(&relative_path, project_root_charter)
+        else {
+            continue;
+        };
+        entries.push(PlanFileEntry {
+            path,
+            inferred_parent: infer_plan_parent_for_workspace(&relative_path, project_root_charter),
+            relative_path,
+            charter_name,
+        });
+    }
+    entries.sort_by(|left, right| left.relative_path.cmp(&right.relative_path));
+    Ok(entries)
 }
 
 /// Discover all `.md` files recursively, skipping hidden directories.

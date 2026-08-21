@@ -1,4 +1,4 @@
-use super::discovery::{discover_action_files, discover_charter_files};
+use super::discovery::{discover_action_files, discover_charter_files, discover_plan_files};
 use super::findings::Finding;
 use super::pathing::{
     charter_collection_from_anchor, infer_charter_name_for_workspace,
@@ -9,9 +9,7 @@ use crate::domain::{Charter, DomainModel};
 use crate::workspace::actions::TrustedDocument;
 use crate::workspace::actions::convert::from_actions_with_charter;
 use crate::workspace::actions::repository::SourcedAction;
-use crate::workspace::calendar::ics::parse_ics_file;
-use crate::workspace::calendar::plans::collect_plan_files_in;
-use crate::workspace::calendar::sync_store::read_plans_sync_store;
+use crate::workspace::calendar::ics::parse_ics;
 use crate::workspace::charter::{
     MarkdownCharter, frontmatter_has_id_key, frontmatter_has_parent_key, parse_charter,
 };
@@ -524,7 +522,7 @@ pub fn read_workspace_with_plans(
     let plans_root = plan_override.unwrap_or(&layout.plans_root);
     let mut reported_unowned =
         report_unowned_plan_collections(plans_root, &charters_by_name, &mut findings);
-    for entry in collect_plan_files_in(plans_root, layout.project_root_charter.as_deref())? {
+    for entry in discover_plan_files(plans_root, layout.project_root_charter.as_deref())? {
         let plans_dir = entry
             .relative_path
             .parent()
@@ -544,7 +542,10 @@ pub fn read_workspace_with_plans(
             continue;
         };
 
-        let plans = match parse_ics_file(&entry.path) {
+        let plans = match std::fs::read_to_string(&entry.path)
+            .map_err(WorkspaceError::Io)
+            .and_then(|content| parse_ics(&content, &entry.path))
+        {
             Ok(plans) => plans,
             Err(e) => {
                 findings.push(Finding::violation(
@@ -560,7 +561,6 @@ pub fn read_workspace_with_plans(
 
     let mut charters: Vec<MarkdownCharter> = charters_by_name.into_values().collect();
     resolve_predecessor_aliases(&mut charters);
-    hydrate_occurrence_links(&mut charters, root, plans_root);
 
     Ok(WorkspaceRead { charters, findings })
 }
@@ -599,38 +599,6 @@ fn report_unowned_plan_collections(
         ));
     }
     reported
-}
-
-/// Hydrate the live occurrence→plan linkage onto materialized occurrence tokens.
-///
-/// A stamped occurrence is an ordinary `.actions` line; its link to the master
-/// (`plan_id` + the occurrence slot key) is in neither the DSL nor the sidecar —
-/// it lives in the plans sync store as machine-local live-path state. Reading it
-/// back here derives the occurrence's *live* lineage (per the design: "while an
-/// occurrence is live its lineage is derived from the current rule — the
-/// sync-store cache stands"), so every consumer of the loaded model — query, CLI,
-/// LSP, and graphd's `cco:prescribed_by` edge — sees which plan a token realizes.
-///
-/// Best-effort and non-fatal: a missing or plans-root-mismatched store yields no
-/// links and leaves every action untouched (there is nothing live to hydrate).
-/// The *archived* half of lineage is snapshotted onto the completed instance at
-/// crystallization — a separate concern, not derived here.
-fn hydrate_occurrence_links(charters: &mut [MarkdownCharter], root: &Path, plans_root: &Path) {
-    let Ok(store) = read_plans_sync_store(root, plans_root) else {
-        return;
-    };
-    let links = store.occurrence_links();
-    if links.is_empty() {
-        return;
-    }
-    for charter in charters.iter_mut() {
-        for sa in &mut charter.actions {
-            if let Some((plan_id, slot_key)) = links.get(&sa.action.id) {
-                sa.action.plan_id = Some(*plan_id);
-                sa.action.external_occurrence_key = Some(slot_key.clone());
-            }
-        }
-    }
 }
 
 /// Resolve alias predecessor references (`<alias`) to UUIDs once the whole

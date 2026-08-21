@@ -11,7 +11,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
-use crate::workspace::store::{WorkspaceError, resolve_workspace_layout};
+use crate::workspace::store::WorkspaceError;
 
 pub const SCHEDULED_AT_FIELD: &str = "scheduled_at";
 pub const DUE_DATE_FIELD: &str = "due_date";
@@ -144,29 +144,6 @@ impl PlansSyncStore {
     }
 }
 
-/// Resolve the one local state file for the configured plans projection.
-pub fn plans_sync_store_path(root: &Path) -> PathBuf {
-    resolve_workspace_layout(root)
-        .data_root
-        .join("sync")
-        .join("plans.json")
-}
-
-/// Load merge bases for `plans_root`. A missing store or a store belonging to
-/// another configured path has clean first-sync semantics.
-pub fn read_plans_sync_store(
-    root: &Path,
-    plans_root: &Path,
-) -> Result<PlansSyncStore, WorkspaceError> {
-    let path = plans_sync_store_path(root);
-    let content = match std::fs::read_to_string(&path) {
-        Ok(content) => Some(content),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
-        Err(error) => return Err(error.into()),
-    };
-    decode_plans_sync_store(content.as_deref(), plans_root)
-}
-
 /// Decode host-supplied merge-base bytes for one plans projection.
 pub fn decode_plans_sync_store(
     content: Option<&str>,
@@ -271,35 +248,16 @@ mod tests {
     }
 
     #[test]
-    fn missing_store_starts_empty() {
-        let root = tempfile::tempdir().unwrap();
-        let store = read_plans_sync_store(root.path(), Path::new("/tmp/plans")).unwrap();
-        assert!(store.actions.is_empty());
-    }
-
-    #[test]
-    fn changing_the_configured_vdir_starts_empty() {
-        let root = tempfile::tempdir().unwrap();
-        let path = plans_sync_store_path(root.path());
-        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fn missing_or_different_projection_starts_empty() {
+        let missing = decode_plans_sync_store(None, Path::new("/tmp/plans")).unwrap();
+        assert!(missing.actions.is_empty());
 
         let id = Uuid::new_v4();
         let mut old = PlansSyncStore::new(Path::new("/tmp/old-plans"));
         old.stamp_scheduled_at(id, None);
-        std::fs::write(&path, serialize_plans_sync_store(&old).unwrap()).unwrap();
-
-        let current = read_plans_sync_store(root.path(), Path::new("/tmp/new-plans")).unwrap();
+        let content = serialize_plans_sync_store(&old).unwrap();
+        let current = decode_plans_sync_store(Some(&content), Path::new("/tmp/new-plans")).unwrap();
         assert!(current.actions.is_empty());
         assert_eq!(current.plans_root, Path::new("/tmp/new-plans"));
-    }
-
-    #[test]
-    fn project_workspace_store_lives_under_clearhead() {
-        let root = tempfile::tempdir().unwrap();
-        std::fs::create_dir(root.path().join(".clearhead")).unwrap();
-        assert_eq!(
-            plans_sync_store_path(root.path()),
-            root.path().join(".clearhead/sync/plans.json")
-        );
     }
 }

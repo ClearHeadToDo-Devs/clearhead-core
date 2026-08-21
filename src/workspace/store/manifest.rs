@@ -3,10 +3,9 @@
 //! Useful for debugging load order, understanding inferred charter names and parents,
 //! and verifying that the workspace layout is being read as intended.
 
-use super::discovery::{discover_action_files, discover_charter_files};
+use super::discovery::{discover_action_files, discover_charter_files, discover_plan_files};
 use super::pathing::{infer_charter_name_for_workspace, infer_parent_charter_name_for_workspace};
 use super::{WorkspaceError, resolve_workspace_layout};
-use crate::workspace::calendar::plans::collect_plan_files;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
@@ -58,7 +57,8 @@ pub fn collect_workspace_manifest(
 
     let action_files = discover_action_files(&layout.charter_root)?;
     let charter_files = discover_charter_files(&layout.charter_root)?;
-    let plan_files = collect_plan_files(root)?;
+    let plan_files =
+        discover_plan_files(&layout.plans_root, layout.project_root_charter.as_deref())?;
 
     let mut entries_by_charter: HashMap<String, WorkspaceManifestEntry> = HashMap::new();
 
