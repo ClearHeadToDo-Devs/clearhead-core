@@ -3,7 +3,10 @@
 pub mod manifest;
 pub mod mounts;
 pub use manifest::{read_workspace_manifest, workspace_manifest_path, write_workspace_manifest};
-pub use mounts::NativeWorkspaceMounts;
+pub use mounts::{
+    NativeWorkspaceMounts, list_action_files, load_domain_model, load_workspace,
+    load_workspace_model, read_workspace,
+};
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -23,9 +26,10 @@ use clearhead_core::workspace::{
     ActionResourceState, FileState, PreparedArchiveOutcome, PreparedCloseOutcome,
     PreparedDeleteOutcome, PreparedInsertOutcome, PreparedTransactionOutcome,
     PreparedUpdateOutcome, SidecarResourceState, TransactionModel, TransactionRequest,
-    WorkspaceError, completed_actions_path, list_action_files, normalize_request, parse_actions,
-    prepare_action_archive, prepare_action_delete, prepare_action_insert, prepare_action_update,
-    prepare_close_action_subtree, prepare_transaction, sidecar_path, workspace_data_root,
+    WorkspaceError, completed_actions_path, list_action_files as core_list_action_files,
+    normalize_request, parse_actions, prepare_action_archive, prepare_action_delete,
+    prepare_action_insert, prepare_action_update, prepare_close_action_subtree,
+    prepare_transaction, sidecar_path, workspace_data_root,
 };
 use clearhead_core::{Action, ActionSelector};
 
@@ -335,7 +339,7 @@ fn load_target_files(
     target_ids: &HashSet<uuid::Uuid>,
 ) -> Result<TransactionModel, WorkspaceError> {
     let mut files = Vec::new();
-    for active_path in list_action_files(workspace_root)? {
+    for active_path in core_list_action_files(workspace_root)? {
         let completed_path = completed_actions_path(&active_path);
         let (active_snapshot, active_expected) = snapshot(data_root, &active_path)?;
         let (completed_snapshot, completed_expected) = snapshot(data_root, &completed_path)?;

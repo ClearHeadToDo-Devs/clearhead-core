@@ -14,7 +14,6 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context as _, anyhow};
 use chrono::Utc;
 use clearhead_core::WorkspaceConfig;
-use clearhead_core::workspace::store::load::Workspace;
 use oxigraph::io::{JsonLdProfileSet, RdfFormat, RdfSerializer};
 use tracing::debug;
 
@@ -85,8 +84,11 @@ fn default_tree_format() -> Format {
 pub fn build_store(workspace: &Path, config: &WorkspaceConfig) -> anyhow::Result<Store> {
     let store = graph::create_store().map_err(|e| anyhow!("Failed to create store: {e}"))?;
 
-    let primary =
-        Workspace::load(workspace).map_err(|e| anyhow!("Failed to load workspace: {e}"))?;
+    let primary = clearhead_workspace_fs::load_workspace_model(
+        workspace,
+        config.plan_path.as_deref().map(Path::new),
+    )
+    .map_err(|e| anyhow!("Failed to load workspace: {e}"))?;
     let graph_name = GraphName::NamedNode(graph::workspace_graph_uri(&primary.effective_id()));
     graph::insert_workspace_metadata(&store, &primary, graph_name.clone())
         .map_err(|e| anyhow!("Failed to insert workspace metadata: {e}"))?;
@@ -109,7 +111,7 @@ fn load_additional(store: &Store, path: &Path) -> anyhow::Result<()> {
             path.display()
         );
     }
-    let workspace = Workspace::load(path)
+    let workspace = clearhead_workspace_fs::load_workspace_model(path, None)
         .map_err(|e| anyhow!("Failed to load workspace at {}: {e}", path.display()))?;
     let graph_name = GraphName::NamedNode(graph::workspace_graph_uri(&workspace.effective_id()));
     graph::insert_workspace_metadata(store, &workspace, graph_name.clone()).map_err(|e| {

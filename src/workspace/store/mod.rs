@@ -20,6 +20,7 @@
 //! `resolve_workspace_layout` detects which layout applies and returns a
 //! `WorkspaceLayout` that all load/save functions use for path resolution.
 
+mod assembly;
 mod discovery;
 mod doctor;
 mod findings;
@@ -30,6 +31,7 @@ mod save;
 
 use std::path::{Path, PathBuf};
 
+pub use assembly::{WorkspaceAssemblyInput, assemble_workspace, assembled_domain_model};
 pub use doctor::{Diagnosis, diagnose, diagnose_read};
 pub use findings::{Finding, FindingSeverity};
 pub use load::{

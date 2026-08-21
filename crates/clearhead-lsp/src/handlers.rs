@@ -516,9 +516,9 @@ fn emit_diff_telemetry(diff: &Diff, current: &ParsedDocument, file_path: &str) {
 fn parsed_action_files(
     workspace_root: &std::path::Path,
 ) -> impl Iterator<Item = (std::path::PathBuf, clearhead_core::ParsedDocument)> {
-    use clearhead_core::{list_action_files, parse_document};
+    use clearhead_core::parse_document;
 
-    list_action_files(workspace_root)
+    clearhead_workspace_fs::list_action_files(workspace_root)
         .unwrap_or_default()
         .into_iter()
         .filter_map(|path| {
@@ -532,9 +532,9 @@ fn find_definition_in_workspace(
     workspace_root: &std::path::Path,
     ref_text: &str,
 ) -> Option<(std::path::PathBuf, tower_lsp_server::ls_types::Range)> {
-    use clearhead_core::{ReferenceOptions, ReferenceTarget, load_domain_model, resolve_reference};
+    use clearhead_core::{ReferenceOptions, ReferenceTarget, resolve_reference};
 
-    let model = load_domain_model(workspace_root).ok()?;
+    let model = clearhead_workspace_fs::load_domain_model(workspace_root, None).ok()?;
     let opts = ReferenceOptions::default();
     let target = resolve_reference(&model, ref_text, &opts).ok()?;
 

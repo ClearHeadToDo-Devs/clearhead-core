@@ -1,6 +1,6 @@
 use crate::commands::CommandContext;
 use anyhow::Context;
-use clearhead_core::workspace::{MarkdownCharter, diagnose_read, read_workspace_with_plans};
+use clearhead_core::workspace::{MarkdownCharter, diagnose_read};
 
 pub fn run(ctx: &CommandContext) -> anyhow::Result<()> {
     print_config_section(ctx);
@@ -114,8 +114,9 @@ fn print_workspace_section(ctx: &CommandContext) -> anyhow::Result<()> {
         .context("Failed to collect workspace manifest")?;
     // Diagnostics must observe, not alter: the pure reader (no journal replay,
     // per-file failures become findings) instead of the healing load path.
-    let read = read_workspace_with_plans(&ctx.data_dir, ctx.plan_override().as_deref())
-        .context("Failed to read workspace")?;
+    let read =
+        clearhead_workspace_fs::read_workspace(&ctx.data_dir, ctx.plan_override().as_deref())
+            .context("Failed to read workspace")?;
 
     let root_alias = find_root_charter_alias(&read.charters).unwrap_or("-".to_string());
     println!("  root_charter: {}", root_alias);

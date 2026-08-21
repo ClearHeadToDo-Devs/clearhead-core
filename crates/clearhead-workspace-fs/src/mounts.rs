@@ -3,11 +3,15 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
-use clearhead_core::workspace::WorkspaceError;
+use clearhead_core::domain::DomainModel;
 use clearhead_core::workspace::resource::{
     MountInventory, MountReadEvidence, ReadPlan, ResourceReadFailure, ResourceRevision,
     ResourceSnapshot, WorkspaceInventory, WorkspaceMounts, WorkspacePath, WorkspaceScope,
     WorkspaceSnapshot,
+};
+use clearhead_core::workspace::{
+    MarkdownCharter, Workspace, WorkspaceAssemblyInput, WorkspaceError, WorkspaceRead,
+    assemble_workspace, plan_workspace_read, read_plans_sync_store,
 };
 
 /// Physical roots resolved by the native adapter.
@@ -56,12 +60,23 @@ impl NativeWorkspaceMounts {
     pub fn read(
         &self,
         plans: &WorkspaceMounts<ReadPlan>,
+        inventory: &WorkspaceMounts<MountInventory>,
     ) -> Result<WorkspaceMounts<MountReadEvidence>, WorkspaceError> {
         Ok(WorkspaceMounts {
-            workspace: read_mount(&self.workspace, &plans.workspace)?,
-            external_plans: match (&self.external_plans, &plans.external_plans) {
-                (Some(root), Some(plan)) => Some(read_mount(root, plan)?),
-                (None, None) => None,
+            workspace: read_mount(
+                &self.workspace,
+                &plans.workspace,
+                &inventory.workspace.files,
+            )?,
+            external_plans: match (
+                &self.external_plans,
+                &plans.external_plans,
+                &inventory.external_plans,
+            ) {
+                (Some(root), Some(plan), Some(inventory)) => {
+                    Some(read_mount(root, plan, &inventory.files)?)
+                }
+                (None, None, None) => None,
                 _ => {
                     return Err(WorkspaceError::Actions(
                         "external plans read plan does not match resolved mounts".into(),
@@ -70,6 +85,99 @@ impl NativeWorkspaceMounts {
             },
         })
     }
+}
+
+/// Relaxed native read: inventory and read bytes without replaying pending intent.
+pub fn read_workspace(
+    workspace_root: &Path,
+    external_plans: Option<&Path>,
+) -> Result<WorkspaceRead, WorkspaceError> {
+    assemble_native(workspace_root, external_plans)
+}
+
+/// Healing native load: recover pending workspace intent before inventory.
+pub fn load_workspace(
+    workspace_root: &Path,
+    external_plans: Option<&Path>,
+) -> Result<Vec<MarkdownCharter>, WorkspaceError> {
+    let mounts = NativeWorkspaceMounts::resolve(workspace_root, external_plans);
+    let charter_root = mounts.workspace.join("charters");
+    if charter_root.is_dir() {
+        clearhead_core::workspace::durability::recover_pending(&charter_root)?;
+    }
+    let read = assemble_native(workspace_root, external_plans)?;
+    for finding in &read.findings {
+        eprintln!("warning: [{}] {}", finding.path.display(), finding.message);
+    }
+    Ok(read.charters)
+}
+
+/// Discover active `.actions` resources and map them to native paths.
+pub fn list_action_files(workspace_root: &Path) -> Result<Vec<PathBuf>, WorkspaceError> {
+    let mounts = NativeWorkspaceMounts::resolve(workspace_root, None);
+    let inventory = mounts.inventory()?;
+    let mut paths = inventory
+        .workspace
+        .files
+        .paths()
+        .filter(|path| path.as_str().starts_with("charters/"))
+        .filter(|path| path.as_str().ends_with(".actions"))
+        .filter(|path| !path.as_str().ends_with(".completed.actions"))
+        .filter(|path| !path.as_str().ends_with(".upcoming.actions"))
+        .map(|path| mounts.workspace.join(path.as_str()))
+        .collect::<Vec<_>>();
+    paths.sort();
+    Ok(paths)
+}
+
+pub fn load_domain_model(
+    workspace_root: &Path,
+    external_plans: Option<&Path>,
+) -> Result<DomainModel, WorkspaceError> {
+    let charters = load_workspace(workspace_root, external_plans)?;
+    Ok(load_workspace_envelope(workspace_root, charters).into())
+}
+
+pub fn load_workspace_envelope(workspace_root: &Path, charters: Vec<MarkdownCharter>) -> Workspace {
+    let manifest = crate::read_workspace_manifest(workspace_root);
+    Workspace::from_parts(
+        workspace_root.to_path_buf(),
+        manifest.workspace_id,
+        manifest.workspace_name,
+        charters,
+    )
+}
+
+pub fn load_workspace_model(
+    workspace_root: &Path,
+    external_plans: Option<&Path>,
+) -> Result<Workspace, WorkspaceError> {
+    let charters = load_workspace(workspace_root, external_plans)?;
+    Ok(load_workspace_envelope(workspace_root, charters))
+}
+
+fn assemble_native(
+    workspace_root: &Path,
+    external_plans: Option<&Path>,
+) -> Result<WorkspaceRead, WorkspaceError> {
+    let mounts = NativeWorkspaceMounts::resolve(workspace_root, external_plans);
+    let inventory = mounts.inventory()?;
+    let plans = plan_workspace_read(&inventory);
+    let reads = mounts.read(&plans, &inventory)?;
+    let effective_plans_root = mounts
+        .external_plans
+        .as_deref()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| mounts.workspace.join("plans"));
+    let occurrence_links = read_plans_sync_store(workspace_root, &effective_plans_root)
+        .map(|store| store.occurrence_links().clone())
+        .unwrap_or_default();
+    assemble_workspace(&WorkspaceAssemblyInput {
+        scope: mounts.scope,
+        inventory,
+        reads,
+        occurrence_links,
+    })
 }
 
 fn inventory_mount(root: &Path) -> Result<MountInventory, WorkspaceError> {
@@ -104,17 +212,27 @@ fn inventory_mount(root: &Path) -> Result<MountInventory, WorkspaceError> {
     })
 }
 
-fn read_mount(root: &Path, plan: &ReadPlan) -> Result<MountReadEvidence, WorkspaceError> {
+fn read_mount(
+    root: &Path,
+    plan: &ReadPlan,
+    inventory: &WorkspaceInventory,
+) -> Result<MountReadEvidence, WorkspaceError> {
     let mut snapshots = Vec::new();
     let mut failures = Vec::new();
     for logical in plan.paths() {
         let path = root.join(logical.as_str());
         match std::fs::read(&path) {
-            Ok(bytes) => snapshots.push(ResourceSnapshot::new(
-                logical.clone(),
-                bytes.clone(),
-                revision(&bytes),
-            )),
+            Ok(bytes) => {
+                let actual = revision(&bytes);
+                if inventory.revision(logical) != Some(&actual) {
+                    failures.push(ResourceReadFailure {
+                        path: logical.clone(),
+                        message: "resource changed after inventory".into(),
+                    });
+                    continue;
+                }
+                snapshots.push(ResourceSnapshot::new(logical.clone(), bytes, actual));
+            }
             Err(error) => failures.push(ResourceReadFailure {
                 path: logical.clone(),
                 message: error.to_string(),
@@ -167,6 +285,28 @@ mod tests {
     }
 
     #[test]
+    fn native_loader_matches_legacy_domain_assembly() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(root.path().join("charters")).unwrap();
+        std::fs::write(
+            root.path().join("charters/work.actions"),
+            "[ ] Shared semantics #019fa000-0000-7000-8000-000000000001",
+        )
+        .unwrap();
+        std::fs::write(
+            root.path().join("charters/work.md"),
+            "---\nalias: work\n---\n# Work\n",
+        )
+        .unwrap();
+
+        let legacy = clearhead_core::load_domain_model(root.path()).unwrap();
+        let mounted = load_domain_model(root.path(), None).unwrap();
+        assert_eq!(mounted.charters.len(), legacy.charters.len());
+        assert_eq!(mounted.charters[0].id, legacy.charters[0].id);
+        assert_eq!(mounted.charters[0].actions, legacy.charters[0].actions);
+    }
+
+    #[test]
     fn inventories_empty_collections_and_keeps_equal_paths_separate() {
         let root = tempfile::tempdir().unwrap();
         let workspace = root.path().join("workspace");
@@ -194,7 +334,7 @@ mod tests {
         );
 
         let plans = plan_workspace_read(&inventory);
-        let reads = mounts.read(&plans).unwrap();
+        let reads = mounts.read(&plans, &inventory).unwrap();
         assert_eq!(
             reads
                 .workspace

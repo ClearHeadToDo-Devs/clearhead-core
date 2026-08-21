@@ -172,10 +172,18 @@ impl WorkspaceInventory {
 ///
 /// The optional external plans tree is deliberately a separate namespace: an
 /// adapter must never disguise it as `plans/...` inside the workspace mount.
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd, serde::Serialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum MountId {
+    #[default]
     Workspace,
     ExternalPlans,
+}
+
+impl MountId {
+    pub fn is_workspace(&self) -> bool {
+        matches!(self, Self::Workspace)
+    }
 }
 
 /// A logical path together with the mount that owns it.

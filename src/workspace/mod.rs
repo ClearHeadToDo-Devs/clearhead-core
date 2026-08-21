@@ -46,7 +46,7 @@ pub use archive_facts::ArchivedActionFact;
 pub use calendar::ics::{
     ICSPlan, OccurrenceOp, OccurrenceOverride, VTodoAction, action_id_from_vtodo_uid,
     action_to_vtodo, actions_to_icalendar, canonical_occurrence_key, occurrence_action_id,
-    parse_vtodo_actions, plan_to_vtodo, plans_to_icalendar, write_master_rollforward,
+    parse_ics, parse_vtodo_actions, plan_to_vtodo, plans_to_icalendar, write_master_rollforward,
     write_occurrence_deviation,
 };
 pub use calendar::plans::{
@@ -76,8 +76,8 @@ pub use resource::{
 };
 pub use selector::ActionSelector;
 pub use sidecar::{
-    ActionMeta, CharterMeta, CharterMetadata, OccurrenceSnapshot, hydrate_actions, read_sidecar,
-    sidecar_path, write_sidecar,
+    ActionMeta, CharterMeta, CharterMetadata, OccurrenceSnapshot, hydrate_actions, parse_sidecar,
+    read_sidecar, sidecar_path, write_sidecar,
 };
 pub use transaction::{
     ActionUpdateSet, FileState, NormalizedOperation, Operation, PreparedTransactionOutcome,
@@ -86,8 +86,9 @@ pub use transaction::{
 };
 
 pub use store::{
-    Diagnosis, Finding, FindingSeverity, ManifestSourceType, Workspace, WorkspaceError,
-    WorkspaceManifestEntry, WorkspaceRead, charter_collection_from_anchor, charter_root,
+    Diagnosis, Finding, FindingSeverity, ManifestSourceType, Workspace, WorkspaceAssemblyInput,
+    WorkspaceError, WorkspaceManifestEntry, WorkspaceRead, assemble_workspace,
+    assembled_domain_model, charter_collection_from_anchor, charter_root,
     collect_workspace_manifest, diagnose, diagnose_read, infer_charter_name,
     infer_parent_charter_name, list_action_files, load_domain_model, load_domain_model_with_plans,
     load_workspace, load_workspace_with_plans, load_workspaces, plans_root, read_workspace,

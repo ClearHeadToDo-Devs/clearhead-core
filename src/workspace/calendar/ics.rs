@@ -112,7 +112,13 @@ pub fn action_id_from_vtodo_uid(uid: &str) -> Uuid {
 /// - `Plan.template_name` — extracted from DESCRIPTION if it starts with `template: <name>`
 pub fn parse_ics_file(path: &Path) -> Result<Vec<ICSPlan>, WorkspaceError> {
     let content = fs::read_to_string(path).map_err(WorkspaceError::Io)?;
+    parse_ics(&content, path)
+}
 
+/// Parse recurring VTODO resources from bytes already supplied by a host.
+///
+/// `logical_path` is provenance only; parsing never reads it.
+pub fn parse_ics(content: &str, logical_path: &Path) -> Result<Vec<ICSPlan>, WorkspaceError> {
     let calendar: Calendar = content
         .parse()
         .map_err(|e: String| WorkspaceError::Parse(e))?;
@@ -136,7 +142,7 @@ pub fn parse_ics_file(path: &Path) -> Result<Vec<ICSPlan>, WorkspaceError> {
         if todo.property_value("RRULE").is_none() {
             continue;
         }
-        let Some(mut ics_plan) = component_to_plan(todo, path) else {
+        let Some(mut ics_plan) = component_to_plan(todo, logical_path) else {
             continue;
         };
         let master_uid = todo.get_uid();

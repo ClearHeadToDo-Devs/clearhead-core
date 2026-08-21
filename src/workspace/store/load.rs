@@ -47,6 +47,23 @@ pub struct Workspace {
 }
 
 impl Workspace {
+    /// Construct the host-facing workspace envelope from already assembled
+    /// charter data and host-supplied identity.
+    pub fn from_parts(
+        root: PathBuf,
+        id: Option<String>,
+        name: Option<String>,
+        charters: Vec<MarkdownCharter>,
+    ) -> Self {
+        Self {
+            root,
+            id,
+            name,
+            ephemeral_id: Uuid::now_v7().to_string(),
+            charters,
+        }
+    }
+
     pub fn load(root: &Path) -> Result<Self, WorkspaceError> {
         Self::load_with_plans(root, None)
     }

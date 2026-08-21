@@ -730,7 +730,7 @@ pub fn read_actions_cmd(
                         let mut ws_model = if is_primary {
                             model.clone()
                         } else {
-                            match clearhead_core::load_domain_model(&ws_path) {
+                            match clearhead_workspace_fs::load_domain_model(&ws_path, None) {
                                 Ok(m) => m,
                                 Err(e) => {
                                     tracing::warn!(
@@ -798,14 +798,16 @@ fn collect_workspace_actions(
         let is_primary = ws_path == ctx.data_dir;
         let label = if multi_ws { Some(ws_name) } else { None };
 
-        let charters = match clearhead_core::load_workspace(&ws_path) {
-            Ok(c) => c,
-            Err(e) if is_primary => return Err(e.into()),
-            Err(e) => {
-                warn!("Skipping workspace '{}': {}", ws_path.display(), e);
-                continue;
-            }
-        };
+        let plan_override = is_primary.then(|| ctx.plan_override()).flatten();
+        let charters =
+            match clearhead_workspace_fs::load_workspace(&ws_path, plan_override.as_deref()) {
+                Ok(c) => c,
+                Err(e) if is_primary => return Err(e.into()),
+                Err(e) => {
+                    warn!("Skipping workspace '{}': {}", ws_path.display(), e);
+                    continue;
+                }
+            };
         let charter_root = clearhead_core::charter_root(&ws_path);
 
         for mc in &charters {
@@ -1137,7 +1139,10 @@ pub(super) fn resolve_charter_across_workspaces(
 ) -> anyhow::Result<(clearhead_core::MarkdownCharter, PathBuf)> {
     for (_, ws_root) in ctx.workspace_dirs() {
         let is_primary = ws_root == ctx.data_dir;
-        let mcs = match clearhead_core::load_workspace(&ws_root) {
+        let plan_override = (ws_root == ctx.data_dir)
+            .then(|| ctx.plan_override())
+            .flatten();
+        let mcs = match clearhead_workspace_fs::load_workspace(&ws_root, plan_override.as_deref()) {
             Ok(m) => m,
             Err(e) if is_primary => return Err(e.into()),
             Err(e) => {
@@ -1173,7 +1178,8 @@ fn collect_all_actions(
     open_only: bool,
 ) -> anyhow::Result<Vec<Action>> {
     let charter_root = clearhead_core::charter_root(&ctx.data_dir);
-    let charters = clearhead_core::load_workspace(&ctx.data_dir)?;
+    let charters =
+        clearhead_workspace_fs::load_workspace(&ctx.data_dir, ctx.plan_override().as_deref())?;
 
     let matches = |mc: &clearhead_core::MarkdownCharter| match (file, &mc.actions_file) {
         (Some(target), Some(actions_file)) => {

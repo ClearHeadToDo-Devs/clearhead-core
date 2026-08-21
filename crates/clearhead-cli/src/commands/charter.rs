@@ -437,7 +437,10 @@ pub fn archive_charter(
     // Resolve query: from --file, explicit query, or error
     let q: String = if let Some(file_path) = file {
         let ws_dir = ctx.workspace_for_file(file_path);
-        let mcs = clearhead_core::load_workspace(&ws_dir)?;
+        let plan_override = (ws_dir == ctx.data_dir)
+            .then(|| ctx.plan_override())
+            .flatten();
+        let mcs = clearhead_workspace_fs::load_workspace(&ws_dir, plan_override.as_deref())?;
         let charter_root = clearhead_core::charter_root(&ws_dir);
         let mc_full = resolve_charter_by_file(&mcs, file_path, &charter_root)
             .ok_or_else(|| anyhow::anyhow!("No charter found for file: {}", file_path.display()))?;
@@ -563,7 +566,10 @@ pub fn close_charter(
     let ws_root = file
         .map(|f| ctx.workspace_for_file(f))
         .unwrap_or_else(|| ctx.data_dir.clone());
-    let mcs = clearhead_core::load_workspace(&ws_root)?;
+    let plan_override = (ws_root == ctx.data_dir)
+        .then(|| ctx.plan_override())
+        .flatten();
+    let mcs = clearhead_workspace_fs::load_workspace(&ws_root, plan_override.as_deref())?;
     let charter_root = clearhead_core::charter_root(&ws_root);
     let mc_full = find_target_charter(&mcs, query, file, &charter_root)?;
     let mut updated = Charter::from(mc_full.clone());

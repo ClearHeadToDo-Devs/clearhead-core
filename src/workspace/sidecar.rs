@@ -109,7 +109,12 @@ pub fn read_sidecar(path: &Path) -> Result<CharterMetadata, WorkspaceError> {
         return Ok(CharterMetadata::default());
     }
     let content = std::fs::read_to_string(path)?;
-    serde_json::from_str(&content).map_err(|e| WorkspaceError::Parse(format!("sidecar: {}", e)))
+    parse_sidecar(&content)
+}
+
+/// Parse sidecar bytes already supplied by a host.
+pub fn parse_sidecar(content: &str) -> Result<CharterMetadata, WorkspaceError> {
+    serde_json::from_str(content).map_err(|e| WorkspaceError::Parse(format!("sidecar: {e}")))
 }
 
 /// Union every sidecar under `charter_root` into one `uuid -> ActionMeta` map.

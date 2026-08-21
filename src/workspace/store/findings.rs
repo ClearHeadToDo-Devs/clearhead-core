@@ -6,6 +6,7 @@
 //! Produced by `read_workspace_with_plans` (per-file read failures) and,
 //! eventually, `doctor` (cross-file coherence checks). See Decision 34.
 
+use crate::workspace::resource::MountId;
 use serde::Serialize;
 use std::path::PathBuf;
 
@@ -27,26 +28,50 @@ pub enum FindingSeverity {
 pub struct Finding {
     pub code: String,
     pub severity: FindingSeverity,
-    /// Path relative to the root the file was discovered under
-    /// (charter root for `.actions`/`.md`/sidecars, plans root for `.ics`).
+    /// Mount containing the resource. Workspace is omitted from serialized
+    /// output for compatibility; external plans remain unambiguous.
+    #[serde(default, skip_serializing_if = "MountId::is_workspace")]
+    pub mount: MountId,
+    /// Logical path relative to the relevant semantic root (charter root for
+    /// charter resources, plans root for calendar resources).
     pub path: PathBuf,
     pub message: String,
 }
 
 impl Finding {
     pub fn warning(code: &str, path: impl Into<PathBuf>, message: impl Into<String>) -> Self {
+        Self::warning_at(MountId::Workspace, code, path, message)
+    }
+
+    pub fn warning_at(
+        mount: MountId,
+        code: &str,
+        path: impl Into<PathBuf>,
+        message: impl Into<String>,
+    ) -> Self {
         Self {
             code: code.to_string(),
             severity: FindingSeverity::Warning,
+            mount,
             path: path.into(),
             message: message.into(),
         }
     }
 
     pub fn violation(code: &str, path: impl Into<PathBuf>, message: impl Into<String>) -> Self {
+        Self::violation_at(MountId::Workspace, code, path, message)
+    }
+
+    pub fn violation_at(
+        mount: MountId,
+        code: &str,
+        path: impl Into<PathBuf>,
+        message: impl Into<String>,
+    ) -> Self {
         Self {
             code: code.to_string(),
             severity: FindingSeverity::Violation,
+            mount,
             path: path.into(),
             message: message.into(),
         }
