@@ -325,7 +325,7 @@ fn try_close_occurrence(
         return Ok(true);
     }
 
-    clearhead_core::apply_occurrence_op(
+    clearhead_workspace_fs::apply_occurrence_op(
         &ctx.data_dir,
         ctx.plan_override().as_deref(),
         plan_id,
@@ -399,7 +399,7 @@ fn try_reschedule_occurrence(
         return Ok(true);
     }
 
-    clearhead_core::apply_occurrence_op(
+    clearhead_workspace_fs::apply_occurrence_op(
         &ctx.data_dir,
         ctx.plan_override().as_deref(),
         plan_id,

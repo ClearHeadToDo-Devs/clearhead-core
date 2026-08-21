@@ -5,15 +5,18 @@ use std::path::{Path, PathBuf};
 
 use uuid::Uuid;
 
+use clearhead_core::workspace::OccurrenceOp;
 use clearhead_core::workspace::calendar::ics::{
-    ICSPlan, VTodoAction, parse_ics, parse_vtodo_actions_content,
+    ICSPlan, VTodoAction, parse_ics, parse_vtodo_actions_content, render_occurrence_deviation,
 };
 use clearhead_core::workspace::calendar::plans::{
     infer_plan_charter_name_for_workspace, infer_plan_parent_for_workspace,
 };
 use clearhead_core::workspace::calendar::sync_store::{PlansSyncStore, decode_plans_sync_store};
+use clearhead_core::workspace::durability::{WorkspaceLock, recover_pending};
 use clearhead_core::workspace::resource::{
-    MountId, ReadPlan, ResourceLocation, ResourceRevision, WorkspaceMounts, WorkspacePath,
+    Effect, EffectBatch, ExpectedResource, MountId, MountInventory, ReadPlan, ResourceLocation,
+    ResourcePrecondition, ResourceRevision, WorkspaceMounts, WorkspacePath,
 };
 use clearhead_core::workspace::{VTodoResource, WorkspaceError};
 
@@ -32,11 +35,27 @@ pub struct CalendarResource {
     pub revision: ResourceRevision,
 }
 
+/// Immutable effective-vdir evidence retained for stale inventory validation.
+#[derive(Clone, Debug)]
+pub struct CalendarObservation {
+    pub mounts: NativeWorkspaceMounts,
+    pub inventory: MountInventory,
+    pub resources: Vec<CalendarResource>,
+}
+
 /// Discover and read all visible `.ics` resources from the effective plans mount.
 pub fn read_calendar_resources(
     workspace_root: &Path,
     external_plans: Option<&Path>,
 ) -> Result<Vec<CalendarResource>, WorkspaceError> {
+    Ok(observe_calendar_resources(workspace_root, external_plans)?.resources)
+}
+
+/// Observe the effective plans inventory and immutable resource bytes together.
+pub fn observe_calendar_resources(
+    workspace_root: &Path,
+    external_plans: Option<&Path>,
+) -> Result<CalendarObservation, WorkspaceError> {
     let mounts = NativeWorkspaceMounts::resolve(workspace_root, external_plans);
     let inventory = mounts.inventory()?;
     let effective_mount = if mounts.external_plans.is_some() {
@@ -109,7 +128,22 @@ pub fn read_calendar_resources(
         });
     }
     resources.sort_by(|left, right| left.relative_path.cmp(&right.relative_path));
-    Ok(resources)
+    Ok(CalendarObservation {
+        mounts,
+        inventory: effective_inventory.clone(),
+        resources,
+    })
+}
+
+fn effective_inventory(mounts: &NativeWorkspaceMounts) -> Result<MountInventory, WorkspaceError> {
+    let inventory = mounts.inventory()?;
+    if mounts.external_plans.is_some() {
+        inventory
+            .external_plans
+            .ok_or_else(|| WorkspaceError::Actions("external plans inventory is missing".into()))
+    } else {
+        Ok(inventory.workspace)
+    }
 }
 
 fn calendar_relative_path(mount: MountId, path: &WorkspacePath) -> Option<&str> {
@@ -125,6 +159,75 @@ fn calendar_relative_path(mount: MountId, path: &WorkspacePath) -> Option<&str> 
         return None;
     }
     Some(relative)
+}
+
+/// Apply one projected-occurrence operation through a stale-guarded native batch.
+pub fn apply_occurrence_op(
+    workspace_root: &Path,
+    external_plans: Option<&Path>,
+    plan_id: Uuid,
+    occurrence_key: &str,
+    op: &OccurrenceOp,
+) -> Result<(), WorkspaceError> {
+    let mounts = NativeWorkspaceMounts::resolve(workspace_root, external_plans);
+    let journal_dir = mounts.workspace.join("charters");
+    std::fs::create_dir_all(&journal_dir)?;
+    let _lock = WorkspaceLock::try_acquire(&mounts.workspace)?
+        .ok_or_else(|| WorkspaceError::WorkspaceLocked(mounts.workspace.clone()))?;
+    recover_pending(&journal_dir)?;
+
+    let observation = observe_calendar_resources(workspace_root, external_plans)?;
+    let mut matched: Option<(&CalendarResource, ICSPlan)> = None;
+    for resource in &observation.resources {
+        let source = std::str::from_utf8(&resource.bytes)
+            .map_err(|error| WorkspaceError::Parse(error.to_string()))?;
+        for plan in parse_ics(source, &resource.relative_path)? {
+            if plan.plan.id != plan_id {
+                continue;
+            }
+            if matched.is_some() {
+                return Err(WorkspaceError::Parse(format!(
+                    "recurring plan {plan_id} appears more than once in the configured plans vdir"
+                )));
+            }
+            matched = Some((resource, plan));
+        }
+    }
+    let Some((resource, plan)) = matched else {
+        return Err(WorkspaceError::Parse(format!(
+            "recurring plan {plan_id} not found in the configured plans vdir"
+        )));
+    };
+    let uid = plan.plan.external_id.as_deref().ok_or_else(|| {
+        WorkspaceError::Parse(format!("recurring plan {plan_id} has no UID to key on"))
+    })?;
+    let source = std::str::from_utf8(&resource.bytes)
+        .map_err(|error| WorkspaceError::Parse(error.to_string()))?;
+    let rendered = render_occurrence_deviation(source, uid, occurrence_key, op)?;
+    let preconditions = observation
+        .resources
+        .iter()
+        .map(|resource| ResourcePrecondition {
+            path: resource.location.clone(),
+            expected: ExpectedResource::Revision(resource.revision.clone()),
+        })
+        .collect();
+    let effects = EffectBatch::new(
+        vec![Effect::Write {
+            path: resource.location.clone(),
+            bytes: rendered.into_bytes(),
+        }],
+        preconditions,
+    )
+    .map_err(|error| WorkspaceError::Actions(error.to_string()))?;
+
+    if effective_inventory(&observation.mounts)? != observation.inventory {
+        return Err(WorkspaceError::Actions(
+            "configured plans vdir changed before occurrence delivery".into(),
+        ));
+    }
+    crate::validate_preconditions(&observation.mounts, effects.preconditions())?;
+    crate::execute_effects(&observation.mounts, &journal_dir, effects.effects())
 }
 
 /// Parse all standalone VTODO projections from the effective plans mount.
@@ -233,5 +336,31 @@ mod tests {
         let store = read_plans_sync_store(temp.path(), &plans).unwrap();
         assert_eq!(store.plans_root, plans);
         assert!(store.actions.is_empty());
+    }
+
+    #[test]
+    fn occurrence_write_targets_the_external_mount_without_flattening_it() {
+        let temp = tempfile::tempdir().unwrap();
+        let project = temp.path().join("project");
+        let external_root = temp.path().join("vdir");
+        let external_file = external_root.join("next/weekly.ics");
+        std::fs::create_dir_all(project.join(".clearhead/charters")).unwrap();
+        std::fs::create_dir_all(external_file.parent().unwrap()).unwrap();
+        std::fs::write(&external_file, PLAN).unwrap();
+        let plan_id =
+            clearhead_core::workspace::calendar::ics::plan_id_from_ics_uid("weekly@example.com");
+
+        apply_occurrence_op(
+            &project,
+            Some(&external_root),
+            plan_id,
+            "20260821T120000Z",
+            &OccurrenceOp::Skip,
+        )
+        .unwrap();
+
+        let rendered = std::fs::read_to_string(&external_file).unwrap();
+        assert!(rendered.contains("EXDATE:20260821T120000Z"));
+        assert!(!project.join(".clearhead/plans").exists());
     }
 }
