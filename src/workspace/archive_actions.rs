@@ -350,6 +350,7 @@ mod tests {
         assert_eq!(plan.active_actions.len(), 2);
     }
 
+    #[cfg(feature = "formatting")]
     fn resource(name: &str, actions: Vec<Action>) -> ActionResourceState {
         ActionResourceState {
             path: WorkspacePath::new(name).unwrap(),

@@ -322,6 +322,7 @@ mod tests {
         assert_eq!(planned[2].parent_id, Some(parent.id));
     }
 
+    #[cfg(feature = "formatting")]
     fn resource(name: &str, actions: Vec<Action>) -> ActionResourceState {
         ActionResourceState {
             path: WorkspacePath::new(name).unwrap(),

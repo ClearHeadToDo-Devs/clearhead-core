@@ -3,22 +3,16 @@
 //! [`WorkspaceConfig`] carries the settings that have semantic meaning — they
 //! affect the data model and graph behaviour, not presentation or UI.
 //!
-//! **Core owns the shared config: the fields *and* the loading.** The
-//! source-and-precedence stack lives in [`loader`]; every tool resolves
-//! configuration through it and deserializes its own struct, extending with
-//! tool-specific fields (`cli_*`, etc.) that never enter core.
+//! Core owns only the host-neutral semantic configuration values. Native source
+//! discovery and precedence live in `clearhead-workspace-fs`.
 
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 
-pub mod loader;
-
 /// Semantic workspace configuration shared across all ClearHead tools.
 ///
 /// Corresponds to the shared settings in `config.schema.json` in the
-/// specifications repository. Core's [`loader`] assembles the canonical file
-/// and environment source stack; each tool deserializes that stack into this
-/// type or into an extension containing tool-specific fields.
+/// specifications repository. Native hosts deserialize their source stack into this type or an extension containing tool-specific fields.
 ///
 /// Workspace *identity* (`workspace_id`, `workspace_name`, `created_at`) is
 /// deliberately **not** here — it is a per-workspace fact that must not layer
@@ -26,7 +20,7 @@ pub mod loader;
 /// [`WorkspaceManifest`](crate::workspace::manifest::WorkspaceManifest)
 /// (`.clearhead/workspace.json`) and is read from the workspace itself.
 ///
-/// Deserializable directly from [`loader::config_sources`]: `#[serde(default)]`
+/// Deserializable from the native adapter config sources: `#[serde(default)]`
 /// means any field absent from the config files falls back to [`Default`], so a
 /// tool that only needs the semantic fields (e.g. graphd) can read this struct
 /// straight from the shared source stack.

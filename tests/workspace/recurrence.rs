@@ -1,4 +1,6 @@
-use clearhead_core::{load_domain_model, load_workspace, render_occurrences};
+#[cfg(feature = "formatting")]
+use clearhead_core::load_domain_model;
+use clearhead_core::{load_workspace, render_occurrences};
 use std::fs;
 use std::path::Path;
 use tempfile::TempDir;

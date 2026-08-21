@@ -478,3 +478,10 @@ fn map_outcome(data_root: &Path, outcome: PreparedTransactionOutcome) -> Transac
         }
     }
 }
+
+pub mod archive_facts;
+pub mod config;
+pub mod detection;
+pub mod telemetry;
+pub use archive_facts::read_archived_action_facts;
+pub use detection::check_for_workspace;

@@ -9,11 +9,11 @@
 //! - provides module-level `emit` / `emit_event` wrappers for call sites that
 //!   haven't been migrated to an injected emitter
 
-pub use clearhead_core::telemetry::ndjson::{NdjsonEmitter, get_telemetry_dir};
 pub use clearhead_core::telemetry::{
     NoopEmitter, TelemetryEmitter, TelemetryEvent, TelemetryRecord, Tool, event_from_field_change,
     event_from_state_change, noop_emitter,
 };
+pub use clearhead_workspace_fs::telemetry::{NdjsonEmitter, get_telemetry_dir};
 
 /// Emit a pre-built `TelemetryRecord` via the CLI's NDJSON emitter.
 pub fn emit(record: TelemetryRecord) -> Result<(), String> {

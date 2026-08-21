@@ -90,15 +90,15 @@ fn main() -> Result<()> {
 /// Self-discover config from the shared core loader, resolving relative
 /// `additional_workspaces` against the project (or global) config base.
 fn discover_config() -> Result<WorkspaceConfig> {
-    let mut config: WorkspaceConfig = clearhead_core::config::loader::config_sources(None)
+    let mut config: WorkspaceConfig = clearhead_workspace_fs::config::config_sources(None)
         .build()
         .and_then(|c| c.try_deserialize())
         .map_err(|e| anyhow::anyhow!("Failed to load config: {e}"))?;
 
-    let base = clearhead_core::config::loader::find_project_data_dir()
+    let base = clearhead_workspace_fs::config::find_project_data_dir()
         .map(|root| root.join(".clearhead"))
-        .unwrap_or_else(clearhead_core::config::loader::get_config_dir);
-    config.additional_workspaces = clearhead_core::config::loader::resolve_workspace_paths(
+        .unwrap_or_else(clearhead_workspace_fs::config::get_config_dir);
+    config.additional_workspaces = clearhead_workspace_fs::config::resolve_workspace_paths(
         &config.additional_workspaces,
         &base,
     )
@@ -113,7 +113,7 @@ fn run_query_command(workspace: &Path, args: QueryArgs) -> Result<()> {
     let cx = query::QueryContext {
         workspace: workspace.to_path_buf(),
         config: discover_config()?,
-        config_dir: clearhead_core::config::loader::get_config_dir(),
+        config_dir: clearhead_workspace_fs::config::get_config_dir(),
     };
     match args.kind {
         QueryKind::Index {

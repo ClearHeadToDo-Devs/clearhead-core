@@ -14,7 +14,6 @@ pub mod archive_charter;
 pub mod archive_facts;
 pub mod calendar;
 pub mod charter;
-pub mod detection;
 pub mod durability;
 pub mod manifest;
 pub mod mutate_actions;
@@ -43,7 +42,7 @@ pub use archive_charter::{
     ArchiveCharterError, ArchiveCharterOptions, ArchiveCharterResult, archive_charter,
     archive_terminal_charters, find_charter as find_markdown_charter,
 };
-pub use archive_facts::{ArchivedActionFact, read_archived_action_facts};
+pub use archive_facts::ArchivedActionFact;
 pub use calendar::ics::{
     ICSPlan, OccurrenceOp, OccurrenceOverride, VTodoAction, action_id_from_vtodo_uid,
     action_to_vtodo, actions_to_icalendar, canonical_occurrence_key, occurrence_action_id,
@@ -85,7 +84,6 @@ pub use transaction::{
     normalize_request, prepare_transaction,
 };
 
-pub use detection::check_for_workspace;
 pub use store::{
     Diagnosis, Finding, FindingSeverity, ManifestSourceType, Workspace, WorkspaceError,
     WorkspaceManifestEntry, WorkspaceRead, charter_collection_from_anchor, charter_root,

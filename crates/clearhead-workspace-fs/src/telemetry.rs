@@ -14,7 +14,7 @@ use std::path::PathBuf;
 
 use tracing::info;
 
-use super::{TelemetryEmitter, TelemetryRecord};
+use clearhead_core::telemetry::{TelemetryEmitter, TelemetryRecord};
 
 /// XDG state directory for ClearHead telemetry files.
 pub fn get_telemetry_dir() -> PathBuf {

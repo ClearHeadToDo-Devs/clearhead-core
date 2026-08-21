@@ -12,7 +12,7 @@
 /// Examples:
 ///
 /// ```no_run
-/// use clearhead_core::workspace::check_for_workspace;
+/// use clearhead_workspace_fs::check_for_workspace;
 /// let workspace_path = check_for_workspace(std::path::Path::new("/path/to/your/project/src"));
 /// assert_eq!(workspace_path, Some(std::path::PathBuf::from("/path/to/your/project")));
 /// ```

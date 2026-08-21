@@ -377,6 +377,7 @@ dependencies = [
  "assert_cmd",
  "chrono",
  "clap",
+ "clearhead-workspace-fs",
  "clearhead_core",
  "comfy-table",
  "config",
@@ -397,6 +398,7 @@ name = "clearhead-lsp"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "clearhead-workspace-fs",
  "clearhead_core",
  "dashmap",
  "serde_json",
@@ -417,8 +419,12 @@ dependencies = [
  "blake3",
  "chrono",
  "clearhead_core",
+ "config",
+ "dirs",
  "serde_json",
+ "shellexpand",
  "tempfile",
+ "tracing",
  "uuid",
 ]
 
@@ -454,8 +460,6 @@ name = "clearhead_core"
 version = "0.2.0"
 dependencies = [
  "chrono",
- "config",
- "dirs",
  "fs2",
  "icalendar",
  "jsonschema",
@@ -468,12 +472,10 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_yaml_ng",
- "shellexpand",
  "tempfile",
  "thiserror",
  "topiary-core",
  "topiary-tree-sitter-facade",
- "tracing",
  "tree-sitter",
  "tree-sitter-actions",
  "uuid",

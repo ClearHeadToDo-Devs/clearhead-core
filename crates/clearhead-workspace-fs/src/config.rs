@@ -1,12 +1,13 @@
 //! Configuration loading: the shared source-and-precedence stack.
 //!
 //! This is the drift-prone part every tool needs *identically* — where config
-//! files live and in what order they override each other. Core owns it so the
-//! CLI, LSP, and graphd all resolve configuration the same way.
+//! files live and in what order they override each other. The native workspace
+//! adapter owns it so CLI, LSP, and graphd resolve host configuration identically
+//! without pulling filesystem or user-directory capabilities into Core.
 //!
 //! Each tool deserializes its **own** struct from these sources and extends with
 //! tool-specific fields (the CLI adds `cli_*`, etc.); core defines the shared
-//! semantic fields in [`WorkspaceConfig`](super::WorkspaceConfig). Field
+//! semantic fields in [`clearhead_core::WorkspaceConfig`]. Field
 //! defaults come from each struct's serde `default` attributes, so this module
 //! only assembles the source layering.
 

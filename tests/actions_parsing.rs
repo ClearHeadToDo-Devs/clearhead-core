@@ -201,6 +201,7 @@ fn valid_link_may_span_whitespace_and_remain_trusted() {
     );
 }
 
+#[cfg(feature = "formatting")]
 #[test]
 fn escaped_brackets_are_trusted_description_prose() {
     let source = concat!(

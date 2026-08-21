@@ -9,10 +9,10 @@
 //!   inject an emitter via context
 
 // Re-export core telemetry types used by protocol handlers.
-pub use clearhead_core::telemetry::ndjson::NdjsonEmitter;
 pub use clearhead_core::telemetry::{
     TelemetryEmitter, TelemetryEvent, Tool, event_from_field_change, event_from_state_change,
 };
+pub use clearhead_workspace_fs::telemetry::NdjsonEmitter;
 
 /// Build and emit a record from parts via the LSP's NDJSON emitter.
 pub fn emit_event(

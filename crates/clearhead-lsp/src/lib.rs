@@ -61,7 +61,7 @@ impl Backend {
             // File isn't under any registered workspace — fall through to project detection
         }
 
-        clearhead_core::workspace::check_for_workspace(&file_path)
+        clearhead_workspace_fs::check_for_workspace(&file_path)
     }
 
     async fn update_document(&self, uri: Uri, text: String, is_fresh_load: bool) {

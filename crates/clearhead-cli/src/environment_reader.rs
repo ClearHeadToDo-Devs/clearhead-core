@@ -7,7 +7,7 @@ use std::path::PathBuf;
 // every tool (CLI, LSP, graphd) resolves configuration identically. Re-exported
 // here so existing `clearhead_cli::environment_reader::*` call sites are
 // unchanged.
-pub use clearhead_core::config::loader::{
+pub use clearhead_workspace_fs::config::{
     ensure_dir_exists, find_project_data_dir, get_config_dir, get_data_dir, resolve_config_path,
     resolve_file_path, resolve_workspace_paths,
 };
@@ -107,10 +107,10 @@ fn default_expansion_total_instances() -> u32 {
 /// which extends the shared semantic fields with `cli_*` settings.
 ///
 /// The source/precedence stack lives in
-/// [`clearhead_core::config::loader::config_sources`]; per-field defaults come
+/// [`clearhead_workspace_fs::config::config_sources`]; per-field defaults come
 /// from this struct's serde `default` attributes.
 pub fn load_config(custom_config_path: Option<PathBuf>) -> Result<Config, ConfigError> {
-    clearhead_core::config::loader::config_sources(custom_config_path)
+    clearhead_workspace_fs::config::config_sources(custom_config_path)
         .build()?
         .try_deserialize()
 }
