@@ -3,9 +3,10 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+use chrono::Local;
 use uuid::Uuid;
 
-use clearhead_core::Plan;
+use clearhead_core::domain::DomainModel;
 use clearhead_core::workspace::OccurrenceOp;
 use clearhead_core::workspace::calendar::ics::{
     ICSPlan, VTodoAction, parse_ics, parse_vtodo_actions_content, render_occurrence_deviation,
@@ -15,7 +16,9 @@ use clearhead_core::workspace::calendar::plans::{
     infer_plan_charter_name_for_workspace, infer_plan_parent_for_workspace,
 };
 use clearhead_core::workspace::calendar::reconcile::{
-    PlanResourceState, prepare_master_rollforwards,
+    AppliedSync, CalendarSyncPreparationInput, PlanResourceState, SyncActionResourceState,
+    SyncConflictResolution, SyncMirrorResourceState, SyncPlanTemplate, SyncReport, plan_sync,
+    prepare_master_rollforwards, prepare_sync, sync_import_actions_file,
 };
 use clearhead_core::workspace::calendar::sync_store::{PlansSyncStore, decode_plans_sync_store};
 use clearhead_core::workspace::durability::{WorkspaceLock, recover_pending};
@@ -24,6 +27,7 @@ use clearhead_core::workspace::resource::{
     ResourcePrecondition, ResourceRevision, WorkspaceMounts, WorkspacePath,
 };
 use clearhead_core::workspace::{VTodoResource, WorkspaceError};
+use clearhead_core::{Plan, action_mirror_path};
 
 use crate::mounts::NativeWorkspaceMounts;
 
@@ -46,6 +50,13 @@ pub struct CalendarObservation {
     pub mounts: NativeWorkspaceMounts,
     pub inventory: MountInventory,
     pub resources: Vec<CalendarResource>,
+}
+
+/// Report and delivery tally computed from the same locked sync evidence.
+#[derive(Debug)]
+pub struct CalendarSyncResult {
+    pub report: SyncReport,
+    pub applied: AppliedSync,
 }
 
 /// Discover and read all visible `.ics` resources from the effective plans mount.
@@ -138,6 +149,281 @@ pub fn observe_calendar_resources(
         inventory: effective_inventory.clone(),
         resources,
     })
+}
+
+/// Recompute and deliver one calendar sync from fresh evidence under the native lock.
+pub fn sync_calendar(
+    workspace_root: &Path,
+    external_plans: Option<&Path>,
+    conflict: Option<SyncConflictResolution>,
+) -> Result<CalendarSyncResult, WorkspaceError> {
+    let mounts = NativeWorkspaceMounts::resolve(workspace_root, external_plans);
+    let journal_dir = mounts.workspace.join("charters");
+    std::fs::create_dir_all(&journal_dir)?;
+    let _lock = WorkspaceLock::try_acquire(&mounts.workspace)?
+        .ok_or_else(|| WorkspaceError::WorkspaceLocked(mounts.workspace.clone()))?;
+    recover_pending(&journal_dir)?;
+
+    let inventory = mounts.inventory()?;
+    let workspace = crate::mounts::load_workspace_model(workspace_root, external_plans)?;
+    let observation = observe_calendar_resources(workspace_root, external_plans)?;
+    let observed_effective = if mounts.external_plans.is_some() {
+        inventory.external_plans.as_ref()
+    } else {
+        Some(&inventory.workspace)
+    }
+    .ok_or_else(|| WorkspaceError::Actions("external plans inventory is missing".into()))?;
+    if &observation.inventory != observed_effective {
+        return Err(WorkspaceError::Actions(
+            "plans vdir changed while calendar sync was being read".into(),
+        ));
+    }
+
+    let plans_root = mounts
+        .external_plans
+        .as_deref()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| mounts.workspace.join("plans"));
+    let store = read_plans_sync_store(workspace_root, &plans_root)?;
+    let (calendar_actions, mut mirror_resources) = sync_mirror_resources(&observation.resources)?;
+    let model = DomainModel {
+        objectives: Vec::new(),
+        charters: workspace.charters.iter().cloned().map(Into::into).collect(),
+    };
+    let report = plan_sync(&model, &store, &calendar_actions)?.resolve_conflicts(conflict);
+
+    for entry in &report.entries {
+        if mirror_resources
+            .iter()
+            .any(|resource| resource.action_id == entry.action_id)
+        {
+            continue;
+        }
+        let (charter_idx, action_idx) = workspace
+            .charters
+            .iter()
+            .enumerate()
+            .find_map(|(charter_idx, charter)| {
+                charter
+                    .actions
+                    .iter()
+                    .position(|action| action.action.id == entry.action_id)
+                    .map(|action_idx| (charter_idx, action_idx))
+            })
+            .ok_or_else(|| {
+                WorkspaceError::Parse(format!(
+                    "sync action not found in workspace: {}",
+                    entry.action_id
+                ))
+            })?;
+        let target = action_mirror_path(
+            &plans_root,
+            &workspace.charters[charter_idx],
+            &workspace.charters[charter_idx].actions[action_idx].action,
+        );
+        let (target_mounts, location, _) =
+            mutation_target(workspace_root, external_plans, &target)?;
+        if target_mounts != mounts {
+            return Err(WorkspaceError::Actions(format!(
+                "calendar mirror target escaped the configured plans mount: {}",
+                target.display()
+            )));
+        }
+        mirror_resources.push(SyncMirrorResourceState {
+            action_id: entry.action_id,
+            location,
+            expected: ExpectedResource::Missing,
+            source: None,
+        });
+    }
+
+    let action_resources = sync_action_resources(&workspace, &report, &mounts)?;
+    let templates = sync_plan_templates(&workspace, &mounts.workspace)?;
+    let observed_resources = sync_read_preconditions(&mounts, &inventory)?;
+    let store_path = WorkspacePath::new("sync/plans.json")
+        .map_err(|error| WorkspaceError::Actions(error.to_string()))?;
+    let store_location = ResourceLocation::workspace(store_path);
+    let store_expected = expected_resource(&mounts, &store_location)?;
+    let prepared = prepare_sync(
+        CalendarSyncPreparationInput {
+            workspace,
+            store,
+            action_resources,
+            mirror_resources,
+            templates,
+            observed_resources,
+            now: Local::now(),
+            store_location,
+            store_expected,
+        },
+        &report,
+    )?;
+
+    if mounts.inventory()? != inventory {
+        return Err(WorkspaceError::Actions(
+            "workspace or plans vdir changed before calendar sync delivery".into(),
+        ));
+    }
+    let applied = super::deliver(&mounts, &journal_dir, prepared)?;
+    Ok(CalendarSyncResult { report, applied })
+}
+
+fn sync_mirror_resources(
+    resources: &[CalendarResource],
+) -> Result<(HashMap<Uuid, VTodoResource>, Vec<SyncMirrorResourceState>), WorkspaceError> {
+    let mut actions = HashMap::new();
+    let mut mirrors = Vec::new();
+    for resource in resources {
+        let plans_dir = resource
+            .relative_path
+            .parent()
+            .map(Path::to_path_buf)
+            .ok_or_else(|| WorkspaceError::InvalidPath(resource.relative_path.clone()))?;
+        let source = std::str::from_utf8(&resource.bytes)
+            .map_err(|error| WorkspaceError::Parse(error.to_string()))?;
+        for action in parse_vtodo_actions_content(source)? {
+            let projected = VTodoResource {
+                action: action.clone(),
+                path: resource.path.clone(),
+                plans_dir: plans_dir.clone(),
+                charter_name: resource.charter_name.clone(),
+            };
+            if actions.insert(action.id, projected).is_some() {
+                return Err(WorkspaceError::Parse(format!(
+                    "duplicate standalone VTODO Action identity {} in configured plans vdir",
+                    action.id
+                )));
+            }
+            mirrors.push(SyncMirrorResourceState {
+                action_id: action.id,
+                location: resource.location.clone(),
+                expected: ExpectedResource::Revision(resource.revision.clone()),
+                source: Some(source.to_owned()),
+            });
+        }
+    }
+    Ok((actions, mirrors))
+}
+
+fn sync_action_resources(
+    workspace: &clearhead_core::workspace::Workspace,
+    report: &SyncReport,
+    mounts: &NativeWorkspaceMounts,
+) -> Result<Vec<SyncActionResourceState>, WorkspaceError> {
+    let mut actions_files = workspace
+        .charters
+        .iter()
+        .filter_map(|charter| charter.actions_file.clone())
+        .collect::<Vec<_>>();
+    for import in &report.imports {
+        let charter = workspace
+            .charters
+            .iter()
+            .find(|charter| charter.plans_dir == import.plans_dir)
+            .ok_or_else(|| {
+                WorkspaceError::Parse(format!(
+                    "calendar collection '{}' has no owning charter; run `clearhead doctor`",
+                    import.plans_dir.display()
+                ))
+            })?;
+        actions_files.push(sync_import_actions_file(charter, import));
+    }
+    actions_files.sort();
+    actions_files.dedup();
+
+    let mut resources = Vec::new();
+    for actions_file in actions_files {
+        let path = logical_path(&Path::new("charters").join(&actions_file))?;
+        let location = ResourceLocation::workspace(path);
+        let expected = expected_resource(mounts, &location)?;
+        resources.push(SyncActionResourceState {
+            actions_file,
+            location,
+            expected,
+        });
+    }
+    Ok(resources)
+}
+
+fn sync_read_preconditions(
+    mounts: &NativeWorkspaceMounts,
+    inventory: &clearhead_core::workspace::resource::WorkspaceMounts<MountInventory>,
+) -> Result<Vec<ResourcePrecondition>, WorkspaceError> {
+    let mut preconditions = Vec::new();
+    for path in inventory.workspace.files.paths() {
+        let location = ResourceLocation::workspace(path.clone());
+        let expected = expected_resource(mounts, &location)?;
+        if expected == ExpectedResource::Missing {
+            return Err(WorkspaceError::Actions(format!(
+                "workspace resource disappeared during calendar sync: {location}"
+            )));
+        }
+        preconditions.push(ResourcePrecondition {
+            path: location,
+            expected,
+        });
+    }
+    if let Some(external) = &inventory.external_plans {
+        for path in external.files.paths() {
+            let location = ResourceLocation::external_plans(path.clone());
+            let expected = expected_resource(mounts, &location)?;
+            if expected == ExpectedResource::Missing {
+                return Err(WorkspaceError::Actions(format!(
+                    "calendar resource disappeared during sync: {location}"
+                )));
+            }
+            preconditions.push(ResourcePrecondition {
+                path: location,
+                expected,
+            });
+        }
+    }
+    Ok(preconditions)
+}
+
+fn expected_resource(
+    mounts: &NativeWorkspaceMounts,
+    location: &ResourceLocation,
+) -> Result<ExpectedResource, WorkspaceError> {
+    match std::fs::read(mounts.physical_path(location)?) {
+        Ok(bytes) => Ok(ExpectedResource::Revision(super::revision(&bytes))),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(ExpectedResource::Missing),
+        Err(error) => Err(error.into()),
+    }
+}
+
+fn sync_plan_templates(
+    workspace: &clearhead_core::workspace::Workspace,
+    data_root: &Path,
+) -> Result<Vec<SyncPlanTemplate>, WorkspaceError> {
+    let mut templates = Vec::new();
+    for charter in &workspace.charters {
+        let Some(actions_file) = &charter.actions_file else {
+            continue;
+        };
+        let actions_path = data_root.join("charters").join(actions_file);
+        let charter_dir = actions_path
+            .parent()
+            .unwrap_or_else(|| Path::new(data_root));
+        for plan in &charter.plans {
+            let Some(template_name) = plan.plan.template_name.as_deref() else {
+                continue;
+            };
+            let Some(template_path) =
+                crate::templates::resolve_template(charter_dir, data_root, template_name)?
+            else {
+                continue;
+            };
+            let steps = crate::read_actions(&template_path)?;
+            let generated_ids = steps.iter().map(|_| Uuid::now_v7()).collect();
+            templates.push(SyncPlanTemplate {
+                plan_id: plan.plan.id,
+                steps,
+                generated_ids,
+            });
+        }
+    }
+    Ok(templates)
 }
 
 fn effective_inventory(mounts: &NativeWorkspaceMounts) -> Result<MountInventory, WorkspaceError> {
@@ -555,6 +841,73 @@ mod tests {
         let rendered = std::fs::read_to_string(&external_file).unwrap();
         assert!(rendered.contains("EXDATE:20260821T120000Z"));
         assert!(!project.join(".clearhead/plans").exists());
+    }
+
+    #[test]
+    fn sync_commits_action_mirror_and_store_across_distinct_mounts() {
+        let temp = tempfile::tempdir().unwrap();
+        let project = temp.path().join("project");
+        let external_root = temp.path().join("vdir");
+        let actions = project.join(".clearhead/charters/inbox.actions");
+        std::fs::create_dir_all(actions.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(external_root.join("inbox")).unwrap();
+        let action_id = Uuid::parse_str("019baaec-00b6-7991-be34-94b68212619a").unwrap();
+        std::fs::write(
+            &actions,
+            format!("[ ] Sync me @2026-04-28T10:00 #{action_id}\n"),
+        )
+        .unwrap();
+
+        let result = sync_calendar(&project, Some(&external_root), None).unwrap();
+
+        assert_eq!(result.applied.take_action, 1);
+        let mirror = external_root.join("inbox").join(format!("{action_id}.ics"));
+        assert!(
+            std::fs::read_to_string(mirror)
+                .unwrap()
+                .contains("SUMMARY:Sync me")
+        );
+        assert!(plans_sync_store_path(&project).exists());
+        assert!(!project.join(".clearhead/plans").exists());
+    }
+
+    #[test]
+    fn sync_patches_multiple_owned_vtodos_in_one_resource() {
+        let temp = tempfile::tempdir().unwrap();
+        let project = temp.path().join("project");
+        let external_root = temp.path().join("vdir");
+        let actions = project.join(".clearhead/charters/inbox.actions");
+        let calendar = external_root.join("inbox/shared.ics");
+        std::fs::create_dir_all(actions.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(calendar.parent().unwrap()).unwrap();
+        let first = "019baaec-00b6-7991-be34-94b68212619a";
+        let second = "019baaec-00b6-7991-be34-94b68212619b";
+        std::fs::write(
+            &actions,
+            format!("[ ] First #{first}\n[ ] Second #{second}\n"),
+        )
+        .unwrap();
+        std::fs::write(
+            &calendar,
+            format!(
+                "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VTODO\r\nUID:{first}\r\nSUMMARY:First\r\nSTATUS:NEEDS-ACTION\r\nEND:VTODO\r\nBEGIN:VTODO\r\nUID:{second}\r\nSUMMARY:Second\r\nSTATUS:NEEDS-ACTION\r\nEND:VTODO\r\nEND:VCALENDAR\r\n"
+            ),
+        )
+        .unwrap();
+        sync_calendar(&project, Some(&external_root), None).unwrap();
+
+        std::fs::write(
+            &actions,
+            format!("[ ] First changed #{first}\n[ ] Second changed #{second}\n"),
+        )
+        .unwrap();
+        let result = sync_calendar(&project, Some(&external_root), None).unwrap();
+
+        assert_eq!(result.applied.take_action, 2);
+        let rendered = std::fs::read_to_string(calendar).unwrap();
+        assert!(rendered.contains("SUMMARY:First changed"));
+        assert!(rendered.contains("SUMMARY:Second changed"));
+        assert_eq!(rendered.matches("BEGIN:VCALENDAR").count(), 1);
     }
 
     #[test]

@@ -97,35 +97,42 @@ pub fn sync_calendar(
     conflict: Option<crate::argparser::ConflictResolutionArg>,
 ) -> anyhow::Result<()> {
     ctx.require_source_integrity("sync calendar")?;
-    let plans_root = ctx.plans_root();
-    // Sync reconciles owned, standalone artifacts only. Occurrences never sync as
-    // standalone VTODOs — they ride their master's RRULE + deviations. The loaded
-    // model is materialized-only (occurrences are never projected into it), and
-    // `plan_sync` additionally excludes the materialized single-token occurrence
-    // and its grafted template subtree from standalone reconciliation.
-    let model = ctx.load_model()?;
-    let sync_store = clearhead_workspace_fs::read_plans_sync_store(&ctx.data_dir, &plans_root)?;
-    let calendar_actions =
-        clearhead_workspace_fs::read_vtodo_actions(&ctx.data_dir, ctx.plan_override().as_deref())?;
-    let report = clearhead_core::plan_sync(&model, &sync_store, &calendar_actions)?;
-    let report = resolve_conflicts(report, conflict);
 
-    // Ingest foreign roll-forwards on recurring masters (a camp-B client advancing
-    // a master's DTSTART to mean "completed"). Independent of the standalone
-    // reconcile above, and a real write — so it runs on non-dry-run syncs only.
-    let rolled_forward = if dry_run {
-        0
-    } else {
-        clearhead_workspace_fs::sync_master_rollforwards(
+    if dry_run {
+        let plans_root = ctx.plans_root();
+        let model = ctx.load_model()?;
+        let sync_store = clearhead_workspace_fs::read_plans_sync_store(&ctx.data_dir, &plans_root)?;
+        let calendar_actions = clearhead_workspace_fs::read_vtodo_actions(
             &ctx.data_dir,
             ctx.plan_override().as_deref(),
-        )?
-    };
+        )?;
+        let report = clearhead_core::plan_sync(&model, &sync_store, &calendar_actions)?
+            .resolve_conflicts(conflict_resolution(conflict));
+        render_sync_report(&report);
+        let tally = report.tally();
+        info!(?tally, "Calendar sync dry run complete");
+        println!(
+            "Dry run complete. {} push, {} pull, {} converged, {} conflict.",
+            tally.take_action, tally.take_calendar, tally.converged, tally.conflict
+        );
+        return Ok(());
+    }
 
-    if report.is_empty() {
-        if !dry_run {
-            clearhead_core::apply_sync(&ctx.data_dir, ctx.plan_override().as_deref(), &report)?;
-        }
+    // Ingest foreign recurring-master roll-forwards first. The native sync then
+    // recomputes its own report under the mutation lock from the resulting fresh
+    // workspace, vdir, and merge-base evidence.
+    let rolled_forward = clearhead_workspace_fs::sync_master_rollforwards(
+        &ctx.data_dir,
+        ctx.plan_override().as_deref(),
+    )?;
+    let result = clearhead_workspace_fs::sync_calendar(
+        &ctx.data_dir,
+        ctx.plan_override().as_deref(),
+        conflict_resolution(conflict),
+    )?;
+    render_sync_report(&result.report);
+
+    if result.report.is_empty() {
         if rolled_forward > 0 {
             println!(
                 "Ingested {rolled_forward} occurrence completion(s) from a calendar roll-forward."
@@ -136,32 +143,7 @@ pub fn sync_calendar(
         return Ok(());
     }
 
-    for warning in &report.warnings {
-        eprintln!("{}", warning);
-    }
-
-    for import in &report.imports {
-        println!(
-            "pull calendar → new action: {} #{} ({})",
-            import.action.title, import.action.id, import.charter_name
-        );
-    }
-    for entry in &report.entries {
-        println!("{}", render_sync_entry(entry));
-    }
-
-    let tally = report.tally();
-    if dry_run {
-        info!(?tally, "Calendar sync dry run complete");
-        println!(
-            "Dry run complete. {} push, {} pull, {} converged, {} conflict.",
-            tally.take_action, tally.take_calendar, tally.converged, tally.conflict
-        );
-        return Ok(());
-    }
-
-    let applied =
-        clearhead_core::apply_sync(&ctx.data_dir, ctx.plan_override().as_deref(), &report)?;
+    let applied = result.applied;
     info!(?applied, rolled_forward, "Calendar sync complete");
     println!(
         "Sync complete. {} push, {} pull, {} converged, {} conflict.",
@@ -175,37 +157,32 @@ pub fn sync_calendar(
     Ok(())
 }
 
-fn resolve_conflicts(
-    mut report: clearhead_core::SyncReport,
-    choice: Option<crate::argparser::ConflictResolutionArg>,
-) -> clearhead_core::SyncReport {
-    let Some(choice) = choice else {
-        return report;
-    };
-
-    for entry in &mut report.entries {
-        resolve_one(&mut entry.scheduled_at, choice);
-        resolve_one(&mut entry.due_date, choice);
-        resolve_one(&mut entry.state, choice);
-        resolve_one(&mut entry.title, choice);
-        resolve_one(&mut entry.description, choice);
-        resolve_one(&mut entry.priority, choice);
-        resolve_one(&mut entry.contexts, choice);
+fn render_sync_report(report: &clearhead_core::SyncReport) {
+    for warning in &report.warnings {
+        eprintln!("{}", warning);
     }
-
-    report
+    for import in &report.imports {
+        println!(
+            "pull calendar → new action: {} #{} ({})",
+            import.action.title, import.action.id, import.charter_name
+        );
+    }
+    for entry in &report.entries {
+        println!("{}", render_sync_entry(entry));
+    }
 }
 
-fn resolve_one<T: Clone>(
-    outcome: &mut Reconcile<T>,
-    choice: crate::argparser::ConflictResolutionArg,
-) {
-    if let Reconcile::Conflict { action, calendar } = outcome.clone() {
-        *outcome = match choice {
-            crate::argparser::ConflictResolutionArg::Action => Reconcile::TakeAction(action),
-            crate::argparser::ConflictResolutionArg::Calendar => Reconcile::TakeCalendar(calendar),
-        };
-    }
+fn conflict_resolution(
+    choice: Option<crate::argparser::ConflictResolutionArg>,
+) -> Option<clearhead_core::SyncConflictResolution> {
+    choice.map(|choice| match choice {
+        crate::argparser::ConflictResolutionArg::Action => {
+            clearhead_core::SyncConflictResolution::PreferAction
+        }
+        crate::argparser::ConflictResolutionArg::Calendar => {
+            clearhead_core::SyncConflictResolution::PreferCalendar
+        }
+    })
 }
 
 fn render_sync_entry(entry: &SyncEntry) -> String {

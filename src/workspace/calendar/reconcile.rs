@@ -7,7 +7,7 @@
 
 use chrono::{DateTime, Local, Utc};
 use icalendar::{Calendar, CalendarComponent, Component, EventLike, Todo, TodoStatus};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
@@ -16,7 +16,7 @@ use super::ics::{
     VTodoAction, action_to_vtodo, canonical_occurrence_key, parse_ics, parse_ics_file,
     parse_vtodo_actions, render_master_rollforward, write_master_rollforward,
 };
-use super::plans::{action_mirror_path, collect_plan_files_in};
+use super::plans::collect_plan_files_in;
 use super::sync_store::{
     CONTEXTS_FIELD, DESCRIPTION_FIELD, DUE_DATE_FIELD, MASTER_DTSTART_FIELD, PRIORITY_FIELD,
     PlansSyncStore, SCHEDULED_AT_FIELD, STATE_FIELD, TITLE_FIELD, UID_FIELD, plans_sync_store_path,
@@ -142,6 +142,16 @@ pub enum OutcomeKind {
     Conflict,
 }
 
+fn resolve_one<T: Clone>(outcome: &mut Reconcile<T>, choice: SyncConflictResolution) {
+    let Reconcile::Conflict { action, calendar } = outcome else {
+        return;
+    };
+    *outcome = match choice {
+        SyncConflictResolution::PreferAction => Reconcile::TakeAction(action.clone()),
+        SyncConflictResolution::PreferCalendar => Reconcile::TakeCalendar(calendar.clone()),
+    };
+}
+
 fn kind<T>(outcome: &Reconcile<T>) -> OutcomeKind {
     match outcome {
         Reconcile::NoOp => OutcomeKind::NoOp,
@@ -185,9 +195,32 @@ pub struct SyncReport {
     pub warnings: Vec<String>,
 }
 
+/// Optional policy for resolving every remaining field conflict in one sync run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SyncConflictResolution {
+    PreferAction,
+    PreferCalendar,
+}
+
 impl SyncReport {
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty() && self.imports.is_empty() && self.warnings.is_empty()
+    }
+
+    pub fn resolve_conflicts(mut self, choice: Option<SyncConflictResolution>) -> Self {
+        let Some(choice) = choice else {
+            return self;
+        };
+        for entry in &mut self.entries {
+            resolve_one(&mut entry.scheduled_at, choice);
+            resolve_one(&mut entry.due_date, choice);
+            resolve_one(&mut entry.state, choice);
+            resolve_one(&mut entry.title, choice);
+            resolve_one(&mut entry.description, choice);
+            resolve_one(&mut entry.priority, choice);
+            resolve_one(&mut entry.contexts, choice);
+        }
+        self
     }
 
     pub fn tally(&self) -> SyncTally {
@@ -418,28 +451,27 @@ pub struct AppliedSync {
     pub conflict: usize,
 }
 
-/// Apply a report under the workspace lock. Action files and merge bases share
-/// one pending batch. VTODO files are updated first, preserving properties and
-/// child components not owned by ClearHead.
-pub fn apply_sync(
-    root: &Path,
-    plan_override: Option<&Path>,
-    report: &SyncReport,
-) -> Result<AppliedSync, WorkspaceError> {
-    require_actions_formatting().map_err(WorkspaceError::Actions)?;
-    let layout = resolve_workspace_layout(root);
-    std::fs::create_dir_all(&layout.charter_root)?;
-    let _lock = WorkspaceLock::try_acquire(&layout.data_root)?
-        .ok_or_else(|| WorkspaceError::WorkspaceLocked(layout.data_root.clone()))?;
-    recover_pending(&layout.charter_root)?;
+#[derive(Debug, Clone)]
+struct PendingActionMirror {
+    action_id: Uuid,
+    uid: String,
+    action: Action,
+    fields: Vec<SyncField>,
+}
 
-    let mut workspace = Workspace::load_with_plans(root, plan_override)?;
-    let plans_root = plan_override.unwrap_or(&layout.plans_root);
-    let mut store = read_plans_sync_store(root, plans_root)?;
-    // Preserve the actual vdir resource path and UID chosen by external tools;
-    // only newly emitted resources use ClearHead's canonical UUID identity.
-    let resources = read_vtodo_actions(plans_root)?;
+#[derive(Debug)]
+struct AppliedReport {
+    dirty_actions: HashSet<PathBuf>,
+    mirrors: Vec<PendingActionMirror>,
+}
+
+fn apply_report(
+    workspace: &mut Workspace,
+    store: &mut PlansSyncStore,
+    report: &SyncReport,
+) -> Result<AppliedReport, WorkspaceError> {
     let mut dirty_actions = HashSet::new();
+    let mut mirrors = Vec::new();
     let mut applied = AppliedSync::default();
 
     for import in &report.imports {
@@ -450,8 +482,8 @@ pub fn apply_sync(
             action,
             source_metadata: None,
         });
-        dirty_actions.insert(layout.charter_root.join(actions_relative));
-        stamp_projection(&mut store, &import.action)?;
+        dirty_actions.insert(actions_relative);
+        stamp_projection(store, &import.action)?;
         applied.take_calendar += 1;
     }
 
@@ -484,7 +516,7 @@ pub fn apply_sync(
                 SCHEDULED_AT_FIELD,
                 SyncField::ScheduledAt,
                 &mut push_fields,
-                &mut store,
+                store,
                 &mut applied,
             )?;
             apply_time_outcome(
@@ -494,7 +526,7 @@ pub fn apply_sync(
                 DUE_DATE_FIELD,
                 SyncField::DueDate,
                 &mut push_fields,
-                &mut store,
+                store,
                 &mut applied,
             )?;
             apply_state_outcome(
@@ -503,7 +535,7 @@ pub fn apply_sync(
                 action,
                 entry.action_id,
                 &mut push_fields,
-                &mut store,
+                store,
                 &mut applied,
             )?;
             apply_value_outcome(
@@ -513,7 +545,7 @@ pub fn apply_sync(
                 TITLE_FIELD,
                 SyncField::Title,
                 &mut push_fields,
-                &mut store,
+                store,
                 &mut applied,
             )?;
             apply_value_outcome(
@@ -523,7 +555,7 @@ pub fn apply_sync(
                 DESCRIPTION_FIELD,
                 SyncField::Description,
                 &mut push_fields,
-                &mut store,
+                store,
                 &mut applied,
             )?;
             apply_value_outcome(
@@ -533,7 +565,7 @@ pub fn apply_sync(
                 PRIORITY_FIELD,
                 SyncField::Priority,
                 &mut push_fields,
-                &mut store,
+                store,
                 &mut applied,
             )?;
             apply_value_outcome(
@@ -543,7 +575,7 @@ pub fn apply_sync(
                 CONTEXTS_FIELD,
                 SyncField::Contexts,
                 &mut push_fields,
-                &mut store,
+                store,
                 &mut applied,
             )?;
             (push_fields, action.clone())
@@ -554,54 +586,200 @@ pub fn apply_sync(
             .iter()
             .any(|(_, outcome)| *outcome == OutcomeKind::TakeCalendar)
         {
-            dirty_actions.insert(layout.charter_root.join(&actions_relative));
+            dirty_actions.insert(actions_relative);
         }
         if !push_fields.is_empty() {
-            let resource = resources.get(&entry.action_id);
-            let path = resource
-                .map(|resource| resource.path.clone())
-                .unwrap_or_else(|| {
-                    action_mirror_path(
-                        plans_root,
-                        &workspace.charters[charter_idx],
-                        &action_for_calendar,
-                    )
-                });
-            patch_action_mirror(&path, &entry.uid, &action_for_calendar, &push_fields)?;
+            mirrors.push(PendingActionMirror {
+                action_id: entry.action_id,
+                uid: entry.uid.clone(),
+                action: action_for_calendar,
+                fields: push_fields,
+            });
         }
     }
 
-    // Single-token stamping rides the same lock and batch: ensure every recurring
-    // plan has one live materialized occurrence before we stage.
-    ensure_active_occurrences(
-        &mut workspace.charters,
-        &mut store,
-        &mut dirty_actions,
-        &layout.charter_root,
-        &layout.data_root,
-        Local::now(),
-    )?;
-
-    commit_actions_and_store(
-        &layout.charter_root,
-        plans_sync_store_path(root),
-        &workspace.charters,
-        &store,
+    Ok(AppliedReport {
         dirty_actions,
-        Vec::new(),
-    )?;
-    let tally = report.tally();
-    Ok(AppliedSync {
-        take_action: tally.take_action,
-        take_calendar: tally.take_calendar,
-        converged: tally.converged,
-        conflict: tally.conflict,
+        mirrors,
     })
 }
 
-/// Stage every dirty `.actions` file (re-rendered from its charter) plus the sync
-/// store into one atomic [`PendingBatch`] and commit. The shared tail of every
-/// write touching both layers, so `.actions` and merge bases never diverge.
+/// Immutable Action-file evidence supplied by a host for sync preparation.
+#[derive(Clone, Debug)]
+pub struct SyncActionResourceState {
+    pub actions_file: PathBuf,
+    pub location: ResourceLocation,
+    pub expected: ExpectedResource,
+}
+
+/// Immutable calendar-mirror evidence supplied by a host for sync preparation.
+#[derive(Clone, Debug)]
+pub struct SyncMirrorResourceState {
+    pub action_id: Uuid,
+    pub location: ResourceLocation,
+    pub expected: ExpectedResource,
+    pub source: Option<String>,
+}
+
+/// Parsed template steps and host-supplied identities for one possible Plan token.
+#[derive(Clone, Debug)]
+pub struct SyncPlanTemplate {
+    pub plan_id: Uuid,
+    pub steps: Vec<Action>,
+    pub generated_ids: Vec<Uuid>,
+}
+
+/// Immutable host evidence and explicit nondeterministic inputs for sync preparation.
+pub struct CalendarSyncPreparationInput {
+    pub workspace: Workspace,
+    pub store: PlansSyncStore,
+    pub action_resources: Vec<SyncActionResourceState>,
+    pub mirror_resources: Vec<SyncMirrorResourceState>,
+    pub templates: Vec<SyncPlanTemplate>,
+    pub observed_resources: Vec<ResourcePrecondition>,
+    pub now: DateTime<Local>,
+    pub store_location: ResourceLocation,
+    pub store_expected: ExpectedResource,
+}
+
+/// Speculative workspace and merge-base state produced by pure sync preparation.
+pub struct CalendarSyncState {
+    pub workspace: Workspace,
+    pub store: PlansSyncStore,
+}
+
+/// Apply a resolved sync report to immutable host evidence and prepare one effect batch.
+///
+/// The host owns locking, recovery, inventory, reads, stale validation, and delivery.
+/// Core owns field reconciliation, Action/calendar rendering, and merge-base updates.
+pub fn prepare_sync(
+    input: CalendarSyncPreparationInput,
+    report: &SyncReport,
+) -> Result<PreparedMutation<CalendarSyncState, AppliedSync>, WorkspaceError> {
+    require_actions_formatting().map_err(WorkspaceError::Actions)?;
+    let CalendarSyncPreparationInput {
+        mut workspace,
+        mut store,
+        action_resources,
+        mirror_resources,
+        templates,
+        observed_resources,
+        now,
+        store_location,
+        store_expected,
+    } = input;
+    let mut changes = apply_report(&mut workspace, &mut store, report)?;
+    ensure_active_occurrences_prepared(
+        &mut workspace.charters,
+        &mut store,
+        &mut changes.dirty_actions,
+        &templates,
+        now,
+    )?;
+    let mut effects = Vec::new();
+    let mut expected_by_location = BTreeMap::new();
+    for (location, expected) in action_resources
+        .iter()
+        .map(|resource| (&resource.location, &resource.expected))
+        .chain(
+            mirror_resources
+                .iter()
+                .map(|resource| (&resource.location, &resource.expected)),
+        )
+        .chain(
+            observed_resources
+                .iter()
+                .map(|resource| (&resource.path, &resource.expected)),
+        )
+        .chain(std::iter::once((&store_location, &store_expected)))
+    {
+        if let Some(previous) = expected_by_location.insert(location.clone(), expected.clone())
+            && previous != *expected
+        {
+            return Err(WorkspaceError::Parse(format!(
+                "sync resource has inconsistent revision evidence: {location}"
+            )));
+        }
+    }
+    let preconditions = expected_by_location
+        .into_iter()
+        .map(|(path, expected)| ResourcePrecondition { path, expected })
+        .collect::<Vec<_>>();
+
+    let mut dirty_actions = changes.dirty_actions.into_iter().collect::<Vec<_>>();
+    dirty_actions.sort();
+    for actions_file in dirty_actions {
+        let resource = action_resources
+            .iter()
+            .find(|resource| resource.actions_file == actions_file)
+            .ok_or_else(|| {
+                WorkspaceError::Parse(format!(
+                    "sync Action resource evidence is missing: {}",
+                    actions_file.display()
+                ))
+            })?;
+        let charter = workspace
+            .charters
+            .iter()
+            .find(|charter| charter.actions_file.as_deref() == Some(actions_file.as_path()))
+            .ok_or_else(|| {
+                WorkspaceError::Parse(format!(
+                    "dirty Action file has no owning charter: {}",
+                    actions_file.display()
+                ))
+            })?;
+        effects.push(Effect::Write {
+            path: resource.location.clone(),
+            bytes: render_actions(&charter.actions)?.into_bytes(),
+        });
+    }
+
+    let mut rendered_mirrors = BTreeMap::<ResourceLocation, String>::new();
+    for mirror in changes.mirrors {
+        let resource = mirror_resources
+            .iter()
+            .find(|resource| resource.action_id == mirror.action_id)
+            .ok_or_else(|| {
+                WorkspaceError::Parse(format!(
+                    "sync calendar resource evidence is missing for Action {}",
+                    mirror.action_id
+                ))
+            })?;
+        let source = rendered_mirrors
+            .get(&resource.location)
+            .map(String::as_str)
+            .or(resource.source.as_deref());
+        let rendered = render_action_mirror(source, &mirror.uid, &mirror.action, &mirror.fields)?;
+        rendered_mirrors.insert(resource.location.clone(), rendered);
+    }
+    effects.extend(
+        rendered_mirrors
+            .into_iter()
+            .map(|(path, content)| Effect::Write {
+                path,
+                bytes: content.into_bytes(),
+            }),
+    );
+
+    effects.push(Effect::Write {
+        path: store_location,
+        bytes: serialize_plans_sync_store(&store)?.into_bytes(),
+    });
+    let batch = EffectBatch::new(effects, preconditions)
+        .map_err(|error| WorkspaceError::Actions(error.to_string()))?;
+    let tally = report.tally();
+    Ok(PreparedMutation::with_outcome(
+        CalendarSyncState { workspace, store },
+        batch,
+        AppliedSync {
+            take_action: tally.take_action,
+            take_calendar: tally.take_calendar,
+            converged: tally.converged,
+            conflict: tally.conflict,
+        },
+    ))
+}
+
 fn commit_actions_and_store(
     charter_root: &Path,
     store_path: PathBuf,
@@ -816,6 +994,113 @@ fn is_resolved(state: ActionState) -> bool {
 /// never duplicated. A token resolved *outside* the completion hook (e.g. a raw
 /// `[x]` edit) reads as not-live, so sync re-stamps the next slot — the safety net
 /// under the eager completion path. Returns the number of tokens stamped.
+fn ensure_active_occurrences_prepared(
+    charters: &mut [MarkdownCharter],
+    store: &mut PlansSyncStore,
+    dirty_actions: &mut HashSet<PathBuf>,
+    templates: &[SyncPlanTemplate],
+    now: DateTime<Local>,
+) -> Result<usize, WorkspaceError> {
+    let links = store.occurrence_links();
+    let mut stamped = 0;
+
+    for charter_idx in 0..charters.len() {
+        let plans = charters[charter_idx].plans.clone();
+        for plan in &plans {
+            let has_live_token = links.iter().any(|(occ_id, (plan_id, _slot))| {
+                *plan_id == plan.plan.id
+                    && charters.iter().any(|charter| {
+                        charter.actions.iter().any(|action| {
+                            action.action.id == *occ_id && !is_resolved(action.action.state)
+                        })
+                    })
+            });
+            if has_live_token {
+                continue;
+            }
+            if let Some(actions_file) =
+                stage_prepared_plan_token(&mut charters[charter_idx], store, plan, templates, now)?
+            {
+                dirty_actions.insert(actions_file);
+                stamped += 1;
+            }
+        }
+    }
+    Ok(stamped)
+}
+
+fn stage_prepared_plan_token(
+    charter: &mut MarkdownCharter,
+    store: &mut PlansSyncStore,
+    plan: &super::ics::ICSPlan,
+    templates: &[SyncPlanTemplate],
+    now: DateTime<Local>,
+) -> Result<Option<PathBuf>, WorkspaceError> {
+    let Some(uid) = plan.plan.external_id.as_deref() else {
+        return Ok(None);
+    };
+    let Some(slot) = next_active_slot(plan, None, now) else {
+        return Ok(None);
+    };
+    let occurrence = render_occurrence(plan, uid, slot);
+    let occurrence_id = occurrence.id;
+    if charter
+        .actions
+        .iter()
+        .any(|action| action.action.id == occurrence_id)
+    {
+        return Ok(None);
+    }
+    let slot_key = occurrence.external_occurrence_key.clone().ok_or_else(|| {
+        WorkspaceError::Parse(format!(
+            "rendered Plan {} occurrence has no occurrence key",
+            plan.plan.id
+        ))
+    })?;
+    let actions_file = charter.actions_file.clone().ok_or_else(|| {
+        WorkspaceError::Parse(format!(
+            "charter {} carries plans but has no actions_file to stamp into",
+            charter.id
+        ))
+    })?;
+    charter.actions.push(SourcedAction {
+        action: occurrence,
+        source_metadata: None,
+    });
+
+    if plan.plan.template_name.is_some()
+        && let Some(template) = templates
+            .iter()
+            .find(|template| template.plan_id == plan.plan.id)
+    {
+        if template.steps.len() != template.generated_ids.len() {
+            return Err(WorkspaceError::Parse(format!(
+                "Plan {} template identity count does not match its steps",
+                plan.plan.id
+            )));
+        }
+        let generated_ids = template
+            .steps
+            .iter()
+            .map(|step| step.id)
+            .zip(template.generated_ids.iter().copied())
+            .collect::<HashMap<_, _>>();
+        for step in instantiate_template(
+            &template.steps,
+            |source_id| generated_ids[&source_id],
+            Some(occurrence_id),
+        ) {
+            charter.actions.push(SourcedAction {
+                action: step,
+                source_metadata: None,
+            });
+        }
+    }
+    store.stamp_occurrence_link(occurrence_id, plan.plan.id, &slot_key)?;
+    Ok(Some(actions_file))
+}
+
+#[cfg(test)]
 fn ensure_active_occurrences(
     charters: &mut [MarkdownCharter],
     store: &mut PlansSyncStore,
@@ -893,10 +1178,12 @@ fn stage_plan_token(
     if charter.actions.iter().any(|sa| sa.action.id == occ_id) {
         return Ok(None); // this slot is already materialized
     }
-    let slot_key = occurrence
-        .external_occurrence_key
-        .clone()
-        .expect("render_occurrence always sets the occurrence key");
+    let slot_key = occurrence.external_occurrence_key.clone().ok_or_else(|| {
+        WorkspaceError::Parse(format!(
+            "rendered Plan {} occurrence has no occurrence key",
+            plan.plan.id
+        ))
+    })?;
     let actions_relative = charter.actions_file.clone().ok_or_else(|| {
         WorkspaceError::Parse(format!(
             "charter {} carries plans but has no actions_file to stamp into",
@@ -984,22 +1271,26 @@ fn locate_import_charter(
         })
 }
 
+/// Select the Action resource that owns a calendar import without touching the host.
+pub fn sync_import_actions_file(charter: &MarkdownCharter, import: &SyncImport) -> PathBuf {
+    charter.actions_file.clone().unwrap_or_else(|| {
+        charter
+            .md_file
+            .as_ref()
+            .map(|path| path.with_extension("actions"))
+            .unwrap_or_else(|| {
+                if import.plans_dir == Path::new("next") {
+                    PathBuf::from("next.actions")
+                } else {
+                    PathBuf::from(format!("{}.actions", import.charter_name))
+                }
+            })
+    })
+}
+
 fn import_actions_file(charter: &mut MarkdownCharter, import: &SyncImport) -> PathBuf {
-    if let Some(path) = &charter.actions_file {
-        return path.clone();
-    }
-    let path = charter
-        .md_file
-        .as_ref()
-        .map(|path| path.with_extension("actions"))
-        .unwrap_or_else(|| {
-            if import.plans_dir == Path::new("next") {
-                PathBuf::from("next.actions")
-            } else {
-                PathBuf::from(format!("{}.actions", import.charter_name))
-            }
-        });
-    charter.actions_file = Some(path.clone());
+    let path = sync_import_actions_file(charter, import);
+    charter.actions_file.get_or_insert_with(|| path.clone());
     path
 }
 
@@ -1117,21 +1408,6 @@ fn apply_state_outcome(
         };
     }
     Ok(())
-}
-
-fn patch_action_mirror(
-    path: &Path,
-    uid: &str,
-    action: &Action,
-    fields: &[SyncField],
-) -> Result<(), WorkspaceError> {
-    let content = match std::fs::read_to_string(path) {
-        Ok(content) => Some(content),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
-        Err(error) => return Err(error.into()),
-    };
-    let rendered = render_action_mirror(content.as_deref(), uid, action, fields)?;
-    atomic_write(path, rendered.as_bytes()).map_err(WorkspaceError::Io)
 }
 
 /// Render one standalone Action mirror from host-supplied source bytes.
@@ -1451,9 +1727,6 @@ mod tests {
         let master = root.join(".clearhead/plans/master.ics");
         std::fs::create_dir_all(master.parent().unwrap()).expect("create plans");
         std::fs::write(&master, "calendar sentinel\n").expect("write master");
-
-        let apply_error = apply_sync(root, None, &SyncReport::default()).unwrap_err();
-        assert!(apply_error.to_string().contains("`formatting` feature"));
 
         let resolve_error = resolve_materialized_occurrence(
             root,
