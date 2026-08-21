@@ -13,8 +13,9 @@ use uuid::Uuid;
 
 use super::expand::{next_active_slot, render_occurrence};
 use super::ics::{
-    VTodoAction, action_to_vtodo, canonical_occurrence_key, parse_ics, parse_ics_file,
-    parse_vtodo_actions, render_master_rollforward, write_master_rollforward,
+    OccurrenceOp, VTodoAction, action_to_vtodo, canonical_occurrence_key, parse_ics,
+    parse_ics_file, parse_vtodo_actions, render_master_rollforward, render_occurrence_deviation,
+    write_master_rollforward,
 };
 use super::plans::collect_plan_files_in;
 use super::sync_store::{
@@ -23,19 +24,16 @@ use super::sync_store::{
     read_plans_sync_store, serialize_plans_sync_store,
 };
 use crate::domain::{Action, ActionState, DomainModel};
-use crate::workspace::action_files::completed_actions_path;
 use crate::workspace::actions::format::require_actions_formatting;
 use crate::workspace::charter::MarkdownCharter;
-use crate::workspace::durability::{PendingBatch, WorkspaceLock, atomic_write, recover_pending};
+use crate::workspace::durability::{WorkspaceLock, atomic_write};
 use crate::workspace::resource::{
     Effect, EffectBatch, ExpectedResource, PreparedMutation, ResourceLocation, ResourcePrecondition,
 };
-use crate::workspace::sidecar::{
-    ActionMeta, CHARTER_METADATA_SCHEMA_URL, OccurrenceSnapshot, read_sidecar, sidecar_path,
-};
+use crate::workspace::sidecar::{ActionMeta, CharterMetadata, OccurrenceSnapshot, render_sidecar};
 use crate::workspace::store::{Workspace, WorkspaceError, resolve_workspace_layout};
-use crate::workspace::templates::{instantiate_template, resolve_template};
-use crate::workspace::{OutputFormat, SourcedAction, format, read_actions};
+use crate::workspace::templates::instantiate_template;
+use crate::workspace::{OutputFormat, SourcedAction, format};
 
 type Time = Option<DateTime<Local>>;
 
@@ -650,6 +648,30 @@ pub struct CalendarSyncPreparationInput {
     pub store_expected: ExpectedResource,
 }
 
+/// Optional completed-occurrence metadata evidence for lineage crystallization.
+pub struct MaterializedOccurrenceArchiveState {
+    pub action: Action,
+    pub metadata: CharterMetadata,
+    pub sidecar_location: ResourceLocation,
+    pub sidecar_expected: ExpectedResource,
+}
+
+/// Immutable evidence and explicit inputs for resolving one materialized token.
+pub struct MaterializedOccurrencePreparationInput {
+    pub workspace: Workspace,
+    pub store: PlansSyncStore,
+    pub occurrence_id: Uuid,
+    pub operation: OccurrenceOp,
+    pub now: DateTime<Local>,
+    pub plan_resources: Vec<PlanResourceState>,
+    pub action_resources: Vec<SyncActionResourceState>,
+    pub templates: Vec<SyncPlanTemplate>,
+    pub archive: Option<MaterializedOccurrenceArchiveState>,
+    pub observed_resources: Vec<ResourcePrecondition>,
+    pub store_location: ResourceLocation,
+    pub store_expected: ExpectedResource,
+}
+
 /// Speculative workspace and merge-base state produced by pure sync preparation.
 pub struct CalendarSyncState {
     pub workspace: Workspace,
@@ -792,199 +814,189 @@ pub fn prepare_sync(
     ))
 }
 
-fn commit_actions_and_store(
-    charter_root: &Path,
-    store_path: PathBuf,
-    charters: &[MarkdownCharter],
-    store: &PlansSyncStore,
-    dirty_actions: HashSet<PathBuf>,
-    extra_files: Vec<(PathBuf, String)>,
-) -> Result<(), WorkspaceError> {
-    let mut batch = PendingBatch::new(charter_root.to_path_buf());
-    let mut paths: Vec<_> = dirty_actions.into_iter().collect();
-    paths.sort();
-    for action_path in paths {
-        let relative = action_path
-            .strip_prefix(charter_root)
-            .unwrap_or(&action_path);
-        let charter = charters
-            .iter()
-            .find(|charter| charter.actions_file.as_deref() == Some(relative))
-            .ok_or_else(|| {
-                WorkspaceError::Parse(format!(
-                    "dirty action file missing charter: {}",
-                    action_path.display()
-                ))
-            })?;
-        let content = render_actions(&charter.actions)?;
-        batch.stage(action_path, content.as_bytes())?;
-    }
-    for (path, content) in extra_files {
-        batch.stage(path, content.as_bytes())?;
-    }
-    batch.stage(store_path, serialize_plans_sync_store(store)?.as_bytes())?;
-    batch.commit()?;
-    Ok(())
-}
-
-/// Resolve a *materialized* recurring occurrence (`complete`/`cancel` on its
-/// `.actions` line): record the deviation on its master, drop its store link, and
-/// eagerly stamp the plan's next token. Returns `Ok(false)` when `occurrence_id`
-/// carries no occurrence link — an ordinary action, so the caller's normal close
-/// was all that was needed.
-///
-/// The line's own state is set by that normal close; this adds only the calendar
-/// round-trip and the single-token advance. Advance reuses
-/// [`ensure_active_occurrences`]: with the link cleared the plan has no live token,
-/// so the stamper produces the next. (One imperfection: completing a *future* slot
-/// early re-selects that same slot, whose `[x]` line already exists, so no token is
-/// stamped until `now` passes it — it self-heals on a later sync.)
-pub fn resolve_materialized_occurrence(
-    root: &Path,
-    plan_override: Option<&Path>,
-    occurrence_id: Uuid,
-    op: &super::ics::OccurrenceOp,
-    now: DateTime<Local>,
-) -> Result<bool, WorkspaceError> {
+/// Resolve a materialized recurring token without touching a host.
+pub fn prepare_materialized_occurrence_resolution(
+    input: MaterializedOccurrencePreparationInput,
+) -> Result<PreparedMutation<CalendarSyncState, bool>, WorkspaceError> {
     require_actions_formatting().map_err(WorkspaceError::Actions)?;
-    let layout = resolve_workspace_layout(root);
-    let plans_root = plan_override.unwrap_or(&layout.plans_root).to_path_buf();
-
-    let (plan_id, slot_key) =
-        match read_plans_sync_store(root, &plans_root)?.occurrence_link(occurrence_id) {
-            Some(link) => link,
-            None => return Ok(false),
-        };
-
-    // 1. Calendar round-trip: the deviation on the master (the proven write path).
-    super::plans::apply_occurrence_op(root, plan_override, plan_id, &slot_key, op)?;
-
-    // 2. Clear the link and advance the token, atomic with the store. Reload after
-    //    the deviation so the stamper sees the fresh EXDATE / completed override.
-    let _lock = WorkspaceLock::try_acquire(&layout.data_root)?
-        .ok_or_else(|| WorkspaceError::WorkspaceLocked(layout.data_root.clone()))?;
-    recover_pending(&layout.charter_root)?;
-
-    let mut workspace = Workspace::load_with_plans(root, plan_override)?;
-    let mut store = read_plans_sync_store(root, &plans_root)?;
-    let archive_snapshot = stage_archived_occurrence_snapshot(
-        &layout.charter_root,
-        &workspace.charters,
+    let MaterializedOccurrencePreparationInput {
+        mut workspace,
+        mut store,
         occurrence_id,
-        plan_id,
-        &slot_key,
-    )?;
+        operation,
+        now,
+        plan_resources,
+        action_resources,
+        templates,
+        mut archive,
+        observed_resources,
+        store_location,
+        store_expected,
+    } = input;
+    let Some((plan_id, slot_key)) = store.occurrence_link(occurrence_id) else {
+        let batch = EffectBatch::new(Vec::new(), observed_resources)
+            .map_err(|error| WorkspaceError::Actions(error.to_string()))?;
+        return Ok(PreparedMutation::with_outcome(
+            CalendarSyncState { workspace, store },
+            batch,
+            false,
+        ));
+    };
+
+    let mut matched = None;
+    for resource in &plan_resources {
+        for plan in parse_ics(&resource.source, Path::new(resource.location.path.as_str()))? {
+            if plan.plan.id != plan_id {
+                continue;
+            }
+            if matched.is_some() {
+                return Err(WorkspaceError::Parse(format!(
+                    "recurring plan {plan_id} appears more than once in the configured plans vdir"
+                )));
+            }
+            matched = Some((resource, plan));
+        }
+    }
+    let Some((plan_resource, plan)) = matched else {
+        return Err(WorkspaceError::Parse(format!(
+            "recurring plan {plan_id} not found in the configured plans vdir"
+        )));
+    };
+    let uid = plan.plan.external_id.as_deref().ok_or_else(|| {
+        WorkspaceError::Parse(format!("recurring plan {plan_id} has no UID to key on"))
+    })?;
+    let rendered_plan =
+        render_occurrence_deviation(&plan_resource.source, uid, &slot_key, &operation)?;
+
+    if let Some(archive) = &mut archive {
+        let entry = archive
+            .metadata
+            .actions
+            .entry(occurrence_id.to_string())
+            .or_insert_with(ActionMeta::default);
+        if entry.occurrence.is_none() {
+            entry.occurrence = Some(OccurrenceSnapshot {
+                plan_id,
+                plan_uid: plan.plan.external_id.clone(),
+                occurrence_key: slot_key.clone(),
+                plan_title: plan.plan.name.clone(),
+                scheduled_at: archive.action.scheduled_at,
+                rrule: plan.plan.recurrence.as_ref().map(|recurrence| {
+                    let text = recurrence.to_string();
+                    text.strip_prefix("R:").unwrap_or(&text).to_string()
+                }),
+                template: plan.plan.template_name.clone(),
+            });
+        }
+    }
     store.clear_occurrence_link(occurrence_id);
 
-    // Advance: stamp the plan's next token, using the resolved slot as the floor so
-    // an on-time or early completion advances rather than re-selecting it.
     let mut dirty_actions = HashSet::new();
     let floor = parse_occurrence_key(&slot_key);
     if let Some(charter_idx) = workspace
         .charters
         .iter()
-        .position(|c| c.plans.iter().any(|p| p.plan.id == plan_id))
-        && let Some(plan) = workspace.charters[charter_idx]
+        .position(|charter| charter.plans.iter().any(|value| value.plan.id == plan_id))
+        && let Some(workspace_plan) = workspace.charters[charter_idx]
             .plans
             .iter()
-            .find(|p| p.plan.id == plan_id)
+            .find(|value| value.plan.id == plan_id)
             .cloned()
-        && let Some(path) = stage_plan_token(
+        && let Some(actions_file) = stage_prepared_plan_token(
             &mut workspace.charters[charter_idx],
             &mut store,
-            &plan,
+            &workspace_plan,
             floor,
+            &templates,
             now,
-            &layout.charter_root,
-            &layout.data_root,
         )?
     {
-        dirty_actions.insert(path);
+        dirty_actions.insert(actions_file);
     }
 
-    commit_actions_and_store(
-        &layout.charter_root,
-        plans_sync_store_path(root),
-        &workspace.charters,
-        &store,
-        dirty_actions,
-        archive_snapshot.into_iter().collect(),
-    )?;
-    Ok(true)
-}
-
-/// If `occurrence_id` has already been closed into a completed archive, stage the
-/// sidecar update that freezes its plan lineage.
-///
-/// Direct core tests may call [`resolve_materialized_occurrence`] while the token
-/// is still live; in that case there is no completed fact to snapshot yet and this
-/// returns `None`. The CLI's normal complete/cancel path closes first, so the
-/// completed action is present and receives the snapshot before the live sync-store
-/// link is cleared.
-fn stage_archived_occurrence_snapshot(
-    charter_root: &Path,
-    charters: &[MarkdownCharter],
-    occurrence_id: Uuid,
-    plan_id: Uuid,
-    slot_key: &str,
-) -> Result<Option<(PathBuf, String)>, WorkspaceError> {
-    let Some(plan) = charters
-        .iter()
-        .flat_map(|charter| &charter.plans)
-        .find(|plan| plan.plan.id == plan_id)
-    else {
-        return Ok(None);
-    };
-
-    let Some((completed_path, archived_action)) =
-        find_completed_occurrence(charter_root, charters, occurrence_id)?
-    else {
-        return Ok(None);
-    };
-
-    let sidecar = sidecar_path(&completed_path);
-    let mut meta = read_sidecar(&sidecar)?;
-    let entry = meta
-        .actions
-        .entry(occurrence_id.to_string())
-        .or_insert_with(ActionMeta::default);
-    if entry.occurrence.is_none() {
-        entry.occurrence = Some(OccurrenceSnapshot {
-            plan_id,
-            plan_uid: plan.plan.external_id.clone(),
-            occurrence_key: slot_key.to_string(),
-            plan_title: plan.plan.name.clone(),
-            scheduled_at: archived_action.scheduled_at,
-            rrule: plan.plan.recurrence.as_ref().map(|r| {
-                let text = r.to_string();
-                text.strip_prefix("R:").unwrap_or(&text).to_string()
-            }),
-            template: plan.plan.template_name.clone(),
+    let mut effects = vec![Effect::Write {
+        path: plan_resource.location.clone(),
+        bytes: rendered_plan.into_bytes(),
+    }];
+    for actions_file in dirty_actions {
+        let resource = action_resources
+            .iter()
+            .find(|resource| resource.actions_file == actions_file)
+            .ok_or_else(|| {
+                WorkspaceError::Parse(format!(
+                    "occurrence Action resource evidence is missing: {}",
+                    actions_file.display()
+                ))
+            })?;
+        let charter = workspace
+            .charters
+            .iter()
+            .find(|charter| charter.actions_file.as_deref() == Some(actions_file.as_path()))
+            .ok_or_else(|| {
+                WorkspaceError::Parse(format!(
+                    "occurrence Action file has no owning charter: {}",
+                    actions_file.display()
+                ))
+            })?;
+        effects.push(Effect::Write {
+            path: resource.location.clone(),
+            bytes: render_actions(&charter.actions)?.into_bytes(),
         });
     }
-    meta.schema = Some(CHARTER_METADATA_SCHEMA_URL.to_string());
-    let content =
-        serde_json::to_string_pretty(&meta).map_err(|e| WorkspaceError::Parse(e.to_string()))?;
-    Ok(Some((sidecar, content)))
-}
+    if let Some(archive) = &archive {
+        effects.push(Effect::Write {
+            path: archive.sidecar_location.clone(),
+            bytes: render_sidecar(&archive.metadata)?.into_bytes(),
+        });
+    }
+    effects.push(Effect::Write {
+        path: store_location.clone(),
+        bytes: serialize_plans_sync_store(&store)?.into_bytes(),
+    });
 
-fn find_completed_occurrence(
-    charter_root: &Path,
-    charters: &[MarkdownCharter],
-    occurrence_id: Uuid,
-) -> Result<Option<(PathBuf, Action)>, WorkspaceError> {
-    for charter in charters {
-        let Some(actions_relative) = charter.actions_file.as_deref() else {
-            continue;
-        };
-        let completed_path = completed_actions_path(&charter_root.join(actions_relative));
-        for action in read_actions(&completed_path)? {
-            if action.id == occurrence_id {
-                return Ok(Some((completed_path, action)));
-            }
+    let mut expected_by_location = BTreeMap::new();
+    for precondition in observed_resources
+        .into_iter()
+        .chain(
+            action_resources
+                .iter()
+                .map(|resource| ResourcePrecondition {
+                    path: resource.location.clone(),
+                    expected: resource.expected.clone(),
+                }),
+        )
+        .chain(archive.iter().map(|archive| ResourcePrecondition {
+            path: archive.sidecar_location.clone(),
+            expected: archive.sidecar_expected.clone(),
+        }))
+        .chain(std::iter::once(ResourcePrecondition {
+            path: store_location,
+            expected: store_expected,
+        }))
+    {
+        if let Some(previous) =
+            expected_by_location.insert(precondition.path.clone(), precondition.expected.clone())
+            && previous != precondition.expected
+        {
+            return Err(WorkspaceError::Parse(format!(
+                "occurrence resource has inconsistent revision evidence: {}",
+                precondition.path
+            )));
         }
     }
-    Ok(None)
+    let batch = EffectBatch::new(
+        effects,
+        expected_by_location
+            .into_iter()
+            .map(|(path, expected)| ResourcePrecondition { path, expected })
+            .collect(),
+    )
+    .map_err(|error| WorkspaceError::Actions(error.to_string()))?;
+    Ok(PreparedMutation::with_outcome(
+        CalendarSyncState { workspace, store },
+        batch,
+        true,
+    ))
 }
 
 /// A resolved occurrence no longer holds the token — the next may be stamped.
@@ -1030,9 +1042,14 @@ fn ensure_active_occurrences_prepared(
             if has_live_token {
                 continue;
             }
-            if let Some(actions_file) =
-                stage_prepared_plan_token(&mut charters[charter_idx], store, plan, templates, now)?
-            {
+            if let Some(actions_file) = stage_prepared_plan_token(
+                &mut charters[charter_idx],
+                store,
+                plan,
+                None,
+                templates,
+                now,
+            )? {
                 dirty_actions.insert(actions_file);
                 stamped += 1;
             }
@@ -1045,13 +1062,14 @@ fn stage_prepared_plan_token(
     charter: &mut MarkdownCharter,
     store: &mut PlansSyncStore,
     plan: &super::ics::ICSPlan,
+    floor: Option<DateTime<Local>>,
     templates: &[SyncPlanTemplate],
     now: DateTime<Local>,
 ) -> Result<Option<PathBuf>, WorkspaceError> {
     let Some(uid) = plan.plan.external_id.as_deref() else {
         return Ok(None);
     };
-    let Some(slot) = next_active_slot(plan, None, now) else {
+    let Some(slot) = next_active_slot(plan, floor, now) else {
         return Ok(None);
     };
     let occurrence = render_occurrence(plan, uid, slot);
@@ -1112,156 +1130,6 @@ fn stage_prepared_plan_token(
     Ok(Some(actions_file))
 }
 
-#[cfg(test)]
-fn ensure_active_occurrences(
-    charters: &mut [MarkdownCharter],
-    store: &mut PlansSyncStore,
-    dirty_actions: &mut HashSet<PathBuf>,
-    charter_root: &Path,
-    data_root: &Path,
-    now: DateTime<Local>,
-) -> Result<usize, WorkspaceError> {
-    let links = store.occurrence_links();
-    let mut stamped = 0;
-
-    for charter_idx in 0..charters.len() {
-        // Clone the plan list so we can mutate this charter's actions in the loop.
-        let plans = charters[charter_idx].plans.clone();
-        for plan in &plans {
-            // `stage_plan_token` is the single authority for whether the Plan can
-            // produce a token (it requires a UID and an active recurring slot).
-            // This loop only skips a Plan when its live token already exists.
-            let has_live_token = links.iter().any(|(occ_id, (pid, _slot))| {
-                *pid == plan.plan.id
-                    && charters.iter().any(|c| {
-                        c.actions
-                            .iter()
-                            .any(|sa| sa.action.id == *occ_id && !is_resolved(sa.action.state))
-                    })
-            });
-            if has_live_token {
-                continue;
-            }
-
-            // No live token → stamp the next upcoming slot (no floor).
-            if let Some(path) = stage_plan_token(
-                &mut charters[charter_idx],
-                store,
-                plan,
-                None,
-                now,
-                charter_root,
-                data_root,
-            )? {
-                dirty_actions.insert(path);
-                stamped += 1;
-            }
-        }
-    }
-
-    Ok(stamped)
-}
-
-/// Render `plan`'s token at `next_active_slot(plan, floor, now)` and stage it into
-/// `charter`: a real `.actions` line plus its `(plan_id, slot)` link in `store`.
-/// Returns the actions file to mark dirty, or `None` when there is no such slot or
-/// it is already materialized in `charter`.
-///
-/// `floor` is the exclusive lower bound the next slot must exceed: `None` for a
-/// plan's first token, `Some(resolved_slot)` when advancing past a just-resolved
-/// one (so on-time and early completions advance instead of re-selecting it).
-fn stage_plan_token(
-    charter: &mut MarkdownCharter,
-    store: &mut PlansSyncStore,
-    plan: &super::ics::ICSPlan,
-    floor: Option<DateTime<Local>>,
-    now: DateTime<Local>,
-    charter_root: &Path,
-    data_root: &Path,
-) -> Result<Option<PathBuf>, WorkspaceError> {
-    let Some(uid) = plan.plan.external_id.as_deref() else {
-        return Ok(None);
-    };
-    let Some(slot) = next_active_slot(plan, floor, now) else {
-        return Ok(None); // series exhausted or no anchor
-    };
-    let occurrence = render_occurrence(plan, uid, slot);
-    let occ_id = occurrence.id;
-    if charter.actions.iter().any(|sa| sa.action.id == occ_id) {
-        return Ok(None); // this slot is already materialized
-    }
-    let slot_key = occurrence.external_occurrence_key.clone().ok_or_else(|| {
-        WorkspaceError::Parse(format!(
-            "rendered Plan {} occurrence has no occurrence key",
-            plan.plan.id
-        ))
-    })?;
-    let actions_relative = charter.actions_file.clone().ok_or_else(|| {
-        WorkspaceError::Parse(format!(
-            "charter {} carries plans but has no actions_file to stamp into",
-            charter.id
-        ))
-    })?;
-    charter.actions.push(SourcedAction {
-        action: occurrence,
-        source_metadata: None,
-    });
-    graft_template_steps(
-        charter,
-        plan,
-        occ_id,
-        &actions_relative,
-        charter_root,
-        data_root,
-    )?;
-    store.stamp_occurrence_link(occ_id, plan.plan.id, &slot_key)?;
-    Ok(Some(charter_root.join(actions_relative)))
-}
-
-/// Graft a templated plan's step-forest beneath its just-stamped occurrence root.
-///
-/// `template:` is the one-bit lane switch and it only ever *adds children*: an
-/// atomic plan (no `template_name`) has no template to resolve and this is a
-/// no-op, leaving the childless root the caller already pushed. A templated plan
-/// instantiates its template with the occurrence id as the `parent_override`, so
-/// the template's own roots attach beneath the occurrence and every descendant
-/// remaps under it. Both lanes therefore share one synthesized root and differ
-/// only by the presence of grafted steps.
-///
-/// Fresh (`now_v7`) child ids are safe: the caller's root-id idempotency guard
-/// means we only reach here on the *first* stamp of a slot, never a re-stamp, so
-/// there is nothing for non-deterministic ids to duplicate. A named-but-missing
-/// template is deliberately non-fatal — the root token still stamps, matching the
-/// atomic lane; a dangling template reference is doctor's to surface, not the
-/// sync write path's to fail on.
-fn graft_template_steps(
-    charter: &mut MarkdownCharter,
-    plan: &super::ics::ICSPlan,
-    occ_id: Uuid,
-    actions_relative: &Path,
-    charter_root: &Path,
-    data_root: &Path,
-) -> Result<(), WorkspaceError> {
-    let Some(template_name) = plan.plan.template_name.as_deref() else {
-        return Ok(()); // atomic lane: childless root, nothing to graft
-    };
-    let actions_abs = charter_root.join(actions_relative);
-    let charter_dir = actions_abs.parent().unwrap_or(charter_root);
-    let Some(tpl_path) = resolve_template(charter_dir, data_root, template_name)? else {
-        return Ok(()); // named template missing → root still stamps
-    };
-    let steps = read_actions(&tpl_path)?;
-    for step in instantiate_template(&steps, |_| Uuid::now_v7(), Some(occ_id)) {
-        charter.actions.push(SourcedAction {
-            action: step,
-            source_metadata: None,
-        });
-    }
-    Ok(())
-}
-
-/// Parse a [`canonical_occurrence_key`] (`%Y%m%dT%H%M%SZ`, UTC) back to a local
-/// instant, for use as an advance floor. `None` if it is not our canonical form.
 fn parse_occurrence_key(key: &str) -> Option<DateTime<Local>> {
     chrono::NaiveDateTime::parse_from_str(key, "%Y%m%dT%H%M%SZ")
         .ok()
@@ -2012,12 +1880,8 @@ mod tests {
         let (mut charters, plan_id, uid) = weekly_charter(dtstart);
         let mut store = PlansSyncStore::new(Path::new("/tmp/plans"));
         let mut dirty = HashSet::new();
-        let root = Path::new("/ws/.clearhead/charters");
-        let data_root = Path::new("/ws/.clearhead");
-
-        let n =
-            ensure_active_occurrences(&mut charters, &mut store, &mut dirty, root, data_root, now)
-                .unwrap();
+        let n = ensure_active_occurrences_prepared(&mut charters, &mut store, &mut dirty, &[], now)
+            .unwrap();
         assert_eq!(n, 1, "a fresh recurring plan gets exactly one token");
         assert_eq!(charters[0].actions.len(), 1);
 
@@ -2034,11 +1898,11 @@ mod tests {
             crate::workspace::calendar::ics::occurrence_action_id(&uid, &key)
         );
         assert_eq!(store.occurrence_link(occ.id), Some((plan_id, key)));
-        assert!(dirty.contains(&root.join("health.actions")));
+        assert!(dirty.contains(Path::new("health.actions")));
 
         // Second run while the token is live and unresolved → nothing new.
         let again =
-            ensure_active_occurrences(&mut charters, &mut store, &mut dirty, root, data_root, now)
+            ensure_active_occurrences_prepared(&mut charters, &mut store, &mut dirty, &[], now)
                 .unwrap();
         assert_eq!(again, 0, "idempotent while the token is live");
         assert_eq!(charters[0].actions.len(), 1);
@@ -2057,30 +1921,14 @@ mod tests {
 
         let mut store = PlansSyncStore::new(Path::new("/tmp/plans"));
         let mut dirty = HashSet::new();
-        let root = Path::new("/ws/.clearhead/charters");
-        let data_root = Path::new("/ws/.clearhead");
         let first_plan = charters[0].plans[0].clone();
-        stage_plan_token(
-            &mut charters[0],
-            &mut store,
-            &first_plan,
-            None,
-            t(20),
-            root,
-            data_root,
-        )
-        .unwrap()
-        .expect("first plan token should stamp");
+        stage_prepared_plan_token(&mut charters[0], &mut store, &first_plan, None, &[], t(20))
+            .unwrap()
+            .expect("first plan token should stamp");
 
-        let stamped = ensure_active_occurrences(
-            &mut charters,
-            &mut store,
-            &mut dirty,
-            root,
-            data_root,
-            t(20),
-        )
-        .unwrap();
+        let stamped =
+            ensure_active_occurrences_prepared(&mut charters, &mut store, &mut dirty, &[], t(20))
+                .unwrap();
 
         assert_eq!(stamped, 1, "only the second plan still needs a token");
         let linked_plans: HashSet<_> = store
@@ -2101,10 +1949,7 @@ mod tests {
         let (mut charters, _plan_id, _uid) = weekly_charter(dtstart);
         let mut store = PlansSyncStore::new(Path::new("/tmp/plans"));
         let mut dirty = HashSet::new();
-        let root = Path::new("/ws/.clearhead/charters");
-        let data_root = Path::new("/ws/.clearhead");
-
-        ensure_active_occurrences(&mut charters, &mut store, &mut dirty, root, data_root, t(6))
+        ensure_active_occurrences_prepared(&mut charters, &mut store, &mut dirty, &[], t(6))
             .unwrap();
         let first_slot = charters[0].actions[0].action.scheduled_at.unwrap();
         charters[0].actions[0].action.state = ActionState::Completed; // resolved by hand
@@ -2117,12 +1962,11 @@ mod tests {
         });
 
         let now_later = first_slot + chrono::Duration::days(1);
-        let n = ensure_active_occurrences(
+        let n = ensure_active_occurrences_prepared(
             &mut charters,
             &mut store,
             &mut dirty,
-            root,
-            data_root,
+            &[],
             now_later,
         )
         .unwrap();
@@ -2209,28 +2053,26 @@ mod tests {
         // synthesized occurrence root the atomic lane stamps. One root token
         // (carrying the occurrence identity + store link), with the template's own
         // roots grafted as its children.
-        let tmp = tempfile::tempdir().unwrap();
-        let charter_root = tmp.path().join("charters");
-        let data_root = tmp.path();
-        std::fs::create_dir_all(data_root.join("templates")).unwrap();
-        std::fs::write(
-            data_root.join("templates/weekly-review.actions"),
+        let (mut charters, plan_id, uid) = weekly_charter(t(5));
+        charters[0].plans[0].plan.template_name = Some("weekly-review".into());
+        let steps = crate::parse_actions(
             "[ ] Review the inbox #01970000-0000-7000-0000-000000000001\n\
              [ ] Reflect on the week #01970000-0000-7000-0000-000000000002\n",
         )
         .unwrap();
-
-        let (mut charters, plan_id, uid) = weekly_charter(t(5));
-        charters[0].plans[0].plan.template_name = Some("weekly-review".into());
+        let template = SyncPlanTemplate {
+            plan_id,
+            generated_ids: vec![Uuid::now_v7(), Uuid::now_v7()],
+            steps,
+        };
 
         let mut store = PlansSyncStore::new(Path::new("/tmp/plans"));
         let mut dirty = HashSet::new();
-        let n = ensure_active_occurrences(
+        let n = ensure_active_occurrences_prepared(
             &mut charters,
             &mut store,
             &mut dirty,
-            &charter_root,
-            data_root,
+            &[template],
             t(20),
         )
         .unwrap();
@@ -2272,24 +2114,14 @@ mod tests {
         // The atomic lane is the templated lane minus the template: a plan with no
         // `template_name` stamps exactly the synthesized root, no children — and a
         // *named-but-missing* template must degrade to the same, never fail the sync.
-        let tmp = tempfile::tempdir().unwrap();
-        let charter_root = tmp.path().join("charters");
-        let data_root = tmp.path();
-
         let (mut charters, plan_id, _uid) = weekly_charter(t(5));
         charters[0].plans[0].plan.template_name = Some("does-not-exist".into());
 
         let mut store = PlansSyncStore::new(Path::new("/tmp/plans"));
         let mut dirty = HashSet::new();
-        let n = ensure_active_occurrences(
-            &mut charters,
-            &mut store,
-            &mut dirty,
-            &charter_root,
-            data_root,
-            t(20),
-        )
-        .unwrap();
+        let n =
+            ensure_active_occurrences_prepared(&mut charters, &mut store, &mut dirty, &[], t(20))
+                .unwrap();
 
         assert_eq!(n, 1, "a missing template still stamps the root token");
         assert_eq!(charters[0].actions.len(), 1, "no phantom children grafted");

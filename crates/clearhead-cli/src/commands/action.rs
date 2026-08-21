@@ -240,7 +240,7 @@ fn close_action_subtree(
         _ => None,
     };
     if let Some(op) = occurrence_op
-        && clearhead_core::resolve_materialized_occurrence(
+        && clearhead_workspace_fs::resolve_materialized_occurrence(
             &workspace_root,
             ctx.plan_override().as_deref(),
             action_id,

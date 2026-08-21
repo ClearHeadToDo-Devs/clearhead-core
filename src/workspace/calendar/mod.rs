@@ -32,7 +32,7 @@ pub use reconcile::{
     AppliedSync, CalendarSyncPreparationInput, CalendarSyncState, OutcomeKind, Reconcile,
     SyncActionResourceState, SyncConflictResolution, SyncEntry, SyncField, SyncImport,
     SyncMirrorResourceState, SyncPlanTemplate, SyncReport, SyncTally, VTodoResource, plan_sync,
-    prepare_sync, read_ics_dates, read_vtodo_actions, reconcile, resolve_materialized_occurrence,
-    sync_import_actions_file, sync_master_rollforwards,
+    prepare_sync, read_ics_dates, read_vtodo_actions, reconcile, sync_import_actions_file,
+    sync_master_rollforwards,
 };
 pub use sync_store::{PlansSyncStore, plans_sync_store_path, read_plans_sync_store};

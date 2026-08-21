@@ -16,10 +16,11 @@ use clearhead_core::workspace::calendar::plans::{
     infer_plan_charter_name_for_workspace, infer_plan_parent_for_workspace,
 };
 use clearhead_core::workspace::calendar::reconcile::{
-    AppliedSync, CalendarSyncPreparationInput, PlanResourceState, SyncActionResourceState,
+    AppliedSync, CalendarSyncPreparationInput, MaterializedOccurrenceArchiveState,
+    MaterializedOccurrencePreparationInput, PlanResourceState, SyncActionResourceState,
     SyncConflictResolution, SyncMirrorResourceState, SyncPlanTemplate, SyncReport, plan_sync,
-    prepare_master_rollforward_changes, prepare_master_rollforwards, prepare_sync,
-    sync_import_actions_file,
+    prepare_master_rollforward_changes, prepare_master_rollforwards,
+    prepare_materialized_occurrence_resolution, prepare_sync, sync_import_actions_file,
 };
 use clearhead_core::workspace::calendar::sync_store::{PlansSyncStore, decode_plans_sync_store};
 use clearhead_core::workspace::durability::{WorkspaceLock, recover_pending};
@@ -27,7 +28,10 @@ use clearhead_core::workspace::resource::{
     Effect, EffectBatch, ExpectedResource, MountId, MountInventory, ReadPlan, ResourceLocation,
     ResourcePrecondition, ResourceRevision, WorkspaceMounts, WorkspacePath,
 };
-use clearhead_core::workspace::{VTodoResource, WorkspaceError};
+use clearhead_core::workspace::{
+    VTodoResource, WorkspaceError, completed_actions_path, parse_actions, parse_sidecar,
+    sidecar_path,
+};
 use clearhead_core::{Plan, action_mirror_path};
 
 use crate::mounts::NativeWorkspaceMounts;
@@ -291,6 +295,129 @@ pub fn sync_calendar(
         applied,
         rolled_forward,
     })
+}
+
+/// Resolve one closed materialized recurring token through native mounted delivery.
+pub fn resolve_materialized_occurrence(
+    workspace_root: &Path,
+    external_plans: Option<&Path>,
+    occurrence_id: Uuid,
+    operation: &OccurrenceOp,
+    now: chrono::DateTime<Local>,
+) -> Result<bool, WorkspaceError> {
+    let mounts = NativeWorkspaceMounts::resolve(workspace_root, external_plans);
+    let journal_dir = mounts.workspace.join("charters");
+    std::fs::create_dir_all(&journal_dir)?;
+    let _lock = WorkspaceLock::try_acquire(&mounts.workspace)?
+        .ok_or_else(|| WorkspaceError::WorkspaceLocked(mounts.workspace.clone()))?;
+    recover_pending(&journal_dir)?;
+
+    let inventory = mounts.inventory()?;
+    let workspace = crate::mounts::load_workspace_model(workspace_root, external_plans)?;
+    let observation = observe_calendar_resources(workspace_root, external_plans)?;
+    let observed_effective = if mounts.external_plans.is_some() {
+        inventory.external_plans.as_ref()
+    } else {
+        Some(&inventory.workspace)
+    }
+    .ok_or_else(|| WorkspaceError::Actions("external plans inventory is missing".into()))?;
+    if &observation.inventory != observed_effective {
+        return Err(WorkspaceError::Actions(
+            "plans vdir changed while materialized occurrence was being read".into(),
+        ));
+    }
+
+    let plans_root = mounts
+        .external_plans
+        .as_deref()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| mounts.workspace.join("plans"));
+    let store_path = WorkspacePath::new("sync/plans.json")
+        .map_err(|error| WorkspaceError::Actions(error.to_string()))?;
+    let store_location = ResourceLocation::workspace(store_path);
+    let store_expected = expected_resource(&mounts, &store_location)?;
+    let store = read_plans_sync_store(workspace_root, &plans_root)?;
+    let plan_resources = plan_resource_states(&observation.resources)?;
+    let action_resources = sync_action_resources(&workspace, &SyncReport::default(), &mounts)?;
+    let templates = sync_plan_templates(&workspace, &mounts.workspace)?;
+    let archive = materialized_occurrence_archive(&workspace, &mounts, occurrence_id)?;
+    let observed_resources = sync_read_preconditions(&mounts, &inventory)?;
+    let prepared =
+        prepare_materialized_occurrence_resolution(MaterializedOccurrencePreparationInput {
+            workspace,
+            store,
+            occurrence_id,
+            operation: operation.clone(),
+            now,
+            plan_resources,
+            action_resources,
+            templates,
+            archive,
+            observed_resources,
+            store_location,
+            store_expected,
+        })?;
+    if !prepared.outcome() {
+        return Ok(false);
+    }
+    if mounts.inventory()? != inventory {
+        return Err(WorkspaceError::Actions(
+            "workspace or plans vdir changed before occurrence delivery".into(),
+        ));
+    }
+    super::deliver(&mounts, &journal_dir, prepared)
+}
+
+fn materialized_occurrence_archive(
+    workspace: &clearhead_core::workspace::Workspace,
+    mounts: &NativeWorkspaceMounts,
+    occurrence_id: Uuid,
+) -> Result<Option<MaterializedOccurrenceArchiveState>, WorkspaceError> {
+    for charter in &workspace.charters {
+        let Some(actions_file) = &charter.actions_file else {
+            continue;
+        };
+        let completed = completed_actions_path(actions_file);
+        let completed_location =
+            ResourceLocation::workspace(logical_path(&Path::new("charters").join(&completed))?);
+        let completed_path = mounts.physical_path(&completed_location)?;
+        let content = match std::fs::read_to_string(completed_path) {
+            Ok(content) => content,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(error.into()),
+        };
+        let Some(action) = parse_actions(&content)
+            .map_err(WorkspaceError::Actions)?
+            .into_iter()
+            .find(|action| action.id == occurrence_id)
+        else {
+            continue;
+        };
+        let sidecar = sidecar_path(&completed);
+        let sidecar_location =
+            ResourceLocation::workspace(logical_path(&Path::new("charters").join(sidecar))?);
+        let sidecar_path = mounts.physical_path(&sidecar_location)?;
+        let (metadata, sidecar_expected) = match std::fs::read(&sidecar_path) {
+            Ok(bytes) => (
+                parse_sidecar(
+                    std::str::from_utf8(&bytes)
+                        .map_err(|error| WorkspaceError::Parse(error.to_string()))?,
+                )?,
+                ExpectedResource::Revision(super::revision(&bytes)),
+            ),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                (Default::default(), ExpectedResource::Missing)
+            }
+            Err(error) => return Err(error.into()),
+        };
+        return Ok(Some(MaterializedOccurrenceArchiveState {
+            action,
+            metadata,
+            sidecar_location,
+            sidecar_expected,
+        }));
+    }
+    Ok(None)
 }
 
 fn plan_resource_states(

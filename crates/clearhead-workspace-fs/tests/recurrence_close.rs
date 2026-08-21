@@ -1,11 +1,9 @@
 use std::fs;
 
-use clearhead_core::{
-    ActionSelector, OccurrenceOp, completed_actions_path, read_actions,
-    resolve_materialized_occurrence,
-};
+use clearhead_core::{ActionSelector, OccurrenceOp, completed_actions_path, read_actions};
 use clearhead_workspace_fs::{
-    close_action_subtree, load_domain_model, read_plans_sync_store, sync_calendar,
+    close_action_subtree, load_domain_model, read_plans_sync_store,
+    resolve_materialized_occurrence, sync_calendar,
 };
 
 fn recurring_plan_workspace() -> tempfile::TempDir {
