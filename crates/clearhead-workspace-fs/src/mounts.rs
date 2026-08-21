@@ -201,8 +201,11 @@ fn inventory_mount(root: &Path) -> Result<MountInventory, WorkspaceError> {
                 collections.insert(logical);
                 stack.push(path);
             } else if file_type.is_file() {
-                let bytes = std::fs::read(&path)?;
-                files.push((logical, revision(&bytes)));
+                let revision = entry
+                    .metadata()
+                    .map(|metadata| metadata_revision(&metadata))
+                    .unwrap_or_else(|_| ResourceRevision::new("metadata-unavailable"));
+                files.push((logical, revision));
             }
         }
     }
@@ -221,17 +224,36 @@ fn read_mount(
     let mut failures = Vec::new();
     for logical in plan.paths() {
         let path = root.join(logical.as_str());
+        let before = match std::fs::metadata(&path) {
+            Ok(metadata) => metadata_revision(&metadata),
+            Err(error) => {
+                failures.push(ResourceReadFailure {
+                    path: logical.clone(),
+                    message: error.to_string(),
+                });
+                continue;
+            }
+        };
+        if inventory.revision(logical) != Some(&before) {
+            failures.push(ResourceReadFailure {
+                path: logical.clone(),
+                message: "resource changed after inventory".into(),
+            });
+            continue;
+        }
         match std::fs::read(&path) {
             Ok(bytes) => {
-                let actual = revision(&bytes);
-                if inventory.revision(logical) != Some(&actual) {
+                let after = std::fs::metadata(&path)
+                    .map(|metadata| metadata_revision(&metadata))
+                    .ok();
+                if after.as_ref() != Some(&before) {
                     failures.push(ResourceReadFailure {
                         path: logical.clone(),
-                        message: "resource changed after inventory".into(),
+                        message: "resource changed while it was read".into(),
                     });
                     continue;
                 }
-                snapshots.push(ResourceSnapshot::new(logical.clone(), bytes, actual));
+                snapshots.push(ResourceSnapshot::new(logical.clone(), bytes, before));
             }
             Err(error) => failures.push(ResourceReadFailure {
                 path: logical.clone(),
@@ -256,8 +278,15 @@ fn logical_path(path: &Path) -> Result<WorkspacePath, WorkspaceError> {
     WorkspacePath::new(logical).map_err(|_| WorkspaceError::InvalidPath(path.to_path_buf()))
 }
 
-fn revision(bytes: &[u8]) -> ResourceRevision {
-    ResourceRevision::new(blake3::hash(bytes).to_hex().to_string())
+fn metadata_revision(metadata: &std::fs::Metadata) -> ResourceRevision {
+    let modified = metadata
+        .modified()
+        .ok()
+        .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok());
+    let (seconds, nanos) = modified
+        .map(|duration| (duration.as_secs(), duration.subsec_nanos()))
+        .unwrap_or_default();
+    ResourceRevision::new(format!("{}:{seconds}:{nanos}", metadata.len()))
 }
 
 #[cfg(test)]

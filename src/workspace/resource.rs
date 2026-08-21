@@ -279,12 +279,40 @@ impl ReadPlan {
 pub fn plan_workspace_read(
     inventory: &WorkspaceMounts<MountInventory>,
 ) -> WorkspaceMounts<ReadPlan> {
+    let workspace = inventory.workspace.files.paths().filter(|path| {
+        let path = path.as_str();
+        if let Some(relative) = path.strip_prefix("charters/") {
+            let hidden_parent = relative
+                .rsplit_once('/')
+                .is_some_and(|(parent, _)| parent.split('/').any(|part| part.starts_with('.')));
+            if hidden_parent {
+                return false;
+            }
+            let filename = relative.rsplit('/').next().unwrap_or(relative);
+            return (relative.ends_with(".actions")
+                && !relative.ends_with(".completed.actions")
+                && !relative.ends_with(".upcoming.actions"))
+                || relative.ends_with(".md")
+                || (filename.starts_with('.') && relative.ends_with(".json"));
+        }
+        path.strip_prefix("plans/").is_some_and(|relative| {
+            relative.ends_with(".ics") && !relative.split('/').any(|part| part.starts_with('.'))
+        })
+    });
     WorkspaceMounts {
-        workspace: ReadPlan::all(&inventory.workspace.files),
-        external_plans: inventory
-            .external_plans
-            .as_ref()
-            .map(|mount| ReadPlan::all(&mount.files)),
+        workspace: ReadPlan::new(workspace.cloned()),
+        external_plans: inventory.external_plans.as_ref().map(|mount| {
+            ReadPlan::new(
+                mount
+                    .files
+                    .paths()
+                    .filter(|path| {
+                        path.as_str().ends_with(".ics")
+                            && !path.as_str().split('/').any(|part| part.starts_with('.'))
+                    })
+                    .cloned(),
+            )
+        }),
     }
 }
 
@@ -544,26 +572,33 @@ mod tests {
 
     #[test]
     fn workspace_and_external_plans_keep_separate_read_namespaces() {
-        let same = path("next/item.ics");
+        let workspace_path = path("plans/next/item.ics");
+        let external_path = path("next/item.ics");
         let inventory = WorkspaceMounts {
             workspace: MountInventory {
                 files: WorkspaceInventory::new([(
-                    same.clone(),
+                    workspace_path.clone(),
                     ResourceRevision::new("workspace"),
                 )]),
                 collections: BTreeSet::new(),
             },
             external_plans: Some(MountInventory {
-                files: WorkspaceInventory::new([(same.clone(), ResourceRevision::new("external"))]),
+                files: WorkspaceInventory::new([(
+                    external_path.clone(),
+                    ResourceRevision::new("external"),
+                )]),
                 collections: BTreeSet::new(),
             }),
         };
 
         let plan = plan_workspace_read(&inventory);
-        assert_eq!(plan.workspace.paths(), std::slice::from_ref(&same));
+        assert_eq!(
+            plan.workspace.paths(),
+            std::slice::from_ref(&workspace_path)
+        );
         assert_eq!(
             plan.external_plans.unwrap().paths(),
-            std::slice::from_ref(&same)
+            std::slice::from_ref(&external_path)
         );
     }
 
