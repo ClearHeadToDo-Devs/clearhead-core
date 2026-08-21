@@ -13,8 +13,8 @@ use uuid::Uuid;
 
 use super::expand::{next_active_slot, render_occurrence};
 use super::ics::{
-    VTodoAction, action_to_vtodo, canonical_occurrence_key, parse_ics_file, parse_vtodo_actions,
-    write_master_rollforward,
+    VTodoAction, action_to_vtodo, canonical_occurrence_key, parse_ics, parse_ics_file,
+    parse_vtodo_actions, render_master_rollforward, write_master_rollforward,
 };
 use super::plans::{action_mirror_path, collect_plan_files_in};
 use super::sync_store::{
@@ -27,6 +27,9 @@ use crate::workspace::action_files::completed_actions_path;
 use crate::workspace::actions::format::require_actions_formatting;
 use crate::workspace::charter::MarkdownCharter;
 use crate::workspace::durability::{PendingBatch, WorkspaceLock, atomic_write, recover_pending};
+use crate::workspace::resource::{
+    Effect, EffectBatch, ExpectedResource, PreparedMutation, ResourceLocation, ResourcePrecondition,
+};
 use crate::workspace::sidecar::{
     ActionMeta, CHARTER_METADATA_SCHEMA_URL, OccurrenceSnapshot, read_sidecar, sidecar_path,
 };
@@ -1233,6 +1236,101 @@ fn render_actions(actions: &[SourcedAction]) -> Result<String, WorkspaceError> {
         .map(|action| action.action.clone())
         .collect::<Vec<_>>();
     format(&actions, OutputFormat::Actions, None, None).map_err(WorkspaceError::Actions)
+}
+
+/// Host-supplied recurring-plan resource used by pure calendar preparation.
+#[derive(Clone, Debug)]
+pub struct PlanResourceState {
+    pub location: ResourceLocation,
+    pub source: String,
+    pub expected: ExpectedResource,
+}
+
+/// Prepare recurring-master roll-forward normalization without touching a host.
+pub fn prepare_master_rollforwards(
+    mut store: PlansSyncStore,
+    store_location: ResourceLocation,
+    store_expected: ExpectedResource,
+    resources: &[PlanResourceState],
+) -> Result<PreparedMutation<PlansSyncStore, usize>, WorkspaceError> {
+    let bases: HashMap<Uuid, DateTime<Local>> = store.field_bases(MASTER_DTSTART_FIELD)?;
+    let mut effects = Vec::new();
+    let mut preconditions = resources
+        .iter()
+        .map(|resource| ResourcePrecondition {
+            path: resource.location.clone(),
+            expected: resource.expected.clone(),
+        })
+        .collect::<Vec<_>>();
+    preconditions.push(ResourcePrecondition {
+        path: store_location.clone(),
+        expected: store_expected,
+    });
+    let mut recorded = 0usize;
+    let mut store_dirty = false;
+
+    for resource in resources {
+        let plans = parse_ics(&resource.source, Path::new(resource.location.path.as_str()))?;
+        let mut rendered = resource.source.clone();
+        let mut resource_dirty = false;
+        for ics in plans {
+            let (Some(plan_uid), Some(current)) =
+                (ics.plan.external_id.as_deref(), ics.plan.dtstart)
+            else {
+                continue;
+            };
+            if ics.plan.recurrence.is_none() {
+                continue;
+            }
+            let plan_id = ics.plan.id;
+            let Some(&base) = bases.get(&plan_id) else {
+                store.stamp(plan_id, MASTER_DTSTART_FIELD, &current)?;
+                store_dirty = true;
+                continue;
+            };
+            if current == base {
+                continue;
+            }
+            let grid: Vec<DateTime<Local>> = ics
+                .plan
+                .expand_occurrences(base, 1000)
+                .into_iter()
+                .map(|date| date.with_timezone(&Local))
+                .collect();
+            let Some(index) = grid
+                .iter()
+                .position(|&date| date == current)
+                .filter(|&index| index >= 1)
+            else {
+                store.stamp(plan_id, MASTER_DTSTART_FIELD, &current)?;
+                store_dirty = true;
+                continue;
+            };
+            let completed_slots = grid[..index]
+                .iter()
+                .map(|&slot| (canonical_occurrence_key(slot), slot))
+                .filter(|(key, _)| !ics.exdates.contains(key) && !ics.overrides.contains_key(key))
+                .collect::<Vec<_>>();
+            rendered = render_master_rollforward(&rendered, plan_uid, base, &completed_slots)?;
+            resource_dirty = true;
+            recorded += completed_slots.len();
+        }
+        if resource_dirty {
+            effects.push(Effect::Write {
+                path: resource.location.clone(),
+                bytes: rendered.into_bytes(),
+            });
+        }
+    }
+    if store_dirty {
+        effects.push(Effect::Write {
+            path: store_location,
+            bytes: serialize_plans_sync_store(&store)?.into_bytes(),
+        });
+    }
+    let batch = EffectBatch::new(effects, preconditions)
+        .map_err(|error| WorkspaceError::Actions(error.to_string()))?;
+    Ok(PreparedMutation::with_outcome(store, batch, recorded))
 }
 
 /// Ingest foreign roll-forwards on recurring masters in the configured plans vdir.

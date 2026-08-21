@@ -116,7 +116,10 @@ pub fn sync_calendar(
     let rolled_forward = if dry_run {
         0
     } else {
-        clearhead_core::sync_master_rollforwards(&ctx.data_dir, ctx.plan_override().as_deref())?
+        clearhead_workspace_fs::sync_master_rollforwards(
+            &ctx.data_dir,
+            ctx.plan_override().as_deref(),
+        )?
     };
 
     if report.is_empty() {

@@ -16,7 +16,8 @@ pub use archive_charter::{
 pub use calendar::{
     CalendarObservation, CalendarResource, apply_occurrence_op, delete_plan_file,
     observe_calendar_resources, plans_sync_store_path, read_calendar_resources, read_ics_file,
-    read_plans_sync_store, read_vtodo_actions, read_vtodo_file, write_plan_file,
+    read_plans_sync_store, read_vtodo_actions, read_vtodo_file, sync_master_rollforwards,
+    write_plan_file,
 };
 pub use doctor::{
     apply_doctor_repairs, diagnose_workspace, diagnose_workspace_read, observe_doctor,

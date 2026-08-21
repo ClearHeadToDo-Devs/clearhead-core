@@ -14,6 +14,9 @@ use clearhead_core::workspace::calendar::ics::{
 use clearhead_core::workspace::calendar::plans::{
     infer_plan_charter_name_for_workspace, infer_plan_parent_for_workspace,
 };
+use clearhead_core::workspace::calendar::reconcile::{
+    PlanResourceState, prepare_master_rollforwards,
+};
 use clearhead_core::workspace::calendar::sync_store::{PlansSyncStore, decode_plans_sync_store};
 use clearhead_core::workspace::durability::{WorkspaceLock, recover_pending};
 use clearhead_core::workspace::resource::{
@@ -230,6 +233,74 @@ pub fn apply_occurrence_op(
     }
     crate::validate_preconditions(&observation.mounts, effects.preconditions())?;
     crate::execute_effects(&observation.mounts, &journal_dir, effects.effects())
+}
+
+/// Normalize foreign recurring-master roll-forwards in one mounted transaction.
+pub fn sync_master_rollforwards(
+    workspace_root: &Path,
+    external_plans: Option<&Path>,
+) -> Result<usize, WorkspaceError> {
+    let mounts = NativeWorkspaceMounts::resolve(workspace_root, external_plans);
+    let journal_dir = mounts.workspace.join("charters");
+    std::fs::create_dir_all(&journal_dir)?;
+    let _lock = WorkspaceLock::try_acquire(&mounts.workspace)?
+        .ok_or_else(|| WorkspaceError::WorkspaceLocked(mounts.workspace.clone()))?;
+    recover_pending(&journal_dir)?;
+
+    let observation = observe_calendar_resources(workspace_root, external_plans)?;
+    let plans_root = observation
+        .mounts
+        .external_plans
+        .clone()
+        .unwrap_or_else(|| observation.mounts.workspace.join("plans"));
+    let store_path = observation.mounts.workspace.join("sync/plans.json");
+    let store_location =
+        ResourceLocation::workspace(WorkspacePath::new("sync/plans.json").unwrap());
+    let (store_source, store_expected) = match std::fs::read(&store_path) {
+        Ok(bytes) => (
+            Some(
+                std::str::from_utf8(&bytes)
+                    .map_err(|error| WorkspaceError::Parse(error.to_string()))?
+                    .to_owned(),
+            ),
+            ExpectedResource::Revision(crate::mounts::content_revision(&bytes)),
+        ),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            (None, ExpectedResource::Missing)
+        }
+        Err(error) => return Err(error.into()),
+    };
+    let store = decode_plans_sync_store(store_source.as_deref(), &plans_root)?;
+    let resources = observation
+        .resources
+        .iter()
+        .map(|resource| {
+            Ok(PlanResourceState {
+                location: resource.location.clone(),
+                source: std::str::from_utf8(&resource.bytes)
+                    .map_err(|error| WorkspaceError::Parse(error.to_string()))?
+                    .to_owned(),
+                expected: ExpectedResource::Revision(resource.revision.clone()),
+            })
+        })
+        .collect::<Result<Vec<_>, WorkspaceError>>()?;
+    let prepared = prepare_master_rollforwards(store, store_location, store_expected, &resources)?;
+
+    if effective_inventory(&observation.mounts)? != observation.inventory {
+        return Err(WorkspaceError::Actions(
+            "configured plans vdir changed before roll-forward delivery".into(),
+        ));
+    }
+    crate::validate_preconditions(&observation.mounts, prepared.effects().preconditions())?;
+    crate::execute_effects(
+        &observation.mounts,
+        &journal_dir,
+        prepared.effects().effects(),
+    )?;
+    Ok(prepared
+        .adopt::<String>(Ok(()))
+        .expect("successful native calendar delivery releases prepared state")
+        .outcome)
 }
 
 /// Parse all standalone VTODO projections from the effective plans mount.
@@ -484,5 +555,32 @@ mod tests {
         let rendered = std::fs::read_to_string(&external_file).unwrap();
         assert!(rendered.contains("EXDATE:20260821T120000Z"));
         assert!(!project.join(".clearhead/plans").exists());
+    }
+
+    #[test]
+    fn roll_forward_and_store_commit_across_workspace_and_external_mounts() {
+        let temp = tempfile::tempdir().unwrap();
+        let project = temp.path().join("project");
+        let external_root = temp.path().join("vdir");
+        let external_file = external_root.join("next/weekly.ics");
+        std::fs::create_dir_all(project.join(".clearhead/charters")).unwrap();
+        std::fs::create_dir_all(external_file.parent().unwrap()).unwrap();
+        std::fs::write(&external_file, PLAN).unwrap();
+
+        assert_eq!(
+            sync_master_rollforwards(&project, Some(&external_root)).unwrap(),
+            0
+        );
+        let advanced = PLAN.replace("20260821T120000Z", "20260828T120000Z");
+        std::fs::write(&external_file, advanced).unwrap();
+
+        assert_eq!(
+            sync_master_rollforwards(&project, Some(&external_root)).unwrap(),
+            1
+        );
+        let rendered = std::fs::read_to_string(&external_file).unwrap();
+        assert!(rendered.contains("DTSTART:20260821T120000Z"));
+        assert!(rendered.contains("RECURRENCE-ID:20260821T120000Z"));
+        assert!(plans_sync_store_path(&project).exists());
     }
 }
