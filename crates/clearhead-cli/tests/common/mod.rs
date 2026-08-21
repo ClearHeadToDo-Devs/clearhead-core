@@ -108,10 +108,9 @@ impl TestEnv {
         cmd.env("XDG_CONFIG_HOME", self.config_dir.parent().unwrap());
         cmd.env("XDG_DATA_HOME", self.data_dir.parent().unwrap());
         cmd.env("XDG_STATE_HOME", &self.state_dir);
-        let graphd = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .expect("clearhead-cli parent")
-            .join("clearhead-graphd/target/debug/clearhead-graphd");
+        // One workspace, one shared target directory at the repository root.
+        let graphd =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/debug/clearhead-graphd");
         if graphd.exists() {
             cmd.env("CLEARHEAD_GRAPHD", graphd);
         }
@@ -123,7 +122,9 @@ impl TestEnv {
 fn specification_examples_dir() -> PathBuf {
     std::env::var("CLEARHEAD_SPEC_DIR")
         .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../specifications"))
+        .unwrap_or_else(|_| {
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../specifications")
+        })
         .join("examples/actions")
 }
 

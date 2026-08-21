@@ -12,10 +12,8 @@ const A: &str = "019f733d-4600-7000-8000-000000000001";
 const B: &str = "019f733d-4600-7000-8000-000000000002";
 
 fn graphd_bin() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .expect("clearhead-cli parent")
-        .join("clearhead-graphd/target/debug/clearhead-graphd")
+    // One workspace, one shared target directory at the repository root.
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/debug/clearhead-graphd")
 }
 
 fn seed() -> TestEnv {

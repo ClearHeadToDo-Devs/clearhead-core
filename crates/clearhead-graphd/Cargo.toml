@@ -13,7 +13,7 @@ path = "src/main.rs"
 anyhow = "1.0"
 clap = { version = "4.0", features = ["derive"] }
 # graphd is read-only and does not need canonical .actions source formatting.
-clearhead_core = { path = "../clearhead-core", version = "0.2.0", default-features = false }
+clearhead_core = { path = "../..", version = "0.2.0", default-features = false }
 comfy-table = "7.1"
 chrono = "0.4"
 config = { version = "0.15.19", default-features = false, features = ["json"] }

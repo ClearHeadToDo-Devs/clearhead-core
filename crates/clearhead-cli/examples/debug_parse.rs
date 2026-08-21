@@ -3,7 +3,7 @@ use std::{fs, path::PathBuf};
 fn main() {
     let spec_root = std::env::var_os("CLEARHEAD_SPEC_DIR")
         .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("../specifications"));
+        .unwrap_or_else(|| PathBuf::from("../../../specifications"));
     let fixture =
         spec_root.join("examples/conformance/syntax/description_unescaped_bracket.actions");
     let content = fs::read_to_string(&fixture)

@@ -14,7 +14,9 @@ use std::path::PathBuf;
 fn spec_dir() -> PathBuf {
     std::env::var("CLEARHEAD_SPEC_DIR")
         .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../specifications"))
+        .unwrap_or_else(|_| {
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../specifications")
+        })
 }
 
 fn index_validator() -> jsonschema::JSONSchema {

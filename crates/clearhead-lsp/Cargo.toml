@@ -12,11 +12,8 @@ name = "clearhead-lsp"
 path = "src/main.rs"
 
 [dependencies]
-# Consumed from canonical repositories so a standalone LSP checkout builds
-# without sibling checkouts. The pinned platform composition and local sibling
-# development override these to adjacent paths via the platform
-# `.cargo/config.toml` `[patch]` table; see the README.
-clearhead_core = { git = "https://github.com/ClearHeadToDo-Devs/clearhead-core.git", rev = "cdb579787ea7863961ad97c04c174757fbb9a7f7", version = "0.2.0", default-features = false, features = ["formatting"] }
+# One repository, one workspace: core is an ordinary sibling path dependency.
+clearhead_core = { path = "../..", version = "0.2.0", default-features = false, features = ["formatting"] }
 chrono = "0.4"
 dashmap = "6.1.0"
 serde_json = "1.0"

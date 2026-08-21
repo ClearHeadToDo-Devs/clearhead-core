@@ -12,7 +12,7 @@ const XSD: &str = "http://www.w3.org/2001/XMLSchema#";
 
 fn fixture(name: &str) -> std::path::PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../clearhead-core/tests/fixtures/workspace")
+        .join("../../tests/fixtures/workspace")
         .join(name)
 }
 
