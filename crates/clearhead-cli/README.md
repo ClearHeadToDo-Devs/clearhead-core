@@ -13,9 +13,9 @@ cargo install clearhead
 Or build from source:
 
 ```bash
-git clone https://github.com/ClearHeadToDo-Devs/clearhead-cli
-cd clearhead-cli
-cargo build --release
+git clone https://github.com/ClearHeadToDo-Devs/clearhead-core
+cd clearhead-core
+cargo build --release -p clearhead_cli
 ```
 
 ## Quick start

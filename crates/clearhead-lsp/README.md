@@ -16,34 +16,26 @@ Archive mutations are intentionally absent from the LSP surface. Editor clients 
 
 ## Ownership and releases
 
-The LSP is released independently from `clearhead-cli` at `ClearHeadToDo-Devs/clearhead-lsp`. Its public process contract is standard LSP over stdio; provider changes and async-runtime upgrades follow this repository's own release history.
+The LSP is a member of the `clearhead-core` repository's Cargo workspace at `crates/clearhead-lsp`, versioned and built independently of the other members. Its public process contract is standard LSP over stdio; provider changes and async-runtime upgrades follow its own release history.
 
 ## Dependencies and builds
 
-`clearhead-core` and `tree-sitter-actions` are declared from their canonical
-Git repositories, so a standalone clone of this repository builds and tests
-without any sibling checkout:
+`clearhead-core` is an ordinary sibling path dependency, so a clone of the
+workspace repository builds and tests without any other checkout:
 
 ```sh
-git clone https://github.com/ClearHeadToDo-Devs/clearhead-lsp.git
-cd clearhead-lsp
-cargo test
+git clone https://github.com/ClearHeadToDo-Devs/clearhead-core.git
+cd clearhead-core
+cargo test -p clearhead-lsp
 ```
 
-Both dependencies are pinned to a specific revision. Bump the `rev` fields in
-`Cargo.toml` to consume a newer published `clearhead-core` or
-`tree-sitter-actions`; promote those pins to version tags as a release step.
-
-### Local development with sibling checkouts
-
-Inside the platform workspace, the super-repo's `.cargo/config.toml` carries a
-`[patch]` table that redirects those Git dependencies back to the adjacent
-submodule checkouts, so local edits to `clearhead-core` and
-`tree-sitter-actions` propagate and `scripts/validate-pinned` verifies the exact
-pinned submodule composition rather than a fetched revision. Cargo discovers
-that file by walking up from the working directory, so it is active for any
-build inside the platform tree and inert for a standalone clone.
-
-```sh
-cargo test --manifest-path clearhead-lsp/Cargo.toml
-```
+The `tree-sitter-actions` grammar is declared from its canonical Git
+repository, pinned to a specific revision. Bump the `rev` field in
+`Cargo.toml` to consume a newer published grammar; promote the pin to a
+version tag as a release step. Inside the platform workspace, the super-repo's
+`.cargo/config.toml` carries a `[patch]` table that redirects that Git
+dependency to the adjacent submodule checkout, so local grammar edits
+propagate and `scripts/validate-pinned` verifies the exact pinned composition.
+Cargo discovers that file by walking up from the working directory, so it is
+active for any build inside the platform tree and inert for a standalone
+clone.

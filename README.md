@@ -8,6 +8,18 @@ ClearHead Core is the foundational library for the ClearHead ecosystem. It provi
 
 The workspace backend is currently the only implementation. Future backends, such as SQLite, can be introduced as explicit capabilities.
 
+## Repository layout
+
+This repository is a single Cargo workspace. The root package is
+`clearhead_core` (this library); the native host binaries live in `crates/`:
+
+- `crates/clearhead-cli` — the `clearhead` command-line client
+- `crates/clearhead-lsp` — the editor protocol server
+- `crates/clearhead-graphd` — the RDF/graph query daemon
+
+Members use ordinary sibling path dependencies, so this checkout builds and
+tests standalone: `cargo test --workspace`.
+
 ## Features
 
 - Domain model structs and logic
@@ -19,7 +31,7 @@ The workspace backend is currently the only implementation. Future backends, suc
 
 This makes it suitable for use in:
 
-- CLI tools such as [clearhead-cli](https://github.com/ClearHeadToDo-Devs/clearhead-cli)
+- CLI tools such as [clearhead-cli](https://github.com/ClearHeadToDo-Devs/clearhead-core/tree/main/crates/clearhead-cli)
 - LSP servers
 - Web services and APIs
 - WebAssembly (WASM) environments
