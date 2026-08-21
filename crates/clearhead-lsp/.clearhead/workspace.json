@@ -1,0 +1,6 @@
+{
+  "$schema": "https://raw.githubusercontent.com/ClearHeadToDo-Devs/specifications/master/schemas/workspace.schema.json",
+  "created_at": "2026-07-17",
+  "workspace_id": "019f7383-0de4-7890-9a8b-d7acb0e4bd30",
+  "workspace_name": "clearhead-lsp"
+}

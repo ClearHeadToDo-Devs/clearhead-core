@@ -1,0 +1,3 @@
+[ ] Handle workspace folder changes after initialization $Workspace roots live in a OnceCell populated only by initialize. Support workspace/didChangeWorkspaceFolders or document the fixed-root contract.$ !3 #019f738f-7c66-7922-bccb-0f2f489d854b
+[ ] Add independent CI and repository license $Enforce cargo fmt, test, clippy, and the black-box protocol suite in the public repository; add the MIT license file declared by Cargo metadata.$ !2 #019f738f-7c71-7480-bca2-bd1c180b2988
+[ ] Decide whether to share the NDJSON telemetry adapter $CLI and LSP currently carry nearly identical rotating-file emitters. Keep the duplication explicit or extract a small shared adapter before a third runtime copies it.$ !3 #019f738f-7c7d-7c93-8195-efd158fc8c6c

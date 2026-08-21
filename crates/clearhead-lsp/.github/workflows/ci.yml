@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout lsp
+        uses: actions/checkout@v4
+        with:
+          path: workspace/clearhead-lsp
+
+      # The crates intentionally use sibling path dependencies in the platform
+      # workspace. Check out those exact siblings rather than hiding the seam
+      # behind registry substitutions that local development does not use.
+      - name: Checkout core
+        uses: actions/checkout@v4
+        with:
+          repository: ClearHeadToDo-Devs/clearhead-core
+          path: workspace/clearhead-core
+
+      - name: Checkout tree-sitter grammar
+        uses: actions/checkout@v4
+        with:
+          repository: ClearHeadToDo-Devs/tree-sitter-actions
+          path: workspace/tree-sitter-actions
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Format
+        working-directory: workspace/clearhead-lsp
+        run: cargo fmt --check
+
+      - name: Clippy
+        working-directory: workspace/clearhead-lsp
+        run: cargo clippy --all-targets --no-deps --locked -- -D warnings
+
+      - name: Test
+        working-directory: workspace/clearhead-lsp
+        run: cargo test --locked
