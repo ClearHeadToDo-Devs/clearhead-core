@@ -1,6 +1,6 @@
 use crate::commands::CommandContext;
 use anyhow::Context;
-use clearhead_core::workspace::{MarkdownCharter, diagnose_read};
+use clearhead_core::workspace::MarkdownCharter;
 
 pub fn run(ctx: &CommandContext) -> anyhow::Result<()> {
     print_config_section(ctx);
@@ -140,7 +140,12 @@ fn print_workspace_section(ctx: &CommandContext) -> anyhow::Result<()> {
     let plan_count: usize = read.charters.iter().map(|c| c.plans.len()).sum();
     let action_count: usize = read.charters.iter().map(|c| c.actions.len()).sum();
 
-    let diagnosis = diagnose_read(&ctx.data_dir, &read);
+    let diagnosis = clearhead_workspace_fs::diagnose_workspace_read(
+        &ctx.data_dir,
+        ctx.plan_override().as_deref(),
+        &read,
+    )
+    .context("Failed to diagnose workspace")?;
     println!(
         "  graph_summary: {} charters | {} plans | {} actions | {} violations, {} warnings",
         charter_count,

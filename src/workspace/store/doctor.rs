@@ -1,22 +1,90 @@
-//! `doctor` — read-only workspace fsck (trust charter, Decision 34).
+//! Pure workspace diagnosis over host-supplied doctor evidence.
 //!
-//! Cross-file coherence checks over what [`read_workspace_with_plans`] loaded,
-//! plus raw filesystem observations the loader never makes. Strictly
-//! read-only: it reports and never heals — cleanup belongs to the commands
-//! that own each file surface, and journal replay belongs to loading.
+//! Core decides what observations mean and which repairs are safe. Native file
+//! discovery, byte reads, clocks, locking, and repair execution belong to the
+//! workspace adapter.
 
 use super::findings::{Finding, FindingSeverity};
-use super::load::{read_workspace_with_plans, syntax_error_summary};
-use super::{WorkspaceError, resolve_workspace_layout};
+use super::load::{WorkspaceRead, syntax_error_summary};
 use crate::domain::{Action, ActionState};
 use crate::workspace::charter::MarkdownCharter;
-use crate::workspace::sidecar::{read_sidecar, sidecar_path};
+use crate::workspace::manifest::WorkspaceManifest;
+use crate::workspace::resource::{ResourceLocation, ResourceRevision, WorkspacePath};
+use crate::workspace::sidecar::{CharterMetadata, parse_sidecar};
+use chrono::{DateTime, Local};
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
-/// Everything a doctor run observed. Nothing was changed to produce it.
+/// One host-observed text resource. Read failure is evidence, not an I/O error
+/// leaked into Core.
+#[derive(Clone, Debug)]
+pub struct DoctorDocument {
+    pub path: WorkspacePath,
+    pub bytes: Result<Vec<u8>, String>,
+    pub revision: ResourceRevision,
+}
+
+/// One sidecar and whether its path-derived companion action file exists.
+#[derive(Clone, Debug)]
+pub struct DoctorSidecarEvidence {
+    pub document: DoctorDocument,
+    pub companion_exists: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DurabilityResidueKind {
+    PendingJournal,
+    OrphanedTemp,
+}
+
+#[derive(Clone, Debug)]
+pub struct DurabilityResidue {
+    pub location: ResourceLocation,
+    pub kind: DurabilityResidueKind,
+}
+
+/// Opaque revision evidence for one observed calendar collection.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DoctorCollectionEvidence {
+    pub location: ResourceLocation,
+    pub revision: ResourceRevision,
+}
+
+/// Host-neutral observations required by doctor beyond normal workspace
+/// assembly.
+#[derive(Clone, Debug)]
+pub struct DoctorEvidence {
+    pub manifest: WorkspaceManifest,
+    pub completed_actions: Vec<DoctorDocument>,
+    pub archived_actions: Vec<DoctorDocument>,
+    pub sidecars: Vec<DoctorSidecarEvidence>,
+    pub plan_collections: Vec<DoctorCollectionEvidence>,
+    pub durability_residue: Vec<DurabilityResidue>,
+    pub observed_at: DateTime<Local>,
+}
+
+/// A repair Core has proven safe from the supplied evidence. Adapters execute
+/// these typed instructions; shells never scrape human finding messages.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum DoctorRepair {
+    PruneSidecarEntry {
+        path: WorkspacePath,
+        id: String,
+        expected: ResourceRevision,
+    },
+    RemoveSidecar {
+        path: WorkspacePath,
+        expected: ResourceRevision,
+    },
+    RemovePlansCollection {
+        location: ResourceLocation,
+        expected: ResourceRevision,
+    },
+}
+
+/// Everything a doctor run concluded. Nothing was changed to produce it.
 #[derive(Debug, Serialize)]
 pub struct Diagnosis {
     /// All findings, most severe first, then by path.
@@ -24,6 +92,9 @@ pub struct Diagnosis {
     pub checked_charters: usize,
     /// Open actions plus actions in completed archives.
     pub checked_actions: usize,
+    /// Typed, host-neutral repairs omitted from the stable JSON report.
+    #[serde(skip)]
+    pub repairs: Vec<DoctorRepair>,
 }
 
 impl Diagnosis {
@@ -43,40 +114,15 @@ impl Diagnosis {
     }
 }
 
-/// Run every workspace coherence check and return the combined findings —
-/// the loader's per-file findings plus doctor's cross-file ones.
-pub fn diagnose(root: &Path, plan_override: Option<&Path>) -> Result<Diagnosis, WorkspaceError> {
-    let read = read_workspace_with_plans(root, plan_override)?;
-    let layout = resolve_workspace_layout(root);
-    let plans_root = plan_override.unwrap_or(&layout.plans_root);
-    Ok(diagnose_read_with_plans(root, &read, plans_root))
-}
-
-/// Like [`diagnose`], but over a workspace the caller already read — for
-/// read-only surfaces (e.g. `debug`) that need the workspace *and* its
-/// diagnosis without reading twice.
-pub fn diagnose_read(root: &Path, read: &super::load::WorkspaceRead) -> Diagnosis {
-    let layout = resolve_workspace_layout(root);
-    diagnose_read_with_plans(root, read, &layout.plans_root)
-}
-
-fn diagnose_read_with_plans(
-    root: &Path,
-    read: &super::load::WorkspaceRead,
-    plans_root: &Path,
-) -> Diagnosis {
-    let layout = resolve_workspace_layout(root);
+/// Run every coherence check over a workspace read and immutable native
+/// observations. This function performs no I/O and is suitable for any host.
+pub fn diagnose(read: &WorkspaceRead, evidence: &DoctorEvidence) -> Diagnosis {
     let mut findings = read.findings.clone();
+    let mut repairs = Vec::new();
 
-    check_workspace_identity(root, &mut findings);
-
-    // Completed archives are outside the loader's scope but inside the
-    // coherence universe: predecessors may point at closed actions, and a
-    // crash mid-archive can leave an action in both files.
-    let completed = collect_completed_actions(&layout.charter_root, &mut findings);
-    // Archived actions (plaintext, in the archive/ region) let predecessors that
-    // point into the archive resolve to satisfied/abandoned instead of dangling.
-    let archived = collect_archived_action_states(&layout.data_root.join("archive"), &mut findings);
+    check_workspace_identity(&evidence.manifest, &mut findings);
+    let completed = collect_completed_actions(&evidence.completed_actions, &mut findings);
+    let archived = collect_archived_action_states(&evidence.archived_actions, &mut findings);
     let charters = &read.charters;
 
     check_duplicate_uuids(charters, &completed, &mut findings);
@@ -84,25 +130,44 @@ fn diagnose_read_with_plans(
     check_charter_alias_collisions(charters, &mut findings);
     check_open_actions_under_unresolved_parents(charters, &mut findings);
     let known_action_ids = collect_known_action_ids(charters, &completed);
-    // A quarantined action file may still own every UUID in its sidecar. Until
-    // source integrity is restored, absence from the semantic model is not
-    // proof of orphanhood and doctor --fix must not prune that provenance.
     let has_quarantined_source = findings.iter().any(|f| f.code == "syntax-errors");
     if !has_quarantined_source {
         check_sidecar_coherence(
-            &layout.charter_root,
-            charters,
+            &evidence.sidecars,
             &known_action_ids,
             &mut findings,
+            &mut repairs,
         );
-        check_orphaned_sidecars(&layout.charter_root, &known_action_ids, &mut findings);
+        check_orphaned_sidecars(
+            &evidence.sidecars,
+            &known_action_ids,
+            &mut findings,
+            &mut repairs,
+        );
     }
-    check_sidecar_created_sanity(&layout.charter_root, charters, &mut findings);
-    check_durability_residue(&layout.charter_root, plans_root, &mut findings);
+    check_sidecar_created_sanity(&evidence.sidecars, evidence.observed_at, &mut findings);
+    check_durability_residue(&evidence.durability_residue, &mut findings);
+
+    repairs.extend(findings.iter().filter_map(|finding| {
+        if finding.code != "unowned-plans-collection" {
+            return None;
+        }
+        let path = WorkspacePath::new(path_text(&finding.path)).ok()?;
+        let location = ResourceLocation::new(finding.mount, path);
+        evidence
+            .plan_collections
+            .iter()
+            .find(|collection| collection.location == location)
+            .map(|collection| DoctorRepair::RemovePlansCollection {
+                location,
+                expected: collection.revision.clone(),
+            })
+    }));
 
     findings.sort_by(|a, b| {
         b.severity
             .cmp(&a.severity)
+            .then_with(|| a.mount.cmp(&b.mount))
             .then_with(|| a.path.cmp(&b.path))
             .then_with(|| a.code.cmp(&b.code))
     });
@@ -113,22 +178,12 @@ fn diagnose_read_with_plans(
         findings,
         checked_charters: charters.len(),
         checked_actions: open_actions + completed_actions,
+        repairs,
     }
 }
 
-/// A workspace with no persisted `workspace_id` still works — queries fall back
-/// to an ephemeral per-load identity ([`Workspace::effective_id`]) — but that
-/// identity is not stable across sessions, breaking named-graph continuity for
-/// archived or shared data. Doctor nudges toward the durable id, reading it from
-/// the [`WorkspaceManifest`] (`workspace.json`).
-///
-/// [`Workspace::effective_id`]: crate::workspace::store::load::Workspace::effective_id
-/// [`WorkspaceManifest`]: crate::workspace::manifest::WorkspaceManifest
-fn check_workspace_identity(root: &Path, findings: &mut Vec<Finding>) {
-    if crate::workspace::manifest::WorkspaceManifest::read(root)
-        .workspace_id
-        .is_none()
-    {
+fn check_workspace_identity(manifest: &WorkspaceManifest, findings: &mut Vec<Finding>) {
+    if manifest.workspace_id.is_none() {
         findings.push(Finding::warning(
             "uninitialized-workspace",
             "workspace.json",
@@ -140,33 +195,24 @@ fn check_workspace_identity(root: &Path, findings: &mut Vec<Finding>) {
 /// Parse every `*.completed.actions` archive, keyed by charter-root-relative
 /// path. Unparseable archives become findings, like the loader's own files.
 fn collect_completed_actions(
-    charter_root: &Path,
+    documents: &[DoctorDocument],
     findings: &mut Vec<Finding>,
 ) -> HashMap<PathBuf, Vec<Action>> {
     let mut completed = HashMap::new();
-    for path in walk_visible_files(charter_root) {
-        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
-            continue;
-        };
-        if !name.ends_with(".completed.actions") {
-            continue;
-        }
-        let relative = path
-            .strip_prefix(charter_root)
-            .unwrap_or(&path)
-            .to_path_buf();
-        let source = match std::fs::read_to_string(&path) {
+    for document in documents {
+        let relative = logical_path_buf(&document.path);
+        let source = match document_text(document) {
             Ok(source) => source,
-            Err(e) => {
+            Err(error) => {
                 findings.push(Finding::violation(
                     "unreadable-file",
                     &relative,
-                    format!("could not read completed archive: {e}"),
+                    format!("could not read completed archive: {error}"),
                 ));
                 continue;
             }
         };
-        match crate::workspace::parse_document(&source) {
+        match crate::workspace::parse_document(source) {
             Ok(doc) => {
                 if !doc.syntax_errors.is_empty() {
                     findings.push(Finding::warning(
@@ -177,13 +223,11 @@ fn collect_completed_actions(
                 }
                 completed.insert(relative, doc.actions);
             }
-            Err(e) => {
-                findings.push(Finding::violation(
-                    "unparseable-file",
-                    &relative,
-                    format!("could not parse completed archive: {e}"),
-                ));
-            }
+            Err(error) => findings.push(Finding::violation(
+                "unparseable-file",
+                &relative,
+                format!("could not parse completed archive: {error}"),
+            )),
         }
     }
     completed
@@ -223,44 +267,33 @@ fn check_duplicate_uuids(
 /// rather than reading as a broken reference. Unparseable archives become
 /// warnings, not violations: archived history is lower-stakes than live files.
 fn collect_archived_action_states(
-    archive_root: &Path,
+    documents: &[DoctorDocument],
     findings: &mut Vec<Finding>,
 ) -> HashMap<Uuid, ActionState> {
     let mut states = HashMap::new();
-    if !archive_root.is_dir() {
-        return states;
-    }
-    for path in walk_visible_files(archive_root) {
-        let is_actions = path
-            .extension()
-            .and_then(|e| e.to_str())
-            .map(|e| e == "actions")
-            .unwrap_or(false);
-        if !is_actions {
-            continue;
-        }
-        let relative = path
-            .strip_prefix(archive_root)
-            .unwrap_or(&path)
-            .to_path_buf();
-        let Ok(source) = std::fs::read_to_string(&path) else {
-            findings.push(Finding::warning(
-                "unreadable-archive",
-                &relative,
-                "could not read archived actions file",
-            ));
-            continue;
+    for document in documents {
+        let relative = logical_path_buf(&document.path);
+        let source = match document_text(document) {
+            Ok(source) => source,
+            Err(error) => {
+                findings.push(Finding::warning(
+                    "unreadable-archive",
+                    &relative,
+                    format!("could not read archived actions file: {error}"),
+                ));
+                continue;
+            }
         };
-        match crate::workspace::parse_document(&source) {
+        match crate::workspace::parse_document(source) {
             Ok(doc) => {
                 for action in doc.actions {
                     states.insert(action.id, action.state);
                 }
             }
-            Err(e) => findings.push(Finding::warning(
+            Err(error) => findings.push(Finding::warning(
                 "unparseable-archive",
                 &relative,
-                format!("could not parse archived actions: {e}"),
+                format!("could not parse archived actions: {error}"),
             )),
         }
     }
@@ -424,40 +457,35 @@ fn collect_known_action_ids(
 }
 
 fn check_sidecar_coherence(
-    charter_root: &Path,
-    charters: &[MarkdownCharter],
+    sidecars: &[DoctorSidecarEvidence],
     known_action_ids: &HashSet<Uuid>,
     findings: &mut Vec<Finding>,
+    repairs: &mut Vec<DoctorRepair>,
 ) {
-    // Sidecar action metadata is UUID-addressed and intentionally rejoins
-    // workspace-wide after an action moves between charter files. An entry is
-    // orphaned only when its UUID exists nowhere in live or completed state,
-    // not merely when it left this sidecar's companion charter.
-    for charter in charters {
-        let Some(actions_file) = &charter.actions_file else {
+    for sidecar in sidecars {
+        let Some(metadata) = parsed_sidecar(sidecar) else {
             continue;
         };
-        let sc_relative = sidecar_path(actions_file);
-        let Ok(meta) = read_sidecar(&charter_root.join(&sc_relative)) else {
-            continue; // corrupt sidecars are already a loader finding
-        };
-
-        // Entries are keyed by action id — or plan id for plan-generated actions.
-        for key in meta.actions.keys() {
-            let orphaned = match Uuid::parse_str(key) {
-                Ok(id) => !known_action_ids.contains(&id),
-                Err(_) => true,
-            };
+        let relative = logical_path_buf(&sidecar.document.path);
+        for key in metadata.actions.keys() {
+            let orphaned = Uuid::parse_str(key)
+                .map(|id| !known_action_ids.contains(&id))
+                .unwrap_or(true);
             if orphaned {
+                let companion = companion_actions_path(&sidecar.document.path);
                 findings.push(Finding::warning(
                     "sidecar-orphan",
-                    &sc_relative,
+                    &relative,
                     format!(
                         "entry '{}' matches no action in {} or its completed archive",
-                        key,
-                        actions_file.display()
+                        key, companion
                     ),
                 ));
+                repairs.push(DoctorRepair::PruneSidecarEntry {
+                    path: sidecar.document.path.clone(),
+                    id: key.clone(),
+                    expected: sidecar.document.revision.clone(),
+                });
             }
         }
     }
@@ -479,30 +507,26 @@ const EARLIEST_PLAUSIBLE_CREATED: &str = "2020-01-01T00:00:00Z";
 /// runs pre-hydration on the DSL, so neither observes the sidecar value —
 /// this is the only place the invariant actually runs.
 fn check_sidecar_created_sanity(
-    charter_root: &Path,
-    charters: &[MarkdownCharter],
+    sidecars: &[DoctorSidecarEvidence],
+    observed_at: DateTime<Local>,
     findings: &mut Vec<Finding>,
 ) {
-    let now = chrono::Local::now();
-    let floor = chrono::DateTime::parse_from_rfc3339(EARLIEST_PLAUSIBLE_CREATED)
+    let floor = DateTime::parse_from_rfc3339(EARLIEST_PLAUSIBLE_CREATED)
         .expect("EARLIEST_PLAUSIBLE_CREATED is a valid RFC3339 constant")
-        .with_timezone(&chrono::Local);
-    for charter in charters {
-        let Some(actions_file) = &charter.actions_file else {
+        .with_timezone(&Local);
+    for sidecar in sidecars {
+        let Some(metadata) = parsed_sidecar(sidecar) else {
             continue;
         };
-        let sc_relative = sidecar_path(actions_file);
-        let Ok(meta) = read_sidecar(&charter_root.join(&sc_relative)) else {
-            continue; // corrupt sidecars are already a loader finding
-        };
-        for (key, action) in &meta.actions {
+        let relative = logical_path_buf(&sidecar.document.path);
+        for (key, action) in &metadata.actions {
             let Some(created) = action.created else {
                 continue;
             };
-            if created > now || created < floor {
+            if created > observed_at || created < floor {
                 findings.push(Finding::warning(
                     "implausible-created",
-                    &sc_relative,
+                    &relative,
                     format!(
                         "entry '{}' has created '{}', outside the plausible window (after now, or before {})",
                         key,
@@ -517,66 +541,58 @@ fn check_sidecar_created_sanity(
 
 /// A `.<stem>.json` sidecar whose `<stem>.actions` file is gone entirely.
 fn check_orphaned_sidecars(
-    charter_root: &Path,
+    sidecars: &[DoctorSidecarEvidence],
     known_action_ids: &HashSet<Uuid>,
     findings: &mut Vec<Finding>,
+    repairs: &mut Vec<DoctorRepair>,
 ) {
-    for path in walk_visible_files(charter_root) {
-        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+    for sidecar in sidecars.iter().filter(|sidecar| !sidecar.companion_exists) {
+        let retains_live_metadata = parsed_sidecar(sidecar).is_some_and(|metadata| {
+            metadata.actions.keys().any(|key| {
+                Uuid::parse_str(key)
+                    .ok()
+                    .is_some_and(|id| known_action_ids.contains(&id))
+            })
+        });
+        if retains_live_metadata {
             continue;
-        };
-        let Some(stem) = name.strip_prefix('.').and_then(|n| n.strip_suffix(".json")) else {
-            continue;
-        };
-        let dir = path.parent().unwrap_or(charter_root);
-        if !dir.join(format!("{stem}.actions")).exists() {
-            // A path-orphaned sidecar may still own metadata for an action that
-            // moved to another charter. The loader intentionally rejoins those
-            // entries globally, so the file is removable only when none remain
-            // live anywhere in the workspace.
-            let retains_live_metadata = read_sidecar(&path).ok().is_some_and(|metadata| {
-                metadata.actions.keys().any(|key| {
-                    Uuid::parse_str(key)
-                        .ok()
-                        .is_some_and(|id| known_action_ids.contains(&id))
-                })
-            });
-            if retains_live_metadata {
-                continue;
-            }
-            let relative = path.strip_prefix(charter_root).unwrap_or(&path);
-            findings.push(Finding::warning(
-                "orphaned-sidecar",
-                relative,
-                format!("sidecar has no matching {stem}.actions file"),
-            ));
         }
+        let relative = logical_path_buf(&sidecar.document.path);
+        findings.push(Finding::warning(
+            "orphaned-sidecar",
+            &relative,
+            format!(
+                "sidecar has no matching {} file",
+                companion_actions_path(&sidecar.document.path)
+            ),
+        ));
+        repairs.push(DoctorRepair::RemoveSidecar {
+            path: sidecar.document.path.clone(),
+            expected: sidecar.document.revision.clone(),
+        });
     }
 }
 
 /// Crash residue: a `.pending` journal (reported, never replayed — that is
 /// loading's job) and orphaned `.tmp.*` staging files nothing ever sweeps.
-fn check_durability_residue(charter_root: &Path, plans_root: &Path, findings: &mut Vec<Finding>) {
-    if charter_root.join(".pending").exists() {
-        findings.push(Finding::warning(
-            "pending-journal",
-            ".pending",
-            "interrupted write batch; the next loading command will replay it (doctor does not)",
+fn check_durability_residue(residue: &[DurabilityResidue], findings: &mut Vec<Finding>) {
+    for item in residue {
+        let (code, message) = match item.kind {
+            DurabilityResidueKind::PendingJournal => (
+                "pending-journal",
+                "interrupted write batch; the next loading command will replay it (doctor does not)",
+            ),
+            DurabilityResidueKind::OrphanedTemp => (
+                "orphaned-temp",
+                "staging file from an interrupted write; safe to delete once no clearhead process is running",
+            ),
+        };
+        findings.push(Finding::warning_at(
+            item.location.mount,
+            code,
+            logical_path_buf(&item.location.path),
+            message,
         ));
-    }
-    for root in [charter_root, plans_root] {
-        for path in walk_visible_files(root) {
-            if let Some(name) = path.file_name().and_then(|n| n.to_str())
-                && name.starts_with(".tmp")
-            {
-                let relative = path.strip_prefix(root).unwrap_or(&path);
-                findings.push(Finding::warning(
-                    "orphaned-temp",
-                    relative,
-                    "staging file from an interrupted write; safe to delete once no clearhead process is running",
-                ));
-            }
-        }
     }
 }
 
@@ -604,31 +620,37 @@ fn charter_file(charter: &MarkdownCharter) -> PathBuf {
         .unwrap_or_else(|| PathBuf::from(&charter.title))
 }
 
-/// All files under `dir`, recursively, skipping hidden *directories* (matching
-/// discovery) but including hidden files — sidecars and crash residue are the
-/// point here.
-fn walk_visible_files(dir: &Path) -> Vec<PathBuf> {
-    let mut files = Vec::new();
-    let mut stack = vec![dir.to_path_buf()];
-    while let Some(current) = stack.pop() {
-        let Ok(entries) = std::fs::read_dir(&current) else {
-            continue;
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                let hidden = path
-                    .file_name()
-                    .map(|n| n.to_string_lossy().starts_with('.'))
-                    .unwrap_or(false);
-                if !hidden {
-                    stack.push(path);
-                }
-            } else if path.is_file() {
-                files.push(path);
-            }
-        }
+fn parsed_sidecar(evidence: &DoctorSidecarEvidence) -> Option<CharterMetadata> {
+    document_text(&evidence.document)
+        .ok()
+        .and_then(|source| parse_sidecar(source).ok())
+}
+
+fn document_text(document: &DoctorDocument) -> Result<&str, String> {
+    let bytes = document.bytes.as_ref().map_err(Clone::clone)?;
+    std::str::from_utf8(bytes).map_err(|error| error.to_string())
+}
+
+fn companion_actions_path(path: &WorkspacePath) -> String {
+    let (parent, filename) = path
+        .as_str()
+        .rsplit_once('/')
+        .map_or(("", path.as_str()), |(parent, filename)| (parent, filename));
+    let stem = filename
+        .strip_prefix('.')
+        .and_then(|name| name.strip_suffix(".json"))
+        .unwrap_or(filename);
+    if parent.is_empty() {
+        format!("{stem}.actions")
+    } else {
+        format!("{parent}/{stem}.actions")
     }
-    files.sort();
-    files
+}
+
+fn logical_path_buf(path: &WorkspacePath) -> PathBuf {
+    PathBuf::from(path.as_str())
+}
+
+fn path_text(path: &Path) -> String {
+    path.to_string_lossy().into_owned()
 }

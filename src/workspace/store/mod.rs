@@ -32,7 +32,10 @@ mod save;
 use std::path::{Path, PathBuf};
 
 pub use assembly::{WorkspaceAssemblyInput, assemble_workspace, assembled_domain_model};
-pub use doctor::{Diagnosis, diagnose, diagnose_read};
+pub use doctor::{
+    Diagnosis, DoctorCollectionEvidence, DoctorDocument, DoctorEvidence, DoctorRepair,
+    DoctorSidecarEvidence, DurabilityResidue, DurabilityResidueKind, diagnose,
+};
 pub use findings::{Finding, FindingSeverity};
 pub use load::{
     Workspace, WorkspaceRead, load_domain_model, load_domain_model_with_plans, load_workspace,

@@ -1,6 +1,5 @@
 pub mod common;
 
-mod doctor;
 mod load;
 mod reader;
 mod recurrence;

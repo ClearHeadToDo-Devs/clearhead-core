@@ -87,10 +87,11 @@ pub use transaction::{
 };
 
 pub use store::{
-    Diagnosis, Finding, FindingSeverity, ManifestSourceType, Workspace, WorkspaceAssemblyInput,
-    WorkspaceError, WorkspaceManifestEntry, WorkspaceRead, assemble_workspace,
-    assembled_domain_model, charter_collection_from_anchor, charter_root,
-    collect_workspace_manifest, diagnose, diagnose_read, infer_charter_name,
+    Diagnosis, DoctorCollectionEvidence, DoctorDocument, DoctorEvidence, DoctorRepair,
+    DoctorSidecarEvidence, DurabilityResidue, DurabilityResidueKind, Finding, FindingSeverity,
+    ManifestSourceType, Workspace, WorkspaceAssemblyInput, WorkspaceError, WorkspaceManifestEntry,
+    WorkspaceRead, assemble_workspace, assembled_domain_model, charter_collection_from_anchor,
+    charter_root, collect_workspace_manifest, diagnose, infer_charter_name,
     infer_parent_charter_name, list_action_files, load_domain_model, load_domain_model_with_plans,
     load_workspace, load_workspace_with_plans, load_workspaces, plans_root, read_workspace,
     read_workspace_with_plans, save_domain_model, workspace_data_root,
