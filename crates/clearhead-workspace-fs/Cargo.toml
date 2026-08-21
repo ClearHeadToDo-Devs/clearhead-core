@@ -1,0 +1,16 @@
+[package]
+name = "clearhead-workspace-fs"
+description = "Native filesystem delivery adapter for ClearHead workspaces"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[dependencies]
+clearhead_core = { path = "../..", version = "0.2.0", default-features = false, features = ["formatting"] }
+chrono = "0.4"
+blake3 = "1.8"
+uuid = "1.0"
+
+[dev-dependencies]
+serde_json = "1.0"
+tempfile = "3.8"

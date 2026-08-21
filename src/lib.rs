@@ -71,7 +71,7 @@ pub use workspace::{
     plans_sync_store_path, plans_to_icalendar, read_action_file, read_actions,
     read_archived_action_facts, read_ics_dates, read_plans_sync_store, read_vtodo_actions,
     reconcile, resolve_materialized_occurrence, save_domain_model, slugify,
-    sync_master_rollforwards, transact, update_action, workspace_data_root, write_actions,
+    sync_master_rollforwards, update_action, workspace_data_root, write_actions,
     write_master_rollforward, write_occurrence_deviation,
 };
 

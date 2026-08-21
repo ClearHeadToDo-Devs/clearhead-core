@@ -12,13 +12,8 @@
 //!   through a per-file active/completed model in order, so a `complete` and a
 //!   later `update` of the same action see each other.
 //!
-//! Everything above [`transact`] is pure — no filesystem. [`transact`] is the
-//! one I/O entry point: it loads the touched files under the workspace lock,
-//! drives the fold, and stages the result through the shared journaled commit
-//! seam, so the whole batch lands atomically or not at all.
-
-use std::collections::HashSet;
-use std::path::{Path, PathBuf};
+//! The native adapter supplies already-loaded resource state and executes the
+//! [`PreparedMutation`] returned by [`prepare_transaction`].
 
 use chrono::{DateTime, Local};
 use serde::{Deserialize, Serialize};
@@ -27,11 +22,11 @@ use uuid::Uuid;
 use crate::domain::update::{ActionUpdate, apply_updates, disallowed_terminal_update};
 use crate::domain::{close_subtree, collect_subtree_ids};
 use crate::verb_result::{VerbError, VerbOutcome, canonical_id};
-use crate::workspace::action_files::{completed_actions_path, read_actions};
 use crate::workspace::actions::format::require_actions_formatting;
 use crate::workspace::actions::{Action, ActionState};
-use crate::workspace::mutation::{WriteSet, render, with_locked_mutation};
-use crate::workspace::store::{WorkspaceError, list_action_files, resolve_workspace_layout};
+use crate::workspace::resource::{
+    Effect, EffectBatch, ExpectedResource, PreparedMutation, ResourcePrecondition, WorkspacePath,
+};
 
 // ============================================================================
 // Wire request shapes (transaction_request schema)
@@ -151,7 +146,7 @@ pub enum NormalizedOperation {
 }
 
 impl NormalizedOperation {
-    fn target(&self) -> Uuid {
+    pub fn target(&self) -> Uuid {
         match self {
             NormalizedOperation::Update { target, .. }
             | NormalizedOperation::Complete { target }
@@ -219,19 +214,32 @@ pub fn normalize_request(
 /// `.actions` list, its `.completed.actions` list, and whether each has changed.
 #[derive(Debug, Clone)]
 pub struct FileState {
-    pub source_path: PathBuf,
+    pub source_path: WorkspacePath,
+    pub completed_path: WorkspacePath,
     pub active: Vec<Action>,
     pub completed: Vec<Action>,
+    pub active_expected: ExpectedResource,
+    pub completed_expected: ExpectedResource,
     pub active_dirty: bool,
     pub completed_dirty: bool,
 }
 
 impl FileState {
-    pub fn new(source_path: PathBuf, active: Vec<Action>, completed: Vec<Action>) -> Self {
+    pub fn new(
+        source_path: WorkspacePath,
+        completed_path: WorkspacePath,
+        active: Vec<Action>,
+        completed: Vec<Action>,
+        active_expected: ExpectedResource,
+        completed_expected: ExpectedResource,
+    ) -> Self {
         Self {
             source_path,
+            completed_path,
             active,
             completed,
+            active_expected,
+            completed_expected,
             active_dirty: false,
             completed_dirty: false,
         }
@@ -353,129 +361,145 @@ fn close_in_file(
 }
 
 // ============================================================================
-// Locked plan + journaled commit
+// Pure preparation
 // ============================================================================
 
-/// The result of running a transaction, mirroring the `transaction_result`
-/// schema's three shapes. `files` lists the absolute paths of the `.actions`
-/// files written (or, for a dry-run, that would be written) — active and
-/// completed both count; derived sidecars are not transaction-written.
+/// Serialized transaction result populated by a delivery adapter.
+///
+/// File locations are host presentation strings rather than Core paths.
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum TransactionOutcome {
-    /// Every operation applied and the changed files were committed.
     Committed {
         operations: Vec<VerbOutcome>,
-        files: Vec<PathBuf>,
+        files: Vec<String>,
     },
-    /// Every operation would apply; `--dry-run` stopped before staging.
     DryRun {
         operations: Vec<VerbOutcome>,
-        files: Vec<PathBuf>,
+        files: Vec<String>,
     },
-    /// One operation could not apply against trusted state; nothing was written.
-    Rejected { operation: usize, error: VerbError },
+    Rejected {
+        operation: usize,
+        error: VerbError,
+    },
 }
 
-/// Execute an ordered transaction atomically.
-///
-/// Request-level problems (empty batch, malformed target, terminal `update`
-/// state) fail fast as an `Err` before the lock is taken. Under the lock, only
-/// the files holding a target are loaded, the operations are folded in order,
-/// and — on success — every changed active/completed file is staged in one
-/// journaled batch. A per-operation rejection or a `--dry-run` stages nothing,
-/// so either commits no bytes.
-pub fn transact(
-    workspace_root: &Path,
-    request: TransactionRequest,
+/// Host-neutral result of preparing an ordered transaction.
+#[derive(Debug, Clone)]
+pub enum PreparedTransactionOutcome {
+    Committed {
+        operations: Vec<VerbOutcome>,
+        files: Vec<WorkspacePath>,
+    },
+    DryRun {
+        operations: Vec<VerbOutcome>,
+        files: Vec<WorkspacePath>,
+    },
+    Rejected {
+        operation: usize,
+        error: VerbError,
+    },
+}
+
+/// Fold a normalized transaction over already-loaded state and render its
+/// speculative resource effects. No filesystem or ambient host path is used.
+pub fn prepare_transaction(
+    mut model: TransactionModel,
+    operations: &[NormalizedOperation],
+    now: DateTime<Local>,
     dry_run: bool,
-) -> Result<TransactionOutcome, WorkspaceError> {
-    let operations =
-        normalize_request(request).map_err(|e| WorkspaceError::Actions(e.to_string()))?;
-    require_actions_formatting().map_err(WorkspaceError::Actions)?;
+) -> Result<PreparedMutation<TransactionModel, PreparedTransactionOutcome>, TransactionError> {
+    require_actions_formatting().map_err(TransactionError::Request)?;
 
-    let layout = resolve_workspace_layout(workspace_root);
-    let target_ids: HashSet<Uuid> = operations.iter().map(NormalizedOperation::target).collect();
-
-    with_locked_mutation(&layout, |_layout| {
-        let mut model = TransactionModel::new(load_target_files(workspace_root, &target_ids)?);
-
-        let outcomes = match apply_operations(&mut model, &operations, Local::now()) {
-            Ok(outcomes) => outcomes,
-            Err((operation, error)) => {
-                return Ok((
-                    WriteSet::new(),
-                    TransactionOutcome::Rejected { operation, error },
-                ));
-            }
-        };
-
-        // One source of truth for both the staged writes and the reported
-        // `files`: each dirty active/completed list, in file-discovery order.
-        let staged: Vec<(PathBuf, &[Action])> = model
-            .files
-            .iter()
-            .flat_map(|file| {
-                let mut entries: Vec<(PathBuf, &[Action])> = Vec::new();
-                if file.active_dirty {
-                    entries.push((file.source_path.clone(), file.active.as_slice()));
-                }
-                if file.completed_dirty {
-                    entries.push((
-                        completed_actions_path(&file.source_path),
-                        file.completed.as_slice(),
-                    ));
-                }
-                entries
-            })
-            .collect();
-        let files: Vec<PathBuf> = staged.iter().map(|(path, _)| path.clone()).collect();
-
-        if dry_run {
-            return Ok((
-                WriteSet::new(),
-                TransactionOutcome::DryRun {
-                    operations: outcomes,
-                    files,
-                },
+    let prior_model = model.clone();
+    let outcomes = match apply_operations(&mut model, operations, now) {
+        Ok(outcomes) => outcomes,
+        Err((operation, error)) => {
+            let batch =
+                EffectBatch::new(Vec::new(), Vec::new()).expect("an empty effect batch is valid");
+            return Ok(PreparedMutation::with_outcome(
+                prior_model,
+                batch,
+                PreparedTransactionOutcome::Rejected { operation, error },
             ));
         }
+    };
 
-        let mut writes = WriteSet::new();
-        for (path, list) in &staged {
-            writes.stage(path.clone(), render(list)?);
-        }
+    let files: Vec<WorkspacePath> = model
+        .files
+        .iter()
+        .flat_map(|file| {
+            let mut paths = Vec::new();
+            if file.active_dirty {
+                paths.push(file.source_path.clone());
+            }
+            if file.completed_dirty {
+                paths.push(file.completed_path.clone());
+            }
+            paths
+        })
+        .collect();
 
-        Ok((
-            writes,
-            TransactionOutcome::Committed {
+    if dry_run {
+        let batch =
+            EffectBatch::new(Vec::new(), Vec::new()).expect("an empty effect batch is valid");
+        return Ok(PreparedMutation::with_outcome(
+            model,
+            batch,
+            PreparedTransactionOutcome::DryRun {
                 operations: outcomes,
                 files,
             },
-        ))
-    })
+        ));
+    }
+
+    let mut effects = Vec::new();
+    let mut preconditions = Vec::new();
+    for file in &model.files {
+        if file.active_dirty {
+            effects.push(Effect::Write {
+                path: file.source_path.clone(),
+                bytes: render_actions(&file.active)?.into_bytes(),
+            });
+        }
+        if file.completed_dirty {
+            effects.push(Effect::Write {
+                path: file.completed_path.clone(),
+                bytes: render_actions(&file.completed)?.into_bytes(),
+            });
+        }
+
+        // Protect the complete trusted read set, including a companion file
+        // whose bytes influenced resolution but did not itself become dirty.
+        preconditions.push(ResourcePrecondition {
+            path: file.source_path.clone(),
+            expected: file.active_expected.clone(),
+        });
+        preconditions.push(ResourcePrecondition {
+            path: file.completed_path.clone(),
+            expected: file.completed_expected.clone(),
+        });
+    }
+    let batch = EffectBatch::new(effects, preconditions)
+        .map_err(|error| TransactionError::Request(error.to_string()))?;
+    Ok(PreparedMutation::with_outcome(
+        model,
+        batch,
+        PreparedTransactionOutcome::Committed {
+            operations: outcomes,
+            files,
+        },
+    ))
 }
 
-/// Read every workspace action file that holds at least one target (active or
-/// completed) into a [`FileState`]. Files no target touches are skipped.
-fn load_target_files(
-    workspace_root: &Path,
-    target_ids: &HashSet<Uuid>,
-) -> Result<Vec<FileState>, WorkspaceError> {
-    let mut files = Vec::new();
-    for active_path in list_action_files(workspace_root)? {
-        let active = read_actions(&active_path)?;
-        let completed_path = completed_actions_path(&active_path);
-        let completed = read_actions(&completed_path)?;
-        let touched = active
-            .iter()
-            .chain(completed.iter())
-            .any(|action| target_ids.contains(&action.id));
-        if touched {
-            files.push(FileState::new(active_path, active, completed));
-        }
-    }
-    Ok(files)
+fn render_actions(actions: &[Action]) -> Result<String, TransactionError> {
+    crate::workspace::actions::format(
+        &actions.to_vec(),
+        crate::workspace::actions::OutputFormat::Actions,
+        None,
+        None,
+    )
+    .map_err(TransactionError::Request)
 }
 
 #[cfg(test)]
@@ -494,9 +518,12 @@ mod tests {
 
     fn model_of(active: Vec<Action>, completed: Vec<Action>) -> TransactionModel {
         TransactionModel::new(vec![FileState::new(
-            PathBuf::from("work.actions"),
+            WorkspacePath::new("charters/work.actions").unwrap(),
+            WorkspacePath::new("charters/work.completed.actions").unwrap(),
             active,
             completed,
+            ExpectedResource::Missing,
+            ExpectedResource::Missing,
         )])
     }
 
@@ -619,145 +646,32 @@ mod tests {
         assert!(matches!(error, VerbError::AlreadyClosed { .. }));
     }
 
-    // ── locked plan + commit (end to end) ───────────────────────────────────
-
-    const A: &str = "019f733d-4600-7000-8000-000000000001";
-    const B: &str = "019f733d-4600-7000-8000-000000000002";
-
-    #[cfg(feature = "formatting")]
-    fn workspace_with(source_body: &str) -> (tempfile::TempDir, PathBuf) {
-        let temp = tempfile::tempdir().unwrap();
-        let charters = temp.path().join("charters");
-        std::fs::create_dir_all(&charters).unwrap();
-        let source = charters.join("work.actions");
-        std::fs::write(&source, source_body).unwrap();
-        (temp, source)
-    }
-
     #[cfg(feature = "formatting")]
     #[test]
-    fn transact_commits_a_mixed_batch_atomically() {
-        let (temp, source) = workspace_with(&format!("[ ] Alpha #{A}\n[ ] Beta #{B}\n"));
+    fn preparation_emits_logical_writes_with_snapshot_preconditions() {
+        let target = action("Target", ActionState::NotStarted, None);
+        let active_revision = crate::workspace::resource::ResourceRevision::new("active-r1");
+        let model = TransactionModel::new(vec![FileState::new(
+            WorkspacePath::new("charters/work.actions").unwrap(),
+            WorkspacePath::new("charters/work.completed.actions").unwrap(),
+            vec![target.clone()],
+            vec![],
+            ExpectedResource::Revision(active_revision.clone()),
+            ExpectedResource::Missing,
+        )]);
+        let operations = vec![NormalizedOperation::Complete { target: target.id }];
 
-        let request: TransactionRequest = serde_json::from_str(&format!(
-            r#"{{"operations":[
-                {{"op":"update-action","target":"urn:uuid:{A}","set":{{"priority":1}}}},
-                {{"op":"complete-action","target":"urn:uuid:{B}"}}
-            ]}}"#
-        ))
-        .unwrap();
+        let prepared = prepare_transaction(model, &operations, Local::now(), false).unwrap();
 
-        let outcome = transact(temp.path(), request, false).unwrap();
-        match outcome {
-            TransactionOutcome::Committed { operations, files } => {
-                assert_eq!(operations.len(), 2);
-                assert_eq!(
-                    files.len(),
-                    2,
-                    "work.actions + work.completed.actions both written"
-                );
-            }
-            other => panic!("expected committed, got {other:?}"),
-        }
-
-        let active = read_actions(&source).unwrap();
-        assert_eq!(active.len(), 1, "Beta moved to completed");
-        assert_eq!(active[0].name, "Alpha");
-        assert_eq!(active[0].priority, Some(1), "Alpha update applied");
-        let completed = read_actions(&completed_actions_path(&source)).unwrap();
-        assert_eq!(completed.len(), 1);
-        assert_eq!(completed[0].name, "Beta");
-        assert!(!temp.path().join("charters/.pending").exists());
-    }
-
-    #[cfg(feature = "formatting")]
-    #[test]
-    fn transact_rejects_the_whole_batch_and_writes_nothing() {
-        let (temp, source) = workspace_with(&format!("[ ] Alpha #{A}\n"));
-        let missing = "019f733d-4600-7000-8000-0000000000ff";
-
-        // op0 would update Alpha; op1 targets a missing action. The batch rejects
-        // and op0's edit must not reach disk.
-        let request: TransactionRequest = serde_json::from_str(&format!(
-            r#"{{"operations":[
-                {{"op":"update-action","target":"urn:uuid:{A}","set":{{"priority":1}}}},
-                {{"op":"complete-action","target":"urn:uuid:{missing}"}}
-            ]}}"#
-        ))
-        .unwrap();
-
-        match transact(temp.path(), request, false).unwrap() {
-            TransactionOutcome::Rejected { operation, error } => {
-                assert_eq!(operation, 1);
-                assert!(matches!(error, VerbError::NotFound { .. }));
-            }
-            other => panic!("expected rejected, got {other:?}"),
-        }
-
-        let active = read_actions(&source).unwrap();
+        assert_eq!(prepared.effects().effects().len(), 2);
+        assert_eq!(prepared.effects().preconditions().len(), 2);
         assert_eq!(
-            active[0].priority, None,
-            "a rejected batch leaves op0's edit uncommitted"
+            prepared.effects().preconditions()[0].expected,
+            ExpectedResource::Revision(active_revision)
         );
-    }
-
-    #[cfg(feature = "formatting")]
-    #[test]
-    fn transact_dry_run_stages_nothing() {
-        let (temp, source) = workspace_with(&format!("[ ] Alpha #{A}\n[ ] Beta #{B}\n"));
-
-        let request: TransactionRequest = serde_json::from_str(&format!(
-            r#"{{"operations":[
-                {{"op":"update-action","target":"urn:uuid:{A}","set":{{"priority":1}}}},
-                {{"op":"complete-action","target":"urn:uuid:{B}"}}
-            ]}}"#
-        ))
-        .unwrap();
-
-        match transact(temp.path(), request, true).unwrap() {
-            TransactionOutcome::DryRun { operations, files } => {
-                assert_eq!(operations.len(), 2, "the fold ran, validating every op");
-                assert_eq!(files.len(), 2, "active + completed both change");
-            }
-            other => panic!("expected dry-run, got {other:?}"),
-        }
-
-        assert_eq!(
-            read_actions(&source).unwrap().len(),
-            2,
-            "dry-run wrote nothing"
-        );
-    }
-
-    #[cfg(feature = "formatting")]
-    #[test]
-    fn transact_recovers_an_interrupted_commit_before_folding() {
-        let (temp, source) = workspace_with(&format!("[ ] Alpha #{A}\n"));
-        let charters = temp.path().join("charters");
-
-        // A crashed prior write that renamed Alpha -> Gamma, staged but not
-        // renamed in. transact's recover_pending must complete it before it reads.
-        let tmp = charters.join(".tmp.recover");
-        std::fs::write(&tmp, format!("[ ] Gamma #{A}\n")).unwrap();
-        std::fs::write(
-            charters.join(".pending"),
-            format!("{}\t{}\n", tmp.display(), source.display()),
-        )
-        .unwrap();
-
-        let request: TransactionRequest = serde_json::from_str(&format!(
-            r#"{{"operations":[
-                {{"op":"update-action","target":"urn:uuid:{A}","set":{{"priority":1}}}}
-            ]}}"#
-        ))
-        .unwrap();
-
-        transact(temp.path(), request, false).unwrap();
-
-        let active = read_actions(&source).unwrap();
-        assert_eq!(active.len(), 1);
-        assert_eq!(active[0].name, "Gamma", "recovery applied the rename");
-        assert_eq!(active[0].priority, Some(1), "then the transaction applied");
-        assert!(!charters.join(".pending").exists());
+        assert!(matches!(
+            prepared.outcome(),
+            PreparedTransactionOutcome::Committed { files, .. } if files.len() == 2
+        ));
     }
 }

@@ -80,8 +80,9 @@ pub use sidecar::{
     sidecar_path, write_sidecar,
 };
 pub use transaction::{
-    ActionUpdateSet, FileState, NormalizedOperation, Operation, TransactionError, TransactionModel,
-    TransactionOutcome, TransactionRequest, apply_operations, normalize_request, transact,
+    ActionUpdateSet, FileState, NormalizedOperation, Operation, PreparedTransactionOutcome,
+    TransactionError, TransactionModel, TransactionOutcome, TransactionRequest, apply_operations,
+    normalize_request, prepare_transaction,
 };
 
 pub use detection::check_for_workspace;
