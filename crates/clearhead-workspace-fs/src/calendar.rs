@@ -5,9 +5,11 @@ use std::path::{Path, PathBuf};
 
 use uuid::Uuid;
 
+use clearhead_core::Plan;
 use clearhead_core::workspace::OccurrenceOp;
 use clearhead_core::workspace::calendar::ics::{
     ICSPlan, VTodoAction, parse_ics, parse_vtodo_actions_content, render_occurrence_deviation,
+    render_plan_resource,
 };
 use clearhead_core::workspace::calendar::plans::{
     infer_plan_charter_name_for_workspace, infer_plan_parent_for_workspace,
@@ -260,6 +262,126 @@ pub fn read_vtodo_actions(
         }
     }
     Ok(actions)
+}
+
+fn absolute_path(path: &Path) -> Result<PathBuf, WorkspaceError> {
+    if path.is_absolute() {
+        Ok(path.to_path_buf())
+    } else {
+        Ok(std::env::current_dir()?.join(path))
+    }
+}
+
+fn logical_path(path: &Path) -> Result<WorkspacePath, WorkspaceError> {
+    let logical = path
+        .components()
+        .map(|component| component.as_os_str().to_str())
+        .collect::<Option<Vec<_>>>()
+        .ok_or_else(|| WorkspaceError::InvalidPath(path.to_path_buf()))?
+        .join("/");
+    WorkspacePath::new(logical).map_err(|_| WorkspaceError::InvalidPath(path.to_path_buf()))
+}
+
+fn mutation_target(
+    workspace_root: &Path,
+    configured_external: Option<&Path>,
+    target: &Path,
+) -> Result<(NativeWorkspaceMounts, ResourceLocation, PathBuf), WorkspaceError> {
+    let target = absolute_path(target)?;
+    let configured = NativeWorkspaceMounts::resolve(workspace_root, configured_external);
+    if let Ok(relative) = target.strip_prefix(&configured.workspace) {
+        let location = ResourceLocation::workspace(logical_path(relative)?);
+        return Ok((configured, location, target));
+    }
+    if let Some(external) = &configured.external_plans
+        && let Ok(relative) = target.strip_prefix(external)
+    {
+        let location = ResourceLocation::external_plans(logical_path(relative)?);
+        return Ok((configured, location, target));
+    }
+
+    // Loose `--file`: preserve exactly the named file and use its parent only as
+    // an invocation-scoped external mount. No charter/vdir hierarchy is inferred.
+    let parent = target
+        .parent()
+        .ok_or_else(|| WorkspaceError::InvalidPath(target.clone()))?;
+    let file_name = target
+        .file_name()
+        .ok_or_else(|| WorkspaceError::InvalidPath(target.clone()))?;
+    let mounts = NativeWorkspaceMounts::resolve(workspace_root, Some(parent));
+    let location = ResourceLocation::external_plans(logical_path(Path::new(file_name))?);
+    Ok((mounts, location, target))
+}
+
+/// Write one Plan through the mounted, stale-guarded native effect boundary.
+pub fn write_plan_file(
+    workspace_root: &Path,
+    configured_external: Option<&Path>,
+    path: &Path,
+    plan: &Plan,
+) -> Result<(), WorkspaceError> {
+    let (mounts, location, target) = mutation_target(workspace_root, configured_external, path)?;
+    let journal_dir = mounts.workspace.join("charters");
+    std::fs::create_dir_all(&journal_dir)?;
+    let _lock = WorkspaceLock::try_acquire(&mounts.workspace)?
+        .ok_or_else(|| WorkspaceError::WorkspaceLocked(mounts.workspace.clone()))?;
+    recover_pending(&journal_dir)?;
+    let (source, expected) = match std::fs::read(&target) {
+        Ok(bytes) => {
+            let source = std::str::from_utf8(&bytes)
+                .map_err(|error| WorkspaceError::Parse(error.to_string()))?
+                .to_owned();
+            (
+                Some(source),
+                ExpectedResource::Revision(crate::mounts::content_revision(&bytes)),
+            )
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            (None, ExpectedResource::Missing)
+        }
+        Err(error) => return Err(error.into()),
+    };
+    let rendered = render_plan_resource(source.as_deref(), plan)?;
+    let effects = EffectBatch::new(
+        vec![Effect::Write {
+            path: location.clone(),
+            bytes: rendered.into_bytes(),
+        }],
+        vec![ResourcePrecondition {
+            path: location,
+            expected,
+        }],
+    )
+    .map_err(|error| WorkspaceError::Actions(error.to_string()))?;
+    crate::validate_preconditions(&mounts, effects.preconditions())?;
+    crate::execute_effects(&mounts, &journal_dir, effects.effects())
+}
+
+/// Delete one explicitly selected Plan resource through durable removal.
+pub fn delete_plan_file(
+    workspace_root: &Path,
+    configured_external: Option<&Path>,
+    path: &Path,
+) -> Result<(), WorkspaceError> {
+    let (mounts, location, target) = mutation_target(workspace_root, configured_external, path)?;
+    let journal_dir = mounts.workspace.join("charters");
+    std::fs::create_dir_all(&journal_dir)?;
+    let _lock = WorkspaceLock::try_acquire(&mounts.workspace)?
+        .ok_or_else(|| WorkspaceError::WorkspaceLocked(mounts.workspace.clone()))?;
+    recover_pending(&journal_dir)?;
+    let bytes = std::fs::read(&target)?;
+    let effects = EffectBatch::new(
+        vec![Effect::Remove {
+            path: location.clone(),
+        }],
+        vec![ResourcePrecondition {
+            path: location,
+            expected: ExpectedResource::Revision(crate::mounts::content_revision(&bytes)),
+        }],
+    )
+    .map_err(|error| WorkspaceError::Actions(error.to_string()))?;
+    crate::validate_preconditions(&mounts, effects.preconditions())?;
+    crate::execute_effects(&mounts, &journal_dir, effects.effects())
 }
 
 /// Read and parse one explicitly named calendar file.

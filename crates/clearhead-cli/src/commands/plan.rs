@@ -419,10 +419,16 @@ fn charter_stem_from_source(source: &Path) -> anyhow::Result<String> {
     Ok(clearhead_core::slugify(stem))
 }
 
-fn save_plan_file(path: &Path, plan: &clearhead_core::Plan) -> anyhow::Result<()> {
-    clearhead_core::workspace::durability::atomic_write(
+fn save_plan_file(
+    ctx: &CommandContext,
+    path: &Path,
+    plan: &clearhead_core::Plan,
+) -> anyhow::Result<()> {
+    clearhead_workspace_fs::write_plan_file(
+        &ctx.data_dir,
+        ctx.plan_override().as_deref(),
         path,
-        clearhead_core::plans_to_icalendar(std::slice::from_ref(plan)),
+        plan,
     )
     .with_context(|| format!("Failed to write plan file '{}'", path.display()))
 }
@@ -572,7 +578,7 @@ pub fn add_plan(
     if dry_run {
         println!("{}", clearhead_core::plans_to_icalendar(&[new_plan]));
     } else {
-        save_plan_file(&output_file, &new_plan)?;
+        save_plan_file(ctx, &output_file, &new_plan)?;
 
         try_emit(
             &new_id,
@@ -624,7 +630,7 @@ pub fn update_plan(
     if dry_run {
         println!("{}", clearhead_core::plans_to_icalendar(&[updated]));
     } else {
-        save_plan_file(&input_file, &updated)?;
+        save_plan_file(ctx, &input_file, &updated)?;
         info!(name = %updated.name, id = %updated.id, "Plan updated successfully");
     }
     Ok(())
@@ -654,8 +660,12 @@ pub fn delete_plan(
     if dry_run {
         println!("{}", clearhead_core::plans_to_icalendar(&[plan]));
     } else {
-        fs::remove_file(&input_file)
-            .with_context(|| format!("Failed to delete plan file '{}'", input_file.display()))?;
+        clearhead_workspace_fs::delete_plan_file(
+            &ctx.data_dir,
+            ctx.plan_override().as_deref(),
+            &input_file,
+        )
+        .with_context(|| format!("Failed to delete plan file '{}'", input_file.display()))?;
 
         try_emit(
             &plan.id,
@@ -718,7 +728,7 @@ pub fn import_plans(
             if target_path.exists() {
                 overwritten += 1;
             }
-            save_plan_file(&target_path, &plan)?;
+            save_plan_file(ctx, &target_path, &plan)?;
         }
         imported += 1;
     }

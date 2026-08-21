@@ -737,6 +737,62 @@ pub fn plans_to_icalendar(plans: &[Plan]) -> String {
     calendar.to_string()
 }
 
+/// Render one Plan resource while preserving unowned calendar content.
+///
+/// A missing source creates a canonical one-component VCALENDAR. An existing
+/// source is patched surgically: alarms, vendor properties, calendar metadata,
+/// overrides, and transport-selected content remain untouched.
+pub fn render_plan_resource(existing: Option<&str>, plan: &Plan) -> Result<String, WorkspaceError> {
+    let Some(existing) = existing else {
+        return Ok(plans_to_icalendar(std::slice::from_ref(plan)));
+    };
+    let mut calendar: Calendar = existing.parse().map_err(WorkspaceError::Parse)?;
+    let uid = plan
+        .external_id
+        .clone()
+        .unwrap_or_else(|| plan.id.to_string());
+    let todo = calendar
+        .components
+        .iter_mut()
+        .find_map(|component| match component {
+            CalendarComponent::Todo(todo)
+                if todo.get_uid() == Some(uid.as_str())
+                    && todo.property_value("RRULE").is_some()
+                    && todo.property_value("RECURRENCE-ID").is_none() =>
+            {
+                Some(todo)
+            }
+            _ => None,
+        })
+        .ok_or_else(|| WorkspaceError::Parse(format!("recurring master VTODO {uid} not found")))?;
+
+    todo.remove_property("SUMMARY").summary(&plan.name);
+    todo.remove_starts();
+    if let Some(dtstart) = plan.dtstart {
+        todo.starts(dtstart.with_timezone(&Utc));
+    }
+    todo.remove_property("RRULE");
+    if let Some(recurrence) = &plan.recurrence {
+        let recurrence = recurrence.to_string();
+        todo.add_property(
+            "RRULE",
+            recurrence.strip_prefix("R:").unwrap_or(&recurrence),
+        );
+    }
+    todo.remove_description();
+    let mut description = Vec::new();
+    if let Some(template) = &plan.template_name {
+        description.push(format!("template: {template}"));
+    }
+    if let Some(text) = &plan.description {
+        description.push(text.clone());
+    }
+    if !description.is_empty() {
+        todo.description(&description.join("\n"));
+    }
+    Ok(calendar.to_string())
+}
+
 /// Map [`ActionState`] to the closest standard iCalendar [`TodoStatus`].
 ///
 /// RFC 5545 has no blocked state. We expose blocked actions as actionable to
@@ -1214,6 +1270,25 @@ mod tests {
             round_trip.dtstart.map(|value| value.timestamp()),
             plan.dtstart.map(|value| value.timestamp())
         );
+    }
+
+    #[test]
+    fn plan_resource_patch_preserves_vendor_properties_and_alarms() {
+        let source = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nX-WR-CALNAME:Foreign\r\nBEGIN:VTODO\r\nUID:weekly@example.com\r\nSUMMARY:Old\r\nDTSTART:20260810T143000Z\r\nRRULE:FREQ=WEEKLY\r\nX-VENDOR-KEEP:yes\r\nBEGIN:VALARM\r\nACTION:DISPLAY\r\nTRIGGER:-PT15M\r\nDESCRIPTION:Reminder\r\nEND:VALARM\r\nEND:VTODO\r\nEND:VCALENDAR\r\n";
+        let mut plan = parse_ics(source, Path::new("weekly.ics")).unwrap()[0]
+            .plan
+            .clone();
+        plan.name = "Updated".into();
+        plan.description = Some("Owned description".into());
+
+        let rendered = render_plan_resource(Some(source), &plan).unwrap();
+
+        assert!(rendered.contains("SUMMARY:Updated"));
+        assert!(rendered.contains("DESCRIPTION:Owned description"));
+        assert!(rendered.contains("X-VENDOR-KEEP:yes"));
+        assert!(rendered.contains("BEGIN:VALARM"));
+        assert!(rendered.contains("TRIGGER:-PT15M"));
+        assert!(rendered.contains("X-WR-CALNAME:Foreign"));
     }
 
     #[test]
