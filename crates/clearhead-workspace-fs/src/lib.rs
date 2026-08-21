@@ -1,7 +1,9 @@
 //! Native filesystem delivery for host-neutral Core workspace mutations.
 
 pub mod manifest;
+pub mod mounts;
 pub use manifest::{read_workspace_manifest, workspace_manifest_path, write_workspace_manifest};
+pub use mounts::NativeWorkspaceMounts;
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};

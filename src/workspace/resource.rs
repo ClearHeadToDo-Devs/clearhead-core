@@ -168,6 +168,76 @@ impl WorkspaceInventory {
     }
 }
 
+/// Which host mount owns a logical resource.
+///
+/// The optional external plans tree is deliberately a separate namespace: an
+/// adapter must never disguise it as `plans/...` inside the workspace mount.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum MountId {
+    Workspace,
+    ExternalPlans,
+}
+
+/// A logical path together with the mount that owns it.
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct ResourceLocation {
+    pub mount: MountId,
+    pub path: WorkspacePath,
+}
+
+impl ResourceLocation {
+    pub fn new(mount: MountId, path: WorkspacePath) -> Self {
+        Self { mount, path }
+    }
+}
+
+/// The two native workspace inputs accepted by Core.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct WorkspaceMounts<T> {
+    pub workspace: T,
+    pub external_plans: Option<T>,
+}
+
+/// Host-neutral workspace layout evidence.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum WorkspaceScope {
+    Project { root_charter_name: String },
+    User,
+}
+
+impl WorkspaceScope {
+    pub fn project_root_charter(&self) -> Option<&str> {
+        match self {
+            Self::Project { root_charter_name } => Some(root_charter_name),
+            Self::User => None,
+        }
+    }
+}
+
+/// Files and collections visible in one mount.
+///
+/// Collections are explicit because an empty external vdir collection still
+/// has semantic ownership and quarantine consequences.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct MountInventory {
+    pub files: WorkspaceInventory,
+    pub collections: BTreeSet<WorkspacePath>,
+}
+
+/// A host read failure represented without an I/O error or OS path.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ResourceReadFailure {
+    pub path: WorkspacePath,
+    pub message: String,
+}
+
+/// Successful immutable reads plus failures for one mount.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct MountReadEvidence {
+    pub snapshot: WorkspaceSnapshot,
+    pub failures: Vec<ResourceReadFailure>,
+}
+
 /// A pure request for the resource bodies needed for workspace assembly.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct ReadPlan(Vec<WorkspacePath>);
@@ -189,6 +259,24 @@ impl ReadPlan {
 
     pub fn paths(&self) -> &[WorkspacePath] {
         &self.0
+    }
+}
+
+/// Plan the immutable reads required to assemble the supplied mounts.
+///
+/// Classification and narrower read planning can evolve in Core without
+/// changing adapter traversal. Reading all inventoried files is the safe first
+/// contract: the host still decides only how to obtain bytes, never which
+/// workspace resources carry meaning.
+pub fn plan_workspace_read(
+    inventory: &WorkspaceMounts<MountInventory>,
+) -> WorkspaceMounts<ReadPlan> {
+    WorkspaceMounts {
+        workspace: ReadPlan::all(&inventory.workspace.files),
+        external_plans: inventory
+            .external_plans
+            .as_ref()
+            .map(|mount| ReadPlan::all(&mount.files)),
     }
 }
 
@@ -444,6 +532,31 @@ mod tests {
     fn read_plans_are_deterministic_and_deduplicated() {
         let plan = ReadPlan::new([path("b.actions"), path("a.actions"), path("b.actions")]);
         assert_eq!(plan.paths(), &[path("a.actions"), path("b.actions")]);
+    }
+
+    #[test]
+    fn workspace_and_external_plans_keep_separate_read_namespaces() {
+        let same = path("next/item.ics");
+        let inventory = WorkspaceMounts {
+            workspace: MountInventory {
+                files: WorkspaceInventory::new([(
+                    same.clone(),
+                    ResourceRevision::new("workspace"),
+                )]),
+                collections: BTreeSet::new(),
+            },
+            external_plans: Some(MountInventory {
+                files: WorkspaceInventory::new([(same.clone(), ResourceRevision::new("external"))]),
+                collections: BTreeSet::new(),
+            }),
+        };
+
+        let plan = plan_workspace_read(&inventory);
+        assert_eq!(plan.workspace.paths(), std::slice::from_ref(&same));
+        assert_eq!(
+            plan.external_plans.unwrap().paths(),
+            std::slice::from_ref(&same)
+        );
     }
 
     #[test]

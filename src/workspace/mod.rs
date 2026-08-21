@@ -69,9 +69,10 @@ pub use mutate_actions::{
 };
 pub use resource::{
     AppliedMutation, DeliveryError, Effect, EffectBatch, EffectBatchError, ExpectedResource,
-    PreparedMutation, ReadPlan, ResourceConflict, ResourcePrecondition, ResourceRevision,
-    ResourceSnapshot, SnapshotError, WorkspaceInventory, WorkspacePath, WorkspacePathError,
-    WorkspaceSnapshot,
+    MountId, MountInventory, MountReadEvidence, PreparedMutation, ReadPlan, ResourceConflict,
+    ResourceLocation, ResourcePrecondition, ResourceReadFailure, ResourceRevision,
+    ResourceSnapshot, SnapshotError, WorkspaceInventory, WorkspaceMounts, WorkspacePath,
+    WorkspacePathError, WorkspaceScope, WorkspaceSnapshot, plan_workspace_read,
 };
 pub use selector::ActionSelector;
 pub use sidecar::{
