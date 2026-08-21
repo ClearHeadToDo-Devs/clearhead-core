@@ -18,7 +18,8 @@ use clearhead_core::workspace::calendar::plans::{
 use clearhead_core::workspace::calendar::reconcile::{
     AppliedSync, CalendarSyncPreparationInput, PlanResourceState, SyncActionResourceState,
     SyncConflictResolution, SyncMirrorResourceState, SyncPlanTemplate, SyncReport, plan_sync,
-    prepare_master_rollforwards, prepare_sync, sync_import_actions_file,
+    prepare_master_rollforward_changes, prepare_master_rollforwards, prepare_sync,
+    sync_import_actions_file,
 };
 use clearhead_core::workspace::calendar::sync_store::{PlansSyncStore, decode_plans_sync_store};
 use clearhead_core::workspace::durability::{WorkspaceLock, recover_pending};
@@ -57,6 +58,7 @@ pub struct CalendarObservation {
 pub struct CalendarSyncResult {
     pub report: SyncReport,
     pub applied: AppliedSync,
+    pub rolled_forward: usize,
 }
 
 /// Discover and read all visible `.ics` resources from the effective plans mount.
@@ -166,7 +168,7 @@ pub fn sync_calendar(
 
     let inventory = mounts.inventory()?;
     let workspace = crate::mounts::load_workspace_model(workspace_root, external_plans)?;
-    let observation = observe_calendar_resources(workspace_root, external_plans)?;
+    let mut observation = observe_calendar_resources(workspace_root, external_plans)?;
     let observed_effective = if mounts.external_plans.is_some() {
         inventory.external_plans.as_ref()
     } else {
@@ -184,7 +186,29 @@ pub fn sync_calendar(
         .as_deref()
         .map(Path::to_path_buf)
         .unwrap_or_else(|| mounts.workspace.join("plans"));
+    let store_path = WorkspacePath::new("sync/plans.json")
+        .map_err(|error| WorkspaceError::Actions(error.to_string()))?;
+    let store_location = ResourceLocation::workspace(store_path);
+    let store_expected = expected_resource(&mounts, &store_location)?;
     let store = read_plans_sync_store(workspace_root, &plans_root)?;
+    let plan_resources = plan_resource_states(&observation.resources)?;
+    let rollforwards = prepare_master_rollforward_changes(store, &plan_resources)?;
+    for write in &rollforwards.calendar_writes {
+        let resource = observation
+            .resources
+            .iter_mut()
+            .find(|resource| resource.location == write.location)
+            .ok_or_else(|| {
+                WorkspaceError::Parse(format!(
+                    "roll-forward write has no observed calendar resource: {}",
+                    write.location
+                ))
+            })?;
+        resource.bytes = write.content.as_bytes().to_vec();
+    }
+    let rolled_forward = rollforwards.recorded;
+    let calendar_writes = rollforwards.calendar_writes;
+    let store = rollforwards.store;
     let (calendar_actions, mut mirror_resources) = sync_mirror_resources(&observation.resources)?;
     let model = DomainModel {
         objectives: Vec::new(),
@@ -240,16 +264,13 @@ pub fn sync_calendar(
     let action_resources = sync_action_resources(&workspace, &report, &mounts)?;
     let templates = sync_plan_templates(&workspace, &mounts.workspace)?;
     let observed_resources = sync_read_preconditions(&mounts, &inventory)?;
-    let store_path = WorkspacePath::new("sync/plans.json")
-        .map_err(|error| WorkspaceError::Actions(error.to_string()))?;
-    let store_location = ResourceLocation::workspace(store_path);
-    let store_expected = expected_resource(&mounts, &store_location)?;
     let prepared = prepare_sync(
         CalendarSyncPreparationInput {
             workspace,
             store,
             action_resources,
             mirror_resources,
+            calendar_writes,
             templates,
             observed_resources,
             now: Local::now(),
@@ -265,7 +286,28 @@ pub fn sync_calendar(
         ));
     }
     let applied = super::deliver(&mounts, &journal_dir, prepared)?;
-    Ok(CalendarSyncResult { report, applied })
+    Ok(CalendarSyncResult {
+        report,
+        applied,
+        rolled_forward,
+    })
+}
+
+fn plan_resource_states(
+    resources: &[CalendarResource],
+) -> Result<Vec<PlanResourceState>, WorkspaceError> {
+    resources
+        .iter()
+        .map(|resource| {
+            Ok(PlanResourceState {
+                location: resource.location.clone(),
+                source: std::str::from_utf8(&resource.bytes)
+                    .map_err(|error| WorkspaceError::Parse(error.to_string()))?
+                    .to_owned(),
+                expected: ExpectedResource::Revision(resource.revision.clone()),
+            })
+        })
+        .collect()
 }
 
 fn sync_mirror_resources(
@@ -908,6 +950,36 @@ mod tests {
         assert!(rendered.contains("SUMMARY:First changed"));
         assert!(rendered.contains("SUMMARY:Second changed"));
         assert_eq!(rendered.matches("BEGIN:VCALENDAR").count(), 1);
+    }
+
+    #[test]
+    fn calendar_sync_folds_rollforward_into_its_mixed_mount_batch() {
+        let temp = tempfile::tempdir().unwrap();
+        let project = temp.path().join("project");
+        let external_root = temp.path().join("vdir");
+        let external_file = external_root.join("next/weekly.ics");
+        let actions = project.join(".clearhead/charters/next.actions");
+        std::fs::create_dir_all(actions.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(external_file.parent().unwrap()).unwrap();
+        std::fs::write(&actions, "").unwrap();
+        std::fs::write(&external_file, PLAN).unwrap();
+
+        assert_eq!(
+            sync_calendar(&project, Some(&external_root), None)
+                .unwrap()
+                .rolled_forward,
+            0
+        );
+        let advanced = PLAN.replace("20260821T120000Z", "20260828T120000Z");
+        std::fs::write(&external_file, advanced).unwrap();
+
+        let result = sync_calendar(&project, Some(&external_root), None).unwrap();
+
+        assert_eq!(result.rolled_forward, 1);
+        let rendered = std::fs::read_to_string(&external_file).unwrap();
+        assert!(rendered.contains("DTSTART:20260821T120000Z"));
+        assert!(rendered.contains("RECURRENCE-ID:20260821T120000Z"));
+        assert!(plans_sync_store_path(&project).exists());
     }
 
     #[test]

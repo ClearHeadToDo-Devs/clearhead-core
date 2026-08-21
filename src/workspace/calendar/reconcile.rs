@@ -621,6 +621,13 @@ pub struct SyncMirrorResourceState {
     pub source: Option<String>,
 }
 
+/// One pure calendar-resource rewrite prepared before field reconciliation.
+#[derive(Clone, Debug)]
+pub struct SyncCalendarWrite {
+    pub location: ResourceLocation,
+    pub content: String,
+}
+
 /// Parsed template steps and host-supplied identities for one possible Plan token.
 #[derive(Clone, Debug)]
 pub struct SyncPlanTemplate {
@@ -635,6 +642,7 @@ pub struct CalendarSyncPreparationInput {
     pub store: PlansSyncStore,
     pub action_resources: Vec<SyncActionResourceState>,
     pub mirror_resources: Vec<SyncMirrorResourceState>,
+    pub calendar_writes: Vec<SyncCalendarWrite>,
     pub templates: Vec<SyncPlanTemplate>,
     pub observed_resources: Vec<ResourcePrecondition>,
     pub now: DateTime<Local>,
@@ -662,6 +670,7 @@ pub fn prepare_sync(
         mut store,
         action_resources,
         mirror_resources,
+        calendar_writes,
         templates,
         observed_resources,
         now,
@@ -734,7 +743,10 @@ pub fn prepare_sync(
         });
     }
 
-    let mut rendered_mirrors = BTreeMap::<ResourceLocation, String>::new();
+    let mut rendered_mirrors = calendar_writes
+        .into_iter()
+        .map(|write| (write.location, write.content))
+        .collect::<BTreeMap<ResourceLocation, String>>();
     for mirror in changes.mirrors {
         let resource = mirror_resources
             .iter()
@@ -1536,27 +1548,22 @@ pub struct PlanResourceState {
 }
 
 /// Prepare recurring-master roll-forward normalization without touching a host.
-pub fn prepare_master_rollforwards(
+pub struct MasterRollforwardChanges {
+    pub store: PlansSyncStore,
+    pub calendar_writes: Vec<SyncCalendarWrite>,
+    pub recorded: usize,
+    pub store_changed: bool,
+}
+
+/// Interpret recurring-master anchor advances without assigning persistence.
+pub fn prepare_master_rollforward_changes(
     mut store: PlansSyncStore,
-    store_location: ResourceLocation,
-    store_expected: ExpectedResource,
     resources: &[PlanResourceState],
-) -> Result<PreparedMutation<PlansSyncStore, usize>, WorkspaceError> {
+) -> Result<MasterRollforwardChanges, WorkspaceError> {
     let bases: HashMap<Uuid, DateTime<Local>> = store.field_bases(MASTER_DTSTART_FIELD)?;
-    let mut effects = Vec::new();
-    let mut preconditions = resources
-        .iter()
-        .map(|resource| ResourcePrecondition {
-            path: resource.location.clone(),
-            expected: resource.expected.clone(),
-        })
-        .collect::<Vec<_>>();
-    preconditions.push(ResourcePrecondition {
-        path: store_location.clone(),
-        expected: store_expected,
-    });
+    let mut calendar_writes = Vec::new();
     let mut recorded = 0usize;
-    let mut store_dirty = false;
+    let mut store_changed = false;
 
     for resource in resources {
         let plans = parse_ics(&resource.source, Path::new(resource.location.path.as_str()))?;
@@ -1574,7 +1581,7 @@ pub fn prepare_master_rollforwards(
             let plan_id = ics.plan.id;
             let Some(&base) = bases.get(&plan_id) else {
                 store.stamp(plan_id, MASTER_DTSTART_FIELD, &current)?;
-                store_dirty = true;
+                store_changed = true;
                 continue;
             };
             if current == base {
@@ -1592,7 +1599,7 @@ pub fn prepare_master_rollforwards(
                 .filter(|&index| index >= 1)
             else {
                 store.stamp(plan_id, MASTER_DTSTART_FIELD, &current)?;
-                store_dirty = true;
+                store_changed = true;
                 continue;
             };
             let completed_slots = grid[..index]
@@ -1605,21 +1612,59 @@ pub fn prepare_master_rollforwards(
             recorded += completed_slots.len();
         }
         if resource_dirty {
-            effects.push(Effect::Write {
-                path: resource.location.clone(),
-                bytes: rendered.into_bytes(),
+            calendar_writes.push(SyncCalendarWrite {
+                location: resource.location.clone(),
+                content: rendered,
             });
         }
     }
-    if store_dirty {
+    Ok(MasterRollforwardChanges {
+        store,
+        calendar_writes,
+        recorded,
+        store_changed,
+    })
+}
+
+pub fn prepare_master_rollforwards(
+    store: PlansSyncStore,
+    store_location: ResourceLocation,
+    store_expected: ExpectedResource,
+    resources: &[PlanResourceState],
+) -> Result<PreparedMutation<PlansSyncStore, usize>, WorkspaceError> {
+    let changes = prepare_master_rollforward_changes(store, resources)?;
+    let mut effects = changes
+        .calendar_writes
+        .iter()
+        .map(|write| Effect::Write {
+            path: write.location.clone(),
+            bytes: write.content.as_bytes().to_vec(),
+        })
+        .collect::<Vec<_>>();
+    if changes.store_changed {
         effects.push(Effect::Write {
-            path: store_location,
-            bytes: serialize_plans_sync_store(&store)?.into_bytes(),
+            path: store_location.clone(),
+            bytes: serialize_plans_sync_store(&changes.store)?.into_bytes(),
         });
     }
+    let mut preconditions = resources
+        .iter()
+        .map(|resource| ResourcePrecondition {
+            path: resource.location.clone(),
+            expected: resource.expected.clone(),
+        })
+        .collect::<Vec<_>>();
+    preconditions.push(ResourcePrecondition {
+        path: store_location,
+        expected: store_expected,
+    });
     let batch = EffectBatch::new(effects, preconditions)
         .map_err(|error| WorkspaceError::Actions(error.to_string()))?;
-    Ok(PreparedMutation::with_outcome(store, batch, recorded))
+    Ok(PreparedMutation::with_outcome(
+        changes.store,
+        batch,
+        changes.recorded,
+    ))
 }
 
 /// Ingest foreign roll-forwards on recurring masters in the configured plans vdir.

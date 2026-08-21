@@ -118,19 +118,13 @@ pub fn sync_calendar(
         return Ok(());
     }
 
-    // Ingest foreign recurring-master roll-forwards first. The native sync then
-    // recomputes its own report under the mutation lock from the resulting fresh
-    // workspace, vdir, and merge-base evidence.
-    let rolled_forward = clearhead_workspace_fs::sync_master_rollforwards(
-        &ctx.data_dir,
-        ctx.plan_override().as_deref(),
-    )?;
     let result = clearhead_workspace_fs::sync_calendar(
         &ctx.data_dir,
         ctx.plan_override().as_deref(),
         conflict_resolution(conflict),
     )?;
     render_sync_report(&result.report);
+    let rolled_forward = result.rolled_forward;
 
     if result.report.is_empty() {
         if rolled_forward > 0 {
