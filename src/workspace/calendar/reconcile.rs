@@ -1125,15 +1125,30 @@ fn patch_action_mirror(
     action: &Action,
     fields: &[SyncField],
 ) -> Result<(), WorkspaceError> {
-    if !path.exists() {
+    let content = match std::fs::read_to_string(path) {
+        Ok(content) => Some(content),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => return Err(error.into()),
+    };
+    let rendered = render_action_mirror(content.as_deref(), uid, action, fields)?;
+    atomic_write(path, rendered.as_bytes()).map_err(WorkspaceError::Io)
+}
+
+/// Render one standalone Action mirror from host-supplied source bytes.
+pub fn render_action_mirror(
+    content: Option<&str>,
+    uid: &str,
+    action: &Action,
+    fields: &[SyncField],
+) -> Result<String, WorkspaceError> {
+    let Some(content) = content else {
         let mut calendar = Calendar::new().name("ClearHead Actions").done();
         let mut todo = action_to_vtodo(action);
         todo.uid(uid);
         calendar.push(todo);
-        return atomic_write(path, calendar.to_string().as_bytes()).map_err(WorkspaceError::Io);
-    }
+        return Ok(calendar.to_string());
+    };
 
-    let content = std::fs::read_to_string(path)?;
     let mut calendar: Calendar = content
         .parse()
         .map_err(|error: String| WorkspaceError::Parse(error))?;
@@ -1150,12 +1165,10 @@ fn patch_action_mirror(
     }
     if !found {
         return Err(WorkspaceError::Parse(format!(
-            "action mirror {} does not contain standalone VTODO UID {}",
-            path.display(),
-            uid
+            "action mirror does not contain standalone VTODO UID {uid}"
         )));
     }
-    atomic_write(path, calendar.to_string().as_bytes()).map_err(WorkspaceError::Io)
+    Ok(calendar.to_string())
 }
 
 fn patch_todo(todo: &mut Todo, action: &Action, fields: &[SyncField]) {
