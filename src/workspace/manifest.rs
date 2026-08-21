@@ -68,34 +68,41 @@ impl WorkspaceManifest {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        let mut value = serde_json::to_value(self).unwrap_or_else(|_| serde_json::json!({}));
-        if let Some(obj) = value.as_object_mut() {
-            obj.insert(
-                "$schema".to_string(),
-                serde_json::Value::String(WORKSPACE_SCHEMA_URL.to_string()),
-            );
-        }
-        let json = serde_json::to_string_pretty(&value)?;
+        let json = render_workspace_manifest(self).map_err(std::io::Error::other)?;
         std::fs::write(&path, json)
     }
 }
 
+/// Parse the host-neutral workspace identity document.
+pub fn parse_workspace_manifest(source: &str) -> Result<WorkspaceManifest, serde_json::Error> {
+    let value: serde_json::Value = serde_json::from_str(source)?;
+    Ok(WorkspaceManifest {
+        workspace_id: str_field(&value, "workspace_id"),
+        workspace_name: str_field(&value, "workspace_name"),
+        created_at: str_field(&value, "created_at"),
+    })
+}
+
+/// Serialize workspace identity with the published schema pointer.
+pub fn render_workspace_manifest(
+    manifest: &WorkspaceManifest,
+) -> Result<String, serde_json::Error> {
+    let mut value = serde_json::to_value(manifest)?;
+    if let Some(object) = value.as_object_mut() {
+        object.insert(
+            "$schema".to_string(),
+            serde_json::Value::String(WORKSPACE_SCHEMA_URL.to_string()),
+        );
+    }
+    serde_json::to_string_pretty(&value)
+}
+
 /// Extract the three identity fields from a JSON file, when present and parseable.
 fn read_identity_fields(path: &Path) -> WorkspaceManifest {
-    let Ok(text) = std::fs::read_to_string(path) else {
-        return WorkspaceManifest::default();
-    };
-    match serde_json::from_str::<serde_json::Value>(&text) {
-        Ok(v) => WorkspaceManifest {
-            workspace_id: str_field(&v, "workspace_id"),
-            workspace_name: str_field(&v, "workspace_name"),
-            created_at: str_field(&v, "created_at"),
-        },
-        // A corrupt identity file degrades to "no durable identity" (ephemeral
-        // id on read) rather than failing the load; `doctor` surfaces the
-        // missing `workspace_id` so the damage is still reported.
-        Err(_) => WorkspaceManifest::default(),
-    }
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|source| parse_workspace_manifest(&source).ok())
+        .unwrap_or_default()
 }
 
 fn str_field(v: &serde_json::Value, key: &str) -> Option<String> {

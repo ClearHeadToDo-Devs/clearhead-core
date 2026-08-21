@@ -102,7 +102,10 @@ pub fn run(config_path_override: Option<PathBuf>) -> anyhow::Result<()> {
     // Idempotent on an existing identity: init never clobbers or re-mints a
     // workspace that already has a workspace_id (which would orphan the named
     // graph). Root-charter repair above is deliberately still performed.
-    if WorkspaceManifest::read(&cwd).workspace_id.is_some() {
+    if clearhead_workspace_fs::read_workspace_manifest(&cwd)
+        .workspace_id
+        .is_some()
+    {
         println!("Already initialized — workspace already has an identity.");
         return Ok(());
     }
@@ -115,13 +118,13 @@ pub fn run(config_path_override: Option<PathBuf>) -> anyhow::Result<()> {
     let workspace_id = uuid::Uuid::now_v7().to_string();
     let created_at = chrono::Local::now().format("%Y-%m-%d").to_string();
 
-    WorkspaceManifest {
+    let manifest = WorkspaceManifest {
         workspace_id: Some(workspace_id.clone()),
         workspace_name: Some(workspace_name.clone()),
         created_at: Some(created_at),
-    }
-    .write(&cwd)
-    .context("Failed to write workspace.json")?;
+    };
+    clearhead_workspace_fs::write_workspace_manifest(&cwd, &manifest)
+        .context("Failed to write workspace.json")?;
 
     println!(
         "Initialized workspace '{}' ({})",

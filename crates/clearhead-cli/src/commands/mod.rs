@@ -314,7 +314,7 @@ pub fn workspace_name_from_path(path: &Path) -> String {
 pub fn workspace_name_for_root(path: &Path) -> String {
     // The manifest (workspace.json) carries the workspace's declared name; fall
     // back to the directory name.
-    clearhead_core::workspace::WorkspaceManifest::read(path)
+    clearhead_workspace_fs::read_workspace_manifest(path)
         .workspace_name
         .map(|n| n.trim().to_string())
         .filter(|n| !n.is_empty())

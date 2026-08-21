@@ -67,7 +67,7 @@ fn print_config_section(ctx: &CommandContext) {
 
     // Workspace identity — a property of the workspace, read from its manifest
     // (workspace.json) rather than the layered config.
-    let manifest = clearhead_core::workspace::WorkspaceManifest::read(&ctx.data_dir);
+    let manifest = clearhead_workspace_fs::read_workspace_manifest(&ctx.data_dir);
     match &manifest.workspace_id {
         Some(id) => println!(
             "  workspace_id: {}  (name: {})",

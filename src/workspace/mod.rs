@@ -61,7 +61,7 @@ pub use calendar::reconcile::{
 };
 pub use calendar::sync_store::{PlansSyncStore, plans_sync_store_path, read_plans_sync_store};
 pub use charter::{MarkdownCharter, format_charter, implicit_charter, parse_charter};
-pub use manifest::WorkspaceManifest;
+pub use manifest::{WorkspaceManifest, parse_workspace_manifest, render_workspace_manifest};
 pub use mutate_actions::{
     ActionPrepareError, ActionResourceState, DeletePreparedState, PreparedDeleteOutcome,
     PreparedInsertOutcome, PreparedUpdateOutcome, SidecarResourceState, plan_action_insert,
