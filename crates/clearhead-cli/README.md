@@ -2,7 +2,7 @@
 
 **Command-line client for the ClearHead action management framework.**
 
-Work items live in plain-text `.actions` files that any editor can read and write. Recurring schedules live in `.ics` vdir files, and archived charter files remain plaintext under the workspace `archive/` directory. `clearhead` provides synchronous command and mutation workflows over `clearhead-core`. Graph reads and SPARQL export belong to the separate [`clearhead-graphd`](https://github.com/ClearHeadToDo-Devs/clearhead-graphd) tool; editor intelligence belongs to [`clearhead-lsp`](https://github.com/ClearHeadToDo-Devs/clearhead-lsp). The CLI does not proxy either public interface.
+Work items live in plain-text `.actions` files that any editor can read and write. Recurring schedules live in `.ics` vdir files, and archived charter files remain plaintext under the workspace `archive/` directory. `clearhead` provides synchronous command and mutation workflows over `clearhead-core`, and — with its default `sparql` feature — evaluates ad-hoc and saved SPARQL queries in-process over the workspace's published RDF dataset (standard SPARQL, no query server). The remaining client-presentation query families (`index`, `tree`, `graph`, `chain`) forward to [`clearhead-graphd`](https://github.com/ClearHeadToDo-Devs/clearhead-graphd) until their consumers migrate; editor intelligence belongs to [`clearhead-lsp`](https://github.com/ClearHeadToDo-Devs/clearhead-lsp).
 
 ## Installation
 
@@ -57,11 +57,21 @@ Concrete deployment and tool-composition recipes live in the [CLI cookbook](./do
 
 ## Graph queries
 
-Call graphd directly for saved views and ad-hoc SPARQL:
+Ad-hoc and saved SPARQL run in-process against the workspace's published RDF
+dataset (an ephemeral in-memory store; queries are verbatim standard SPARQL
+that also run unchanged in independent tooling):
 
 ```bash
-clearhead-graphd query index agenda
-clearhead-graphd query raw 'SELECT ?s WHERE { ?s ?p ?o }' --format json
+clearhead query raw 'SELECT ?s WHERE { ?s ?p ?o }' --format json   # SPARQL Results JSON
+clearhead query named my-saved-query        # .clearhead/queries/my-saved-query.sparql
+```
+
+Machine output is standard SPARQL Results JSON / RDF serializations. The
+graphd-era presentation views still forward to `clearhead-graphd`:
+
+```bash
+clearhead query index agenda
+clearhead query tree
 ```
 
 ## Editor integration

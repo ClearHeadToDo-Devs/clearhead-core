@@ -15,6 +15,12 @@ pub mod environment_reader;
 mod commands;
 use commands::CommandContext;
 
+/// Optional in-process SPARQL query layer (`sparql` feature, on by default).
+/// Absent from the minimal `--no-default-features` build, which compiles no
+/// query engine at all.
+#[cfg(feature = "sparql")]
+mod sparql;
+
 fn main() {
     // Rust's print macros panic when a downstream consumer closes stdout early
     // (`clearhead read ... | head`). Treat that ordinary Unix pipeline event as

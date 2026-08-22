@@ -447,6 +447,7 @@ dependencies = [
  "comfy-table",
  "config",
  "insta",
+ "oxigraph",
  "predicates",
  "serde",
  "serde_json",

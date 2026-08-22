@@ -20,6 +20,16 @@ cargo test --workspace --quiet
 echo "pre-push > cargo check -p clearhead_core --no-default-features (portable capability set)"
 cargo check -p clearhead_core --no-default-features
 
+echo "pre-push > cargo check -p clearhead_cli --no-default-features (minimal, query-engine-free profile)"
+cargo check -p clearhead_cli --no-default-features
+# The rdf-publication charter: Oxigraph may only ever enter through the CLI's
+# optional `sparql` feature — never the minimal profile's dependency graph.
+if cargo tree -p clearhead_cli --no-default-features -e normal --prefix none | grep -q '^oxigraph '; then
+  echo "pre-push > FAIL: oxigraph appears in the minimal CLI dependency graph" >&2
+  echo "pre-push > the query engine belongs only to the optional \`sparql\` feature." >&2
+  exit 1
+fi
+
 echo "pre-push > wasm dependency gate"
 sh scripts/wasm-dependency-gate.sh
 

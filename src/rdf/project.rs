@@ -13,13 +13,13 @@
 
 use super::{
     ACTIONS_NS, BFO_PART_OF, CCO_IS_SUCCESSOR_OF, CCO_PLAN, CCO_PRESCRIBES, CCO_STATUS_PROP,
-    RdfError, Result, XSD_NS, actions_pred, bfo_pred, cco_node, charter_state_node, dcterms_pred,
-    ns, phase_node, rdf_type, rdfs_pred,
+    RdfError, Result, actions_pred, bfo_pred, cco_node, charter_state_node, dcterms_pred, ns,
+    phase_node, rdf_type, rdfs_pred, simple, typed, uuid_node,
 };
 use crate::WorkspaceConfig;
 use crate::domain::{Action, Charter, DomainModel, Plan};
 use crate::workspace::actions::convert::INBOX_CHARTER_NS;
-use oxrdf::{GraphName, Literal, NamedNode, Quad, Term};
+use oxrdf::{GraphName, NamedNode, Quad, Term};
 use std::collections::HashMap;
 use uuid::Uuid;
 
@@ -109,18 +109,6 @@ impl QuadSet {
 // ============================================================================
 // Term helpers
 // ============================================================================
-
-fn uuid_node(id: Uuid) -> NamedNode {
-    NamedNode::new(format!("urn:uuid:{id}")).expect("uuid yields a valid IRI")
-}
-
-fn simple(value: impl Into<String>) -> Term {
-    Term::Literal(Literal::new_simple_literal(value))
-}
-
-fn typed(value: impl Into<String>, xsd_type: &str) -> Term {
-    Term::Literal(Literal::new_typed_literal(value, ns(XSD_NS, xsd_type)))
-}
 
 /// Strip the `R:` prefix oxrrule prints on `Recurrence::to_string()`.
 fn recurrence_rule(recurrence: &impl ToString) -> String {

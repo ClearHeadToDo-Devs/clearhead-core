@@ -24,11 +24,14 @@
 
 pub mod project;
 pub mod serialize;
+pub mod snapshot;
 
 pub use project::project_domain;
 pub use serialize::{RdfFormat, serialize, serialize_domain};
+pub use snapshot::{WorkspaceSnapshot, project_workspace_snapshot};
 
-use oxrdf::{GraphName, NamedNode};
+use oxrdf::{GraphName, Literal, NamedNode, Term};
+use uuid::Uuid;
 
 /// Result type for RDF projection and serialization.
 pub type Result<T> = std::result::Result<T, RdfError>;
@@ -56,6 +59,8 @@ pub(crate) const RDF_NS: &str = "http://www.w3.org/1999/02/22-rdf-syntax-ns#";
 pub(crate) const RDFS_NS: &str = "http://www.w3.org/2000/01/rdf-schema#";
 pub(crate) const XSD_NS: &str = "http://www.w3.org/2001/XMLSchema#";
 pub(crate) const DCTERMS_NS: &str = "http://purl.org/dc/terms/";
+/// Workspace-snapshot vocabulary (identity, source provenance for editors).
+pub(crate) const WORKSPACE_NS: &str = "https://clearhead.us/vocab/workspace/v1#";
 
 // BFO property identifiers. Containment is published in the upward (part_of)
 // direction only; the inverse has_part (BFO_0000051) is derivable and omitted.
@@ -95,8 +100,31 @@ pub(crate) fn dcterms_pred(name: &str) -> NamedNode {
     ns(DCTERMS_NS, name)
 }
 
+pub(crate) fn ws_pred(name: &str) -> NamedNode {
+    ns(WORKSPACE_NS, name)
+}
+
 pub(crate) fn rdf_type() -> NamedNode {
     ns(RDF_NS, "type")
+}
+
+// ============================================================================
+// Shared term helpers
+// ============================================================================
+
+/// The canonical `urn:uuid:<uuid>` entity node (Charter/Plan/Action).
+pub(crate) fn uuid_node(id: Uuid) -> NamedNode {
+    NamedNode::new(format!("urn:uuid:{id}")).expect("uuid yields a valid IRI")
+}
+
+/// An RDF plain literal.
+pub(crate) fn simple(value: impl Into<String>) -> Term {
+    Term::Literal(Literal::new_simple_literal(value))
+}
+
+/// An `xsd:`-typed literal.
+pub(crate) fn typed(value: impl Into<String>, xsd_type: &str) -> Term {
+    Term::Literal(Literal::new_typed_literal(value, ns(XSD_NS, xsd_type)))
 }
 
 /// The v4 individual for an Action's lifecycle phase (linked via
@@ -137,10 +165,14 @@ pub const WORKSPACE_GRAPH_PREFIX: &str = "urn:clearhead:workspace:";
 
 /// The named graph for a workspace, derived from its stable UUID string.
 pub fn workspace_graph_name(uuid: &str) -> GraphName {
-    GraphName::NamedNode(
-        NamedNode::new(format!("{WORKSPACE_GRAPH_PREFIX}{uuid}"))
-            .expect("workspace UUID yields a valid IRI"),
-    )
+    GraphName::NamedNode(workspace_node(uuid))
+}
+
+/// The workspace entity node: the same `urn:clearhead:workspace:<uuid>` IRI
+/// that names the workspace's named graph.
+pub(crate) fn workspace_node(id: &str) -> NamedNode {
+    NamedNode::new(format!("{WORKSPACE_GRAPH_PREFIX}{id}"))
+        .expect("workspace UUID yields a valid IRI")
 }
 
 /// Named graph for transient, workspace-less datasets (ad-hoc projection, tests).

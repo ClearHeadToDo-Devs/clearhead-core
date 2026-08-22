@@ -720,24 +720,30 @@ pub enum DeleteTarget {
 }
 
 // =============================================================================
-// Query targets — forwarded to clearhead-graphd
+// =============================================================================
+// Query targets — raw/named evaluate in-process (`sparql` feature); the
+// client-presentation families still forward to clearhead-graphd.
 // =============================================================================
 
-/// Explicit query output format. Without an override, graphd chooses from the
-/// query family and whether stdout is a terminal. Mirrors graphd's own set.
+/// Explicit query output format. Without an override, the in-process evaluator
+/// (or graphd, for forwarded families) chooses from the query family and
+/// whether stdout is a terminal. For `raw`/saved queries the machine-readable
+/// formats are standards: `json` is SPARQL Results JSON for SELECT/ASK and
+/// Turtle/JSON-LD for CONSTRUCT/DESCRIBE; `ndjson`/`ids`/`dot` remain
+/// index/graph-family contracts served by graphd.
 #[derive(Copy, Clone, Debug, ValueEnum)]
 pub enum QueryFormat {
     /// Pretty-printed human table
     Table,
-    /// JSON array of objects
+    /// SPARQL Results JSON (raw/named) or JSON rows (forwarded families)
     Json,
-    /// One JSON object per line
+    /// One JSON object per line (graphd index family)
     Ndjson,
     /// Semantic JSON-LD document (shaped query families)
     Jsonld,
     /// Bare canonical ids, one per line (feeds `clearhead transact`)
     Ids,
-    /// RDF Turtle (graph families)
+    /// RDF Turtle (CONSTRUCT/DESCRIBE results and graph families)
     Turtle,
     /// Graphviz DOT (graph families)
     Dot,
@@ -745,23 +751,29 @@ pub enum QueryFormat {
 
 #[derive(Subcommand)]
 pub enum QueryTarget {
-    /// Run a raw SPARQL query, or a WHERE clause via --where
+    /// Run a raw SPARQL query, or a WHERE clause via --where. Executes
+    /// in-process against an ephemeral store holding the workspace's
+    /// published RDF dataset (default `sparql` feature); the query is
+    /// verbatim standard SPARQL — no prefix or parameter injection.
     Raw {
         /// Full SPARQL SELECT query
         #[arg(conflicts_with = "where_clause")]
         sparql: Option<String>,
-        /// SPARQL WHERE clause (graphd auto-injects prefixes, selects all vars)
+        /// SPARQL WHERE clause (expanded to a complete standard SELECT)
         #[arg(short = 'w', long = "where", conflicts_with = "sparql")]
         where_clause: Option<String>,
         #[arg(long, value_enum)]
         format: Option<QueryFormat>,
     },
-    /// Run a named query from the queries/ registry
+    /// Run a named query: a saved `.sparql` file from the project
+    /// (`.clearhead/queries/`) or user (`<config>/queries/`) directory runs
+    /// in-process; graphd's built-in registry remains as a fallback.
     #[command(name = "named")]
     Named {
         /// Name of the query (stem of the .sparql file)
         name: String,
-        /// Value substituted for ?STATUS_FILTER (graphd owns its interpretation)
+        /// Value substituted for ?STATUS_FILTER (graphd fallback only —
+        /// in-process queries are verbatim standard SPARQL)
         #[arg(long)]
         status: Option<String>,
         #[arg(long, value_enum)]

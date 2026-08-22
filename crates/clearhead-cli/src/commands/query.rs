@@ -1,14 +1,22 @@
-//! Query commands forward to graphd's own `query` interface.
+//! Query commands: in-process SPARQL evaluation plus the transitional graphd
+//! forwarding shim.
 //!
-//! graphd owns query execution, the named-query registry, parameter injection,
-//! and rendering. The CLI maps its arguments onto `graphd query …` and execs it
-//! with **inherited stdio**, so graphd's terminal-vs-pipe detection sees the
-//! real stream and there is exactly one renderer. The CLI adds nothing to the
-//! output — it is a pure projection.
+//! With the default `sparql` feature, `query raw` and locally-saved
+//! `query named` execute in-process over Core's canonical dataset (see
+//! [`crate::sparql`]): an ephemeral in-memory store, standard SPARQL,
+//! standard result serializations. Queries run verbatim — graphd-era prefix
+//! and `?STATUS_FILTER`-style parameter injection does not happen in-process,
+//! so saved `.sparql` files stay portable across independent SPARQL tooling.
 //!
-//! `chain` is the sole exception: resolving a fuzzy action query to a canonical
-//! IRI is an actions-domain concern, so the CLI does that here, then forwards
-//! `index chain --target <iri>`.
+//! Still forwarded to graphd (until `migrate-graph-consumers` /
+//! `retire-graphd` land): the client-presentation families `index`, `tree`,
+//! `graph`, and `chain`, the built-in registry (`named` fallback, `list`,
+//! `show`), and `--status` parameter injection. In a minimal
+//! `--no-default-features` build there is no query engine: `query raw` errors
+//! cleanly while the unmoved registry/families keep forwarding.
+//!
+//! `chain` resolves a fuzzy action query to a canonical IRI here (an
+//! actions-domain concern), then forwards `index chain --target <iri>`.
 
 use std::ffi::OsString;
 
@@ -78,16 +86,19 @@ pub fn raw(
     where_clause: Option<&str>,
     format: Option<QueryFormat>,
 ) -> anyhow::Result<()> {
-    let mut args: Vec<OsString> = vec!["raw".into()];
-    if let Some(sparql) = sparql {
-        args.push(sparql.into());
+    #[cfg(feature = "sparql")]
+    {
+        crate::sparql::run_raw(ctx, sparql, where_clause, format)
     }
-    if let Some(where_clause) = where_clause {
-        args.push("--where".into());
-        args.push(where_clause.into());
+    #[cfg(not(feature = "sparql"))]
+    {
+        let _ = (ctx, sparql, where_clause, format);
+        anyhow::bail!(
+            "this clearhead build has no query engine (compiled without the `sparql` \
+             feature); use a default-features build for local SPARQL, or evaluate \
+             the exported RDF dataset with any external SPARQL tool"
+        )
     }
-    push_format(&mut args, format);
-    forward(ctx, args)
 }
 
 pub fn named(
@@ -96,6 +107,14 @@ pub fn named(
     status: Option<&str>,
     format: Option<QueryFormat>,
 ) -> anyhow::Result<()> {
+    // In-process path (sparql feature): a locally saved query with no
+    // graphd-era `--status` injection runs against the ephemeral store. The
+    // built-in registry and `--status` remain on the forwarding path until
+    // migrate-graph-consumers moves them.
+    #[cfg(feature = "sparql")]
+    if status.is_none() && crate::sparql::run_saved(ctx, name, format)? {
+        return Ok(());
+    }
     let mut args: Vec<OsString> = vec!["named".into(), name.into()];
     if let Some(status) = status {
         args.push("--status".into());
