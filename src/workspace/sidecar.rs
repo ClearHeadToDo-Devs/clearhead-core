@@ -103,74 +103,9 @@ pub fn sidecar_path(actions_path: &Path) -> PathBuf {
     dir.join(format!(".{}.json", stem))
 }
 
-/// Read sidecar metadata from disk. Returns default if the file doesn't exist.
-pub fn read_sidecar(path: &Path) -> Result<CharterMetadata, WorkspaceError> {
-    if !path.exists() {
-        return Ok(CharterMetadata::default());
-    }
-    let content = std::fs::read_to_string(path)?;
-    parse_sidecar(&content)
-}
-
 /// Parse sidecar bytes already supplied by a host.
 pub fn parse_sidecar(content: &str) -> Result<CharterMetadata, WorkspaceError> {
     serde_json::from_str(content).map_err(|e| WorkspaceError::Parse(format!("sidecar: {e}")))
-}
-
-/// Union every sidecar under `charter_root` into one `uuid -> ActionMeta` map.
-///
-/// Sidecars are re-joined to actions by UUID, not by file path, so a sidecar
-/// left behind when its `.actions` file moved or was renamed still hydrates its
-/// actions (see [`hydrate_actions_map`]). Unreadable or corrupt sidecars are
-/// skipped here — the loader reports those against their own path.
-pub fn collect_sidecar_actions(charter_root: &Path) -> BTreeMap<String, ActionMeta> {
-    let mut union: BTreeMap<String, ActionMeta> = BTreeMap::new();
-    for path in sidecar_files(charter_root) {
-        let Ok(meta) = read_sidecar(&path) else {
-            continue;
-        };
-        for (key, action) in meta.actions {
-            merge_action(union.entry(key).or_default(), action);
-        }
-    }
-    union
-}
-
-/// Fold `from` into `to`, keeping the first present value per field. Callers
-/// walk sidecars in sorted path order for a deterministic result on the rare
-/// duplicate.
-fn merge_action(to: &mut ActionMeta, from: ActionMeta) {
-    to.created = to.created.or(from.created);
-    to.occurrence = to.occurrence.clone().or(from.occurrence);
-}
-
-/// Every hidden `.json` file under `dir`, recursively, sorted for determinism.
-/// The pattern matches sidecars (`.<stem>.json`); a stray non-sidecar `.json`
-/// simply deserializes to an empty [`CharterMetadata`] and contributes nothing.
-fn sidecar_files(dir: &Path) -> Vec<PathBuf> {
-    let mut out = Vec::new();
-    let mut stack = vec![dir.to_path_buf()];
-    while let Some(current) = stack.pop() {
-        let Ok(entries) = std::fs::read_dir(&current) else {
-            continue;
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            let hidden_name = path
-                .file_name()
-                .map(|n| n.to_string_lossy().starts_with('.'))
-                .unwrap_or(false);
-            if path.is_dir() {
-                if !hidden_name {
-                    stack.push(path);
-                }
-            } else if hidden_name && path.extension().and_then(|e| e.to_str()) == Some("json") {
-                out.push(path);
-            }
-        }
-    }
-    out.sort();
-    out
 }
 
 /// Hydrate actions with metadata from the sidecar.
@@ -382,17 +317,11 @@ mod tests {
 
     #[test]
     fn legacy_acts_key_is_rewritten_as_actions_on_save() {
-        // Reading an old-format sidecar and writing it back migrates the key —
+        // Parsing an old-format sidecar and rendering it back migrates the key —
         // this is the self-healing half of the migration (no explicit tool needed).
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join(".legacy.json");
-        std::fs::write(
-            &path,
-            r#"{"acts": {"legacy-id": {"created": "2026-04-20T16:11:00-05:00"}}}"#,
-        )
-        .unwrap();
-
-        let meta = read_sidecar(&path).unwrap();
+        let meta =
+            parse_sidecar(r#"{"acts": {"legacy-id": {"created": "2026-04-20T16:11:00-05:00"}}}"#)
+                .unwrap();
         let rewritten = render_sidecar(&meta).unwrap();
         assert!(rewritten.contains("\"actions\""));
         assert!(!rewritten.contains("\"acts\""));
@@ -517,13 +446,7 @@ mod tests {
         assert!((Local::now() - created).num_seconds().abs() < 5);
     }
 
-    // ===== Filesystem read/write =====
-
-    #[test]
-    fn read_sidecar_missing_file_returns_default() {
-        let result = read_sidecar(Path::new("/nonexistent/.inbox.json")).unwrap();
-        assert!(result.actions.is_empty());
-    }
+    // ===== Schema stamping / render =====
 
     #[test]
     fn render_sidecar_stamps_schema_pointer() {
@@ -560,57 +483,5 @@ mod tests {
         let loaded = parse_sidecar(&render_sidecar(&meta).unwrap()).unwrap();
         assert_eq!(loaded.actions.len(), 1);
         assert!(loaded.actions.contains_key("test-uuid"));
-    }
-
-    // ===== Union across sidecars (location-independent hydration) =====
-
-    #[test]
-    fn collect_sidecar_actions_unions_across_files_and_dirs() {
-        let dir = tempfile::tempdir().unwrap();
-        let sub = dir.path().join("feature");
-        std::fs::create_dir_all(&sub).unwrap();
-        std::fs::write(
-            dir.path().join(".root.json"),
-            r#"{"actions": {"aaa": {"created": "2024-01-01T00:00:00+00:00"}}}"#,
-        )
-        .unwrap();
-        std::fs::write(
-            sub.join(".nested.json"),
-            r#"{"actions": {"bbb": {"created": "2024-02-02T00:00:00+00:00"}}}"#,
-        )
-        .unwrap();
-        // A non-sidecar json and a non-json hidden file contribute nothing.
-        std::fs::write(dir.path().join(".config.json"), r#"{"unrelated": true}"#).unwrap();
-        std::fs::write(dir.path().join(".keep"), "ignore me").unwrap();
-
-        let union = collect_sidecar_actions(dir.path());
-        assert!(union.contains_key("aaa"));
-        assert!(union.contains_key("bbb"));
-        assert_eq!(union.len(), 2);
-    }
-
-    #[test]
-    fn merge_action_keeps_first_created_across_sidecars() {
-        // Same uuid in two sidecars with different `created` stamps. Walking in
-        // sorted path order, the first present value wins deterministically.
-        let dir = tempfile::tempdir().unwrap();
-        std::fs::write(
-            dir.path().join(".aaa.json"),
-            r#"{"actions": {"dup": {"created": "2024-06-01T12:00:00+00:00"}}}"#,
-        )
-        .unwrap();
-        std::fs::write(
-            dir.path().join(".zzz.json"),
-            r#"{"actions": {"dup": {"created": "2025-06-01T12:00:00+00:00"}}}"#,
-        )
-        .unwrap();
-
-        let union = collect_sidecar_actions(dir.path());
-        let entry = &union["dup"];
-        assert_eq!(
-            entry.created.map(|c| c.format("%Y").to_string()).as_deref(),
-            Some("2024"),
-            "the first sidecar in sorted order wins on a duplicate uuid",
-        );
     }
 }

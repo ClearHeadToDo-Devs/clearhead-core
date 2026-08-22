@@ -49,17 +49,6 @@ impl WorkspaceManifest {
             .data_root
             .join("workspace.json")
     }
-
-    /// Read the manifest for the workspace at `root`.
-    ///
-    /// Identity lives only in `workspace.json`. A missing file yields an empty
-    /// manifest — the workspace has no durable identity and the read side mints
-    /// an ephemeral one per load. Never fails: a missing or unparseable file
-    /// degrades to empty so an uninitialized or damaged workspace stays
-    /// queryable; `doctor` reports the missing `workspace_id` separately.
-    pub fn read(root: &Path) -> Self {
-        read_identity_fields(&Self::path(root))
-    }
 }
 
 /// Parse the host-neutral workspace identity document.
@@ -84,14 +73,6 @@ pub fn render_workspace_manifest(
         );
     }
     serde_json::to_string_pretty(&value)
-}
-
-/// Extract the three identity fields from a JSON file, when present and parseable.
-fn read_identity_fields(path: &Path) -> WorkspaceManifest {
-    std::fs::read_to_string(path)
-        .ok()
-        .and_then(|source| parse_workspace_manifest(&source).ok())
-        .unwrap_or_default()
 }
 
 fn str_field(v: &serde_json::Value, key: &str) -> Option<String> {

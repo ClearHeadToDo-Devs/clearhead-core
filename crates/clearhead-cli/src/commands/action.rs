@@ -537,7 +537,7 @@ pub fn delete_action(
     } else {
         let mut all = Vec::new();
         for (_, ws_dir) in ctx.workspace_dirs() {
-            let files = clearhead_core::list_action_files(&ws_dir)
+            let files = clearhead_workspace_fs::list_action_files(&ws_dir)
                 .with_context(|| format!("Failed to list workspace '{}'", ws_dir.display()))?;
             all.extend(files);
         }
@@ -884,7 +884,8 @@ pub fn archive_actions(
             | ResolvedScope::Action { file_path } => vec![file_path],
         }
     } else {
-        clearhead_core::list_action_files(&ctx.data_dir).context("Failed to list workspace")?
+        clearhead_workspace_fs::list_action_files(&ctx.data_dir)
+            .context("Failed to list workspace")?
     };
 
     let mut total_archived = 0usize;
@@ -985,7 +986,8 @@ fn find_act_in_open_files(
     data_dir: &Path,
     query: &str,
 ) -> anyhow::Result<Option<(PathBuf, ActionList)>> {
-    let paths = clearhead_core::list_action_files(data_dir).context("Failed to list workspace")?;
+    let paths =
+        clearhead_workspace_fs::list_action_files(data_dir).context("Failed to list workspace")?;
     let mut loaded = Vec::with_capacity(paths.len());
     for path in paths {
         loaded.push((path.clone(), action_files::read_actions(&path)?));
@@ -1012,7 +1014,7 @@ fn find_act_in_open_files(
 /// action is already closed; with no match anywhere it is not found.
 fn verb_target_error(ctx: &CommandContext, query: &str) -> anyhow::Result<VerbError> {
     for (_, ws_dir) in ctx.workspace_dirs() {
-        let open_files = clearhead_core::list_action_files(&ws_dir).unwrap_or_default();
+        let open_files = clearhead_workspace_fs::list_action_files(&ws_dir).unwrap_or_default();
         let archives: Vec<PathBuf> = open_files
             .iter()
             .map(|p| action_files::completed_actions_path(p))

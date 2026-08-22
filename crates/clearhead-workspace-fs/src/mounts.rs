@@ -335,12 +335,13 @@ mod tests {
     }
 
     #[test]
-    fn native_loader_matches_legacy_domain_assembly() {
+    fn native_loader_assembles_domain_model() {
+        let action_id = "019fa000-0000-7000-8000-000000000001";
         let root = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(root.path().join("charters")).unwrap();
         std::fs::write(
             root.path().join("charters/work.actions"),
-            "[ ] Shared semantics #019fa000-0000-7000-8000-000000000001",
+            format!("[ ] Shared semantics #{action_id}"),
         )
         .unwrap();
         std::fs::write(
@@ -349,11 +350,10 @@ mod tests {
         )
         .unwrap();
 
-        let legacy = clearhead_core::load_domain_model(root.path()).unwrap();
         let mounted = load_domain_model(root.path(), None).unwrap();
-        assert_eq!(mounted.charters.len(), legacy.charters.len());
-        assert_eq!(mounted.charters[0].id, legacy.charters[0].id);
-        assert_eq!(mounted.charters[0].actions, legacy.charters[0].actions);
+        assert_eq!(mounted.charters.len(), 1);
+        assert_eq!(mounted.charters[0].actions.len(), 1);
+        assert_eq!(mounted.charters[0].actions[0].id.to_string(), action_id);
     }
 
     #[test]

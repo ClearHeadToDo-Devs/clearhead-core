@@ -1,6 +1,8 @@
 use clearhead_core::domain::update::ActionUpdate;
-use clearhead_core::workspace::sidecar::{ActionMeta, CharterMetadata, read_sidecar, sidecar_path};
-use clearhead_core::{Action, ActionSelector, ActionState, read_actions};
+use clearhead_core::workspace::sidecar::{ActionMeta, CharterMetadata, sidecar_path};
+use clearhead_core::{Action, ActionSelector, ActionState};
+use clearhead_workspace_fs::read_actions;
+use clearhead_workspace_fs::sidecar::read_sidecar;
 use clearhead_workspace_fs::sidecar::write_sidecar;
 use clearhead_workspace_fs::{delete_action, insert_action, update_action};
 use uuid::Uuid;

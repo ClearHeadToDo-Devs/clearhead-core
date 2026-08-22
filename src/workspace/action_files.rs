@@ -13,9 +13,8 @@
 
 use std::path::{Path, PathBuf};
 
+use crate::workspace::actions::ActionList;
 use crate::workspace::actions::repository::SourcedAction;
-use crate::workspace::actions::{ActionList, parse_actions};
-use crate::workspace::store::WorkspaceError;
 
 /// A parsed `.actions` file — the workspace-layer representation of a charter's actions.
 ///
@@ -107,42 +106,6 @@ pub fn completed_actions_path(actions_path: &Path) -> PathBuf {
 }
 
 // ============================================================================
-// Public API
-// ============================================================================
-
-/// Read [`Action`]s from a `.actions` or `.completed.actions` file.
-///
-/// Returns `Ok(vec![])` if the file is absent. Syntax errors are returned as
-/// an error per the parse boundary contract.
-pub fn read_actions(path: &Path) -> Result<ActionList, WorkspaceError> {
-    if !path.exists() {
-        return Ok(ActionList::new());
-    }
-
-    let content = std::fs::read_to_string(path).map_err(WorkspaceError::Io)?;
-    parse_actions(&content).map_err(WorkspaceError::Actions)
-}
-
-/// Read a `.actions` file into an [`ActionsFile`], preserving file origin on each action.
-///
-/// `workspace_root` is used to infer the charter name from the relative path.
-/// Returns `Ok(ActionsFile { path, actions: [] })` if the file is absent.
-pub fn read_action_file(path: &Path) -> Result<ActionsFile, WorkspaceError> {
-    let actions = read_actions(path)?;
-    let sourced = actions
-        .into_iter()
-        .map(|action| SourcedAction {
-            action,
-            source_metadata: None,
-        })
-        .collect();
-    Ok(ActionsFile {
-        path: path.to_path_buf(),
-        actions: sourced,
-    })
-}
-
-// ============================================================================
 // Tests
 // ============================================================================
 
@@ -180,16 +143,5 @@ mod tests {
             completed_actions_path(Path::new("build_clearhead/obs.actions")),
             PathBuf::from("build_clearhead/obs.completed.actions")
         );
-    }
-
-    // ========================================================================
-    // Reads
-    // ========================================================================
-
-    #[test]
-    fn test_missing_file_returns_empty() {
-        let result = read_actions(Path::new("/nonexistent/path.actions"));
-        assert!(result.is_ok());
-        assert!(result.unwrap().is_empty());
     }
 }

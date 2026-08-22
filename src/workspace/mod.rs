@@ -24,7 +24,7 @@ pub mod templates;
 pub mod transaction;
 
 // Re-export key types at workspace level
-pub use action_files::{ActionsFile, completed_actions_path, read_action_file, read_actions};
+pub use action_files::{ActionsFile, completed_actions_path};
 pub use actions::{
     Action, ActionList, ActionState, Diff, IntegrityError, OutputFormat, ParseFailure, ParseMode,
     ParseOutcome, ParsedDocument, RecoveryReport, SourceMetadata, SourceRange, SourcedAction,
@@ -75,7 +75,7 @@ pub use resource::{
 pub use selector::ActionSelector;
 pub use sidecar::{
     ActionMeta, CharterMeta, CharterMetadata, OccurrenceSnapshot, hydrate_actions, parse_sidecar,
-    read_sidecar, record_charter_id, render_sidecar, sidecar_path, stamp_metadata_entries,
+    record_charter_id, render_sidecar, sidecar_path, stamp_metadata_entries,
 };
 pub use transaction::{
     ActionUpdateSet, FileState, NormalizedOperation, Operation, PreparedTransactionOutcome,
@@ -86,11 +86,9 @@ pub use transaction::{
 pub use store::{
     Diagnosis, DoctorCollectionEvidence, DoctorDocument, DoctorEvidence, DoctorRepair,
     DoctorSidecarEvidence, DurabilityResidue, DurabilityResidueKind, Finding, FindingSeverity,
-    ManifestSourceType, Workspace, WorkspaceAssemblyInput, WorkspaceError, WorkspaceManifestEntry,
-    WorkspaceRead, assemble_workspace, assembled_domain_model, charter_collection_from_anchor,
-    charter_root, collect_workspace_manifest, diagnose, infer_charter_name,
-    infer_parent_charter_name, list_action_files, load_domain_model, load_domain_model_with_plans,
-    load_workspace, load_workspace_with_plans, load_workspaces, plans_root, read_workspace,
-    read_workspace_with_plans, workspace_data_root,
+    Workspace, WorkspaceAssemblyInput, WorkspaceError, WorkspaceRead, assemble_workspace,
+    assembled_domain_model, charter_collection_from_anchor, charter_root, diagnose,
+    infer_charter_name, infer_charter_name_for_workspace, infer_parent_charter_name,
+    infer_parent_charter_name_for_workspace, plans_root, project_root_charter, workspace_data_root,
 };
-pub use templates::{instantiate_template, resolve_template, template_candidates};
+pub use templates::{instantiate_template, template_candidates};

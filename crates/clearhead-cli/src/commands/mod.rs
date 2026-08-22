@@ -502,7 +502,7 @@ pub fn read_input(file: Option<&PathBuf>) -> anyhow::Result<String> {
 pub fn charter_to_file_path(data_dir: &Path, charter_query: &str) -> anyhow::Result<PathBuf> {
     let data_root = clearhead_core::charter_root(data_dir);
     let action_files =
-        clearhead_core::list_action_files(data_dir).context("Failed to list workspace")?;
+        clearhead_workspace_fs::list_action_files(data_dir).context("Failed to list workspace")?;
 
     let query_lower = charter_query.to_lowercase();
 

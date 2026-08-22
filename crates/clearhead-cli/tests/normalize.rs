@@ -144,7 +144,7 @@ fn test_format_file_refuses_recovered_source_even_for_stdout() {
 
 #[test]
 fn test_normalize_write_creates_sidecar() {
-    use clearhead_core::workspace::sidecar::read_sidecar;
+    use clearhead_workspace_fs::sidecar::read_sidecar;
     let env = TestEnv::new();
     let uuid = "01951111-0000-7000-0000-000000000001";
     env.write_actions("work.actions", &format!("[ ] Task one #{}\n", uuid));
@@ -174,7 +174,7 @@ fn test_normalize_write_creates_sidecar() {
 
 #[test]
 fn test_sidecar_additive_on_repeated_normalize() {
-    use clearhead_core::workspace::sidecar::read_sidecar;
+    use clearhead_workspace_fs::sidecar::read_sidecar;
     let env = TestEnv::new();
     let uuid = "01951111-0000-7000-0000-000000000001";
     env.write_actions("work.actions", &format!("[ ] Task #{}\n", uuid));

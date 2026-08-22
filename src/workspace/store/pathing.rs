@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
 /// Infer charter name with optional project-root behavior.
-pub(crate) fn infer_charter_name_for_workspace(
+pub fn infer_charter_name_for_workspace(
     relative_path: &Path,
     project_root_charter: Option<&str>,
 ) -> Option<String> {
@@ -84,7 +84,7 @@ pub fn infer_charter_name(relative_path: &Path) -> Option<String> {
 }
 
 /// Infer parent charter with optional project-root behavior.
-pub(crate) fn infer_parent_charter_name_for_workspace(
+pub fn infer_parent_charter_name_for_workspace(
     relative_path: &Path,
     project_root_charter: Option<&str>,
 ) -> Option<String> {

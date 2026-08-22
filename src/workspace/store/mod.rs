@@ -21,11 +21,9 @@
 //! `WorkspaceLayout` that all load/save functions use for path resolution.
 
 mod assembly;
-mod discovery;
 mod doctor;
 mod findings;
 pub mod load;
-mod manifest;
 mod pathing;
 
 use std::path::{Path, PathBuf};
@@ -36,12 +34,11 @@ pub use doctor::{
     DoctorSidecarEvidence, DurabilityResidue, DurabilityResidueKind, diagnose,
 };
 pub use findings::{Finding, FindingSeverity};
-pub use load::{
-    Workspace, WorkspaceRead, load_domain_model, load_domain_model_with_plans, load_workspace,
-    load_workspace_with_plans, load_workspaces, read_workspace, read_workspace_with_plans,
+pub use load::{Workspace, WorkspaceRead};
+pub use pathing::{
+    charter_collection_from_anchor, infer_charter_name, infer_charter_name_for_workspace,
+    infer_parent_charter_name, infer_parent_charter_name_for_workspace,
 };
-pub use manifest::{ManifestSourceType, WorkspaceManifestEntry, collect_workspace_manifest};
-pub use pathing::{charter_collection_from_anchor, infer_charter_name, infer_parent_charter_name};
 
 /// Returns the workspace root directory (`.clearhead/` for project layout).
 ///
@@ -64,10 +61,13 @@ pub fn plans_root(root: &Path) -> PathBuf {
     resolve_workspace_layout(root).plans_root
 }
 
-/// Returns absolute paths to all `.actions` files in the workspace.
-pub fn list_action_files(root: &Path) -> Result<Vec<PathBuf>, WorkspaceError> {
-    let layout = resolve_workspace_layout(root);
-    discovery::discover_action_files(&layout.charter_root)
+/// The project-layout root charter name, if this workspace uses project layout.
+///
+/// `Some(dir_name)` when a `.clearhead/` subdirectory exists (top-level
+/// `next.actions` maps to that charter); `None` for user layout. Pure path
+/// policy exposed so a native adapter can infer charter names identically.
+pub fn project_root_charter(root: &Path) -> Option<String> {
+    resolve_workspace_layout(root).project_root_charter
 }
 
 /// Errors that can occur when interacting with a workspace.

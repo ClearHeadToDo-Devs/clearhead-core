@@ -110,7 +110,7 @@ fn print_workspace_section(ctx: &CommandContext) -> anyhow::Result<()> {
         workspace_source
     );
 
-    let manifest = clearhead_core::collect_workspace_manifest(&ctx.data_dir)
+    let manifest = clearhead_workspace_fs::collect_workspace_manifest(&ctx.data_dir)
         .context("Failed to collect workspace manifest")?;
     // Diagnostics must observe, not alter: the pure reader (no journal replay,
     // per-file failures become findings) instead of the healing load path.
@@ -196,14 +196,16 @@ fn find_root_charter_alias(charters: &[MarkdownCharter]) -> Option<String> {
         })
 }
 
-fn format_source_type(source_type: &clearhead_core::ManifestSourceType) -> &'static str {
+fn format_source_type(source_type: &clearhead_workspace_fs::ManifestSourceType) -> &'static str {
     match source_type {
-        clearhead_core::ManifestSourceType::Actions => "actions",
-        clearhead_core::ManifestSourceType::Markdown => "markdown",
-        clearhead_core::ManifestSourceType::Ics => "ics",
-        clearhead_core::ManifestSourceType::ActionsPlusMarkdown => "actions+markdown",
-        clearhead_core::ManifestSourceType::ActionsPlusIcs => "actions+ics",
-        clearhead_core::ManifestSourceType::MarkdownPlusIcs => "markdown+ics",
-        clearhead_core::ManifestSourceType::ActionsPlusMarkdownPlusIcs => "actions+markdown+ics",
+        clearhead_workspace_fs::ManifestSourceType::Actions => "actions",
+        clearhead_workspace_fs::ManifestSourceType::Markdown => "markdown",
+        clearhead_workspace_fs::ManifestSourceType::Ics => "ics",
+        clearhead_workspace_fs::ManifestSourceType::ActionsPlusMarkdown => "actions+markdown",
+        clearhead_workspace_fs::ManifestSourceType::ActionsPlusIcs => "actions+ics",
+        clearhead_workspace_fs::ManifestSourceType::MarkdownPlusIcs => "markdown+ics",
+        clearhead_workspace_fs::ManifestSourceType::ActionsPlusMarkdownPlusIcs => {
+            "actions+markdown+ics"
+        }
     }
 }

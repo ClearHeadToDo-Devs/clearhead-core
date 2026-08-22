@@ -1,5 +1,4 @@
 use super::common::*;
-use clearhead_core::load_domain_model;
 use std::fs;
 use std::path::Path;
 
@@ -7,7 +6,7 @@ use std::path::Path;
 
 #[test]
 fn corrupt_sidecar_is_a_finding_not_a_load_failure() {
-    use clearhead_core::workspace::{FindingSeverity, read_workspace};
+    use clearhead_core::workspace::FindingSeverity;
 
     let workspace = make_workspace(&[
         (
@@ -43,7 +42,7 @@ fn corrupt_sidecar_is_a_finding_not_a_load_failure() {
 
 #[test]
 fn syntax_errors_surface_as_a_warning_finding() {
-    use clearhead_core::workspace::{FindingSeverity, read_workspace};
+    use clearhead_core::workspace::FindingSeverity;
 
     let workspace = make_workspace(&[(
         "work.actions",
@@ -69,8 +68,6 @@ fn syntax_errors_surface_as_a_warning_finding() {
 
 #[test]
 fn unparseable_ics_is_a_finding_and_the_rest_still_loads() {
-    use clearhead_core::workspace::read_workspace;
-
     let workspace = make_workspace(&[(
         "work.actions",
         "[ ] Task #01951111-0000-7000-0000-000000000004\n",
@@ -98,11 +95,13 @@ fn unparseable_ics_is_a_finding_and_the_rest_still_loads() {
 }
 
 #[test]
-fn neither_read_nor_load_replays_pending_journal() {
-    // Pending-journal recovery is the native adapter's obligation (it runs
-    // recover_pending under the workspace lock before handing bytes to Core).
-    // Core's readers are pure: they observe the pre-crash bytes as-is and never
-    // mutate the workspace, so a `.pending` journal survives an in-Core read.
+fn read_never_replays_but_load_recovers_pending_journal() {
+    // Pending-journal recovery is the native adapter's obligation. The relaxed
+    // reader (`read_workspace`) never mutates: it observes the pre-crash bytes
+    // as-is, so a `.pending` journal survives it. The recovering loader
+    // (`load_workspace`/`load_domain_model`) is the other half of Decision 34 —
+    // it replays the journal under the workspace lock before reading, so a crash
+    // mid-batch converges forward.
     let workspace = make_workspace(&[(
         "work.actions",
         "[ ] Old content #01951111-0000-7000-0000-000000000005\n",
@@ -123,7 +122,7 @@ fn neither_read_nor_load_replays_pending_journal() {
     )
     .expect("write journal");
 
-    let read = clearhead_core::workspace::read_workspace(workspace.path()).expect("read failed");
+    let read = read_workspace(workspace.path()).expect("read failed");
     assert!(
         charter_root.join(".pending").exists(),
         "the pure reader must never replay the journal"
@@ -140,8 +139,8 @@ fn neither_read_nor_load_replays_pending_journal() {
 
     let model = load_domain_model(workspace.path()).expect("load failed");
     assert!(
-        charter_root.join(".pending").exists(),
-        "load is a pure reader too — it must not replay the journal either"
+        !charter_root.join(".pending").exists(),
+        "the recovering loader must replay and clear the journal under the lock"
     );
     let work = model
         .charters
@@ -149,7 +148,7 @@ fn neither_read_nor_load_replays_pending_journal() {
         .find(|c| c.title == "work")
         .expect("work charter");
     assert_eq!(
-        work.actions[0].name, "Old content",
-        "load sees the pre-crash state as-is; recovery is the adapter's job"
+        work.actions[0].name, "New content",
+        "load recovers the staged batch forward before reading"
     );
 }

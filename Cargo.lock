@@ -422,6 +422,8 @@ dependencies = [
  "config",
  "dirs",
  "fs2",
+ "ron 0.8.1",
+ "serde",
  "serde_json",
  "shellexpand",
  "tempfile",

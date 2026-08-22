@@ -8,7 +8,7 @@ const A: &str = "019f733d-4600-7000-8000-000000000001";
 const B: &str = "019f733d-4600-7000-8000-000000000002";
 
 fn active(env: &TestEnv) -> Vec<clearhead_core::Action> {
-    clearhead_core::read_actions(&env.data_dir.join("charters/work.actions")).unwrap()
+    clearhead_workspace_fs::read_actions(&env.data_dir.join("charters/work.actions")).unwrap()
 }
 
 #[test]

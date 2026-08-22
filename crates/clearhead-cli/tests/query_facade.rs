@@ -106,7 +106,8 @@ fn query_facade_ids_feed_transact_end_to_end() {
         .success()
         .stdout(predicate::str::contains(r#""kind":"committed""#));
 
-    let active = clearhead_core::read_actions(&env.data_dir.join("charters/work.actions")).unwrap();
+    let active =
+        clearhead_workspace_fs::read_actions(&env.data_dir.join("charters/work.actions")).unwrap();
     assert!(active.is_empty(), "graph-selected actions were acted on");
 }
 

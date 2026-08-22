@@ -1,5 +1,4 @@
 use super::common::*;
-use clearhead_core::{ManifestSourceType, collect_workspace_manifest, load_domain_model};
 
 // =============================================================================
 // Fixture-based tests (checked-in workspace trees)

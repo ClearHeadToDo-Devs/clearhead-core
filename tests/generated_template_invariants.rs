@@ -1,5 +1,5 @@
 use chrono::{DateTime, Duration, Local, Utc};
-use clearhead_core::workspace::{instantiate_template, resolve_template};
+use clearhead_core::workspace::{instantiate_template, template_candidates};
 use clearhead_core::{Action, ActionState, PredecessorRef};
 use proptest::prelude::*;
 use proptest::test_runner::FileFailurePersistence;
@@ -199,7 +199,12 @@ proptest! {
             _ => None,
         };
 
-        let resolved = resolve_template(&charter_dir, data_root, &name).unwrap();
+        // Resolution is `template_candidates` (pure ordering) plus a host fs probe;
+        // the native adapter's `resolve_template` composes exactly these two, so the
+        // precedence invariant is provable here over Core's pure candidate policy.
+        let resolved = template_candidates(&charter_dir, data_root, &name)
+            .into_iter()
+            .find(|path| path.is_file());
         prop_assert_eq!(resolved, expected);
     }
 }

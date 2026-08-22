@@ -3,6 +3,7 @@
 pub mod action_files;
 pub mod archive_charter;
 pub mod calendar;
+pub mod discovery;
 pub mod doctor;
 pub mod durability;
 pub mod manifest;
@@ -20,6 +21,7 @@ pub use calendar::{
     read_ics_file, read_plans_sync_store, read_vtodo_actions, read_vtodo_file,
     resolve_materialized_occurrence, sync_calendar, sync_master_rollforwards, write_plan_file,
 };
+pub use discovery::{ManifestSourceType, WorkspaceManifestEntry, collect_workspace_manifest};
 pub use doctor::{
     apply_doctor_repairs, diagnose_workspace, diagnose_workspace_read, observe_doctor,
 };
@@ -46,10 +48,9 @@ use clearhead_core::workspace::{
     ActionResourceState, FileState, PreparedArchiveOutcome, PreparedCloseOutcome,
     PreparedDeleteOutcome, PreparedInsertOutcome, PreparedTransactionOutcome,
     PreparedUpdateOutcome, SidecarResourceState, TransactionModel, TransactionRequest,
-    WorkspaceError, completed_actions_path, list_action_files as core_list_action_files,
-    normalize_request, parse_actions, prepare_action_archive, prepare_action_delete,
-    prepare_action_insert, prepare_action_update, prepare_close_action_subtree,
-    prepare_transaction, sidecar_path, workspace_data_root,
+    WorkspaceError, completed_actions_path, normalize_request, parse_actions,
+    prepare_action_archive, prepare_action_delete, prepare_action_insert, prepare_action_update,
+    prepare_close_action_subtree, prepare_transaction, sidecar_path, workspace_data_root,
 };
 use clearhead_core::{Action, ActionSelector};
 
@@ -365,7 +366,7 @@ fn load_target_files(
     target_ids: &HashSet<uuid::Uuid>,
 ) -> Result<TransactionModel, WorkspaceError> {
     let mut files = Vec::new();
-    for active_path in core_list_action_files(workspace_root)? {
+    for active_path in crate::list_action_files(workspace_root)? {
         let completed_path = completed_actions_path(&active_path);
         let (active_snapshot, active_expected) = snapshot(data_root, &active_path)?;
         let (completed_snapshot, completed_expected) = snapshot(data_root, &completed_path)?;

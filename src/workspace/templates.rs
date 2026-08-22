@@ -4,27 +4,18 @@ use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
 use crate::workspace::actions::{Action, ActionList};
-use crate::workspace::store::WorkspaceError;
 
 /// Ordered template candidates: charter-local first, then workspace-global.
+///
+/// Pure path policy: it names where a template *would* live. Probing which of
+/// the candidates exists on disk is host I/O and belongs to the native adapter's
+/// `resolve_template`.
 pub fn template_candidates(charter_dir: &Path, data_root: &Path, name: &str) -> [PathBuf; 2] {
     let filename = format!("{name}.actions");
     [
         charter_dir.join("templates").join(&filename),
         data_root.join("templates").join(filename),
     ]
-}
-
-/// Legacy native resolver. Native hosts should probe [`template_candidates`]
-/// through their filesystem adapter.
-pub fn resolve_template(
-    charter_dir: &Path,
-    data_root: &Path,
-    name: &str,
-) -> Result<Option<PathBuf>, WorkspaceError> {
-    Ok(template_candidates(charter_dir, data_root, name)
-        .into_iter()
-        .find(|path| path.is_file()))
 }
 
 /// Instantiate a template, remapping all UUIDs and optionally reparenting root actions.
@@ -60,48 +51,18 @@ pub fn instantiate_template(
 mod tests {
     use super::*;
     use crate::workspace::actions::ActionState;
-    use std::fs;
 
     #[test]
-    fn resolve_finds_charter_local_first() {
-        let tmp = tempfile::tempdir().unwrap();
-        let charter_dir = tmp.path().join("health");
-        let data_root = tmp.path().join("root");
-
-        fs::create_dir_all(charter_dir.join("templates")).unwrap();
-        fs::create_dir_all(data_root.join("templates")).unwrap();
-
-        let local = charter_dir.join("templates/weekly-review.actions");
-        let root = data_root.join("templates/weekly-review.actions");
-        fs::write(&local, "[ ] Step one\n").unwrap();
-        fs::write(&root, "[ ] Root version\n").unwrap();
-
-        let result = resolve_template(&charter_dir, &data_root, "weekly-review").unwrap();
-        assert_eq!(result, Some(local));
-    }
-
-    #[test]
-    fn resolve_falls_back_to_data_root() {
-        let tmp = tempfile::tempdir().unwrap();
-        let charter_dir = tmp.path().join("health");
-        let data_root = tmp.path().join("root");
-
-        fs::create_dir_all(&charter_dir).unwrap();
-        fs::create_dir_all(data_root.join("templates")).unwrap();
-
-        let root = data_root.join("templates/weekly-review.actions");
-        fs::write(&root, "[ ] Step one\n").unwrap();
-
-        let result = resolve_template(&charter_dir, &data_root, "weekly-review").unwrap();
-        assert_eq!(result, Some(root));
-    }
-
-    #[test]
-    fn resolve_returns_none_when_missing() {
-        let tmp = tempfile::tempdir().unwrap();
-        let result =
-            resolve_template(&tmp.path().join("a"), &tmp.path().join("b"), "nonexistent").unwrap();
-        assert!(result.is_none());
+    fn template_candidates_are_charter_local_then_global() {
+        let candidates =
+            template_candidates(Path::new("health"), Path::new("root"), "weekly-review");
+        assert_eq!(
+            candidates,
+            [
+                PathBuf::from("health/templates/weekly-review.actions"),
+                PathBuf::from("root/templates/weekly-review.actions"),
+            ]
+        );
     }
 
     #[test]

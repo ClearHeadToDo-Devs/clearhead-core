@@ -1,4 +1,5 @@
-use clearhead_core::{TransactionRequest, VerbError, completed_actions_path, read_actions};
+use clearhead_core::{TransactionRequest, VerbError, completed_actions_path};
+use clearhead_workspace_fs::read_actions;
 use clearhead_workspace_fs::{TransactionOutcome, transact};
 
 const A: &str = "019f733d-4600-7000-8000-000000000001";

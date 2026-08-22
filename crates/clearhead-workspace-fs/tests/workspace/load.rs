@@ -1,8 +1,4 @@
 use super::common::*;
-use clearhead_core::workspace::read_workspace;
-use clearhead_core::{
-    ManifestSourceType, collect_workspace_manifest, load_domain_model, load_workspace,
-};
 use std::fs;
 use std::path::Path;
 
@@ -488,8 +484,7 @@ fn load_quarantines_semantics_when_file_has_parse_issues() {
          [ ] Valid two #01961111-0000-7000-0000-000000000002\n",
     )]);
 
-    let read = clearhead_core::workspace::read_workspace(workspace.path())
-        .expect("diagnostic read should succeed");
+    let read = read_workspace(workspace.path()).expect("diagnostic read should succeed");
     assert!(
         read.findings.iter().any(|finding| {
             finding.code == "syntax-errors" && finding.message.contains("file quarantined")

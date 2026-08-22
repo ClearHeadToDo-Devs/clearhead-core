@@ -1,5 +1,4 @@
 use super::common::*;
-use clearhead_core::load_domain_model;
 
 #[test]
 fn sidecar_hydrates_acts_on_load() {

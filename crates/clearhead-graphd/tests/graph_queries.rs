@@ -1,4 +1,4 @@
-use clearhead_core::{CharterState, workspace::store::load_domain_model};
+use clearhead_core::CharterState;
 use clearhead_graphd::graph::{
     GraphName, TRANSIENT_GRAPH_URI, create_store, load_domain_model as load_into_store, query_raw,
 };
@@ -26,7 +26,8 @@ fn transient_graph() -> GraphName {
 }
 
 fn user_flat_store() -> (clearhead_core::DomainModel, oxigraph::store::Store) {
-    let model = load_domain_model(&fixture("user-flat")).expect("load domain model");
+    let model = clearhead_workspace_fs::load_domain_model(&fixture("user-flat"), None)
+        .expect("load domain model");
     let store = create_store().expect("create store");
     // Use a named graph — the same code path as production.
     load_into_store(&store, &model, None, transient_graph()).expect("load into store");

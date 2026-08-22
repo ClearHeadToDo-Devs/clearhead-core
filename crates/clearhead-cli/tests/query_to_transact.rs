@@ -96,7 +96,8 @@ fn graphd_index_ids_feed_transact_verbatim() {
         );
 
     // The graph-selected actions were actually acted on: both left the active file.
-    let active = clearhead_core::read_actions(&env.data_dir.join("charters/work.actions")).unwrap();
+    let active =
+        clearhead_workspace_fs::read_actions(&env.data_dir.join("charters/work.actions")).unwrap();
     assert!(
         active.is_empty(),
         "both actions should be completed and out of the active file; got {active:?}"

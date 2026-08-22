@@ -1,8 +1,34 @@
 //! Shared fixture helpers for the workspace-store integration tests.
+//!
+//! These integration tests exercise the native loader that now lives in this
+//! adapter crate. The one-argument shims below delegate to the two-argument
+//! `clearhead_workspace_fs` loaders (external plans default to `None`) so the
+//! test bodies read the same as when the loader lived in Core.
 
+use clearhead_core::DomainModel;
+use clearhead_core::workspace::{MarkdownCharter, WorkspaceError, WorkspaceRead};
 use std::fs;
 use std::path::Path;
 use tempfile::TempDir;
+
+pub use clearhead_workspace_fs::{
+    ManifestSourceType, WorkspaceManifestEntry, collect_workspace_manifest,
+};
+
+/// Load a workspace's domain model from the native filesystem (no external plans mount).
+pub fn load_domain_model(root: &Path) -> Result<DomainModel, WorkspaceError> {
+    clearhead_workspace_fs::load_domain_model(root, None)
+}
+
+/// Load a workspace's charter list from the native filesystem.
+pub fn load_workspace(root: &Path) -> Result<Vec<MarkdownCharter>, WorkspaceError> {
+    clearhead_workspace_fs::load_workspace(root, None)
+}
+
+/// Relaxed read of a workspace from the native filesystem.
+pub fn read_workspace(root: &Path) -> Result<WorkspaceRead, WorkspaceError> {
+    clearhead_workspace_fs::read_workspace(root, None)
+}
 
 pub fn make_workspace(files: &[(&str, &str)]) -> TempDir {
     let dir = tempfile::tempdir().expect("failed to create temp dir");
@@ -53,8 +79,11 @@ pub fn make_user_workspace(files: &[(&str, &str)]) -> TempDir {
     dir
 }
 pub fn fixture_path(name: &str) -> std::path::PathBuf {
+    // Fixtures and RON snapshots live in the Core crate's test tree (shared with
+    // Core's parser tests via `include_str!`); reference them from there rather
+    // than duplicating the corpus into this adapter crate.
     Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/workspace")
+        .join("../../tests/fixtures/workspace")
         .join(name)
 }
 
@@ -76,7 +105,7 @@ pub fn model_to_ron(model: &clearhead_core::DomainModel) -> String {
 /// Serialize a manifest to deterministic RON.
 ///
 /// Entries are sorted by path so the output is stable across runs.
-pub fn manifest_to_ron(manifest: &[clearhead_core::WorkspaceManifestEntry]) -> String {
+pub fn manifest_to_ron(manifest: &[WorkspaceManifestEntry]) -> String {
     let mut sorted = manifest.to_vec();
     sorted.sort_by(|a, b| a.path.cmp(&b.path));
     ron::ser::to_string_pretty(&sorted, ron::ser::PrettyConfig::default())

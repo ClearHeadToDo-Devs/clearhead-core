@@ -1,7 +1,8 @@
 use chrono::Local;
 use clearhead_core::workspace::WorkspaceError;
-use clearhead_core::{ActionSelector, ActionState, completed_actions_path, read_actions};
+use clearhead_core::{ActionSelector, ActionState, completed_actions_path};
 use clearhead_workspace_fs::durability::WorkspaceLock;
+use clearhead_workspace_fs::read_actions;
 use clearhead_workspace_fs::{archive_actions, close_action_subtree};
 use uuid::Uuid;
 
