@@ -8,7 +8,7 @@ license = "MIT"
 repository = "https://github.com/ClearHeadToDo-Devs/clearhead-core.git"
 
 # One repository, one workspace: the pure domain core plus its native hosts
-# (CLI, LSP, graphd) are members of a single Cargo workspace rooted here.
+# (CLI, LSP) are members of a single Cargo workspace rooted here.
 # The root package remains `clearhead_core`.
 [workspace]
 members = ["crates/*"]

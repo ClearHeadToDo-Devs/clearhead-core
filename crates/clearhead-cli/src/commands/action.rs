@@ -1037,8 +1037,9 @@ fn verb_target_error(ctx: &CommandContext, query: &str) -> anyhow::Result<VerbEr
     })
 }
 
-/// Resolve a fuzzy action query to its canonical id for the query facade's
-/// chain adapter, which forwards a canonical IRI to graphd rather than a name.
+/// Resolve a fuzzy action query to its canonical id for the `query chain`
+/// adapter, which binds a canonical IRI to `?TARGET_ACTION` rather than a name.
+#[cfg(feature = "sparql")]
 pub(crate) fn resolve_action_id(ctx: &CommandContext, query: &str) -> anyhow::Result<uuid::Uuid> {
     let actions = collect_all_actions(ctx, &None, true)?;
     let action = find_best_match(&actions, query, |_| true)?

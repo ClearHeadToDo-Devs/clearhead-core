@@ -9,9 +9,8 @@
 //! presentation, so it lives in the delivery shell, not Core.
 //!
 //! The wire shapes here (the `@context`, the numeric locator framing, the
-//! `--format` set) are a compatibility contract with existing consumers such as
-//! clearhead.nvim; they are held to byte-parity with graphd during the
-//! migration.
+//! `--format` set) are a stable contract with existing consumers such as
+//! clearhead.nvim.
 
 use std::io::IsTerminal;
 

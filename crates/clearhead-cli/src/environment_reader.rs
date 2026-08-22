@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 // Path resolution and the config source/precedence stack now live in core so
-// every tool (CLI, LSP, graphd) resolves configuration identically. Re-exported
+// every tool (CLI, LSP) resolves configuration identically. Re-exported
 // here so existing `clearhead_cli::environment_reader::*` call sites are
 // unchanged.
 pub use clearhead_workspace_fs::config::{

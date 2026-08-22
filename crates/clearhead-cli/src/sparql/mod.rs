@@ -453,8 +453,8 @@ const ACTIONS_STATUS_NS: &str = "https://clearhead.us/vocab/actions/v4#";
 /// Run `query named` in-process when the name resolves in the flat registry —
 /// a project or user drop-in, or a built-in ([`registry::resolve_flat`]). When
 /// `status` is given it is bound to `?STATUS_FILTER` (validated, never raw).
-/// Returns `Ok(false)` when nothing matches, so the caller can fall back to
-/// graphd until it is retired.
+/// Returns `Ok(false)` when nothing matches, so the caller can report an
+/// unknown-query error.
 pub fn run_saved(
     ctx: &CommandContext,
     name: &str,

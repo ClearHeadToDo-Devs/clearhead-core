@@ -1,48 +1,31 @@
-//! The read→write contract: canonical ids emitted by graphd's index projection
-//! feed `clearhead transact` verbatim, with no id reshaping between them.
+//! The read→write contract: canonical ids emitted by the index projection feed
+//! `clearhead transact` verbatim, with no id reshaping between them.
 //!
 //! This is the double-entry check on the "select from the graph, act atomically"
-//! pipeline: if graphd's `--format ids` and transact's `target` ever drift apart
-//! (bare vs `urn:uuid:`, stray whitespace, a different id spelling), this test
-//! fails even though each side's own tests still pass.
+//! pipeline: if `query index --format ids` and transact's `target` ever drift
+//! apart (bare vs `urn:uuid:`, stray whitespace, a different id spelling), this
+//! test fails even though each side's own tests still pass.
+
+#![cfg(feature = "sparql")]
 
 mod common;
 use common::TestEnv;
 use predicates::prelude::*;
-use std::path::PathBuf;
-use std::process::Command;
 
 const A: &str = "019f733d-4600-7000-8000-000000000001";
 const B: &str = "019f733d-4600-7000-8000-000000000002";
+const WS: &str = "00000000-0000-0000-0000-0000000000aa";
 
-fn graphd_bin() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .expect("clearhead-cli parent")
-        .join("clearhead-graphd/target/debug/clearhead-graphd")
-}
-
-/// Run graphd's index projection against the test workspace and return the raw
-/// `--format ids` lines, using the same XDG environment the CLI would pass it.
-fn graphd_index_ids(env: &TestEnv, view: &str) -> Vec<String> {
-    let output = Command::new(graphd_bin())
-        .env("XDG_CONFIG_HOME", env.config_dir.parent().unwrap())
-        .env("XDG_DATA_HOME", env.data_dir.parent().unwrap())
-        .env("XDG_STATE_HOME", &env.state_dir)
-        .args([
-            "-w",
-            env.data_dir.to_str().unwrap(),
-            "query",
-            "index",
-            view,
-            "--format",
-            "ids",
-        ])
+/// Run the in-process index projection and return its raw `--format ids` lines.
+fn index_ids(env: &TestEnv, view: &str) -> Vec<String> {
+    let output = env
+        .std_command()
+        .args(["query", "index", view, "--format", "ids"])
         .output()
-        .expect("failed to run graphd");
+        .expect("failed to run clearhead query index");
     assert!(
         output.status.success(),
-        "graphd index {view} failed: {}",
+        "index {view} failed: {}",
         String::from_utf8_lossy(&output.stderr)
     );
     String::from_utf8(output.stdout)
@@ -53,29 +36,23 @@ fn graphd_index_ids(env: &TestEnv, view: &str) -> Vec<String> {
 }
 
 #[test]
-fn graphd_index_ids_feed_transact_verbatim() {
-    if !graphd_bin().exists() {
-        eprintln!("clearhead-graphd binary not built; skipping handoff test");
-        return;
-    }
-
+fn index_ids_feed_transact_verbatim() {
     let env = TestEnv::new();
-    env.with_workspace_identity();
+    env.write_text(
+        "workspace.json",
+        &format!(r#"{{"workspace_id":"{WS}","workspace_name":"testws"}}"#),
+    );
     env.write_actions("work.actions", &format!("[ ] Alpha #{A}\n[ ] Beta #{B}\n"));
 
-    let ids = graphd_index_ids(&env, "default");
-    assert_eq!(
-        ids.len(),
-        2,
-        "graphd should project both open actions: {ids:?}"
-    );
+    let ids = index_ids(&env, "default");
+    assert_eq!(ids.len(), 2, "both open actions project: {ids:?}");
     assert!(
         ids.iter().all(|id| id.starts_with("urn:uuid:")),
-        "graphd emits canonical urn:uuid ids: {ids:?}"
+        "index emits canonical urn:uuid ids: {ids:?}"
     );
 
     // Wrap each id as a complete-action target WITHOUT touching the id string —
-    // the whole point is that graphd's id IS transact's target.
+    // the whole point is that the index's id IS transact's target.
     let operations = ids
         .iter()
         .map(|id| format!(r#"{{"op":"complete-action","target":"{id}"}}"#))
@@ -90,7 +67,6 @@ fn graphd_index_ids_feed_transact_verbatim() {
         .success()
         .stdout(
             predicate::str::contains(r#""kind":"committed""#)
-                // Every graph-selected id round-trips into a completed outcome.
                 .and(predicate::str::contains(format!("urn:uuid:{A}")))
                 .and(predicate::str::contains(format!("urn:uuid:{B}"))),
         );

@@ -4,8 +4,8 @@
 //! serializations. `named` resolves through the in-process registry — project
 //! and user drop-ins plus the built-in queries — and the built-in views'
 //! time-anchor view variables (`?NOW`, `?CUTOFF_DATE`, …) are bound at run
-//! time. Still forwarded to graphd until later slices: the `index`/`tree`/
-//! `graph` families and `--status` binding.
+//! time. `--status` binds a validated `?STATUS_FILTER`; an unresolved name
+//! fails cleanly.
 //!
 //! These tests compile away entirely in the minimal `--no-default-features`
 //! build, which has no query engine.
@@ -373,31 +373,28 @@ fn named_unknown_name_fails() {
         .expect("run clearhead query named");
     assert!(
         !output.status.success(),
-        "an unknown query name must fail (locally unresolvable, and graphd has no such built-in)"
+        "an unknown query name is unresolvable and must fail"
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("No query named"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
     );
 }
 
 #[test]
-fn named_unknown_name_with_status_still_forwards() {
-    // A name that resolves nowhere in the registry still forwards to graphd
-    // (until it is retired) — `--status` does not change that.
+fn named_unknown_name_with_status_fails() {
+    // A name that resolves nowhere fails cleanly; `--status` does not change that.
     let env = seed();
     let output = env
         .std_command()
-        .env("CLEARHEAD_GRAPHD", "/nonexistent/clearhead-graphd")
-        .args([
-            "query",
-            "named",
-            "whatever",
-            "--status",
-            "actions:Completed",
-        ])
+        .args(["query", "named", "whatever", "--status", "Completed"])
         .output()
         .expect("run clearhead query named --status");
     assert!(!output.status.success());
     assert!(
-        String::from_utf8_lossy(&output.stderr).contains("clearhead-graphd"),
-        "an unresolved name forwards to graphd: {}",
+        String::from_utf8_lossy(&output.stderr).contains("No query named"),
+        "{}",
         String::from_utf8_lossy(&output.stderr)
     );
 }

@@ -183,7 +183,7 @@ pub enum Verb {
         dry_run: bool,
     },
 
-    /// Query the workspace graph, forwarding to clearhead-graphd
+    /// Query the workspace graph with in-process SPARQL over Core's dataset
     Query {
         #[command(subcommand)]
         target: QueryTarget,
@@ -721,23 +721,22 @@ pub enum DeleteTarget {
 
 // =============================================================================
 // =============================================================================
-// Query targets — raw/named evaluate in-process (`sparql` feature); the
-// client-presentation families still forward to clearhead-graphd.
+// Query targets — every family evaluates in-process (`sparql` feature) over
+// Core's canonical dataset; a minimal build has no query engine.
 // =============================================================================
 
-/// Explicit query output format. Without an override, the in-process evaluator
-/// (or graphd, for forwarded families) chooses from the query family and
-/// whether stdout is a terminal. For `raw`/saved queries the machine-readable
-/// formats are standards: `json` is SPARQL Results JSON for SELECT/ASK and
-/// Turtle/JSON-LD for CONSTRUCT/DESCRIBE; `ndjson`/`ids`/`dot` remain
-/// index/graph-family contracts served by graphd.
+/// Explicit query output format. Without an override, the evaluator chooses
+/// from the query family and whether stdout is a terminal. For `raw`/saved
+/// queries the machine-readable formats are standards: `json` is SPARQL Results
+/// JSON for SELECT/ASK and Turtle/JSON-LD for CONSTRUCT/DESCRIBE; `ndjson`/
+/// `ids`/`dot` are the index/graph-family presentation contracts.
 #[derive(Copy, Clone, Debug, ValueEnum)]
 pub enum QueryFormat {
     /// Pretty-printed human table
     Table,
-    /// SPARQL Results JSON (raw/named) or JSON rows (forwarded families)
+    /// SPARQL Results JSON (raw/named) or framed nodes (index/tree)
     Json,
-    /// One JSON object per line (graphd index family)
+    /// One JSON object per line (index family)
     Ndjson,
     /// Semantic JSON-LD document (shaped query families)
     Jsonld,
@@ -766,14 +765,13 @@ pub enum QueryTarget {
         format: Option<QueryFormat>,
     },
     /// Run a named query: a saved `.sparql` file from the project
-    /// (`.clearhead/queries/`) or user (`<config>/queries/`) directory runs
-    /// in-process; graphd's built-in registry remains as a fallback.
+    /// (`.clearhead/queries/`) or user (`<config>/queries/`) directory, or a
+    /// built-in query — resolved and evaluated in-process.
     #[command(name = "named")]
     Named {
         /// Name of the query (stem of the .sparql file)
         name: String,
-        /// Value substituted for ?STATUS_FILTER (graphd fallback only —
-        /// in-process queries are verbatim standard SPARQL)
+        /// Status individual bound to `?STATUS_FILTER` (e.g. `Completed`)
         #[arg(long)]
         status: Option<String>,
         #[arg(long, value_enum)]
