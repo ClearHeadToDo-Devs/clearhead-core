@@ -1045,6 +1045,36 @@ pub enum ExportTarget {
         #[arg(long, requires = "reference")]
         recursive: bool,
     },
+
+    /// Export the whole workspace as its canonical RDF dataset — a
+    /// deterministic, replaceable publication snapshot of the validated
+    /// plaintext workspace, one named graph per workspace. Always available
+    /// (no query engine involved); `--workspace <name>` selects.
+    Workspace {
+        /// RDF serialization (default: trig)
+        #[arg(long, value_enum)]
+        format: Option<RdfExportFormat>,
+
+        /// Output file path. If not provided, writes to stdout
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+    },
+}
+
+/// RDF serialization for `export workspace`. Dataset formats (TriG, N-Quads)
+/// preserve each workspace's `urn:clearhead:workspace:<uuid>` named graph;
+/// JSON-LD carries graph identity via `@graph`; Turtle is graph-only and drops
+/// the graph label. All serialize the same Core projection.
+#[derive(Copy, Clone, Debug, ValueEnum)]
+pub enum RdfExportFormat {
+    /// TriG (default) — dataset syntax, preserves the workspace named graph
+    Trig,
+    /// N-Quads — line-based dataset syntax, preserves the workspace named graph
+    Nquads,
+    /// Flat/expanded JSON-LD with @context
+    Jsonld,
+    /// Turtle — graph-only: emits the triples, drops the graph label
+    Turtle,
 }
 
 #[derive(Subcommand)]

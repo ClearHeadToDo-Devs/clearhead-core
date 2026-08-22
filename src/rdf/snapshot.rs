@@ -82,8 +82,7 @@ pub fn project_workspace_snapshot(
         );
     }
 
-    quads.sort_by_key(|q| q.to_string());
-    quads.dedup();
+    super::canonicalize(&mut quads);
     Ok(quads)
 }
 

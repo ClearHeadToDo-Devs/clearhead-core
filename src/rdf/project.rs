@@ -100,8 +100,7 @@ impl QuadSet {
 
     /// Deduplicate and sort into a deterministic canonical order.
     fn into_canonical(mut self) -> Vec<Quad> {
-        self.quads.sort_by_key(|q| q.to_string());
-        self.quads.dedup();
+        super::canonicalize(&mut self.quads);
         self.quads
     }
 }

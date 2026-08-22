@@ -2,6 +2,7 @@ pub mod action;
 pub mod charter;
 pub mod debug;
 pub mod doctor;
+pub mod export;
 pub mod file;
 pub mod init;
 pub mod plan;

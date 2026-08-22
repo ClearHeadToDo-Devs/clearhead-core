@@ -15,6 +15,13 @@ pub mod environment_reader;
 mod commands;
 use commands::CommandContext;
 
+/// Whole-workspace RDF dataset assembly (load → Core projection → canonical
+/// quads) shared by `export workspace` and the `sparql` query layer.
+mod dataset;
+
+/// Shared stdout writers with clean broken-pipe behavior.
+mod stdout;
+
 /// Optional in-process SPARQL query layer (`sparql` feature, on by default).
 /// Absent from the minimal `--no-default-features` build, which compiles no
 /// query engine at all.
@@ -366,6 +373,9 @@ fn dispatch(cli: &argparser::Cli, ctx: &CommandContext) -> anyhow::Result<()> {
                 open_only,
                 recursive,
             } => commands::plan::export_plans(ctx, reference, output, *open_only, *recursive),
+            argparser::ExportTarget::Workspace { format, output } => {
+                commands::export::workspace(ctx, *format, output.as_deref())
+            }
         },
         Verb::Import { target } => match target {
             argparser::ImportTarget::Plans {

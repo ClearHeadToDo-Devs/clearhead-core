@@ -16,6 +16,7 @@ const EXEMPT: &[(&str, &str)] = &[
     ("init.rs", "fs::write(&config_path, json_str)"),
     ("mod.rs", "fs::write(path, content)"), // write_or_print: user-directed output
     ("plan.rs", "fs::write(output_path, icalendar)"), // export --output: user-directed output
+    ("export.rs", "std::fs::write(path"),   // export workspace --output: user-directed output
 ];
 
 #[test]

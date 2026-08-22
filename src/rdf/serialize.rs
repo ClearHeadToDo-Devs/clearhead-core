@@ -34,7 +34,8 @@
 //! See the `rdf-publication` charter.
 
 use super::{
-    ACTIONS_NS, BFO_NS, CCO_NS, DCTERMS_NS, RDF_NS, RDFS_NS, Result, XSD_NS, project_domain,
+    ACTIONS_NS, BFO_NS, CCO_NS, DCTERMS_NS, RDF_NS, RDFS_NS, Result, WORKSPACE_NS, XSD_NS,
+    project_domain,
 };
 use crate::WorkspaceConfig;
 use crate::domain::DomainModel;
@@ -66,6 +67,7 @@ const VOCAB_PREFIXES: &[(&str, &str)] = &[
     ("rdfs", RDFS_NS),
     ("dcterms", DCTERMS_NS),
     ("xsd", XSD_NS),
+    ("ws", WORKSPACE_NS),
 ];
 
 /// Project `model` and serialize it in one call — the entry point a host uses to

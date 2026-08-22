@@ -23,11 +23,9 @@
 //! - standard result serializations: SPARQL Results JSON for SELECT/ASK and
 //!   Turtle/JSON-LD for CONSTRUCT/DESCRIBE, plus the human table.
 
-use std::io::{IsTerminal, Write};
+use std::io::IsTerminal;
 
 use anyhow::{Context as _, anyhow};
-use clearhead_core::rdf::{self, WorkspaceSnapshot};
-use clearhead_core::workspace::store::Workspace;
 use oxigraph::io::{JsonLdProfileSet, RdfFormat, RdfSerializer};
 use oxigraph::model::{Term, Triple};
 use oxigraph::sparql::results::{QueryResultsFormat, QueryResultsSerializer};
@@ -36,109 +34,23 @@ use oxigraph::store::Store;
 
 use crate::argparser::QueryFormat;
 use crate::commands::CommandContext;
+use crate::stdout::{write_stdout, write_stdout_line};
 
 // ============================================================================
 // Dataset assembly
 // ============================================================================
 
-/// Load every selected workspace, project it through Core, and return a fresh
-/// in-memory store holding exactly the published dataset — nothing else is
-/// ever loaded into it.
-///
-/// Mirrors the CLI's workspace fan-out: the primary workspace honors
-/// `plan_path` and contributes the configured context hierarchy; additional
-/// workspaces warn and are skipped on error so one bad workspace never blocks
-/// the others. Each workspace lands in its own `urn:clearhead:workspace:<uuid>`
-/// named graph.
+/// Load the canonical workspace dataset (see [`crate::dataset`]) into a fresh
+/// in-memory store. The store holds exactly the published quad set — nothing
+/// else is ever loaded into it — and is dropped with the command.
 pub fn build_store(ctx: &CommandContext) -> anyhow::Result<Store> {
     let store = Store::new().context("create in-memory SPARQL store")?;
-    let config = ctx.workspace_config();
-
-    for (name, path) in ctx.workspace_dirs() {
-        let is_primary = path == ctx.data_dir;
-        let loaded = if is_primary {
-            clearhead_workspace_fs::load_workspace_model(&path, ctx.plan_override().as_deref())
-        } else {
-            clearhead_workspace_fs::load_workspace_model(&path, None)
-        };
-        let workspace = match loaded {
-            Ok(workspace) => workspace,
-            Err(error) if is_primary => {
-                return Err(error).context("Failed to load workspace");
-            }
-            Err(error) => {
-                tracing::warn!("Skipping workspace '{}': {error}", path.display());
-                continue;
-            }
-        };
-        let _ = name;
-
-        let graph = rdf::workspace_graph_name(&workspace.effective_id());
-        let snapshot = workspace_snapshot(&workspace);
-        let model = clearhead_core::DomainModel::from(workspace);
-        let mut quads =
-            rdf::project_domain(&model, is_primary.then_some(&config), graph.clone())
-                .map_err(|e| anyhow!("Failed to project workspace '{}': {e}", path.display()))?;
-        quads.extend(
-            rdf::project_workspace_snapshot(&snapshot, graph)
-                .map_err(|e| anyhow!("Failed to project workspace snapshot: {e}"))?,
-        );
-        for quad in &quads {
-            store
-                .insert(quad)
-                .context("insert quad into ephemeral store")?;
-        }
+    for quad in &crate::dataset::assemble_dataset(ctx)? {
+        store
+            .insert(quad)
+            .context("insert quad into ephemeral store")?;
     }
     Ok(store)
-}
-
-/// Assemble the host evidence for Core's pure workspace-snapshot projection:
-/// workspace identity plus per-charter / per-action source locations, with
-/// paths canonicalized here at the filesystem boundary.
-fn workspace_snapshot(workspace: &Workspace) -> WorkspaceSnapshot {
-    let root = workspace
-        .root
-        .canonicalize()
-        .unwrap_or_else(|_| workspace.root.clone());
-    WorkspaceSnapshot {
-        workspace_id: workspace.effective_id(),
-        workspace_name: workspace.effective_name(),
-        root: root.to_string_lossy().into_owned(),
-        charter_root: clearhead_core::charter_root(&root)
-            .to_string_lossy()
-            .into_owned(),
-        charter_files: workspace
-            .charters
-            .iter()
-            .filter_map(|charter| {
-                charter
-                    .md_file
-                    .as_deref()
-                    .map(|p| (charter.id, p.to_string_lossy().into_owned()))
-            })
-            .collect(),
-        action_sources: workspace
-            .charters
-            .iter()
-            .flat_map(|charter| {
-                let source_file = charter
-                    .actions_file
-                    .as_deref()
-                    .map(|p| p.to_string_lossy().into_owned())
-                    .unwrap_or_default();
-                charter.actions.iter().filter_map(move |sourced| {
-                    sourced.source_metadata.as_ref().map(|meta| {
-                        (
-                            sourced.action.id,
-                            source_file.clone(),
-                            // Published lines are 1-based; tree-sitter rows are 0-based.
-                            meta.root.start_row as u32 + 1,
-                        )
-                    })
-                })
-            })
-            .collect(),
-    }
 }
 
 // ============================================================================
@@ -213,6 +125,7 @@ pub fn expand_where_clause(where_clause: &str) -> String {
          PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>\n\
          PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>\n\
          PREFIX skos: <http://www.w3.org/2004/02/skos/core#>\n\
+         PREFIX ws: <https://clearhead.us/vocab/workspace/v1#>\n\
          SELECT * WHERE {{ GRAPH ?g {{ {where_clause} }} }}"
     )
 }
@@ -257,7 +170,7 @@ fn emit_solutions(solutions: QuerySolutionIter, format: Option<QueryFormat>) -> 
                     .context("serialize solution")?;
             }
             writer.finish().context("finish SPARQL Results JSON")?;
-            write_stdout_raw(&buffer)
+            write_stdout(&buffer)
         }
         QueryFormat::Ndjson => anyhow::bail!(
             "--format ndjson is the graphd-era index contract; raw SELECT results use --format json (SPARQL Results JSON)"
@@ -291,7 +204,7 @@ fn emit_graph(triples: QueryTripleIter, format: Option<QueryFormat>) -> anyhow::
                 triples.iter().map(|t| t.subject.to_string()).collect();
             let predicates: std::collections::HashSet<_> =
                 triples.iter().map(|t| t.predicate.to_string()).collect();
-            write_stdout(&format!(
+            write_stdout_line(&format!(
                 "{} triples, {} subjects, {} predicates",
                 triples.len(),
                 subjects.len(),
@@ -312,14 +225,14 @@ fn emit_graph(triples: QueryTripleIter, format: Option<QueryFormat>) -> anyhow::
 
 fn emit_boolean(value: bool, format: Option<QueryFormat>) -> anyhow::Result<()> {
     match format {
-        None | Some(QueryFormat::Table) => write_stdout(if value { "true" } else { "false" }),
+        None | Some(QueryFormat::Table) => write_stdout_line(if value { "true" } else { "false" }),
         // SPARQL Results JSON carries ASK answers as a boolean document.
         Some(QueryFormat::Json) => {
             let mut buffer = Vec::new();
             QueryResultsSerializer::from_format(QueryResultsFormat::Json)
                 .serialize_boolean_to_writer(&mut buffer, value)
                 .context("serialize boolean result")?;
-            write_stdout_raw(&buffer)
+            write_stdout(&buffer)
         }
         Some(other) => anyhow::bail!("--format {other:?} is not defined for ASK results"),
     }
@@ -333,7 +246,7 @@ fn emit_rdf(triples: &[Triple], format: RdfFormat) -> anyhow::Result<()> {
             .context("serialize RDF triple")?;
     }
     let bytes = serializer.finish().context("finish RDF serialization")?;
-    write_stdout_raw(&bytes)
+    write_stdout(&bytes)
 }
 
 fn emit_solutions_table(solutions: QuerySolutionIter) -> anyhow::Result<()> {
@@ -361,7 +274,7 @@ fn emit_solutions_table(solutions: QuerySolutionIter) -> anyhow::Result<()> {
     }
 
     if rows.is_empty() {
-        return write_stdout("(no results)");
+        return write_stdout_line("(no results)");
     }
     let mut table = Table::new();
     table
@@ -376,7 +289,7 @@ fn emit_solutions_table(solutions: QuerySolutionIter) -> anyhow::Result<()> {
     for row in rows {
         table.add_row(row.into_iter().map(Cell::new).collect::<Vec<_>>());
     }
-    write_stdout(&table.to_string())
+    write_stdout_line(&table.to_string())
 }
 
 /// Display form of a term in the human table: bare IRI / literal value.
@@ -385,22 +298,6 @@ fn term_display(term: &Term) -> String {
         Term::NamedNode(node) => node.as_str().to_string(),
         Term::Literal(literal) => literal.value().to_string(),
         Term::BlankNode(node) => format!("_:{}", node.as_str()),
-    }
-}
-
-fn write_stdout(value: &str) -> anyhow::Result<()> {
-    let mut bytes = value.as_bytes().to_vec();
-    bytes.push(b'\n');
-    write_stdout_raw(&bytes)
-}
-
-/// Write to stdout, treating a closed downstream pipe as success so
-/// `clearhead query … | head -n1` exits cleanly.
-fn write_stdout_raw(bytes: &[u8]) -> anyhow::Result<()> {
-    match std::io::stdout().lock().write_all(bytes) {
-        Ok(()) => Ok(()),
-        Err(error) if error.kind() == std::io::ErrorKind::BrokenPipe => Ok(()),
-        Err(error) => Err(error).context("write stdout"),
     }
 }
 

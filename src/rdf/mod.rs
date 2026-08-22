@@ -30,7 +30,7 @@ pub use project::project_domain;
 pub use serialize::{RdfFormat, serialize, serialize_domain};
 pub use snapshot::{WorkspaceSnapshot, project_workspace_snapshot};
 
-use oxrdf::{GraphName, Literal, NamedNode, Term};
+use oxrdf::{GraphName, Literal, NamedNode, Quad, Term};
 use uuid::Uuid;
 
 /// Result type for RDF projection and serialization.
@@ -111,6 +111,17 @@ pub(crate) fn rdf_type() -> NamedNode {
 // ============================================================================
 // Shared term helpers
 // ============================================================================
+
+/// Canonical order for a quad set: sorted by N-Quads spelling, deduplicated.
+///
+/// Both projection entry points ([`project_domain`],
+/// [`project_workspace_snapshot`]) emit in this order; hosts merging multiple
+/// workspaces' quads (whole-workspace export, multi-graph query datasets)
+/// re-canonicalize through here so serialization stays byte-deterministic.
+pub fn canonicalize(quads: &mut Vec<Quad>) {
+    quads.sort_by_key(|q| q.to_string());
+    quads.dedup();
+}
 
 /// The canonical `urn:uuid:<uuid>` entity node (Charter/Plan/Action).
 pub(crate) fn uuid_node(id: Uuid) -> NamedNode {
