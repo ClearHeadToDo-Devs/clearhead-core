@@ -1,8 +1,11 @@
 //! The optional in-process SPARQL evaluator (`sparql` feature, on by default):
-//! `query raw` and locally-saved `query named` run against an ephemeral store
-//! holding exactly the dataset Core publishes, and emit standard SPARQL result
-//! / RDF serializations. graphd-era machinery (prefix/parameter injection, the
-//! built-in registry, index/tree/graph rendering) is not part of this path.
+//! `query raw` and `query named` run against an ephemeral store holding exactly
+//! the dataset Core publishes, and emit standard SPARQL result / RDF
+//! serializations. `named` resolves through the in-process registry — project
+//! and user drop-ins plus the built-in queries — and the built-in views'
+//! time-anchor view variables (`?NOW`, `?CUTOFF_DATE`, …) are bound at run
+//! time. Still forwarded to graphd until later slices: the `index`/`tree`/
+//! `graph` families and `--status` binding.
 //!
 //! These tests compile away entirely in the minimal `--no-default-features`
 //! build, which has no query engine.
@@ -283,6 +286,59 @@ fn named_runs_a_project_saved_query() {
 }
 
 #[test]
+fn named_runs_a_built_in_query() {
+    // A shipped built-in resolves in-process with no local drop-in present.
+    let env = seed();
+    let output = env
+        .std_command()
+        .args(["query", "named", "all-plans", "--format", "json"])
+        .output()
+        .expect("run clearhead query named");
+    assert!(
+        output.status.success(),
+        "built-in named failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    // A complete standard SPARQL Results document (no plans here → no rows).
+    let _doc: Value = serde_json::from_slice(&output.stdout).expect("SRJ");
+}
+
+#[test]
+fn named_overdue_binds_cutoff_to_now_and_matches_past_due() {
+    // `?CUTOFF_DATE` is bound to the current instant at run time, so an action
+    // due in the past is reported overdue and one due far in the future is not.
+    // Proves the view-variable substitution binds a real, correctly-typed
+    // datetime — not just that the query parses.
+    let env = TestEnv::new();
+    env.write_text(
+        "workspace.json",
+        &format!(r#"{{"workspace_id":"{WS}","workspace_name":"testws"}}"#),
+    );
+    // `:` marks the due date (`@` would be the scheduled date).
+    env.write_actions(
+        "work.actions",
+        &format!("[ ] Old task :2000-01-01T09:00 #{A}\n[ ] Future task :2999-01-01T09:00 #{B}\n"),
+    );
+
+    let output = env
+        .std_command()
+        .args(["query", "named", "overdue-tasks", "--format", "json"])
+        .output()
+        .expect("run clearhead query named");
+    assert!(
+        output.status.success(),
+        "overdue-tasks failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let doc: Value = serde_json::from_slice(&output.stdout).expect("SRJ");
+    assert_eq!(
+        binding_values(&doc, "name"),
+        vec!["Old task"],
+        "only the past-due action is overdue"
+    );
+}
+
+#[test]
 fn named_runs_a_user_saved_query() {
     let env = seed();
     std::fs::create_dir_all(env.config_dir.join("queries")).unwrap();
@@ -322,9 +378,9 @@ fn named_unknown_name_fails() {
 }
 
 #[test]
-fn named_with_status_stays_on_the_graphd_fallback() {
-    // --status is graphd-era parameter injection; the in-process evaluator
-    // never sees it. Force the fallback to fail so the forwarding is visible.
+fn named_unknown_name_with_status_still_forwards() {
+    // A name that resolves nowhere in the registry still forwards to graphd
+    // (until it is retired) — `--status` does not change that.
     let env = seed();
     let output = env
         .std_command()
@@ -341,7 +397,60 @@ fn named_with_status_stays_on_the_graphd_fallback() {
     assert!(!output.status.success());
     assert!(
         String::from_utf8_lossy(&output.stderr).contains("clearhead-graphd"),
-        "the --status path forwards to graphd: {}",
+        "an unresolved name forwards to graphd: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn named_status_filters_a_built_in_in_process() {
+    // A known built-in with `--status` runs in-process: `?STATUS_FILTER` is
+    // bound to the validated status IRI, so only matching actions come back.
+    let env = TestEnv::new();
+    env.write_text(
+        "workspace.json",
+        &format!(r#"{{"workspace_id":"{WS}","workspace_name":"testws"}}"#),
+    );
+    env.write_actions(
+        "work.actions",
+        &format!("[x] Done thing #{A}\n[ ] Open thing #{B}\n"),
+    );
+
+    let output = env
+        .std_command()
+        .args([
+            "query",
+            "named",
+            "actions-by-phase",
+            "--status",
+            "Completed",
+            "--format",
+            "json",
+        ])
+        .output()
+        .expect("run clearhead query named --status");
+    assert!(
+        output.status.success(),
+        "in-process status failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let doc: Value = serde_json::from_slice(&output.stdout).expect("SRJ");
+    assert_eq!(binding_values(&doc, "name"), vec!["Done thing"]);
+}
+
+#[test]
+fn named_rejects_an_unknown_status() {
+    // An out-of-set `--status` is rejected, never interpolated into the query.
+    let env = seed();
+    let output = env
+        .std_command()
+        .args(["query", "named", "actions-by-phase", "--status", "Bogus"])
+        .output()
+        .expect("run clearhead query named --status");
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("unknown --status"),
+        "{}",
         String::from_utf8_lossy(&output.stderr)
     );
 }

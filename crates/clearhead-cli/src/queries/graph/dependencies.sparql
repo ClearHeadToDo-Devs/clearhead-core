@@ -1,0 +1,50 @@
+# Action dependency network as a standard RDF graph.
+# The result preserves ontology predicates and can be consumed unchanged by
+# JSON-LD, Turtle, N-Triples, or any external SPARQL/RDF tool.
+#
+# Containment is sourced from Core's canonical upward `part_of` (BFO_0000050)
+# and re-expressed as `has_part` (BFO_0000051) in the output so the graph reads
+# parent -> child. It is hierarchical: a charter directly contains its top-level
+# actions, and a parent action directly contains its sub-actions — not the flat
+# charter-contains-every-descendant shape of the retired graphd projection.
+
+PREFIX actions: <https://clearhead.us/vocab/actions/v4#>
+PREFIX bfo: <http://purl.obolibrary.org/obo/>
+PREFIX cco: <https://www.commoncoreontologies.org/>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+
+CONSTRUCT {
+    ?action a actions:Action ;
+            rdfs:label ?name ;
+            cco:ont00001868 ?status .
+    ?action actions:hasPriority ?priority .
+    ?action cco:ont00001775 ?predecessor .
+    ?predecessor a actions:Action ;
+                 rdfs:label ?predecessor_name ;
+                 cco:ont00001868 ?predecessor_status .
+    ?parent bfo:BFO_0000051 ?action .
+    ?charter a actions:Charter ;
+             rdfs:label ?charter_name .
+}
+WHERE {
+    GRAPH ?g {
+        ?action a actions:Action ;
+                rdfs:label ?name ;
+                cco:ont00001868 ?status .
+        OPTIONAL { ?action actions:hasPriority ?priority }
+        OPTIONAL {
+            ?action cco:ont00001775 ?predecessor .
+            ?predecessor a actions:Action ;
+                         rdfs:label ?predecessor_name ;
+                         cco:ont00001868 ?predecessor_status .
+        }
+        # Direct parent (charter or parent action), re-expressed downward.
+        OPTIONAL { ?action bfo:BFO_0000050 ?parent }
+        # When that parent is a charter, carry its node so the graph can group.
+        OPTIONAL {
+            ?action bfo:BFO_0000050 ?charter .
+            ?charter a actions:Charter ;
+                     rdfs:label ?charter_name .
+        }
+    }
+}

@@ -449,6 +449,7 @@ dependencies = [
  "insta",
  "oxigraph",
  "oxrdf",
+ "petgraph",
  "predicates",
  "serde",
  "serde_json",

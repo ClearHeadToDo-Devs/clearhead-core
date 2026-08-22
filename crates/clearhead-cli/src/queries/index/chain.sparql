@@ -1,0 +1,43 @@
+# =============================================================================
+# Query: Chain (index)
+# =============================================================================
+# Purpose: given one action, every action that must still be completed before
+# it can start — walked recursively through the predecessor edge
+# (cco:ont00001775, "is_successor_of": "?action cannot start until
+# ?predecessor is done"), via the `+` (one-or-more) property path.
+# Flat and deduped — no depth/parent-in-chain column. Branches (an action
+# with more than one direct predecessor) all land in the same list.
+# Only open/in-progress predecessors are returned: completed or cancelled
+# ones are done: they don't block anything, so they're not part of what's
+# left to do.
+# Parameters:
+#   ?TARGET_ACTION — substituted with the resolved action's <urn:uuid:...>
+#     by `query chain`'s CLI handler, ahead of the standard param injection
+#     pass (this one isn't a fixed placeholder like ?END_OF_TODAY, so it
+#     can't go through query.rs's inject_params).
+# Returns: index contract columns (id, name, status, source_file, source_line,
+#          charter_root) + priority sort key per specifications/query_output.md
+# =============================================================================
+
+PREFIX actions: <https://clearhead.us/vocab/actions/v4#>
+PREFIX cco: <https://www.commoncoreontologies.org/>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+PREFIX ws: <https://clearhead.us/vocab/workspace/v1#>
+
+SELECT (?required AS ?id) ?name ?status ?source_file ?source_line ?charter_root ?priority WHERE {
+    GRAPH ?g {
+        ?TARGET_ACTION cco:ont00001775+ ?required .
+
+        ?required a actions:Action ;
+             rdfs:label ?name ;
+             cco:ont00001868 ?raw_state ;
+             ws:hasSourceFile ?source_file ;
+             ws:hasSourceLine ?source_line .
+        ?workspace_node a ws:Workspace ;
+                        ws:charterRoot ?charter_root .
+        FILTER(?raw_state = actions:NotStarted || ?raw_state = actions:InProgress)
+        OPTIONAL { ?required actions:hasPriority ?priority }
+    }
+    BIND(STRAFTER(STR(?raw_state), "#") AS ?status)
+}
+ORDER BY ASC(COALESCE(?priority, 99)) ?name

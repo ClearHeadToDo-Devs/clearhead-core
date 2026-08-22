@@ -14,6 +14,9 @@ pub fn write_stdout(bytes: &[u8]) -> anyhow::Result<()> {
 }
 
 /// Write one line (value plus a trailing newline) to stdout.
+// Only the `sparql` query layer renders line-oriented human output; the minimal
+// build has no caller.
+#[cfg_attr(not(feature = "sparql"), allow(dead_code))]
 pub fn write_stdout_line(value: &str) -> anyhow::Result<()> {
     let mut bytes = value.as_bytes().to_vec();
     bytes.push(b'\n');

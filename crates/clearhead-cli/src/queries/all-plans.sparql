@@ -1,0 +1,35 @@
+# =============================================================================
+# Query: All Plans
+# =============================================================================
+# Purpose: List all Plans with basic metadata
+# Returns: plan, name, priority_level, objective, contexts
+# Usage: Basic inventory of all plans in the workspace
+# =============================================================================
+
+PREFIX actions: <https://clearhead.us/vocab/actions/v4#>
+PREFIX cco: <https://www.commoncoreontologies.org/>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+
+SELECT DISTINCT ?plan ?name ?priority_level ?objective
+       (GROUP_CONCAT(DISTINCT ?context; separator=", ") AS ?contexts) WHERE {
+    ?plan a cco:ont00000974 ;
+          rdfs:label ?name .
+
+    # Optional priority
+    OPTIONAL {
+        ?plan actions:hasPriority ?priority_level .
+    }
+
+    # Optional objective (project/story) via inServiceOf
+    OPTIONAL {
+        ?plan actions:inServiceOf ?obj .
+        ?obj rdfs:label ?objective .
+    }
+
+    # Optional contexts
+    OPTIONAL {
+        ?plan actions:requiresContext ?context .
+    }
+}
+GROUP BY ?plan ?name ?priority_level ?objective
+ORDER BY ?priority_level ?name

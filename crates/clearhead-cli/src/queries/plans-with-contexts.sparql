@@ -1,0 +1,32 @@
+# =============================================================================
+# Query: Plans with Context Details
+# =============================================================================
+# Purpose: List plans with their context requirements and hierarchy info
+# Returns: plan_name, context_id, context_type, parent_context
+# Usage: Understanding context dependencies and tag hierarchies
+# =============================================================================
+
+PREFIX actions: <https://clearhead.us/vocab/actions/v4#>
+PREFIX cco: <https://www.commoncoreontologies.org/>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+
+SELECT ?plan_name ?context_id ?context_type ?parent_context WHERE {
+    ?plan a cco:ont00000974 ;
+          rdfs:label ?plan_name ;
+          actions:requiresContext ?context .
+
+    ?context actions:hasContextIdentifier ?context_id .
+
+    # Optional context type
+    OPTIONAL {
+        ?context actions:hasContextType ?type .
+        ?type rdfs:label ?context_type .
+    }
+
+    # Optional parent context (for hierarchy)
+    OPTIONAL {
+        ?context actions:contextBroader ?parent .
+        ?parent actions:hasContextIdentifier ?parent_context .
+    }
+}
+ORDER BY ?plan_name ?context_id

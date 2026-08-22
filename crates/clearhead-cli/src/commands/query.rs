@@ -1,22 +1,23 @@
-//! Query commands: in-process SPARQL evaluation plus the transitional graphd
+//! Query commands: in-process SPARQL evaluation, with a shrinking graphd
 //! forwarding shim.
 //!
-//! With the default `sparql` feature, `query raw` and locally-saved
-//! `query named` execute in-process over Core's canonical dataset (see
-//! [`crate::sparql`]): an ephemeral in-memory store, standard SPARQL,
-//! standard result serializations. Queries run verbatim — graphd-era prefix
-//! and `?STATUS_FILTER`-style parameter injection does not happen in-process,
-//! so saved `.sparql` files stay portable across independent SPARQL tooling.
+//! With the default `sparql` feature, every query family runs in-process over
+//! Core's canonical dataset (see [`crate::sparql`]): an ephemeral in-memory
+//! store, standard SPARQL, standard result serializations. `raw` and `named`
+//! evaluate directly; `index`/`tree`/`graph` add their client-presentation
+//! framing; `list`/`show` read the in-process registry. The built-in views'
+//! view variables (`?NOW`, `?STATUS_FILTER`, `?TARGET_ACTION`, …) are bound at
+//! run time from values this crate constructs — validated terms, never raw
+//! input — so the saved `.sparql` files stay standard, portable documents.
 //!
-//! Still forwarded to graphd (until `migrate-graph-consumers` /
-//! `retire-graphd` land): the client-presentation families `index`, `tree`,
-//! `graph`, and `chain`, the built-in registry (`named` fallback, `list`,
-//! `show`), and `--status` parameter injection. In a minimal
-//! `--no-default-features` build there is no query engine: `query raw` errors
-//! cleanly while the unmoved registry/families keep forwarding.
+//! The only thing still forwarded to graphd is a `named` invocation whose name
+//! resolves nowhere in the registry; `retire-graphd` removes that last shim. In
+//! a minimal `--no-default-features` build there is no query engine: `raw`
+//! errors cleanly and the families forward.
 //!
 //! `chain` resolves a fuzzy action query to a canonical IRI here (an
-//! actions-domain concern), then forwards `index chain --target <iri>`.
+//! actions-domain concern), then runs the `index chain` view with it bound to
+//! `?TARGET_ACTION`.
 
 use std::ffi::OsString;
 
@@ -66,6 +67,9 @@ fn forward(ctx: &CommandContext, args: Vec<OsString>) -> anyhow::Result<()> {
 }
 
 /// Forward a simple `<subcommand> [name] [--format …]` view (index/tree/graph).
+/// Only the minimal `--no-default-features` build still forwards these — the
+/// `sparql` build runs every family in-process.
+#[cfg(not(feature = "sparql"))]
 fn forward_named_view(
     ctx: &CommandContext,
     subcommand: &str,
@@ -107,12 +111,12 @@ pub fn named(
     status: Option<&str>,
     format: Option<QueryFormat>,
 ) -> anyhow::Result<()> {
-    // In-process path (sparql feature): a locally saved query with no
-    // graphd-era `--status` injection runs against the ephemeral store. The
-    // built-in registry and `--status` remain on the forwarding path until
-    // migrate-graph-consumers moves them.
+    // In-process path (sparql feature): a query that resolves in the registry —
+    // drop-in or built-in — runs against the ephemeral store, with `--status`
+    // bound as a validated `?STATUS_FILTER`. An unresolved name still forwards
+    // to graphd until it is retired.
     #[cfg(feature = "sparql")]
-    if status.is_none() && crate::sparql::run_saved(ctx, name, format)? {
+    if crate::sparql::run_saved(ctx, name, status, format)? {
         return Ok(());
     }
     let mut args: Vec<OsString> = vec!["named".into(), name.into()];
@@ -129,7 +133,14 @@ pub fn index(
     name: Option<&str>,
     format: Option<QueryFormat>,
 ) -> anyhow::Result<()> {
-    forward_named_view(ctx, "index", name, format)
+    #[cfg(feature = "sparql")]
+    {
+        crate::sparql::index::run(ctx, name, None, format)
+    }
+    #[cfg(not(feature = "sparql"))]
+    {
+        forward_named_view(ctx, "index", name, format)
+    }
 }
 
 pub fn tree(
@@ -137,7 +148,14 @@ pub fn tree(
     name: Option<&str>,
     format: Option<QueryFormat>,
 ) -> anyhow::Result<()> {
-    forward_named_view(ctx, "tree", name, format)
+    #[cfg(feature = "sparql")]
+    {
+        crate::sparql::tree::run(ctx, name, format)
+    }
+    #[cfg(not(feature = "sparql"))]
+    {
+        forward_named_view(ctx, "tree", name, format)
+    }
 }
 
 pub fn graph(
@@ -145,27 +163,57 @@ pub fn graph(
     name: Option<&str>,
     format: Option<QueryFormat>,
 ) -> anyhow::Result<()> {
-    forward_named_view(ctx, "graph", name, format)
+    #[cfg(feature = "sparql")]
+    {
+        crate::sparql::graph::run(ctx, name, format)
+    }
+    #[cfg(not(feature = "sparql"))]
+    {
+        forward_named_view(ctx, "graph", name, format)
+    }
 }
 
 pub fn chain(ctx: &CommandContext, query: &str, format: Option<QueryFormat>) -> anyhow::Result<()> {
+    // Resolve the fuzzy action query to a canonical IRI here (an actions-domain
+    // concern), then run the `chain` index view with it bound to ?TARGET_ACTION.
     let id = super::action::resolve_action_id(ctx, query)?;
     let target = format!("<{}>", canonical_id(id));
 
-    let mut args: Vec<OsString> = vec![
-        "index".into(),
-        "chain".into(),
-        "--target".into(),
-        target.into(),
-    ];
-    push_format(&mut args, format);
-    forward(ctx, args)
+    #[cfg(feature = "sparql")]
+    {
+        crate::sparql::index::run(ctx, Some("chain"), Some(&target), format)
+    }
+    #[cfg(not(feature = "sparql"))]
+    {
+        let mut args: Vec<OsString> = vec![
+            "index".into(),
+            "chain".into(),
+            "--target".into(),
+            target.into(),
+        ];
+        push_format(&mut args, format);
+        forward(ctx, args)
+    }
 }
 
 pub fn show(ctx: &CommandContext, name: &str) -> anyhow::Result<()> {
-    forward(ctx, vec!["show".into(), name.into()])
+    #[cfg(feature = "sparql")]
+    {
+        crate::sparql::registry::show(ctx, name)
+    }
+    #[cfg(not(feature = "sparql"))]
+    {
+        forward(ctx, vec!["show".into(), name.into()])
+    }
 }
 
 pub fn list(ctx: &CommandContext) -> anyhow::Result<()> {
-    forward(ctx, vec!["list".into()])
+    #[cfg(feature = "sparql")]
+    {
+        crate::sparql::registry::list(ctx)
+    }
+    #[cfg(not(feature = "sparql"))]
+    {
+        forward(ctx, vec!["list".into()])
+    }
 }

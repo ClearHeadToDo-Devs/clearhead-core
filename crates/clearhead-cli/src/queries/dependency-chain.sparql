@@ -1,0 +1,25 @@
+# =============================================================================
+# Query: Dependency Chain
+# =============================================================================
+# Purpose: All action dependencies in the workspace (what blocks what)
+# Returns: name, depends_on
+# Notes:
+#   Uses cco:ont00001775 (is_successor_of) — action depends on its predecessors.
+#   Read as: "?name cannot start until ?depends_on is done."
+# =============================================================================
+
+PREFIX actions: <https://clearhead.us/vocab/actions/v4#>
+PREFIX cco: <https://www.commoncoreontologies.org/>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+
+SELECT ?name ?depends_on ?dep_state WHERE {
+    ?action a actions:Action ;
+         rdfs:label ?name ;
+         cco:ont00001775 ?dep .
+
+    ?dep rdfs:label ?depends_on ;
+         cco:ont00001868 ?raw_dep_state .
+
+    BIND(STRAFTER(STR(?raw_dep_state), "#") AS ?dep_state)
+}
+ORDER BY ?name ?depends_on

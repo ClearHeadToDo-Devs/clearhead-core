@@ -1,0 +1,31 @@
+# =============================================================================
+# Query: Unlinked Actions
+# =============================================================================
+# Purpose: Actions not referenced by any charter and with no parent action
+# Returns: name, state
+# Notes:
+#   Well-formed actions are either:
+#     (a) linked from a charter via bfo:BFO_0000051 (hasPart), or
+#     (b) children of another action via bfo:BFO_0000050 (partOf).
+#   Results here may indicate missing charter membership or import artifacts.
+# =============================================================================
+
+PREFIX actions: <https://clearhead.us/vocab/actions/v4#>
+PREFIX cco: <https://www.commoncoreontologies.org/>
+PREFIX bfo: <http://purl.obolibrary.org/obo/>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+PREFIX ws: <https://clearhead.us/vocab/workspace/v1#>
+
+SELECT ?name ?state ?source_file ?source_line WHERE {
+    ?action a actions:Action ;
+         rdfs:label ?name ;
+         cco:ont00001868 ?raw_state .
+
+    BIND(STRAFTER(STR(?raw_state), "#") AS ?state)
+
+    FILTER NOT EXISTS { ?charter a actions:Charter ; bfo:BFO_0000051 ?action . }
+    FILTER NOT EXISTS { ?action bfo:BFO_0000050 ?parent . }
+    OPTIONAL { ?action ws:hasSourceFile ?source_file }
+    OPTIONAL { ?action ws:hasSourceLine ?source_line }
+}
+ORDER BY ?name

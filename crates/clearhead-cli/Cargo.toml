@@ -17,7 +17,7 @@ default = ["sparql"]
 # feature that pulls Oxigraph. It evaluates Core's canonical dataset in an
 # ephemeral in-memory store — no persistence, no foreign-RDF loading. Build
 # with `--no-default-features` for the minimal, query-engine-free profile.
-sparql = ["dep:oxigraph"]
+sparql = ["dep:oxigraph", "dep:petgraph"]
 
 [dependencies]
 # Shared domain, workspace, persistence, and configuration services
@@ -50,6 +50,9 @@ oxrdf = "0.3.3"
 # default-features = false: no RocksDB, no persistence — the store is created
 # empty per query and dropped with the command.
 oxigraph = { version = "0.5.3", default-features = false, optional = true }
+# Graphviz DOT projection for the `graph` query family; same version graphd
+# used, so the rendered DOT is byte-identical. Pulled only by `sparql`.
+petgraph = { version = "0.8", optional = true }
 
 [dependencies.uuid]
 version = "1.0"

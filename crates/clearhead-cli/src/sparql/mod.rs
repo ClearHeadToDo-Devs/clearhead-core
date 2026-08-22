@@ -7,11 +7,21 @@
 //! ```
 //!
 //! The store is in-memory and dropped with the command: no persistence, no
-//! arbitrary-RDF loading, no federation, no endpoint proxying, and no
-//! ClearHead-specific query machinery. Queries execute verbatim as standard
-//! SPARQL — graphd-era prefix/placeholder injection does not happen here, so a
-//! saved `.sparql` file is complete and runs unchanged in independent tooling
-//! (the `rdf-publication` charter's portability contract).
+//! arbitrary-RDF loading, no federation, and no endpoint proxying. Queries run
+//! as complete standard SPARQL documents — no graphd-era prefix injection or
+//! textual placeholder substitution — so a saved `.sparql` file stays portable
+//! and runs unchanged in independent tooling (the `rdf-publication` charter's
+//! portability contract).
+//!
+//! The one ClearHead convention is a small set of **view variables** — `?NOW`,
+//! `?CUTOFF_DATE`, `?END_OF_TODAY`, `?END_OF_WEEK`, `?STATUS_FILTER`,
+//! `?TARGET_ACTION` — that the built-in views leave free and this module binds
+//! at run time ([`bind_time_vars`]). They live in `FILTER`/`BIND` expressions,
+//! not the `SELECT` projection, so oxigraph's `substitute_variable` cannot bind
+//! them; instead only these fixed placeholder names are replaced, and only with
+//! terms this module constructs itself (never caller input) — so a saved query
+//! stays a standard document on disk and nothing untrusted is interpolated. A
+//! query that mentions no view variable is left exactly as written.
 //!
 //! This module owns:
 //! - dataset assembly: Core's canonical domain projection plus Core's pure
@@ -23,9 +33,15 @@
 //! - standard result serializations: SPARQL Results JSON for SELECT/ASK and
 //!   Turtle/JSON-LD for CONSTRUCT/DESCRIBE, plus the human table.
 
+pub mod graph;
+pub mod index;
+pub mod registry;
+pub mod tree;
+
 use std::io::IsTerminal;
 
 use anyhow::{Context as _, anyhow};
+use chrono::Utc;
 use oxigraph::io::{JsonLdProfileSet, RdfFormat, RdfSerializer};
 use oxigraph::model::{Term, Triple};
 use oxigraph::sparql::results::{QueryResultsFormat, QueryResultsSerializer};
@@ -54,38 +70,39 @@ pub fn build_store(ctx: &CommandContext) -> anyhow::Result<Store> {
 }
 
 // ============================================================================
-// Saved queries
+// View variables
 // ============================================================================
 
-/// Resolve a saved query by name: the project's `.clearhead/queries/` wins over
-/// the user config's `queries/`, matching graphd's registry precedence. Only
-/// plain `.sparql` files are considered — a saved query is a complete standard
-/// SPARQL document, portable by construction.
-///
-/// Returns `None` when no local file matches, so the caller can fall back to
-/// graphd's built-in registry until `migrate-graph-consumers` moves it.
-pub fn saved_query(ctx: &CommandContext, name: &str) -> Option<String> {
-    if !is_safe_query_name(name) {
-        return None;
-    }
-    let file = format!("{name}.sparql");
-    let project = ctx.data_dir.join(".clearhead").join("queries").join(&file);
-    let user = crate::environment_reader::get_config_dir()
-        .join("queries")
-        .join(&file);
-    [project, user]
-        .iter()
-        .find_map(|path| std::fs::read_to_string(path).ok())
+/// An `xsd:dateTime` literal in Turtle/SPARQL syntax, datatype spelled as a
+/// full IRI so it needs no `PREFIX xsd:` in the query.
+fn datetime_literal(value: &str) -> String {
+    format!("\"{value}\"^^<http://www.w3.org/2001/XMLSchema#dateTime>")
 }
 
-/// A saved-query name is a plain file stem: reject anything path-shaped so a
-/// command-line name can never escape the queries directories.
-fn is_safe_query_name(name: &str) -> bool {
-    !name.is_empty()
-        && name != "."
-        && name != ".."
-        && !name.contains(['/', '\\'])
-        && !name.contains("..")
+/// Bind ClearHead's time-anchor view variables (`?NOW`, `?CUTOFF_DATE`,
+/// `?END_OF_TODAY`, `?END_OF_WEEK`) to the current instant and its derived
+/// day/week boundaries.
+///
+/// These appear in `FILTER`/`BIND` expressions, not the `SELECT` projection, so
+/// oxigraph's `substitute_variable` (which only binds projected variables)
+/// cannot reach them; we substitute the placeholder text instead. Only these
+/// fixed names are touched, and only with literals we format ourselves — never
+/// caller input — so a saved query stays a standard document on disk and
+/// nothing untrusted is interpolated. `?STATUS_FILTER` / `?TARGET_ACTION` (real
+/// IRIs) are bound the same way by the family runners, from validated inputs.
+fn bind_time_vars(sparql: &str) -> String {
+    let now = Utc::now();
+    let instant = datetime_literal(&now.format("%Y-%m-%dT%H:%M:%SZ").to_string());
+    let end_of_today = datetime_literal(&format!("{}T23:59:59Z", now.format("%Y-%m-%d")));
+    let end_of_week = datetime_literal(&format!(
+        "{}T23:59:59Z",
+        (now + chrono::Duration::days(7)).format("%Y-%m-%d")
+    ));
+    sparql
+        .replace("?NOW", &instant)
+        .replace("?CUTOFF_DATE", &instant)
+        .replace("?END_OF_TODAY", &end_of_today)
+        .replace("?END_OF_WEEK", &end_of_week)
 }
 
 // ============================================================================
@@ -97,12 +114,14 @@ fn is_safe_query_name(name: &str) -> bool {
 /// When the query declares no dataset of its own, the default graph is the
 /// union of all named graphs (the documented ClearHead evaluator convention),
 /// so workspace-agnostic queries work unchanged in single- and multi-workspace
-/// stores. Queries are otherwise verbatim — no prefix or parameter injection.
+/// stores. Time-anchor view variables are bound ([`bind_time_vars`]); a query
+/// that mentions none is unchanged.
 ///
 /// Results stream against the store; keep it alive until [`emit`] returns.
 pub fn execute<'a>(store: &'a Store, sparql: &str) -> anyhow::Result<QueryResults<'a>> {
+    let sparql = bind_time_vars(sparql);
     let mut prepared = SparqlEvaluator::new()
-        .parse_query(sparql)
+        .parse_query(&sparql)
         .map_err(|e| anyhow!("SPARQL parse error: {e}"))?;
     if prepared.dataset().is_default_dataset() {
         prepared.dataset_mut().set_default_graph_as_union();
@@ -111,6 +130,82 @@ pub fn execute<'a>(store: &'a Store, sparql: &str) -> anyhow::Result<QueryResult
         .on_store(store)
         .execute()
         .map_err(|e| anyhow!("SPARQL evaluation error: {e}"))
+}
+
+/// A SELECT result row: variable name → the term's bare lexical form.
+pub type Row = std::collections::HashMap<String, String>;
+
+/// Execute a SELECT and collect its rows, stringifying each term to the bare
+/// form the view families consume (IRI without `<>`, literal value, `_:`
+/// blank). Rejects non-SELECT results — the families are row-shaped.
+pub fn select_rows(store: &Store, sparql: &str) -> anyhow::Result<Vec<Row>> {
+    match execute(store, sparql)? {
+        QueryResults::Solutions(solutions) => {
+            let vars: Vec<String> = solutions
+                .variables()
+                .iter()
+                .map(|v| v.as_str().to_string())
+                .collect();
+            let mut rows = Vec::new();
+            for solution in solutions {
+                let solution = solution.context("evaluate solution")?;
+                let mut row = Row::new();
+                for var in &vars {
+                    if let Some(term) = solution.get(var.as_str()) {
+                        row.insert(var.clone(), term_display(term));
+                    }
+                }
+                rows.push(row);
+            }
+            Ok(rows)
+        }
+        QueryResults::Boolean(_) => {
+            anyhow::bail!("this query family requires a SELECT query, not ASK")
+        }
+        QueryResults::Graph(_) => {
+            anyhow::bail!("this query family requires a SELECT query, not CONSTRUCT/DESCRIBE")
+        }
+    }
+}
+
+/// Terms framed as JSON numbers rather than stringified literals — shared by
+/// the `index` and `tree` node projections.
+pub(super) const INTEGER_TERMS: &[&str] = &["source_line", "priority"];
+
+/// Project one SELECT row into a JSON-LD node: integer terms become JSON
+/// numbers, everything else a string. Shared framing primitive for the
+/// row-shaped families.
+pub(super) fn frame_row_node(row: &Row) -> anyhow::Result<serde_json::Value> {
+    let mut node = serde_json::Map::new();
+    for (term, value) in row {
+        let framed = if INTEGER_TERMS.contains(&term.as_str()) {
+            let n: u64 = value
+                .parse()
+                .map_err(|_| anyhow!("{term} is not an integer: {value:?}"))?;
+            serde_json::json!(n)
+        } else {
+            serde_json::Value::String(value.clone())
+        };
+        node.insert(term.clone(), framed);
+    }
+    Ok(serde_json::Value::Object(node))
+}
+
+/// Execute a CONSTRUCT/DESCRIBE and collect its RDF triples — the graph
+/// family's semantic result, before any presentation projection. Rejects
+/// row-shaped results.
+pub fn construct_triples(store: &Store, sparql: &str) -> anyhow::Result<Vec<Triple>> {
+    match execute(store, sparql)? {
+        QueryResults::Graph(triples) => triples
+            .collect::<Result<_, _>>()
+            .map_err(|e| anyhow!("evaluate graph result: {e}")),
+        QueryResults::Solutions(_) => {
+            anyhow::bail!("the graph family requires a CONSTRUCT or DESCRIBE query, not SELECT")
+        }
+        QueryResults::Boolean(_) => {
+            anyhow::bail!("the graph family requires a CONSTRUCT or DESCRIBE query, not ASK")
+        }
+    }
 }
 
 /// Expand a bare WHERE clause into a complete standard SELECT query — CLI
@@ -327,18 +422,51 @@ pub fn run_raw(
     emit(execute(&store, &full_query)?, format)
 }
 
-/// Run `query named` in-process when the name resolves to a saved `.sparql`
-/// file in the project or user queries directory. Returns `Ok(false)` when no
-/// local query matches, so the caller can fall back to graphd's built-in
-/// registry until it migrates.
+/// The action status individuals (`cco:ont00001868` objects) a `--status`
+/// filter may name.
+const STATUS_TERMS: &[&str] = &[
+    "NotStarted",
+    "InProgress",
+    "Completed",
+    "Blocked",
+    "Cancelled",
+];
+
+/// The `?STATUS_FILTER` replacement for a `--status` value: a validated
+/// `actions:` status IRI. An `actions:` prefix is optional; anything outside
+/// the known set is rejected rather than interpolated, so nothing untrusted
+/// reaches the query.
+fn status_filter_iri(status: &str) -> anyhow::Result<String> {
+    let local = status.strip_prefix("actions:").unwrap_or(status);
+    if STATUS_TERMS.contains(&local) {
+        Ok(format!("<{ACTIONS_STATUS_NS}{local}>"))
+    } else {
+        anyhow::bail!(
+            "unknown --status '{status}'; expected one of: {}",
+            STATUS_TERMS.join(", ")
+        )
+    }
+}
+
+const ACTIONS_STATUS_NS: &str = "https://clearhead.us/vocab/actions/v4#";
+
+/// Run `query named` in-process when the name resolves in the flat registry —
+/// a project or user drop-in, or a built-in ([`registry::resolve_flat`]). When
+/// `status` is given it is bound to `?STATUS_FILTER` (validated, never raw).
+/// Returns `Ok(false)` when nothing matches, so the caller can fall back to
+/// graphd until it is retired.
 pub fn run_saved(
     ctx: &CommandContext,
     name: &str,
+    status: Option<&str>,
     format: Option<QueryFormat>,
 ) -> anyhow::Result<bool> {
-    let Some(sparql) = saved_query(ctx, name) else {
+    let Some(mut sparql) = registry::resolve_flat(ctx, name) else {
         return Ok(false);
     };
+    if let Some(status) = status {
+        sparql = sparql.replace("?STATUS_FILTER", &status_filter_iri(status)?);
+    }
     let store = build_store(ctx)?;
     emit(execute(&store, &sparql)?, format)?;
     Ok(true)
@@ -360,15 +488,5 @@ mod tests {
         let _prepared = SparqlEvaluator::new()
             .parse_query(&expanded)
             .expect("expanded --where clause is a complete valid query");
-    }
-
-    #[test]
-    fn saved_query_names_are_plain_file_stems() {
-        for good in ["agenda", "my-query", "weekly_rollup"] {
-            assert!(is_safe_query_name(good), "{good:?} should be accepted");
-        }
-        for bad in ["", ".", "..", "../secrets", "a/b", "a\\b", "..hidden.."] {
-            assert!(!is_safe_query_name(bad), "{bad:?} should be rejected");
-        }
     }
 }

@@ -1,0 +1,29 @@
+# =============================================================================
+# Query: Default Index
+# =============================================================================
+# Purpose: All open actions with source locations — the default index view.
+#          Each row carries charter_root so the consumer can resolve the
+#          relative source_file to an absolute path without external context.
+# Returns: index contract columns (id, name, status, source_file, source_line,
+#          charter_root)
+# =============================================================================
+
+PREFIX actions: <https://clearhead.us/vocab/actions/v4#>
+PREFIX cco: <https://www.commoncoreontologies.org/>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+PREFIX ws: <https://clearhead.us/vocab/workspace/v1#>
+
+SELECT (?action AS ?id) ?name ?status ?source_file ?source_line ?charter_root WHERE {
+    GRAPH ?g {
+        ?action a actions:Action ;
+             rdfs:label ?name ;
+             cco:ont00001868 ?raw_state ;
+             ws:hasSourceFile ?source_file ;
+             ws:hasSourceLine ?source_line .
+        ?workspace_node a ws:Workspace ;
+                        ws:charterRoot ?charter_root .
+        FILTER(?raw_state != actions:Completed && ?raw_state != actions:Cancelled)
+    }
+    BIND(STRAFTER(STR(?raw_state), "#") AS ?status)
+}
+ORDER BY ?charter_root ?source_file ?source_line
