@@ -60,17 +60,6 @@ impl WorkspaceManifest {
     pub fn read(root: &Path) -> Self {
         read_identity_fields(&Self::path(root))
     }
-
-    /// Write the manifest to `root`, stamping `$schema`. Creates the data-root
-    /// directory if needed.
-    pub fn write(&self, root: &Path) -> std::io::Result<()> {
-        let path = Self::path(root);
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        let json = render_workspace_manifest(self).map_err(std::io::Error::other)?;
-        std::fs::write(&path, json)
-    }
 }
 
 /// Parse the host-neutral workspace identity document.
