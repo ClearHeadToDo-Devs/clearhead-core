@@ -1,4 +1,17 @@
+use clearhead_core::rdf::{self, RdfFormat};
 use clearhead_core::{Action, ActionState, DomainModel};
+
+/// Serialize a domain model to flat JSON-LD through Core's canonical RDF
+/// projection — the same one dataset that backs every RDF serialization.
+///
+/// Read commands reach this for `--output jsonld` over a *filtered* subset, so
+/// the data is published into the transient named graph rather than a specific
+/// workspace's graph. Whole-workspace export, which names the real workspace
+/// graph, is a separate command over the same projection.
+pub fn serialize_domain_to_jsonld(model: &DomainModel) -> Result<String, String> {
+    rdf::serialize_domain(model, None, rdf::transient_graph_name(), RdfFormat::JsonLd)
+        .map_err(|e| e.to_string())
+}
 
 /// Check if an Action should be included in calendar export.
 ///

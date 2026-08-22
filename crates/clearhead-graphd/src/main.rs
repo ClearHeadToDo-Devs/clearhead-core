@@ -1,7 +1,6 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use clap::{Parser, Subcommand};
 use clearhead_core::WorkspaceConfig;
-use std::io::Read;
 use std::path::{Path, PathBuf};
 
 #[derive(Parser, Debug)]
@@ -20,9 +19,6 @@ struct Cli {
 enum Command {
     /// Query the workspace: named views, saved queries, or ad-hoc SPARQL.
     Query(QueryArgs),
-
-    /// Convert a JSON-encoded domain model from stdin to canonical JSON-LD.
-    ExportJsonld,
 }
 
 #[derive(clap::Args, Debug)]
@@ -83,7 +79,6 @@ fn main() -> Result<()> {
 
     match cli.command {
         Command::Query(args) => run_query_command(&cli.workspace, args),
-        Command::ExportJsonld => export_jsonld(std::io::stdin()),
     }
 }
 
@@ -145,17 +140,4 @@ fn init_tracing() {
             tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "warn".into()),
         )
         .try_init();
-}
-
-fn export_jsonld(mut input: impl Read) -> Result<()> {
-    let mut model_json = String::new();
-    input
-        .read_to_string(&mut model_json)
-        .context("Failed to read domain model from stdin")?;
-    let model: clearhead_core::DomainModel =
-        serde_json::from_str(&model_json).context("Invalid domain model JSON")?;
-    let jsonld = clearhead_graphd::graph::serialize_domain_to_jsonld(&model)
-        .context("Failed to serialize JSON-LD")?;
-    println!("{jsonld}");
-    Ok(())
 }

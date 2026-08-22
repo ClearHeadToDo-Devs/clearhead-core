@@ -1,9 +1,9 @@
 //! RDF graph module — the bridge between the domain model and Oxigraph.
 //!
 //! This module owns the "put it in / take it out / ask it questions" layer:
-//! [`insert`] loads domain objects as RDF triples, [`query`] runs SPARQL and
-//! reconstructs domain objects, and [`jsonld`] produces canonical JSON-LD
-//! interchange.
+//! [`insert`] loads domain objects as RDF triples and [`query`] runs SPARQL and
+//! reconstructs domain objects. Canonical RDF/JSON-LD publication is no longer
+//! here — Core's `rdf` module serializes the domain model directly.
 //!
 //! # Named Graph Architecture
 //!
@@ -107,17 +107,14 @@
 //!
 //! - [`insert`]    — domain model → RDF triples; loads into named graph
 //! - [`query`]     — SPARQL query execution and result extraction
-//! - [`jsonld`]    — canonical compact JSON-LD export
 
 pub mod dot;
 pub mod insert;
-pub mod jsonld;
 pub mod query;
 pub mod shape;
 
 pub use dot::frame_dot;
 pub use insert::{insert_workspace_metadata, load_domain_model, load_turtle_into_graph};
-pub use jsonld::{serialize_domain_to_jsonld, serialize_workspace_to_jsonld};
 pub use oxigraph::model::GraphName;
 pub use oxigraph::store::Store;
 pub use query::{

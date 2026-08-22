@@ -23,8 +23,10 @@
 //! `specifications/ontology.md` and the `ontology/v4` artifacts.
 
 pub mod project;
+pub mod serialize;
 
 pub use project::project_domain;
+pub use serialize::{RdfFormat, serialize, serialize_domain};
 
 use oxrdf::{GraphName, NamedNode};
 

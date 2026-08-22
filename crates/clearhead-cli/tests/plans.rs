@@ -126,15 +126,13 @@ fn test_read_plans_honors_ids_and_jsonld_formats() {
         .output()
         .unwrap();
     assert!(json.status.success());
+    // Core's rdf module owns the semantic shape; here we only prove the plumbing
+    // emits valid flat JSON-LD (an @context + @graph) that names the plan.
     let value: serde_json::Value = serde_json::from_slice(&json.stdout).unwrap();
-    let graph = value["@graph"].as_array().unwrap();
-    assert!(
-        graph
-            .iter()
-            .any(|node| node.get("name").and_then(|v| v.as_str()) == Some("My Plan")),
-        "{}",
-        String::from_utf8_lossy(&json.stdout)
-    );
+    assert!(value.get("@context").is_some(), "expected an @context");
+    assert!(value.get("@graph").and_then(|g| g.as_array()).is_some());
+    let doc = String::from_utf8_lossy(&json.stdout);
+    assert!(doc.contains("My Plan"), "{doc}");
 }
 
 #[test]

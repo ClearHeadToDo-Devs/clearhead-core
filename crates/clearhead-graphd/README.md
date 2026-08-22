@@ -51,19 +51,13 @@ Index queries live in an `index/` subdirectory. graphd loads the primary workspa
 
 Output is destination-aware. A terminal defaults to a human rendering. A pipe uses the query family's machine projection: index views emit NDJSON, while unrestricted `SELECT` queries emit JSON row arrays. Index views validate their addressable-row contract before any projection. Explicit `--format table`, `json`, `ndjson`, `jsonld`, `ids`, `turtle`, and `dot` override detection where supported. The index-only `ids` projection emits each canonical identity unchanged, one per line in query order, for JSON-parser-free composition.
 
-The semantic rules for index output are documented in [`docs/query_contract.md`](docs/query_contract.md). Exact JSON-LD fields are in [`docs/jsonld_export_contract.md`](docs/jsonld_export_contract.md).
+The semantic rules for index output are documented in [`docs/query_contract.md`](docs/query_contract.md).
 
 Clients invoke this public command interface directly; the `clearhead` CLI does not proxy graph queries.
 
-## Domain JSON to JSON-LD export
-
-`export-jsonld` is the remaining stdin protocol. It reads a JSON-encoded `DomainModel` and writes canonical JSON-LD:
-
-```sh
-clearhead-graphd export-jsonld < domain-model.json
-```
-
-Warnings and errors go to stderr. A failed command exits non-zero, and callers must not consume stdout.
+Canonical RDF/JSON-LD publication no longer lives here: Core's `rdf` module
+serializes the domain model directly, and the `clearhead export` command owns the
+whole-workspace publication path.
 
 ## Development
 

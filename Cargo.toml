@@ -34,6 +34,11 @@ jsonschema = { version = "0.18", optional = true }
 # oxigraph 0.5.x resolves, so a graphd/CLI composition shares one copy.
 oxrdf = "0.3.3"
 oxttl = "0.2.3"
+# JSON-LD is one more text serialization of the same canonical quad set, not a
+# parallel hand-built export. oxjsonld is the Oxigraph-family codec (a sibling of
+# oxttl): database-free, quad-based, and already in our lockfile via oxigraph's
+# resolution, so a graphd/CLI composition shares one copy.
+oxjsonld = "0.2.5"
 quick-xml = { version = "0.31", features = ["serialize"] }
 rrule = "0.14.0"
 serde = { version = "1.0", features = ["derive"] }
