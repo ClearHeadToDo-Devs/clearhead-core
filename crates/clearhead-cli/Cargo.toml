@@ -18,6 +18,12 @@ default = ["sparql"]
 # ephemeral in-memory store — no persistence, no foreign-RDF loading. Build
 # with `--no-default-features` for the minimal, query-engine-free profile.
 sparql = ["dep:oxigraph", "dep:petgraph"]
+# Opt-in conformance of the CLI's real index query output against the
+# specification's published index_query_result schema. Bare `cargo test` stays
+# independent of a specifications checkout; the super-repo runs this with
+# CLEARHEAD_SPEC_DIR. Implies `sparql`: the index family is evaluated in-process
+# by the query engine, so the producer boundary only exists when it is built.
+spec-conformance = ["sparql"]
 
 [dependencies]
 # Shared domain, workspace, persistence, and configuration services
@@ -67,5 +73,8 @@ features = [
 assert_cmd = "2.1"
 clap_mangen = "0.3"
 insta = { version = "1.45.1", features = ["filters", "redactions", "ron"] }
+# Local schema validation for the spec-conformance suite; no HTTP/file
+# reference resolution or its async stack.
+jsonschema = { version = "0.18", default-features = false }
 predicates = "3.0"
 tempfile = "3.8"
