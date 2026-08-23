@@ -83,7 +83,7 @@ pub fn fixture_path(name: &str) -> std::path::PathBuf {
     // Core's parser tests via `include_str!`); reference them from there rather
     // than duplicating the corpus into this adapter crate.
     Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../tests/fixtures/workspace")
+        .join("../clearhead-core/tests/fixtures/workspace")
         .join(name)
 }
 

@@ -15,7 +15,12 @@ use std::path::{Path, PathBuf};
 fn spec_dir() -> PathBuf {
     std::env::var("CLEARHEAD_SPEC_DIR")
         .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../specifications"))
+        // From crates/clearhead-core up to the platform root, then into the
+        // specifications submodule (the standalone fallback when the env var,
+        // which validate-pinned relies on, is unset).
+        .unwrap_or_else(|_| {
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../specifications")
+        })
 }
 
 fn fixture(relative: &str) -> String {

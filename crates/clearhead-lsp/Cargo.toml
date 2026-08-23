@@ -13,7 +13,7 @@ path = "src/main.rs"
 
 [dependencies]
 # One repository, one workspace: core is an ordinary sibling path dependency.
-clearhead_core = { path = "../..", version = "0.2.0", default-features = false, features = ["formatting"] }
+clearhead_core = { path = "../clearhead-core", version = "0.2.0", default-features = false, features = ["formatting"] }
 clearhead-workspace-fs = { path = "../clearhead-workspace-fs", version = "0.1.0" }
 chrono = "0.4"
 dashmap = "6.1.0"

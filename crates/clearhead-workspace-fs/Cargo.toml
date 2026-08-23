@@ -6,7 +6,7 @@ edition = "2024"
 license = "MIT"
 
 [dependencies]
-clearhead_core = { path = "../..", version = "0.2.0", default-features = false, features = ["formatting"] }
+clearhead_core = { path = "../clearhead-core", version = "0.2.0", default-features = false, features = ["formatting"] }
 serde = { version = "1.0", features = ["derive"] }
 chrono = "0.4"
 config = { version = "0.15.19", default-features = false, features = ["json"] }

@@ -1,77 +1,17 @@
-[package]
-name = "clearhead_core"
-description = "Core domain model and logic for the ClearHead framework"
-version = "0.2.0"
-authors = ["Darrion Burgess <darrionburgess@gmail.com>"]
-edition = "2024"
-license = "MIT"
-repository = "https://github.com/ClearHeadToDo-Devs/clearhead-core.git"
-
-# One repository, one workspace: the pure domain core plus its native hosts
-# (CLI, LSP) are members of a single Cargo workspace rooted here.
-# The root package remains `clearhead_core`.
+# The `clearhead-rs` workspace: the Rust codebase for the ClearHead platform.
+#
+# This is a virtual manifest — it defines no package of its own. Every crate,
+# including the pure domain core, is an equal member under `crates/`. Keeping the
+# workspace root package-less is deliberate: the core library must not name or
+# "parent" its own downstream hosts. Core decides; the hosts and the delivery
+# adapter depend on it, never the reverse.
+#
+# Cargo has no name field for a virtual workspace, so `clearhead-rs` is asserted
+# here in metadata and in the README rather than enforced by Cargo.
 [workspace]
+resolver = "3"
 members = ["crates/*"]
 
-[features]
-default = ["formatting"]
-# Canonical .actions source formatting. Read-only consumers can disable default
-# features to avoid Topiary and its async runtime dependency closure.
-formatting = ["dep:topiary-core", "dep:topiary-tree-sitter-facade"]
-# Runs the opt-in semantic, formatting, lint, and schema conformance suite
-# against inert oracle data from a specifications checkout. Off by default so a
-# bare `cargo test` needs neither jsonschema nor the test-only spec repository.
-spec-conformance = ["formatting", "dep:jsonschema"]
-
-[dependencies]
-# Shared domain, workspace, persistence, and configuration dependencies
-chrono = { version = "0.4", features = ["serde"] }
-icalendar = { version = "0.17.10", features = ["chrono-tz"] }
-jsonschema = { version = "0.18", optional = true }
-# RDF term model and text serializers only — the small, database-free pieces of
-# the Oxigraph family. Store/SPARQL (the oxigraph crate) stays out of Core; it
-# is pulled solely by the optional CLI `sparql` feature. Versions match what
-# oxigraph 0.5.x resolves, so the CLI's `sparql` build shares one copy.
-oxrdf = "0.3.3"
-oxttl = "0.2.3"
-# JSON-LD is one more text serialization of the same canonical quad set, not a
-# parallel hand-built export. oxjsonld is the Oxigraph-family codec (a sibling of
-# oxttl): database-free, quad-based, and already in our lockfile via oxigraph's
-# resolution, so the CLI's `sparql` build shares one copy.
-oxjsonld = "0.2.5"
-quick-xml = { version = "0.31", features = ["serialize"] }
-rrule = "0.14.0"
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-serde_yaml_ng = "0.10"
-thiserror = "2.0"
-topiary-core = { version = "0.7.3", optional = true }
-topiary-tree-sitter-facade = { version = "0.7.3", optional = true }
-tree-sitter = "0.26.3"
-# Consumed from its canonical repository so a standalone Core checkout builds
-# without a sibling tree-sitter-actions checkout. The pinned platform composition
-# and local sibling development override this to the adjacent path via the
-# platform `.cargo/config.toml` `[patch]` table; see the README.
-tree-sitter-actions = { git = "https://github.com/ClearHeadToDo-Devs/tree-sitter-actions.git", rev = "b6a2579f49df113f2f1a0069b54c05780960ee19", version = "0.10.0" }
-
-[dependencies.uuid]
-version = "1.0"
-features = [
-  "serde",
-  "v4",
-  "v5",
-  "v7",
-]
-
-# UUID v4/v7 minting needs a randomness source. Native targets get one from the
-# OS; a WASM host supplies it through JS crypto. Selecting getrandom's `wasm_js`
-# backend keeps Core portable without pulling any native-only capability — it
-# still requires `--cfg getrandom_backend="wasm_js"` at build time (see the
-# `wasm` dependency gate in the pre-push hook).
-[target.'cfg(target_arch = "wasm32")'.dependencies]
-getrandom = { version = "0.3", features = ["wasm_js"] }
-
-[dev-dependencies]
-proptest = "1.7"
-ron = "0.8"
-tempfile = "3.8"
+[workspace.metadata]
+name = "clearhead-rs"
+description = "Rust workspace for the ClearHead platform (pure domain core, native filesystem delivery adapter, CLI, and LSP)."
