@@ -423,6 +423,7 @@ dependencies = [
  "comfy-table",
  "config",
  "insta",
+ "jsonschema",
  "oxigraph",
  "oxrdf",
  "petgraph",
