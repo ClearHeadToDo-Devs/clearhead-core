@@ -1,9 +1,14 @@
-//! Workspace storage — loading and saving domain models on disk.
+//! Workspace layout resolution and domain-model assembly.
+//!
+//! This module resolves which layout a workspace uses and assembles the
+//! [`DomainModel`](crate::domain::DomainModel) from snapshots a host has already
+//! read. Reading and writing bytes is a delivery adapter's job, not Core's; the
+//! only host tap here is a directory-existence probe used to detect the layout.
 //!
 //! # Workspace Layouts
 //!
 //! ClearHead supports two workspace layouts. See the
-//! [naming conventions specification](../../../specifications/naming_conventions.md)
+//! [naming conventions specification](https://github.com/ClearHeadToDo-Devs/specifications/blob/master/naming_conventions.md)
 //! for the authoritative description of each scope.
 //!
 //! ## Project layout
@@ -18,7 +23,7 @@
 //! Used for personal workspaces not tied to a specific project.
 //!
 //! `resolve_workspace_layout` detects which layout applies and returns a
-//! `WorkspaceLayout` that all load/save functions use for path resolution.
+//! `WorkspaceLayout` that assembly and path resolution use.
 
 mod assembly;
 mod doctor;
