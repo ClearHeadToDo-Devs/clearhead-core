@@ -72,7 +72,10 @@ pub const BUILT_IN: &[(&str, &str)] = &[
         "overdue-tasks",
         include_str!("../queries/overdue-tasks.sparql"),
     ),
-    ("open-plans", include_str!("../queries/open-plans.sparql")),
+    (
+        "open-actions",
+        include_str!("../queries/open-actions.sparql"),
+    ),
     (
         "plans-with-contexts",
         include_str!("../queries/plans-with-contexts.sparql"),
