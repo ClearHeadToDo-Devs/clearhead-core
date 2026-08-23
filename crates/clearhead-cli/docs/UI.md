@@ -19,7 +19,7 @@ We use the above file formats as our primary nouns so that each verb can operate
 
 ### Read
 
-`clearhead read` reads canonical workspace entities through core. Semantic queries are a separate tool boundary: `clearhead-graphd` owns SPARQL, query families, validation, rendering, and graph export, and clients invoke it directly. The CLI does not proxy graphd.
+`clearhead read` reads canonical workspace entities through core. Semantic queries are a separate concern: `clearhead query` evaluates ad-hoc SPARQL and the saved query families in-process — behind the default `sparql` feature — over Core's published RDF dataset, with validation, rendering, and graph export.
 
 ## Verbs
 
@@ -36,7 +36,7 @@ the point is to keep the interface as simple and intuitive as possiible so that 
 
 ## Output
 
-CLI output covers canonical entities and mutation outcomes. graphd independently owns query output; it is not a CLI presentation layer.
+CLI output covers canonical entities and mutation outcomes; the optional `sparql` feature adds query output (SPARQL results and the index/tree/graph families).
 
 ### Destination is binary: human or machine
 
@@ -52,7 +52,7 @@ The only distinction is `isatty(stdout)` — a terminal is a human, everything e
 
 ### Explicit format flags override both
 
-Format flags are tool-local. The CLI's entity reads support their documented native, JSON-LD, table, and ID modes; graphd separately owns query formats such as NDJSON, nested JSON, and RDF serializations. `--ids` emits one UUID per line for xargs-style batch work:
+Format flags are tool-local. The CLI's entity reads support their documented native, JSON-LD, table, and ID modes; the `sparql` feature adds query formats such as NDJSON, nested JSON, and RDF serializations. `--ids` emits one UUID per line for xargs-style batch work:
 
 ```
 clearhead read actions --charter lsp --ids | xargs -I{} clearhead update action {} --state in-progress

@@ -15,7 +15,6 @@ This repository is a single Cargo workspace. The root package is
 
 - `crates/clearhead-cli` — the `clearhead` command-line client
 - `crates/clearhead-lsp` — the editor protocol server
-- `crates/clearhead-graphd` — the RDF/graph query daemon
 
 Members use ordinary sibling path dependencies, so this checkout builds and
 tests standalone: `cargo test --workspace`.

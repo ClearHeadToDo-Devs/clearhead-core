@@ -31,13 +31,13 @@ jsonschema = { version = "0.18", optional = true }
 # RDF term model and text serializers only — the small, database-free pieces of
 # the Oxigraph family. Store/SPARQL (the oxigraph crate) stays out of Core; it
 # is pulled solely by the optional CLI `sparql` feature. Versions match what
-# oxigraph 0.5.x resolves, so a graphd/CLI composition shares one copy.
+# oxigraph 0.5.x resolves, so the CLI's `sparql` build shares one copy.
 oxrdf = "0.3.3"
 oxttl = "0.2.3"
 # JSON-LD is one more text serialization of the same canonical quad set, not a
 # parallel hand-built export. oxjsonld is the Oxigraph-family codec (a sibling of
 # oxttl): database-free, quad-based, and already in our lockfile via oxigraph's
-# resolution, so a graphd/CLI composition shares one copy.
+# resolution, so the CLI's `sparql` build shares one copy.
 oxjsonld = "0.2.5"
 quick-xml = { version = "0.31", features = ["serialize"] }
 rrule = "0.14.0"

@@ -2,7 +2,7 @@
 
 **Command-line client for the ClearHead action management framework.**
 
-Work items live in plain-text `.actions` files that any editor can read and write. Recurring schedules live in `.ics` vdir files, and archived charter files remain plaintext under the workspace `archive/` directory. `clearhead` provides synchronous command and mutation workflows over `clearhead-core`, and — with its default `sparql` feature — evaluates ad-hoc and saved SPARQL queries in-process over the workspace's published RDF dataset (standard SPARQL, no query server). The remaining client-presentation query families (`index`, `tree`, `graph`, `chain`) forward to [`clearhead-graphd`](https://github.com/ClearHeadToDo-Devs/clearhead-graphd) until their consumers migrate; editor intelligence belongs to [`clearhead-lsp`](https://github.com/ClearHeadToDo-Devs/clearhead-lsp).
+Work items live in plain-text `.actions` files that any editor can read and write. Recurring schedules live in `.ics` vdir files, and archived charter files remain plaintext under the workspace `archive/` directory. `clearhead` provides synchronous command and mutation workflows over `clearhead-core`, and — with its default `sparql` feature — evaluates ad-hoc and saved SPARQL queries in-process over the workspace's published RDF dataset (standard SPARQL, no query server). The saved presentation query families (`index`, `tree`, `graph`, `chain`) run in-process too; editor intelligence belongs to [`clearhead-lsp`](https://github.com/ClearHeadToDo-Devs/clearhead-lsp).
 
 ## Installation
 
@@ -66,8 +66,8 @@ clearhead query raw 'SELECT ?s WHERE { ?s ?p ?o }' --format json   # SPARQL Resu
 clearhead query named my-saved-query        # .clearhead/queries/my-saved-query.sparql
 ```
 
-Machine output is standard SPARQL Results JSON / RDF serializations. The
-graphd-era presentation views still forward to `clearhead-graphd`:
+Machine output is standard SPARQL Results JSON / RDF serializations. The saved
+presentation views (`index`, `tree`, `graph`, `chain`) run in-process as well:
 
 ```bash
 clearhead query index agenda

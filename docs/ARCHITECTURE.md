@@ -11,7 +11,7 @@ This allows for a layer of control between core and the cli but also allows the 
 The **Rust struct (IR) is the canonical representation**. Everything else is a view or persistence mechanism.
 
 - Workspace is all the plaintext files that users interact with directly. These files are the durable source of truth and are parsed into the IR.
-- analytics tools such as our own graphd are expected to read the workspace files like any other consumer to get their information, which is why much of this functionality is within core so that all tools can leverage the same language of configuration and workspace layout
+- analytics and query tools (for example the CLI's in-process SPARQL layer) are expected to read the workspace files like any other consumer to get their information, which is why much of this functionality is within core so that all tools can leverage the same language of configuration and workspace layout
 
 ## Workspace Architecture
 
