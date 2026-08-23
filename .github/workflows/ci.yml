@@ -54,12 +54,5 @@ jobs:
       - name: WASM dependency gate
         run: sh scripts/wasm-dependency-gate.sh
 
-      # The CLI's forwarded query families compose the real sibling graphd
-      # binary from the shared workspace target dir.
-      - name: Build graphd integration dependency
-        run: cargo build -p clearhead-graphd --locked
-
       - name: Test
-        env:
-          CLEARHEAD_GRAPHD: ${{ github.workspace }}/target/debug/clearhead-graphd
         run: cargo test --workspace --locked

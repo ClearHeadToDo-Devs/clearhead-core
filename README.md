@@ -4,15 +4,26 @@ Shared Rust library implementing ClearHead specifications for reuse by clients w
 
 ## Overview
 
-ClearHead Core is the foundational library for the ClearHead ecosystem. It provides shared logic for managing actions, plans, charters, and objectives.
+ClearHead Core is the foundational library for the ClearHead ecosystem. It
+provides the shared domain model and logic for managing actions, plans, charters,
+and objectives.
 
-The workspace backend is currently the only implementation. Future backends, such as SQLite, can be introduced as explicit capabilities.
+Core is a **pure domain library**: it holds the in-memory model and the
+algorithms, and it *decides* what a workspace mutation should do — but it
+performs no I/O. Reading and durably writing files is the job of a *delivery
+adapter*. The native adapter, `clearhead-workspace-fs`, implements that boundary
+against a POSIX filesystem; a different host (for example a WASM runtime) can
+supply its own adapter without Core changing. See
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full seam.
 
 ## Repository layout
 
 This repository is a single Cargo workspace. The root package is
-`clearhead_core` (this library); the native host binaries live in `crates/`:
+`clearhead_core` (this pure library); the delivery adapter and native host
+binaries live in `crates/`:
 
+- `crates/clearhead-workspace-fs` — native filesystem delivery adapter (the I/O
+  half of the seam; loading, durable writes, calendar sync)
 - `crates/clearhead-cli` — the `clearhead` command-line client
 - `crates/clearhead-lsp` — the editor protocol server
 
@@ -23,12 +34,20 @@ tests standalone: `cargo test --workspace`.
 
 - Domain model structs and logic
   - strongly typed representations of the framework's entities
-- workspace loading
-  - domain-model loading from the canonical plaintext workspace
-- config reading and layering
-  - this includes environment variables
+- pure algorithms over the model
+  - `.actions` parsing/formatting, diff, filter, recurrence expansion,
+    reference resolution, and the RDF publication (a database-free quad
+    projection)
+- the host-neutral delivery protocol
+  - logical resource paths, snapshots, and the `EffectBatch` a host executes —
+    the contract every delivery adapter implements
+- the shared semantic config schema (`WorkspaceConfig`)
+  - Core defines the settings and precedence; a delivery adapter (e.g.
+    `clearhead-workspace-fs`) reads the actual files and environment
 
-This makes it suitable for use in:
+Loading the workspace from disk and durably persisting mutations are **not**
+Core's responsibility — they belong to a delivery adapter. This makes Core
+suitable for use in:
 
 - CLI tools such as [clearhead-cli](https://github.com/ClearHeadToDo-Devs/clearhead-core/tree/main/crates/clearhead-cli)
 - LSP servers

@@ -4,7 +4,7 @@
 //! update — as opposed to the CLI orchestration that assembles them from flags.
 //! They live here, next to [`close_subtree`](super::close_subtree) and
 //! [`collect_subtree_ids`](super::collect_subtree_ids), so every client (CLI,
-//! LSP, graphd) shares one home for the rules.
+//! LSP, and any other host) shares one home for the rules.
 //!
 //! Relocated from `clearhead_cli::mutations` by the durable-verbs charter
 //! (`relocate-updates`); moved verbatim, no behavior change. The `completed_at`

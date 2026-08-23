@@ -1,11 +1,16 @@
 //! ClearHead Core Library
 //!
-//! Shared domain and workspace services for the ClearHead framework, aligned
-//! with the Actions Vocabulary v4 ontology. The [`domain`] module contains the
-//! in-memory model and pure algorithms; [`workspace`] and [`config`] own the
-//! canonical local-file layout, persistence, and configuration semantics used
-//! consistently by the CLI, LSP, graphd, and other clients. Network transport
-//! and client-specific user interfaces remain outside this crate.
+//! Pure domain library for the ClearHead framework, aligned with the Actions
+//! Vocabulary v4 ontology. Core holds the in-memory model and the algorithms and
+//! *decides* what a workspace mutation should do, but it performs no I/O: reading
+//! bytes off disk and durably writing them is the job of a delivery adapter (the
+//! native one is `clearhead-workspace-fs`). The [`domain`] module contains the
+//! model and pure algorithms; [`workspace`] defines the DSL projection and the
+//! host-neutral delivery protocol; [`config`] defines the shared semantic config
+//! schema (a delivery adapter resolves the actual files and environment). This
+//! keeps one dialect of layout and configuration across the CLI, LSP, and any
+//! other host — native or WebAssembly. Network transport and client-specific
+//! user interfaces remain outside this crate.
 //!
 //! # Domain Model
 //!
@@ -22,8 +27,10 @@
 //!
 //! # Module Hierarchy
 //!
-//! - [`workspace`]: DSL projection — `.actions` parsing/formatting, charter discovery,
-//!   ICS plan loading, expansion, and workspace store.
+//! - [`workspace`]: DSL projection and delivery protocol — `.actions`
+//!   parsing/formatting, recurrence expansion, mutation planning, and the
+//!   host-neutral resource/effect contract adapters execute. Loading bytes from
+//!   disk lives in a delivery adapter, not here.
 //! - [`domain`]: Core structs ([`Action`], [`Plan`], [`Charter`], [`Objective`], etc.)
 //!   and the [`DomainModel`] aggregate.
 //! - [`reference`]: String-based reference resolution across the domain model

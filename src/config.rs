@@ -22,8 +22,8 @@ use std::collections::{HashMap, HashSet};
 ///
 /// Deserializable from the native adapter config sources: `#[serde(default)]`
 /// means any field absent from the config files falls back to [`Default`], so a
-/// tool that only needs the semantic fields (e.g. graphd) can read this struct
-/// straight from the shared source stack.
+/// tool that only needs the semantic fields (e.g. a read-only query consumer)
+/// can read this struct straight from the shared source stack.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct WorkspaceConfig {
