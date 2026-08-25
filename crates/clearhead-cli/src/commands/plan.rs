@@ -208,7 +208,13 @@ pub fn read_plans(
         Some(argparser::OutputMode::Table) => print_plans_table(&plans),
         None if !std::io::stdout().is_terminal() => {
             let plans: Vec<_> = plans.into_iter().map(|(_, plan)| plan).collect();
-            print!("{}", clearhead_core::plans_to_icalendar(&plans));
+            print!(
+                "{}",
+                clearhead_core::plans_to_icalendar_with_component(
+                    &plans,
+                    ctx.config.plan_component,
+                )
+            );
         }
         None => print_plans_table(&plans),
     }
@@ -429,6 +435,7 @@ fn save_plan_file(
         ctx.plan_override().as_deref(),
         path,
         plan,
+        ctx.config.plan_component,
     )
     .with_context(|| format!("Failed to write plan file '{}'", path.display()))
 }
@@ -576,7 +583,13 @@ pub fn add_plan(
     debug!(name = %name, output_file = %output_file.display(), dry_run = dry_run, "Executing Add Plan");
 
     if dry_run {
-        println!("{}", clearhead_core::plans_to_icalendar(&[new_plan]));
+        println!(
+            "{}",
+            clearhead_core::plans_to_icalendar_with_component(
+                &[new_plan],
+                ctx.config.plan_component,
+            )
+        );
     } else {
         save_plan_file(ctx, &output_file, &new_plan)?;
 
@@ -628,7 +641,13 @@ pub fn update_plan(
     let updated = plan.clone();
 
     if dry_run {
-        println!("{}", clearhead_core::plans_to_icalendar(&[updated]));
+        println!(
+            "{}",
+            clearhead_core::plans_to_icalendar_with_component(
+                &[updated],
+                ctx.config.plan_component,
+            )
+        );
     } else {
         save_plan_file(ctx, &input_file, &updated)?;
         info!(name = %updated.name, id = %updated.id, "Plan updated successfully");
@@ -658,7 +677,10 @@ pub fn delete_plan(
     debug!(query = %query, input_file = %input_file.display(), dry_run = dry_run, "Executing Delete Plan");
 
     if dry_run {
-        println!("{}", clearhead_core::plans_to_icalendar(&[plan]));
+        println!(
+            "{}",
+            clearhead_core::plans_to_icalendar_with_component(&[plan], ctx.config.plan_component,)
+        );
     } else {
         clearhead_workspace_fs::delete_plan_file(
             &ctx.data_dir,

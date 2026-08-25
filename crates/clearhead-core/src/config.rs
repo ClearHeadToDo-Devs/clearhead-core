@@ -9,6 +9,29 @@
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 
+/// RFC 5545 component used to encode Plans in the configured calendar vdir.
+///
+/// The choice changes the external integration surface, not Plan or Action
+/// domain semantics. VEVENT is the interoperable calendar default; VTODO is
+/// available for task-oriented calendar clients.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+pub enum PlanComponentKind {
+    #[default]
+    #[serde(rename = "vevent")]
+    VEvent,
+    #[serde(rename = "vtodo")]
+    VTodo,
+}
+
+impl std::fmt::Display for PlanComponentKind {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::VEvent => "vevent",
+            Self::VTodo => "vtodo",
+        })
+    }
+}
+
 /// Semantic workspace configuration shared across all ClearHead tools.
 ///
 /// Corresponds to the shared settings in `config.schema.json` in the
@@ -58,6 +81,9 @@ pub struct WorkspaceConfig {
     /// Callers resolve configured values before passing them into workspace
     /// operations.
     pub plan_path: Option<String>,
+
+    /// Component used to encode Plans in the configured iCalendar vdir.
+    pub plan_component: PlanComponentKind,
 }
 
 impl Default for WorkspaceConfig {
@@ -68,6 +94,7 @@ impl Default for WorkspaceConfig {
             additional_workspaces: Vec::new(),
             expansion_total_instances: 2,
             plan_path: None,
+            plan_component: PlanComponentKind::default(),
         }
     }
 }
@@ -273,5 +300,18 @@ mod tests {
         // must terminate
         let _ = cfg.get_tag_ancestors("a");
         let _ = cfg.get_tag_ancestors("b");
+    }
+
+    #[test]
+    fn plan_component_defaults_to_vevent() {
+        let config: WorkspaceConfig = serde_json::from_str("{}").unwrap();
+        assert_eq!(config.plan_component, PlanComponentKind::VEvent);
+    }
+
+    #[test]
+    fn plan_component_deserializes_vtodo() {
+        let config: WorkspaceConfig =
+            serde_json::from_str(r#"{"plan_component":"vtodo"}"#).unwrap();
+        assert_eq!(config.plan_component, PlanComponentKind::VTodo);
     }
 }

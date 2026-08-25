@@ -47,7 +47,7 @@
 pub mod workspace;
 
 pub mod config;
-pub use config::WorkspaceConfig;
+pub use config::{PlanComponentKind, WorkspaceConfig};
 pub use workspace::calendar::expand::render_occurrences;
 #[doc(inline)]
 pub use workspace::transaction::{TransactionOutcome, TransactionRequest};
@@ -70,9 +70,9 @@ pub use workspace::{
     infer_plan_charter_name, infer_plan_parent, occurrence_action_id, parse_actions,
     parse_actions_with_mode, parse_charter, parse_document, parse_tree, parse_trusted_document,
     parse_vtodo_actions_content, patch_action_list, plan_action_archive, plan_file_name,
-    plan_output_path, plan_sync, plan_to_vtodo, plans_root, plans_to_icalendar, prepare_sync,
-    reconcile, render_master_rollforward, render_occurrence_deviation, slugify,
-    workspace_data_root,
+    plan_output_path, plan_sync, plan_to_vevent, plan_to_vtodo, plans_root, plans_to_icalendar,
+    plans_to_icalendar_with_component, prepare_sync, reconcile, render_master_rollforward,
+    render_occurrence_deviation, render_plan_resource_with_component, slugify, workspace_data_root,
 };
 
 pub mod domain;

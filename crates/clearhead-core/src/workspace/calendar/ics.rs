@@ -1,20 +1,20 @@
 //! ICS schedule file parser and exporter.
 //!
-//! **Parse direction** (`ics → domain`): recurring VTODO components become
-//! [`Plan`]s; standalone VTODOs become [`VTodoAction`] projections.
-//! Component kind and RRULE semantics, rather than server-specific metadata or
-//! filenames, determine which domain projection is read.
+//! **Parse direction** (`ics → domain`): VEVENT components become one-off or
+//! recurring [`Plan`]s. RRULE-bearing VTODOs remain Plan-compatible while the
+//! legacy standalone-VTODO Action projection is retired in stages.
 //!
-//! **Export direction** (`domain → ics`): converts [`Plan`]s and [`Action`]s
-//! into iCalendar. Recurring Plans become VTODO masters carrying RRULE; every
-//! standalone Action becomes one VTODO whose DTSTART and DUE remain optional.
+//! **Export direction** (`domain → ics`): converts [`Plan`]s through the
+//! configured VEVENT or VTODO codec. Legacy [`Action`] VTODO helpers remain
+//! temporarily available to the existing sync path.
 
+use crate::config::PlanComponentKind;
 use crate::domain::{Action, ActionState, Plan, Recurrence};
 use crate::workspace::store::WorkspaceError;
 use chrono::{DateTime, Local, NaiveDate, NaiveDateTime, TimeZone, Utc};
 use icalendar::{
-    Calendar, CalendarComponent, CalendarDateTime, Component, DatePerhapsTime, EventLike, Todo,
-    TodoStatus,
+    Calendar, CalendarComponent, CalendarDateTime, Component, DatePerhapsTime, Event, EventLike,
+    Todo, TodoStatus,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -98,7 +98,12 @@ pub fn action_id_from_vtodo_uid(uid: &str) -> Uuid {
     Uuid::parse_str(uid).unwrap_or_else(|_| Uuid::new_v5(&VTODO_ACTION_NAMESPACE, uid.as_bytes()))
 }
 
-/// Parse recurring VTODO resources from bytes already supplied by a host.
+/// Parse Plan resources from bytes already supplied by a host.
+///
+/// VEVENT components are Plans whether one-off or recurring. During the
+/// transition from the legacy mixed VTODO surface, only RRULE-bearing VTODOs
+/// are classified as Plans; standalone VTODOs continue through the Action-sync
+/// compatibility path until one-off Plan realization replaces it.
 ///
 /// `logical_path` is provenance only; parsing never reads it.
 pub fn parse_ics(content: &str, logical_path: &Path) -> Result<Vec<ICSPlan>, WorkspaceError> {
@@ -106,10 +111,14 @@ pub fn parse_ics(content: &str, logical_path: &Path) -> Result<Vec<ICSPlan>, Wor
         .parse()
         .map_err(|e: String| WorkspaceError::Parse(e))?;
 
-    let mut plans = Vec::new();
-
-    // Collect todos once: a recurring master and its `RECURRENCE-ID` overrides
-    // are separate components that share one UID within the file.
+    let events: Vec<&Event> = calendar
+        .components
+        .iter()
+        .filter_map(|component| match component {
+            CalendarComponent::Event(event) => Some(event),
+            _ => None,
+        })
+        .collect();
     let todos: Vec<&Todo> = calendar
         .components
         .iter()
@@ -119,12 +128,33 @@ pub fn parse_ics(content: &str, logical_path: &Path) -> Result<Vec<ICSPlan>, Wor
         })
         .collect();
 
-    for todo in todos.iter().copied() {
-        // A non-recurring VTODO is an Action projection, not a Plan; a
-        // `RECURRENCE-ID` VTODO is an override of its master, attached below.
-        if todo.property_value("RRULE").is_none() {
+    let mut plans = Vec::new();
+    for event in events
+        .iter()
+        .copied()
+        .filter(|event| event.property_value("RECURRENCE-ID").is_none())
+    {
+        let Some(mut ics_plan) = component_to_plan(event, logical_path) else {
             continue;
-        }
+        };
+        let master_uid = event.get_uid();
+        ics_plan.exdates = parse_exdates(event);
+        ics_plan.overrides = events
+            .iter()
+            .copied()
+            .filter(|other| {
+                other.property_value("RECURRENCE-ID").is_some() && other.get_uid() == master_uid
+            })
+            .filter_map(override_from_event)
+            .collect();
+        plans.push(ics_plan);
+    }
+
+    for todo in todos
+        .iter()
+        .copied()
+        .filter(|todo| todo.property_value("RRULE").is_some())
+    {
         let Some(mut ics_plan) = component_to_plan(todo, logical_path) else {
             continue;
         };
@@ -144,7 +174,7 @@ pub fn parse_ics(content: &str, logical_path: &Path) -> Result<Vec<ICSPlan>, Wor
     Ok(plans)
 }
 
-/// Build an [`ICSPlan`] from a recurring VTODO's shared component fields.
+/// Build an [`ICSPlan`] from a Plan component's shared fields.
 /// Returns `None` if UID or SUMMARY is missing.
 fn component_to_plan<T: Component>(component: &T, path: &Path) -> Option<ICSPlan> {
     let uid = component.get_uid()?;
@@ -269,15 +299,36 @@ fn parse_ics_datetime_token(token: &str) -> Option<DateTime<Local>> {
 
 /// Read a master's `EXDATE` slots as canonical occurrence keys. `EXDATE` may be
 /// a single comma-joined property or repeated; both are unioned.
-fn parse_exdates(todo: &Todo) -> BTreeSet<String> {
-    let single = todo.properties().get("EXDATE").into_iter();
-    let repeated = todo.multi_properties().get("EXDATE").into_iter().flatten();
+fn parse_exdates<T: Component>(component: &T) -> BTreeSet<String> {
+    let single = component.properties().get("EXDATE").into_iter();
+    let repeated = component
+        .multi_properties()
+        .get("EXDATE")
+        .into_iter()
+        .flatten();
     single
         .chain(repeated)
         .flat_map(|property| property.value().split(','))
         .filter_map(parse_ics_datetime_token)
         .map(canonical_occurrence_key)
         .collect()
+}
+
+/// Build one schedule-only occurrence override from a `RECURRENCE-ID` VEVENT.
+fn override_from_event(event: &Event) -> Option<(String, OccurrenceOverride)> {
+    let slot = parse_ics_datetime_token(event.property_value("RECURRENCE-ID")?)?;
+    let over = OccurrenceOverride {
+        scheduled_at: event.get_start().and_then(date_perhaps_time_to_local),
+        due_date: event.get_end().and_then(date_perhaps_time_to_local),
+        state: ActionState::NotStarted,
+        completed_at: None,
+        title: event.get_summary().map(str::to_string),
+        description: event
+            .get_description()
+            .filter(|value| !value.is_empty())
+            .map(str::to_string),
+    };
+    Some((canonical_occurrence_key(slot), over))
 }
 
 /// Build one occurrence override from a `RECURRENCE-ID` VTODO. Returns `None`
@@ -621,10 +672,35 @@ fn split_text_list(value: &str) -> Vec<String> {
 // ============================================================================
 
 /// Convert one recurring [`Plan`] to its canonical VTODO master.
-///
-/// `external_id` is the interoperable RFC 5545 UID when present; locally
-/// authored Plans fall back to their domain UUID. Plan names map to SUMMARY,
-/// recurrence to RRULE, and the optional template directive leads DESCRIPTION.
+/// Populate the fields shared by both Plan component codecs.
+fn populate_plan_component<T: Component + EventLike>(component: &mut T, plan: &Plan) {
+    component.remove_property("SUMMARY").summary(&plan.name);
+    component.remove_starts();
+    if let Some(dtstart) = plan.dtstart {
+        component.starts(dtstart.with_timezone(&Utc));
+    }
+    component.remove_property("RRULE");
+    if let Some(recurrence) = &plan.recurrence {
+        let recurrence = recurrence.to_string();
+        component.add_property(
+            "RRULE",
+            recurrence.strip_prefix("R:").unwrap_or(&recurrence),
+        );
+    }
+    component.remove_description();
+    let mut description = Vec::new();
+    if let Some(template) = &plan.template_name {
+        description.push(format!("template: {template}"));
+    }
+    if let Some(text) = &plan.description {
+        description.push(text.clone());
+    }
+    if !description.is_empty() {
+        component.description(&description.join("\n"));
+    }
+}
+
+/// Convert one [`Plan`] to the VTODO Plan codec.
 pub fn plan_to_vtodo(plan: &Plan) -> Todo {
     let mut todo = Todo::new();
     let uid = plan
@@ -632,98 +708,101 @@ pub fn plan_to_vtodo(plan: &Plan) -> Todo {
         .clone()
         .unwrap_or_else(|| plan.id.to_string());
     todo.uid(&uid);
-    todo.summary(&plan.name);
-
-    if let Some(dtstart) = plan.dtstart {
-        todo.starts(dtstart.with_timezone(&Utc));
-    }
-    if let Some(recurrence) = &plan.recurrence {
-        let rrule = recurrence.to_string();
-        todo.add_property("RRULE", rrule.strip_prefix("R:").unwrap_or(&rrule));
-    }
-
-    let mut description = Vec::new();
-    if let Some(template) = &plan.template_name {
-        description.push(format!("template: {template}"));
-    }
-    if let Some(text) = &plan.description {
-        description.push(text.clone());
-    }
-    if !description.is_empty() {
-        todo.description(&description.join("\n"));
-    }
-
+    populate_plan_component(&mut todo, plan);
     todo.done()
 }
 
-/// Convert recurring [`Plan`]s to the canonical ClearHead Plan calendar.
-pub fn plans_to_icalendar(plans: &[Plan]) -> String {
+/// Convert one [`Plan`] to the default VEVENT Plan codec.
+pub fn plan_to_vevent(plan: &Plan) -> Event {
+    let mut event = Event::new();
+    let uid = plan
+        .external_id
+        .clone()
+        .unwrap_or_else(|| plan.id.to_string());
+    event.uid(&uid);
+    populate_plan_component(&mut event, plan);
+    event.done()
+}
+
+/// Convert [`Plan`]s to an iCalendar document using the selected component.
+pub fn plans_to_icalendar_with_component(
+    plans: &[Plan],
+    component_kind: PlanComponentKind,
+) -> String {
     let mut calendar = Calendar::new()
         .name("ClearHead Plans")
         .description("Schedules managed by ClearHead")
         .done();
 
     for plan in plans {
-        calendar.push(plan_to_vtodo(plan));
+        match component_kind {
+            PlanComponentKind::VEvent => calendar.push(plan_to_vevent(plan)),
+            PlanComponentKind::VTodo => calendar.push(plan_to_vtodo(plan)),
+        };
     }
 
     calendar.to_string()
 }
 
-/// Render one Plan resource while preserving unowned calendar content.
+/// Convert Plans to the legacy VTODO representation.
 ///
-/// A missing source creates a canonical one-component VCALENDAR. An existing
-/// source is patched surgically: alarms, vendor properties, calendar metadata,
-/// overrides, and transport-selected content remain untouched.
-pub fn render_plan_resource(existing: Option<&str>, plan: &Plan) -> Result<String, WorkspaceError> {
+/// New call sites should use [`plans_to_icalendar_with_component`].
+pub fn plans_to_icalendar(plans: &[Plan]) -> String {
+    plans_to_icalendar_with_component(plans, PlanComponentKind::VTodo)
+}
+
+/// Render one Plan resource while preserving unowned calendar content.
+pub fn render_plan_resource_with_component(
+    existing: Option<&str>,
+    plan: &Plan,
+    component_kind: PlanComponentKind,
+) -> Result<String, WorkspaceError> {
     let Some(existing) = existing else {
-        return Ok(plans_to_icalendar(std::slice::from_ref(plan)));
+        return Ok(plans_to_icalendar_with_component(
+            std::slice::from_ref(plan),
+            component_kind,
+        ));
     };
     let mut calendar: Calendar = existing.parse().map_err(WorkspaceError::Parse)?;
     let uid = plan
         .external_id
         .clone()
         .unwrap_or_else(|| plan.id.to_string());
-    let todo = calendar
-        .components
-        .iter_mut()
-        .find_map(|component| match component {
-            CalendarComponent::Todo(todo)
+    let mut found = false;
+    for component in &mut calendar.components {
+        match (component_kind, component) {
+            (PlanComponentKind::VEvent, CalendarComponent::Event(event))
+                if event.get_uid() == Some(uid.as_str())
+                    && event.property_value("RECURRENCE-ID").is_none() =>
+            {
+                populate_plan_component(event, plan);
+                found = true;
+                break;
+            }
+            (PlanComponentKind::VTodo, CalendarComponent::Todo(todo))
                 if todo.get_uid() == Some(uid.as_str())
-                    && todo.property_value("RRULE").is_some()
                     && todo.property_value("RECURRENCE-ID").is_none() =>
             {
-                Some(todo)
+                populate_plan_component(todo, plan);
+                found = true;
+                break;
             }
-            _ => None,
-        })
-        .ok_or_else(|| WorkspaceError::Parse(format!("recurring master VTODO {uid} not found")))?;
-
-    todo.remove_property("SUMMARY").summary(&plan.name);
-    todo.remove_starts();
-    if let Some(dtstart) = plan.dtstart {
-        todo.starts(dtstart.with_timezone(&Utc));
+            _ => {}
+        }
     }
-    todo.remove_property("RRULE");
-    if let Some(recurrence) = &plan.recurrence {
-        let recurrence = recurrence.to_string();
-        todo.add_property(
-            "RRULE",
-            recurrence.strip_prefix("R:").unwrap_or(&recurrence),
-        );
-    }
-    todo.remove_description();
-    let mut description = Vec::new();
-    if let Some(template) = &plan.template_name {
-        description.push(format!("template: {template}"));
-    }
-    if let Some(text) = &plan.description {
-        description.push(text.clone());
-    }
-    if !description.is_empty() {
-        todo.description(&description.join("\n"));
+    if !found {
+        return Err(WorkspaceError::Parse(format!(
+            "Plan {uid} not found as configured {component_kind} component"
+        )));
     }
     Ok(calendar.to_string())
+}
+
+/// Render a Plan through the legacy VTODO codec.
+///
+/// New call sites should use [`render_plan_resource_with_component`].
+pub fn render_plan_resource(existing: Option<&str>, plan: &Plan) -> Result<String, WorkspaceError> {
+    render_plan_resource_with_component(existing, plan, PlanComponentKind::VTodo)
 }
 
 /// Map [`ActionState`] to the closest standard iCalendar [`TodoStatus`].
@@ -1028,6 +1107,45 @@ mod tests {
     }
 
     #[test]
+    fn parses_one_off_vevent_as_plan() {
+        let f = write_ics(
+            "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\n\
+             UID:focus@example.com\r\nSUMMARY:Focus block\r\n\
+             DTSTART:20260504T090000Z\r\nDTEND:20260504T100000Z\r\n\
+             END:VEVENT\r\nEND:VCALENDAR\r\n",
+        );
+        let plans = parse_ics_file(f.path()).unwrap();
+        assert_eq!(plans.len(), 1);
+        assert_eq!(plans[0].plan.name, "Focus block");
+        assert!(plans[0].plan.recurrence.is_none());
+        assert_eq!(
+            plans[0].plan.external_id.as_deref(),
+            Some("focus@example.com")
+        );
+    }
+
+    #[test]
+    fn parses_recurring_vevent_with_rescheduled_override() {
+        let f = write_ics(
+            "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\n\
+             UID:focus@example.com\r\nSUMMARY:Focus block\r\n\
+             DTSTART:20260504T090000Z\r\nRRULE:FREQ=DAILY\r\nEND:VEVENT\r\n\
+             BEGIN:VEVENT\r\nUID:focus@example.com\r\nSUMMARY:Focus block\r\n\
+             RECURRENCE-ID:20260505T090000Z\r\nDTSTART:20260505T110000Z\r\n\
+             DTEND:20260505T120000Z\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n",
+        );
+        let plans = parse_ics_file(f.path()).unwrap();
+        assert_eq!(plans.len(), 1);
+        let override_ = plans[0].overrides.get("20260505T090000Z").unwrap();
+        assert_eq!(
+            override_.scheduled_at.unwrap().with_timezone(&Utc).hour(),
+            11
+        );
+        assert_eq!(override_.due_date.unwrap().with_timezone(&Utc).hour(), 12);
+        assert_eq!(override_.state, ActionState::NotStarted);
+    }
+
+    #[test]
     fn standalone_parse_ignores_masters_and_overrides() {
         // A recurring master and its RECURRENCE-ID override are Plan/deviation, not
         // standalone Actions — the standalone reader must skip both, or the sync
@@ -1223,6 +1341,52 @@ mod tests {
             round_trip.dtstart.map(|value| value.timestamp()),
             plan.dtstart.map(|value| value.timestamp())
         );
+    }
+
+    #[test]
+    fn vevent_plan_serialization_is_the_configurable_default_shape() {
+        let plan = Plan {
+            id: plan_id_from_ics_uid("focus@example.com"),
+            name: "Focus block".to_string(),
+            recurrence: Recurrence::from_rrule_str("FREQ=WEEKLY"),
+            external_id: Some("focus@example.com".to_string()),
+            dtstart: Some(
+                Utc.with_ymd_and_hms(2026, 8, 10, 14, 30, 0)
+                    .unwrap()
+                    .with_timezone(&Local),
+            ),
+            ..Default::default()
+        };
+
+        let calendar = plans_to_icalendar_with_component(
+            std::slice::from_ref(&plan),
+            PlanComponentKind::VEvent,
+        );
+        assert!(calendar.contains("BEGIN:VEVENT"));
+        assert!(!calendar.contains("BEGIN:VTODO"));
+        let parsed = parse_ics(&calendar, Path::new("focus.ics")).unwrap();
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].plan.external_id, plan.external_id);
+        assert_eq!(parsed[0].plan.recurrence, plan.recurrence);
+    }
+
+    #[test]
+    fn vevent_plan_patch_preserves_vendor_properties_and_alarms() {
+        let source = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nX-WR-CALNAME:Foreign\r\nBEGIN:VEVENT\r\nUID:focus@example.com\r\nSUMMARY:Old\r\nDTSTART:20260810T143000Z\r\nRRULE:FREQ=WEEKLY\r\nX-VENDOR-KEEP:yes\r\nBEGIN:VALARM\r\nACTION:DISPLAY\r\nTRIGGER:-PT15M\r\nDESCRIPTION:Reminder\r\nEND:VALARM\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+        let mut plan = parse_ics(source, Path::new("focus.ics")).unwrap()[0]
+            .plan
+            .clone();
+        plan.name = "Updated".into();
+
+        let rendered =
+            render_plan_resource_with_component(Some(source), &plan, PlanComponentKind::VEvent)
+                .unwrap();
+
+        assert!(rendered.contains("SUMMARY:Updated"));
+        assert!(rendered.contains("X-VENDOR-KEEP:yes"));
+        assert!(rendered.contains("BEGIN:VALARM"));
+        assert!(rendered.contains("TRIGGER:-PT15M"));
+        assert!(rendered.contains("X-WR-CALNAME:Foreign"));
     }
 
     #[test]

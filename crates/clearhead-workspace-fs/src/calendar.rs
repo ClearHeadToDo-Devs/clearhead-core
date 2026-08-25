@@ -7,11 +7,12 @@ use chrono::Local;
 use uuid::Uuid;
 
 use crate::durability::{WorkspaceLock, recover_pending};
+use clearhead_core::PlanComponentKind;
 use clearhead_core::domain::DomainModel;
 use clearhead_core::workspace::OccurrenceOp;
 use clearhead_core::workspace::calendar::ics::{
     ICSPlan, VTodoAction, parse_ics, parse_vtodo_actions_content, render_occurrence_deviation,
-    render_plan_resource,
+    render_plan_resource_with_component,
 };
 use clearhead_core::workspace::calendar::plans::{
     infer_plan_charter_name_for_workspace, infer_plan_parent_for_workspace,
@@ -845,6 +846,7 @@ pub fn write_plan_file(
     configured_external: Option<&Path>,
     path: &Path,
     plan: &Plan,
+    component_kind: PlanComponentKind,
 ) -> Result<(), WorkspaceError> {
     let (mounts, location, target) = mutation_target(workspace_root, configured_external, path)?;
     let journal_dir = mounts.workspace.join("charters");
@@ -867,7 +869,7 @@ pub fn write_plan_file(
         }
         Err(error) => return Err(error.into()),
     };
-    let rendered = render_plan_resource(source.as_deref(), plan)?;
+    let rendered = render_plan_resource_with_component(source.as_deref(), plan, component_kind)?;
     let effects = EffectBatch::new(
         vec![Effect::Write {
             path: location.clone(),

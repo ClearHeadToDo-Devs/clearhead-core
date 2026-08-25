@@ -44,8 +44,9 @@ pub use archive_facts::ArchivedActionFact;
 pub use calendar::ics::{
     ICSPlan, OccurrenceOp, OccurrenceOverride, VTodoAction, action_id_from_vtodo_uid,
     action_to_vtodo, actions_to_icalendar, canonical_occurrence_key, occurrence_action_id,
-    parse_ics, parse_vtodo_actions_content, plan_to_vtodo, plans_to_icalendar,
-    render_master_rollforward, render_occurrence_deviation,
+    parse_ics, parse_vtodo_actions_content, plan_to_vevent, plan_to_vtodo, plans_to_icalendar,
+    plans_to_icalendar_with_component, render_master_rollforward, render_occurrence_deviation,
+    render_plan_resource_with_component,
 };
 pub use calendar::plans::{
     action_mirror_path, charter_plans_dir_relative, infer_plan_charter_name, infer_plan_parent,

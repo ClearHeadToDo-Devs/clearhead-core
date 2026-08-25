@@ -97,6 +97,10 @@ fn print_config_section(ctx: &CommandContext) {
             ))
             .unwrap_or_else(|| "<unset> — plans live under the workspace's own plans/".to_string()),
     );
+    println!(
+        "  plan_component: {}  [override: CLEARHEAD_PLAN_COMPONENT | project config.local.json]",
+        ctx.config.plan_component,
+    );
 }
 
 fn print_workspace_section(ctx: &CommandContext) -> anyhow::Result<()> {

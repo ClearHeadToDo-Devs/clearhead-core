@@ -195,6 +195,7 @@ impl CommandContext {
             tag_hierarchies: self.config.tag_hierarchies.clone(),
             expansion_total_instances: self.config.expansion_total_instances,
             plan_path: resolved_plan_path,
+            plan_component: self.config.plan_component,
             additional_workspaces: resolved_additional
                 .into_iter()
                 .map(|p| p.to_string_lossy().into_owned())

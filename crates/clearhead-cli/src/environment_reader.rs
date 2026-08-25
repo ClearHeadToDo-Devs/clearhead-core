@@ -61,6 +61,11 @@ pub struct Config {
     #[serde(default)]
     pub plan_path: Option<String>,
 
+    // RFC 5545 component used for Plan resources. VEVENT is the calendar-native
+    // default; VTODO remains available for task-oriented clients.
+    #[serde(default)]
+    pub plan_component: clearhead_core::PlanComponentKind,
+
     // CLI-specific settings (cli_ prefix)
     #[serde(default = "default_format")]
     pub cli_format: String,
