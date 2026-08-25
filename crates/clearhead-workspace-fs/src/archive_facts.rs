@@ -101,6 +101,7 @@ mod tests {
             action_id.to_string(),
             ActionMeta {
                 created: None,
+                plan: None,
                 occurrence: Some(occurrence.clone()),
             },
         );

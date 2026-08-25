@@ -62,6 +62,14 @@ pub struct ActionMeta {
     /// When this action was first created by tooling.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub created: Option<DateTime<Local>>,
+    /// Durable semantic link to the iCalendar Plan this Action realizes.
+    ///
+    /// Unlike merge bases in the machine-local projection store, this relation
+    /// survives projection resets and arbitrary calendar-created UIDs. A
+    /// one-off Plan has no occurrence key; a recurring instance records its
+    /// immutable canonical slot.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plan: Option<ActionPlanLink>,
     /// Frozen lineage for an archived materialized recurring occurrence.
     ///
     /// Live occurrence lineage is hydrated from the plans sync store because it is
@@ -70,6 +78,18 @@ pub struct ActionMeta {
     /// not change what this completed instance realized.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub occurrence: Option<OccurrenceSnapshot>,
+}
+
+/// Link from one Action to the Plan or recurring Plan occurrence it realizes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ActionPlanLink {
+    /// Interoperable RFC 5545 UID. It may be arbitrary text when authored by a
+    /// calendar client and therefore must not be parsed as an Action UUID.
+    pub uid: String,
+    /// Canonical RECURRENCE-ID slot for recurring realizations. Omitted for a
+    /// one-off Plan.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub occurrence_key: Option<String>,
 }
 
 /// Durable lineage captured when a materialized recurring occurrence closes.
@@ -264,6 +284,34 @@ mod tests {
         assert_eq!(parsed.actions.len(), 1);
         let action = &parsed.actions["019dad29-c05d-7781-a92c-40d71adfb88e"];
         assert!(action.created.is_some());
+    }
+
+    #[test]
+    fn action_plan_link_roundtrips_arbitrary_uid_and_occurrence_key() {
+        let mut meta = CharterMetadata::default();
+        meta.actions.insert(
+            "019dad29-c05d-7781-a92c-40d71adfb88e".to_string(),
+            ActionMeta {
+                plan: Some(ActionPlanLink {
+                    uid: "foreign-plan@example.test".to_string(),
+                    occurrence_key: Some("20260825T160000Z".to_string()),
+                }),
+                ..Default::default()
+            },
+        );
+
+        let json = render_sidecar(&meta).unwrap();
+        let parsed = parse_sidecar(&json).unwrap();
+        assert_eq!(
+            parsed.actions["019dad29-c05d-7781-a92c-40d71adfb88e"]
+                .plan
+                .as_ref()
+                .unwrap(),
+            &ActionPlanLink {
+                uid: "foreign-plan@example.test".to_string(),
+                occurrence_key: Some("20260825T160000Z".to_string()),
+            }
+        );
     }
 
     #[test]

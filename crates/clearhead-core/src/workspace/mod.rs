@@ -75,8 +75,8 @@ pub use resource::{
 };
 pub use selector::ActionSelector;
 pub use sidecar::{
-    ActionMeta, CharterMeta, CharterMetadata, OccurrenceSnapshot, hydrate_actions, parse_sidecar,
-    record_charter_id, render_sidecar, sidecar_path, stamp_metadata_entries,
+    ActionMeta, ActionPlanLink, CharterMeta, CharterMetadata, OccurrenceSnapshot, hydrate_actions,
+    parse_sidecar, record_charter_id, render_sidecar, sidecar_path, stamp_metadata_entries,
 };
 pub use transaction::{
     ActionUpdateSet, FileState, NormalizedOperation, Operation, PreparedTransactionOutcome,

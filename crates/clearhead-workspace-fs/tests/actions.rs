@@ -49,6 +49,7 @@ fn delete_removes_active_subtree_and_prunes_sidecar_in_same_batch() {
             id.to_string(),
             ActionMeta {
                 created: Some(chrono::Local::now()),
+                plan: None,
                 occurrence: None,
             },
         );
