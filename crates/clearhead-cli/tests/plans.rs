@@ -136,7 +136,7 @@ fn test_read_plans_honors_ids_and_jsonld_formats() {
 }
 
 #[test]
-fn test_import_plans_splits_multi_vtodo_ics_into_vdir_files() {
+fn test_import_plans_converts_multi_vtodo_ics_to_configured_vdir_files() {
     let env = TestEnv::new();
     env.write_actions("bulk-export.actions", "");
     let source = env.data_dir.join("bulk-export.ics");
@@ -155,7 +155,8 @@ fn test_import_plans_splits_multi_vtodo_ics_into_vdir_files() {
         ));
     let plans_dir = env.data_dir.join("plans").join("bulk-export");
     let first = fs::read_to_string(plans_dir.join("plan-one@example.com.ics")).unwrap();
-    assert!(first.contains("BEGIN:VTODO"), "{first}");
+    assert!(first.contains("BEGIN:VEVENT"), "{first}");
+    assert!(!first.contains("BEGIN:VTODO"), "{first}");
     assert!(first.contains("RRULE:FREQ=WEEKLY"), "{first}");
     assert!(plans_dir.join("plan-two@example.com.ics").exists());
     env.command()
@@ -247,11 +248,10 @@ fn test_import_plans_overwrites_existing_uid_with_flag() {
         .assert()
         .success()
         .stdout(predicate::str::contains("(1 overwritten)"));
-    assert!(
-        fs::read_to_string(existing)
-            .unwrap()
-            .contains("SUMMARY:New Focus")
-    );
+    let content = fs::read_to_string(existing).unwrap();
+    assert!(content.contains("SUMMARY:New Focus"), "{content}");
+    assert!(content.contains("BEGIN:VEVENT"), "{content}");
+    assert!(!content.contains("BEGIN:VTODO"), "{content}");
 }
 
 #[test]
@@ -300,7 +300,7 @@ fn test_add_command_with_options() {
 }
 
 #[test]
-fn test_add_plan_file_flag_writes_single_todo_file_to_explicit_path() {
+fn test_add_plan_file_flag_writes_configured_event_to_explicit_path() {
     let env = TestEnv::new();
     let output = env
         .data_dir
@@ -321,7 +321,8 @@ fn test_add_plan_file_flag_writes_single_todo_file_to_explicit_path() {
         .success();
     let content = fs::read_to_string(&output).unwrap();
     assert!(content.contains("SUMMARY:Focus Block"));
-    assert!(content.contains("BEGIN:VTODO"));
+    assert!(content.contains("BEGIN:VEVENT"));
+    assert!(!content.contains("BEGIN:VTODO"));
 }
 
 #[test]

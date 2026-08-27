@@ -768,28 +768,40 @@ pub fn render_plan_resource_with_component(
         .external_id
         .clone()
         .unwrap_or_else(|| plan.id.to_string());
-    let mut found = false;
-    for component in &mut calendar.components {
+    let matching_master = calendar
+        .components
+        .iter()
+        .position(|component| match component {
+            CalendarComponent::Event(event) => {
+                event.get_uid() == Some(uid.as_str())
+                    && event.property_value("RECURRENCE-ID").is_none()
+            }
+            CalendarComponent::Todo(todo) => {
+                todo.get_uid() == Some(uid.as_str())
+                    && todo.property_value("RECURRENCE-ID").is_none()
+            }
+            _ => false,
+        });
+    let found = if let Some(index) = matching_master {
+        let component = &mut calendar.components[index];
         match (component_kind, component) {
-            (PlanComponentKind::VEvent, CalendarComponent::Event(event))
-                if event.get_uid() == Some(uid.as_str())
-                    && event.property_value("RECURRENCE-ID").is_none() =>
-            {
+            (PlanComponentKind::VEvent, CalendarComponent::Event(event)) => {
                 populate_plan_component(event, plan);
-                found = true;
-                break;
             }
-            (PlanComponentKind::VTodo, CalendarComponent::Todo(todo))
-                if todo.get_uid() == Some(uid.as_str())
-                    && todo.property_value("RECURRENCE-ID").is_none() =>
-            {
+            (PlanComponentKind::VTodo, CalendarComponent::Todo(todo)) => {
                 populate_plan_component(todo, plan);
-                found = true;
-                break;
             }
-            _ => {}
+            (PlanComponentKind::VEvent, component) => {
+                *component = CalendarComponent::Event(plan_to_vevent(plan));
+            }
+            (PlanComponentKind::VTodo, component) => {
+                *component = CalendarComponent::Todo(plan_to_vtodo(plan));
+            }
         }
-    }
+        true
+    } else {
+        false
+    };
     if !found {
         return Err(WorkspaceError::Parse(format!(
             "Plan {uid} not found as configured {component_kind} component"
@@ -1386,6 +1398,24 @@ mod tests {
         assert!(rendered.contains("X-VENDOR-KEEP:yes"));
         assert!(rendered.contains("BEGIN:VALARM"));
         assert!(rendered.contains("TRIGGER:-PT15M"));
+        assert!(rendered.contains("X-WR-CALNAME:Foreign"));
+    }
+
+    #[test]
+    fn plan_resource_patch_converts_legacy_vtodo_to_configured_vevent() {
+        let source = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nX-WR-CALNAME:Foreign\r\nBEGIN:VTODO\r\nUID:weekly@example.com\r\nSUMMARY:Old\r\nDTSTART:20260810T143000Z\r\nRRULE:FREQ=WEEKLY\r\nEND:VTODO\r\nEND:VCALENDAR\r\n";
+        let mut plan = parse_ics(source, Path::new("weekly.ics")).unwrap()[0]
+            .plan
+            .clone();
+        plan.name = "Updated".into();
+
+        let rendered =
+            render_plan_resource_with_component(Some(source), &plan, PlanComponentKind::VEvent)
+                .unwrap();
+
+        assert!(rendered.contains("BEGIN:VEVENT"));
+        assert!(!rendered.contains("BEGIN:VTODO"));
+        assert!(rendered.contains("SUMMARY:Updated"));
         assert!(rendered.contains("X-WR-CALNAME:Foreign"));
     }
 
