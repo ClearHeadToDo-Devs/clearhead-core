@@ -1,10 +1,10 @@
-# Contributors Guide
+# Contributors guide
 
-Welcome! This document contains technical details for developers working on `clearhead_cli`.
+Technical guidance for developers working on `clearhead_cli`:
 
-We cover each section in its own document:
-
-- [Architecture](ARCHITECTURE.md): An overview of the architecture of the tool and how the different components fit together.
-- [Testing](TESTING.md): An overview of the testing strategy and how to write tests
-- [LSP Server](LSP.md): An overview of the LSP server and how to interact with it
-- [User Interface](UI.md): An overview of the user interface and how to design it
+- [Workspace architecture](../../../docs/ARCHITECTURE.md) defines the Core,
+  native-adapter, and host boundaries.
+- [Testing](TESTING.md) describes the CLI test strategy.
+- [User Interface](UI.md) describes terminal presentation conventions.
+- The sibling [`clearhead-lsp`](../../clearhead-lsp/README.md) README documents
+  the standalone editor protocol host.

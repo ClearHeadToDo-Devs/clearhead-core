@@ -66,7 +66,7 @@ clearhead read actions --charter inbox | clearhead update action --state in-prog
 
 ### Interactive UI is out of scope (for now)
 
-The terminal renders above are **static** — format a result, print it, exit; `display/tree.rs` is a pure `DomainModel → String` with no event loop. A live, navigable, keybound view is a genuinely separate tool, and — as graphd is to the graph engine — it would be its own binary consuming this output, not a mode of the CLI. It is deferred, not designed here; nothing in this contract assumes it.
+The terminal renders above are **static** — format a result, print it, exit; `display/tree.rs` is a pure `DomainModel → String` with no event loop. A live, navigable, keybound view is a genuinely separate client consuming this output, not a mode of the CLI. It is deferred, not designed here; nothing in this contract assumes it.
 
 ## Flags
 

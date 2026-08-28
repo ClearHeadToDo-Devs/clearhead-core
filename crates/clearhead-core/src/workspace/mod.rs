@@ -1,11 +1,11 @@
 //! Workspace (DSL) projection.
 //!
-//! This module owns the `.actions` file format and `.md` charter parsing,
-//! plus the `WorkspaceStore` trait for discovering and persisting workspace
-//! content on disk or in memory.
+//! This module owns host-neutral workspace representations, snapshot assembly,
+//! mutation planning, and the resource/effect protocol. It parses bytes already
+//! supplied by a host and never discovers or persists native resources itself.
 //!
-//! It speaks `DomainModel` at its boundary — callers convert to/from the
-//! domain IR, and the workspace module handles the DSL details.
+//! It speaks `DomainModel` at its semantic boundary; delivery adapters observe
+//! physical resources and execute the effects Core prepares.
 
 pub mod action_files;
 pub mod actions;

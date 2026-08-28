@@ -10,9 +10,9 @@
 //! and mirroring the live directory tree would reintroduce the sibling-alias
 //! collisions the flat scheme exists to avoid. Because discovery only recurses
 //! into `charters/`, the moved files drop out of the default read automatically
-//! while staying fully parseable when the graph binary needs them. Any RDF view
-//! is regenerated on read, exactly like live data — this is what lets
-//! `clearhead-core` shed Oxigraph: archival no longer writes Turtle.
+//! while staying fully parseable by Core's workspace assembly. Any RDF view is
+//! regenerated from the loaded model, exactly like live data; archival never
+//! writes Turtle.
 //!
 //! Crystallization is *almost* a verbatim relocation. Child 1's one content
 //! side effect is self-containment: the sidecar's own `charter.id` is stamped

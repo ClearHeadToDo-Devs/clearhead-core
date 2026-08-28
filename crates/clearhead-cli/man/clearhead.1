@@ -57,10 +57,12 @@ clearhead \- plaintext action management: read, write, query, and archive .actio
 ClearHead is a plaintext-first personal action management system.
 Work items (\fIactions\fR) live in \fB.actions\fR files that any text editor can read and write.
 Recurring schedules live in \fB.ics\fR (vdir) files.
-Completed history is accumulated in a single \fBarchive.ttl\fR Turtle file.
+Completed actions remain plaintext in \fB.completed.actions\fR files; archived
+charters move as UUID-addressed plaintext facts under \fBarchive/\fR.
 .PP
-\fBclearhead\fR is the command-line interface and LSP server for the workspace.
-It follows a \fIverb\-noun\fR command structure:
+\fBclearhead\fR is the synchronous command-line host for the workspace.
+Editor intelligence is provided by the standalone \fBclearhead-lsp\fR process.
+The CLI follows a \fIverb\-noun\fR command structure:
 .EX
     clearhead read actions
     clearhead add action "Buy oat milk" \-\-charter inbox
@@ -196,8 +198,9 @@ Show only charters backed by a \fB.md\fR or \fBREADME.md\fR file;
 omit charters inferred from \fB.actions\fR file stems alone.
 .RE
 .PP
-Graph queries are provided by the separate \fBclearhead-graphd\fR tool. For
-example, run \fBclearhead-graphd query index agenda\fR for the daily agenda.
+Workspace queries run in-process through \fBclearhead query\fR over Core's
+canonical RDF dataset. For example, run
+\fBclearhead query index agenda\fR for the daily agenda.
 .\" --------------------------------------------------------------------
 .SS "show \(em inspect a single item"
 .PP
@@ -425,8 +428,8 @@ Print action counts without writing.
 [\fB\-\-force\fR]
 [\fB\-\-dry\-run\fR]
 .PP
-Sweep a fully closed charter's artifacts into \fBarchive.ttl\fR and remove
-its source files.
+Crystallize a fully closed charter's artifacts into the workspace
+\fBarchive/\fR region and remove its live source files.
 The charter must carry \fBstate: Closed\fR in its frontmatter (set with
 \fBupdate charter \-\-state closed\fR).
 .RS 4
@@ -450,13 +453,16 @@ Print what would be archived without writing or deleting.
 What \fBarchive charter\fR does:
 .RS 4
 .IP \(bu 4
-Completed actions from \fB<charter>.completed.actions\fR \(-> \fBarchive.ttl\fR
+Move charter Markdown, actions, completed actions, sidecar metadata, and owned
+supporting files into \fBarchive/\fR with the charter UUID as the stable stem
 .IP \(bu 4
-Plan VTODOs from \fBplans/<charter>/\fR \(-> \fBarchive.ttl\fR
+Normalize the archived parent edge to a UUID so flattened facts remain
+self-contained
 .IP \(bu 4
-Charter metadata itself \(-> \fBarchive.ttl\fR
+Commit the move as one recoverable batch and collapse empty live directories
 .IP \(bu 4
-Empty source files and directories are removed
+Leave Plan resources in the configured vdir untouched; calendar projection
+lifecycle is independent of charter archival
 .RE
 .\" --------------------------------------------------------------------
 .SS "format \(em normalise file layout"
@@ -542,16 +548,6 @@ File containing updates to apply.
 Overwrite \fIprimary\fR with the merged result.
 .RE
 .\" --------------------------------------------------------------------
-.SS "expand \(em materialise scheduled instances"
-.PP
-.B clearhead expand actions
-[\fIfile\fR]
-[\fB\-\-dry\-run\fR]
-.PP
-Expand recurring Plans (\fB.ics\fR VTODOs) into concrete action instances in
-the corresponding \fB.actions\fR files.
-Generates up to \fBexpansion_primary_instances\fR actions into the primary
-\fB.actions\fR file and additional instances into \fB.upcoming.actions\fR.
 .\" --------------------------------------------------------------------
 .SS "apply \(em instantiate a template"
 .PP
@@ -614,11 +610,13 @@ Defaults to the source filename stem.
 Replace existing \fI<UID>.ics\fR files when a UID collision occurs.
 .RE
 .\" --------------------------------------------------------------------
-.SS "graph queries"
+.SS "query \(em evaluate the workspace projection"
 .PP
-SPARQL execution, saved query families, validation, and query output formats
-belong to the independently installed \fBclearhead-graphd\fR tool. The CLI does
-not proxy that interface. See \fBclearhead-graphd --help\fR.
+\fBclearhead query\fR loads Core's canonical RDF dataset into a fresh,
+in-memory SPARQL store. \fBraw\fR and \fBnamed\fR evaluate standard SPARQL;
+\fBindex\fR, \fBtree\fR, \fBgraph\fR, and \fBchain\fR add validated presentation
+families. The default \fBsparql\fR feature owns this ephemeral evaluator; it is
+never a persistent database or network service.
 .\" --------------------------------------------------------------------
 .SS "sync \(em synchronise with external systems"
 .PP
@@ -774,12 +772,11 @@ The nearest ancestor directory containing a \fB.clearhead/\fR subdirectory.
 .B Directory layout
 .EX
     <workspace>/
-    ├── archive.ttl              # closed history (Turtle RDF)
+    ├── archive/                 # UUID-addressed plaintext charter history
     ├── charters/
     │   ├── inbox.actions        # default capture zone
     │   ├── <charter>.actions    # flat charter actions
     │   ├── <charter>.completed.actions
-    │   ├── <charter>.upcoming.actions
     │   ├── <charter>.md         # charter metadata / description
     │   └── <charter>/           # directory-form charter
     │       ├── README.md
@@ -798,9 +795,10 @@ For a project workspace, all of the above lives inside \fB.clearhead/\fR at
 the project root.
 The root charter's actions are at \fB.clearhead/charters/next.actions\fR.
 .PP
-\fBarchive.ttl\fR is the only file written by \fBarchive charter\fR.
-It accumulates all closed history and is never deleted.
-Query workspace graph data directly with \fBclearhead-graphd\fR using SPARQL.
+Charter archival moves UUID-addressed plaintext facts into \fBarchive/\fR; it
+does not translate them to Turtle or JSON-LD. Query live and archived facts
+through \fBclearhead query\fR, or publish the replaceable RDF dataset with
+\fBclearhead export workspace\fR.
 .\" ====================================================================
 .SH WORKFLOW
 .\" ====================================================================
@@ -1042,8 +1040,8 @@ Default global workspace data directory.
 \fI~/.local/share/clearhead/charters/inbox.actions\fR
 Default inbox (uncategorised captures).
 .TP
-\fI~/.local/share/clearhead/archive.ttl\fR
-Permanent closed history in Turtle RDF format.
+\fI~/.local/share/clearhead/archive/\fR
+UUID-addressed plaintext history for archived charters.
 .TP
 \fI<project>/.clearhead/\fR
 Project-local workspace root.
@@ -1090,12 +1088,11 @@ Project-level named SPARQL queries.
         --scheduled-at "2026-05-19T09:00:00-07:00" \\
         --rrule "FREQ=WEEKLY;BYDAY=MO" \\
         --template weekly-review
-    clearhead expand actions
 .EE
 .PP
 .B Query blocked actions with SPARQL
 .EX
-    clearhead-graphd query raw --where '
+    clearhead query raw --where '
         ?action a actions:Action ;
                 cco:ont00001868 actions:Blocked ;
                 rdfs:label ?name .

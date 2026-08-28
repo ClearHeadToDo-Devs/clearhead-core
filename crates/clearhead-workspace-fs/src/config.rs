@@ -2,8 +2,9 @@
 //!
 //! This is the drift-prone part every tool needs *identically* — where config
 //! files live and in what order they override each other. The native workspace
-//! adapter owns it so CLI, LSP, and graphd resolve host configuration identically
-//! without pulling filesystem or user-directory capabilities into Core.
+//! adapter owns it so CLI, LSP, and other native hosts resolve host
+//! configuration identically without pulling filesystem or user-directory
+//! capabilities into Core.
 //!
 //! Each tool deserializes its **own** struct from these sources and extends with
 //! tool-specific fields (the CLI adds `cli_*`, etc.); core defines the shared
