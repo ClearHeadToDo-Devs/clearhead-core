@@ -19,7 +19,7 @@ fn sub_charter_dir(
     ws_root: &Path,
     parent: &clearhead_core::MarkdownCharter,
 ) -> anyhow::Result<PathBuf> {
-    let charter_root = clearhead_core::charter_root(ws_root);
+    let charter_root = clearhead_workspace_fs::charter_root(ws_root);
     let acts_rel = parent.actions_file.as_ref().ok_or_else(|| {
         anyhow::anyhow!(
             "Parent charter '{}' has no associated actions file; cannot determine placement",
@@ -335,11 +335,11 @@ pub fn add_charter(
         let dir = sub_charter_dir(&ws_root, &parent_mc)?;
         std::fs::create_dir_all(&dir)
             .with_context(|| format!("Failed to create directory '{}'", dir.display()))?;
-        (dir, clearhead_core::workspace_data_root(&ws_root))
+        (dir, clearhead_workspace_fs::workspace_data_root(&ws_root))
     } else {
         (
-            clearhead_core::charter_root(&ctx.data_dir),
-            clearhead_core::workspace_data_root(&ctx.data_dir),
+            clearhead_workspace_fs::charter_root(&ctx.data_dir),
+            clearhead_workspace_fs::workspace_data_root(&ctx.data_dir),
         )
     };
 
@@ -442,7 +442,7 @@ pub fn archive_charter(
             .then(|| ctx.plan_override())
             .flatten();
         let mcs = clearhead_workspace_fs::load_workspace(&ws_dir, plan_override.as_deref())?;
-        let charter_root = clearhead_core::charter_root(&ws_dir);
+        let charter_root = clearhead_workspace_fs::charter_root(&ws_dir);
         let mc_full = resolve_charter_by_file(&mcs, file_path, &charter_root)
             .ok_or_else(|| anyhow::anyhow!("No charter found for file: {}", file_path.display()))?;
         mc_full
@@ -504,7 +504,7 @@ pub fn update_charter(
     use clearhead_cli::mutations::{CharterUpdate, apply_charter_update};
 
     let mcs = ctx.load_charters()?;
-    let charter_root = clearhead_core::charter_root(&ctx.data_dir);
+    let charter_root = clearhead_workspace_fs::charter_root(&ctx.data_dir);
     let mc_full = find_target_charter(&mcs, Some(query), None, &charter_root)?;
     let mut updated = Charter::from(mc_full.clone());
 
@@ -571,7 +571,7 @@ pub fn close_charter(
         .then(|| ctx.plan_override())
         .flatten();
     let mcs = clearhead_workspace_fs::load_workspace(&ws_root, plan_override.as_deref())?;
-    let charter_root = clearhead_core::charter_root(&ws_root);
+    let charter_root = clearhead_workspace_fs::charter_root(&ws_root);
     let mc_full = find_target_charter(&mcs, query, file, &charter_root)?;
     let mut updated = Charter::from(mc_full.clone());
 

@@ -24,7 +24,7 @@ pub fn apply_template(
     };
 
     let charter_dir = actions_path.parent().unwrap_or(std::path::Path::new(""));
-    let data_root = clearhead_core::workspace_data_root(&ctx.data_dir);
+    let data_root = clearhead_workspace_fs::workspace_data_root(&ctx.data_dir);
 
     let tpl_path =
         clearhead_workspace_fs::templates::resolve_template(charter_dir, &data_root, name)

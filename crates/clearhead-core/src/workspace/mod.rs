@@ -88,8 +88,8 @@ pub use store::{
     Diagnosis, DoctorCollectionEvidence, DoctorDocument, DoctorEvidence, DoctorRepair,
     DoctorSidecarEvidence, DurabilityResidue, DurabilityResidueKind, Finding, FindingSeverity,
     Workspace, WorkspaceAssemblyInput, WorkspaceError, WorkspaceRead, assemble_workspace,
-    assembled_domain_model, charter_collection_from_anchor, charter_root, diagnose,
-    infer_charter_name, infer_charter_name_for_workspace, infer_parent_charter_name,
-    infer_parent_charter_name_for_workspace, plans_root, project_root_charter, workspace_data_root,
+    assembled_domain_model, charter_collection_from_anchor, diagnose, infer_charter_name,
+    infer_charter_name_for_workspace, infer_parent_charter_name,
+    infer_parent_charter_name_for_workspace,
 };
 pub use templates::{instantiate_template, template_candidates};

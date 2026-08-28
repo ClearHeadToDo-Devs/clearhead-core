@@ -74,7 +74,7 @@ fn workspace_snapshot(workspace: &Workspace) -> WorkspaceSnapshot {
         workspace_id: workspace.effective_id(),
         workspace_name: workspace.effective_name(),
         root: root.to_string_lossy().into_owned(),
-        charter_root: clearhead_core::charter_root(&root)
+        charter_root: clearhead_workspace_fs::charter_root(&root)
             .to_string_lossy()
             .into_owned(),
         charter_files: workspace

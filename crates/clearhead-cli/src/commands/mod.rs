@@ -78,7 +78,7 @@ impl CommandContext {
 
     /// Resolve an optional file arg against the default file from config.
     pub fn resolve_action_file(&self, file: Option<&PathBuf>) -> PathBuf {
-        let charter_root = clearhead_core::charter_root(&self.data_dir);
+        let charter_root = clearhead_workspace_fs::charter_root(&self.data_dir);
         file.cloned()
             .unwrap_or_else(|| resolve_file_path(&self.config.default_file, &charter_root))
     }
@@ -99,7 +99,7 @@ impl CommandContext {
     pub fn workspace_for_file(&self, file: &Path) -> PathBuf {
         let abs = std::fs::canonicalize(file).unwrap_or_else(|_| file.to_path_buf());
         for (_, dir) in self.workspace_dirs() {
-            let charter_root = clearhead_core::charter_root(&dir);
+            let charter_root = clearhead_workspace_fs::charter_root(&dir);
             let abs_root = std::fs::canonicalize(&charter_root).unwrap_or(charter_root);
             if abs.starts_with(&abs_root) {
                 return dir;
@@ -502,7 +502,7 @@ pub fn read_input(file: Option<&PathBuf>) -> anyhow::Result<String> {
 /// Scans all workspace action files and matches the inferred charter name against
 /// the query (by UUID prefix, alias, or inferred file stem / directory name).
 pub fn charter_to_file_path(data_dir: &Path, charter_query: &str) -> anyhow::Result<PathBuf> {
-    let data_root = clearhead_core::charter_root(data_dir);
+    let data_root = clearhead_workspace_fs::charter_root(data_dir);
     let action_files =
         clearhead_workspace_fs::list_action_files(data_dir).context("Failed to list workspace")?;
 

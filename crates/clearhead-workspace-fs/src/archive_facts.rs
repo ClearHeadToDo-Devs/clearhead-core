@@ -8,7 +8,9 @@ use std::path::{Path, PathBuf};
 
 use clearhead_core::ArchivedActionFact;
 use clearhead_core::workspace::sidecar::sidecar_path;
-use clearhead_core::workspace::store::{WorkspaceError, charter_root, workspace_data_root};
+use clearhead_core::workspace::store::WorkspaceError;
+
+use crate::{charter_root, workspace_data_root};
 
 /// Read archived action facts from every completed-actions store the native workspace owns.
 ///

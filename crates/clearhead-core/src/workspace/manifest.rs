@@ -12,9 +12,6 @@
 //! per-plan metadata live in their co-located sidecars, never here.
 
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
-
-use super::store::resolve_workspace_layout;
 
 /// Published schema for `workspace.json`, stamped on write so editors validate.
 pub const WORKSPACE_SCHEMA_URL: &str = "https://raw.githubusercontent.com/ClearHeadToDo-Devs/specifications/master/schemas/workspace.schema.json";
@@ -38,17 +35,6 @@ pub struct WorkspaceManifest {
     /// ISO 8601 date the workspace was initialized. Informational only.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub created_at: Option<String>,
-}
-
-impl WorkspaceManifest {
-    /// Path to the manifest for a workspace rooted at `root`, honoring both the
-    /// project layout (`<root>/.clearhead/workspace.json`) and the user layout
-    /// (`<root>/workspace.json`).
-    pub fn path(root: &Path) -> PathBuf {
-        resolve_workspace_layout(root)
-            .data_root
-            .join("workspace.json")
-    }
 }
 
 /// Parse the host-neutral workspace identity document.

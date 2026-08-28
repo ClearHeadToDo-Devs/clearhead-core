@@ -27,8 +27,8 @@ pub use doctor::{
 };
 pub use manifest::{read_workspace_manifest, workspace_manifest_path, write_workspace_manifest};
 pub use mounts::{
-    NativeWorkspaceMounts, list_action_files, load_domain_model, load_workspace,
-    load_workspace_model, read_workspace,
+    NativeWorkspaceMounts, charter_root, list_action_files, load_domain_model, load_workspace,
+    load_workspace_model, plans_root, project_root_charter, read_workspace, workspace_data_root,
 };
 
 use std::collections::HashSet;
@@ -50,7 +50,7 @@ use clearhead_core::workspace::{
     PreparedUpdateOutcome, SidecarResourceState, TransactionModel, TransactionRequest,
     WorkspaceError, completed_actions_path, normalize_request, parse_actions,
     prepare_action_archive, prepare_action_delete, prepare_action_insert, prepare_action_update,
-    prepare_close_action_subtree, prepare_transaction, sidecar_path, workspace_data_root,
+    prepare_close_action_subtree, prepare_transaction, sidecar_path,
 };
 use clearhead_core::{Action, ActionSelector};
 

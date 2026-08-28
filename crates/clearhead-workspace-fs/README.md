@@ -21,7 +21,7 @@ its *own* adapter implementing the same boundary; Core would not change.
 ## The delivery boundary
 
 Core speaks in host-neutral terms defined in
-[`clearhead_core::workspace::resource`](../../src/workspace/resource.rs):
+[`clearhead_core::workspace::resource`](../clearhead-core/src/workspace/resource.rs):
 
 - **`WorkspacePath` / `ResourceLocation`** — logical, `/`-separated workspace
   paths with no OS, symlink, or root-directory semantics. This adapter maps

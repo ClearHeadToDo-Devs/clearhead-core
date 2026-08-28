@@ -48,6 +48,28 @@ impl NativeWorkspaceMounts {
         }
     }
 
+    /// Physical root containing workspace-managed resources.
+    pub fn data_root(&self) -> &Path {
+        &self.workspace
+    }
+
+    /// Physical root containing the charter tree.
+    pub fn charter_root(&self) -> PathBuf {
+        self.workspace.join("charters")
+    }
+
+    /// Effective physical plans root, honoring an external plans mount.
+    pub fn plans_root(&self) -> PathBuf {
+        self.external_plans
+            .clone()
+            .unwrap_or_else(|| self.workspace.join("plans"))
+    }
+
+    /// Project-root charter identity derived while resolving the native layout.
+    pub fn project_root_charter(&self) -> Option<&str> {
+        self.scope.project_root_charter()
+    }
+
     /// Resolve a logical resource location to its native physical path.
     pub fn physical_path(&self, location: &ResourceLocation) -> Result<PathBuf, WorkspaceError> {
         let root = match location.mount {
@@ -101,6 +123,28 @@ impl NativeWorkspaceMounts {
             },
         })
     }
+}
+
+/// Detect and return the physical data root for a native workspace.
+pub fn workspace_data_root(root: &Path) -> PathBuf {
+    NativeWorkspaceMounts::resolve(root, None).workspace
+}
+
+/// Detect and return the physical charter root for a native workspace.
+pub fn charter_root(root: &Path) -> PathBuf {
+    NativeWorkspaceMounts::resolve(root, None).charter_root()
+}
+
+/// Detect and return the default physical plans root for a native workspace.
+pub fn plans_root(root: &Path) -> PathBuf {
+    NativeWorkspaceMounts::resolve(root, None).plans_root()
+}
+
+/// Detect the project-root charter identity for a native workspace.
+pub fn project_root_charter(root: &Path) -> Option<String> {
+    NativeWorkspaceMounts::resolve(root, None)
+        .project_root_charter()
+        .map(ToOwned::to_owned)
 }
 
 /// Relaxed native read: inventory and read bytes without replaying pending intent.
@@ -325,13 +369,39 @@ mod tests {
         let mounts =
             NativeWorkspaceMounts::resolve(&root.path().join("project"), Some(external.as_path()));
         assert_eq!(mounts.workspace, root.path().join("project/.clearhead"));
-        assert_eq!(mounts.external_plans, Some(external));
+        assert_eq!(mounts.external_plans, Some(external.clone()));
         assert_eq!(
             mounts.scope,
             WorkspaceScope::Project {
                 root_charter_name: "project".into()
             }
         );
+        assert_eq!(mounts.data_root(), root.path().join("project/.clearhead"));
+        assert_eq!(
+            mounts.charter_root(),
+            root.path().join("project/.clearhead/charters")
+        );
+        assert_eq!(mounts.plans_root(), external);
+        assert_eq!(mounts.project_root_charter(), Some("project"));
+    }
+
+    #[test]
+    fn native_layout_helpers_distinguish_project_and_user_workspaces() {
+        let root = tempfile::tempdir().unwrap();
+        let project = root.path().join("project");
+        std::fs::create_dir_all(project.join(".clearhead")).unwrap();
+        let user = root.path().join("user");
+        std::fs::create_dir_all(&user).unwrap();
+
+        assert_eq!(workspace_data_root(&project), project.join(".clearhead"));
+        assert_eq!(charter_root(&project), project.join(".clearhead/charters"));
+        assert_eq!(plans_root(&project), project.join(".clearhead/plans"));
+        assert_eq!(project_root_charter(&project).as_deref(), Some("project"));
+
+        assert_eq!(workspace_data_root(&user), user);
+        assert_eq!(charter_root(&user), user.join("charters"));
+        assert_eq!(plans_root(&user), user.join("plans"));
+        assert_eq!(project_root_charter(&user), None);
     }
 
     #[test]

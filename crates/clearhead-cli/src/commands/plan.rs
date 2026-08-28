@@ -352,7 +352,7 @@ fn resolve_plans_dir(
     }
 
     let plans_root = ctx.plans_root();
-    let charter_root = clearhead_core::charter_root(&ctx.data_dir);
+    let charter_root = clearhead_workspace_fs::charter_root(&ctx.data_dir);
 
     let charters = ctx.load_charters()?;
     if let Some(query) = charter {

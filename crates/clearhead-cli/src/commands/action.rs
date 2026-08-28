@@ -132,7 +132,7 @@ fn resolve_acts_file(
         let rel = mc.actions_file.as_ref().ok_or_else(|| {
             anyhow::anyhow!("Charter '{}' has no associated actions file", mc.title)
         })?;
-        let root = clearhead_core::charter_root(&ws_root);
+        let root = clearhead_workspace_fs::charter_root(&ws_root);
         return Ok(root.join(rel));
     }
 
@@ -144,7 +144,7 @@ fn resolve_acts_file(
 
     if actionable.len() == 1 {
         let (_mc, rel) = actionable[0];
-        let root = clearhead_core::charter_root(&ctx.data_dir);
+        let root = clearhead_workspace_fs::charter_root(&ctx.data_dir);
         return Ok(root.join(rel));
     }
 
@@ -533,7 +533,7 @@ pub fn delete_action(
         let rel = mc.actions_file.as_ref().ok_or_else(|| {
             anyhow::anyhow!("Charter '{}' has no associated actions file", mc.title)
         })?;
-        vec![clearhead_core::charter_root(&ws_root).join(rel)]
+        vec![clearhead_workspace_fs::charter_root(&ws_root).join(rel)]
     } else {
         let mut all = Vec::new();
         for (_, ws_dir) in ctx.workspace_dirs() {
@@ -641,7 +641,7 @@ pub fn read_actions_cmd(
         let rel = mc.actions_file.as_ref().ok_or_else(|| {
             anyhow::anyhow!("Charter '{}' has no associated actions file", mc.title)
         })?;
-        let root = clearhead_core::charter_root(&ws_root);
+        let root = clearhead_workspace_fs::charter_root(&ws_root);
         Some(root.join(rel))
     } else {
         None
@@ -808,7 +808,7 @@ fn collect_workspace_actions(
                     continue;
                 }
             };
-        let charter_root = clearhead_core::charter_root(&ws_path);
+        let charter_root = clearhead_workspace_fs::charter_root(&ws_path);
 
         for mc in &charters {
             let mut open: Vec<Action> = mc
@@ -963,7 +963,7 @@ fn find_and_load_open_actions(
         let rel = mc.actions_file.as_ref().ok_or_else(|| {
             anyhow::anyhow!("Charter '{}' has no associated actions file", mc.title)
         })?;
-        let path = clearhead_core::charter_root(&ws_root).join(rel);
+        let path = clearhead_workspace_fs::charter_root(&ws_root).join(rel);
         let actions = super::load_file_for_mutation(&path, "action lifecycle")?;
         return Ok(Some((path, actions)));
     }
@@ -1180,7 +1180,7 @@ fn collect_all_actions(
     file: &Option<PathBuf>,
     open_only: bool,
 ) -> anyhow::Result<Vec<Action>> {
-    let charter_root = clearhead_core::charter_root(&ctx.data_dir);
+    let charter_root = clearhead_workspace_fs::charter_root(&ctx.data_dir);
     let charters =
         clearhead_workspace_fs::load_workspace(&ctx.data_dir, ctx.plan_override().as_deref())?;
 

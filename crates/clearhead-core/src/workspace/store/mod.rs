@@ -1,29 +1,9 @@
-//! Workspace layout resolution and domain-model assembly.
+//! Host-neutral workspace assembly.
 //!
-//! This module resolves which layout a workspace uses and assembles the
-//! [`DomainModel`](crate::domain::DomainModel) from snapshots a host has already
-//! read. Reading and writing bytes is a delivery adapter's job, not Core's; the
-//! only host tap here is a directory-existence probe used to detect the layout.
-//!
-//! # Workspace Layouts
-//!
-//! ClearHead supports two workspace layouts. See the
-//! [naming conventions specification](https://github.com/ClearHeadToDo-Devs/specifications/blob/master/naming_conventions.md)
-//! for the authoritative description of each scope.
-//!
-//! ## Project layout
-//! The workspace root contains a `.clearhead/` subdirectory. Action files live
-//! inside it, and the root directory name becomes the top-level charter — so
-//! `my-project/.clearhead/next.actions` belongs to the `my-project` charter.
-//! Used for project-local work tracked alongside source code.
-//!
-//! ## User layout
-//! No `.clearhead/` subdirectory. Action files live directly in the root and
-//! charter names are inferred purely from filenames and directory structure.
-//! Used for personal workspaces not tied to a specific project.
-//!
-//! `resolve_workspace_layout` detects which layout applies and returns a
-//! `WorkspaceLayout` that assembly and path resolution use.
+//! Core assembles a [`DomainModel`](crate::domain::DomainModel) only from
+//! snapshots and explicit [`WorkspaceScope`](crate::workspace::WorkspaceScope)
+//! evidence supplied by a host. Native layout detection and physical path
+//! construction belong to `clearhead-workspace-fs`.
 
 mod assembly;
 mod doctor;
@@ -31,7 +11,7 @@ mod findings;
 pub mod load;
 mod pathing;
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 pub use assembly::{WorkspaceAssemblyInput, assemble_workspace, assembled_domain_model};
 pub use doctor::{
@@ -44,36 +24,6 @@ pub use pathing::{
     charter_collection_from_anchor, infer_charter_name, infer_charter_name_for_workspace,
     infer_parent_charter_name, infer_parent_charter_name_for_workspace,
 };
-
-/// Returns the workspace root directory (`.clearhead/` for project layout).
-///
-/// Use this for non-charter files: `archive/`, `objectives/`, `templates/`.
-pub fn workspace_data_root(root: &Path) -> PathBuf {
-    resolve_workspace_layout(root).data_root
-}
-
-/// Returns the charter tree root (`<data_root>/charters/`).
-///
-/// All `.actions` and `.md` charter files live here. Use this for charter/action path resolution.
-pub fn charter_root(root: &Path) -> PathBuf {
-    resolve_workspace_layout(root).charter_root
-}
-
-/// Returns the plans root (`<data_root>/plans/`).
-///
-/// All vdir `.ics` plan files live here. Each charter gets one subdirectory.
-pub fn plans_root(root: &Path) -> PathBuf {
-    resolve_workspace_layout(root).plans_root
-}
-
-/// The project-layout root charter name, if this workspace uses project layout.
-///
-/// `Some(dir_name)` when a `.clearhead/` subdirectory exists (top-level
-/// `next.actions` maps to that charter); `None` for user layout. Pure path
-/// policy exposed so a native adapter can infer charter names identically.
-pub fn project_root_charter(root: &Path) -> Option<String> {
-    resolve_workspace_layout(root).project_root_charter
-}
 
 /// Errors that can occur when interacting with a workspace.
 #[derive(thiserror::Error, Debug)]
@@ -93,44 +43,4 @@ pub enum WorkspaceError {
     /// Another process currently owns the workspace mutation lock.
     #[error("Workspace is locked by another writer: {0}")]
     WorkspaceLocked(PathBuf),
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct WorkspaceLayout {
-    /// `.clearhead/` (or workspace root for user layout) — for non-charter files.
-    pub(crate) data_root: PathBuf,
-    /// `<data_root>/charters/` — where the charter tree lives.
-    pub(crate) charter_root: PathBuf,
-    /// `<data_root>/plans/` — where vdir plan files live (parallel to charters/).
-    pub(crate) plans_root: PathBuf,
-    pub(crate) project_root_charter: Option<String>,
-}
-
-/// Detect the workspace layout and return the paths needed for load/save.
-///
-/// - **Project layout** (`.clearhead/` exists): data root is `.clearhead/`,
-///   and the root directory name becomes `project_root_charter` so that
-///   `next.actions` at the top level maps to the project charter rather than "next".
-/// - **User layout** (no `.clearhead/`): data root is the directory itself,
-///   `project_root_charter` is `None`, and all charter names come from filenames.
-pub(crate) fn resolve_workspace_layout(root: &Path) -> WorkspaceLayout {
-    let project_data = root.join(".clearhead");
-    if project_data.is_dir() {
-        return WorkspaceLayout {
-            charter_root: project_data.join("charters"),
-            plans_root: project_data.join("plans"),
-            data_root: project_data,
-            project_root_charter: root
-                .file_name()
-                .and_then(|name| name.to_str())
-                .map(ToString::to_string),
-        };
-    }
-
-    WorkspaceLayout {
-        charter_root: root.join("charters"),
-        plans_root: root.join("plans"),
-        data_root: root.to_path_buf(),
-        project_root_charter: None,
-    }
 }

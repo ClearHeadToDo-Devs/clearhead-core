@@ -30,6 +30,9 @@ if cargo tree -p clearhead_cli --no-default-features -e normal --prefix none | g
   exit 1
 fi
 
+echo "pre-push > pure Core source gate"
+sh scripts/pure-core-source-gate.sh
+
 echo "pre-push > wasm dependency gate"
 sh scripts/wasm-dependency-gate.sh
 

@@ -8,12 +8,12 @@
 //! ([`infer_charter_name_for_workspace`] et al.); only the directory walk and
 //! the manifest assembly are native.
 
+use crate::{charter_root, plans_root, project_root_charter};
 use clearhead_core::workspace::calendar::plans::{
     infer_plan_charter_name_for_workspace, infer_plan_parent_for_workspace,
 };
 use clearhead_core::workspace::store::{
-    WorkspaceError, charter_root, infer_charter_name_for_workspace,
-    infer_parent_charter_name_for_workspace, plans_root, project_root_charter,
+    WorkspaceError, infer_charter_name_for_workspace, infer_parent_charter_name_for_workspace,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;

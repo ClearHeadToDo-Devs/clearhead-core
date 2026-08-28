@@ -107,7 +107,7 @@ fn print_workspace_section(ctx: &CommandContext) -> anyhow::Result<()> {
     println!("workspace");
 
     let workspace_source = resolve_workspace_source(ctx);
-    let data_root = clearhead_core::workspace_data_root(&ctx.data_dir);
+    let data_root = clearhead_workspace_fs::workspace_data_root(&ctx.data_dir);
     println!(
         "  resolved_data_root: {} ({})",
         data_root.display(),

@@ -52,7 +52,7 @@ impl Backend {
         {
             let abs = std::fs::canonicalize(&file_path).unwrap_or_else(|_| file_path.clone());
             for root_path in roots.values() {
-                let charter_root = clearhead_core::charter_root(root_path);
+                let charter_root = clearhead_workspace_fs::charter_root(root_path);
                 let abs_root = std::fs::canonicalize(&charter_root).unwrap_or(charter_root);
                 if abs.starts_with(&abs_root) {
                     return Some(root_path.clone());
