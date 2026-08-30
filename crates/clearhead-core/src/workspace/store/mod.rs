@@ -17,6 +17,7 @@ pub use assembly::{WorkspaceAssemblyInput, assemble_workspace, assembled_domain_
 pub use doctor::{
     Diagnosis, DoctorCollectionEvidence, DoctorDocument, DoctorEvidence, DoctorRepair,
     DoctorSidecarEvidence, DurabilityResidue, DurabilityResidueKind, diagnose,
+    state_coherence_findings,
 };
 pub use findings::{Finding, FindingSeverity};
 pub use load::{Workspace, WorkspaceRead};

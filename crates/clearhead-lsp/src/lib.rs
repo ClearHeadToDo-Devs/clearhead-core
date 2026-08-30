@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+use clearhead_core::workspace::state_coherence_findings;
 use clearhead_core::{ParsedDocument, parse_document};
 use dashmap::DashMap;
 use tokio::sync::OnceCell;
@@ -13,7 +14,7 @@ mod handlers;
 mod providers;
 mod telemetry;
 
-use providers::compute_diagnostics;
+use providers::{compute_diagnostics, finding_to_lsp};
 
 #[derive(Debug)]
 struct DocumentState {
@@ -21,6 +22,7 @@ struct DocumentState {
     tree: Tree,
     parsed: Option<ParsedDocument>,
     last_saved_parsed: Option<ParsedDocument>,
+    workspace_diagnostics: Vec<Diagnostic>,
 }
 
 #[derive(Debug)]
@@ -64,12 +66,60 @@ impl Backend {
         clearhead_workspace_fs::check_for_workspace(&file_path)
     }
 
+    fn workspace_diagnostics_for_uri(&self, uri: &Uri) -> Vec<Diagnostic> {
+        let Some(workspace_root) = self.workspace_for_uri(uri) else {
+            return Vec::new();
+        };
+        let Some(file_path) = uri.to_file_path() else {
+            return Vec::new();
+        };
+        let charter_root = clearhead_workspace_fs::charter_root(&workspace_root);
+        let Ok(relative) = file_path.strip_prefix(&charter_root) else {
+            return Vec::new();
+        };
+        let Ok(read) = clearhead_workspace_fs::read_workspace(&workspace_root, None) else {
+            return Vec::new();
+        };
+
+        state_coherence_findings(&read.charters)
+            .into_iter()
+            .filter(|finding| finding.path == relative)
+            .map(|finding| finding_to_lsp(&finding))
+            .collect()
+    }
+
+    async fn refresh_workspace_diagnostics(&self) {
+        let uris: Vec<Uri> = self
+            .documents
+            .iter()
+            .map(|entry| entry.key().clone())
+            .collect();
+        for uri in uris {
+            let workspace_diagnostics = self.workspace_diagnostics_for_uri(&uri);
+            let diagnostics = self.documents.get_mut(&uri).map(|mut document| {
+                document.workspace_diagnostics = workspace_diagnostics.clone();
+                let mut diagnostics = document
+                    .parsed
+                    .as_ref()
+                    .map(compute_diagnostics)
+                    .unwrap_or_default();
+                diagnostics.extend(workspace_diagnostics);
+                diagnostics
+            });
+            if let Some(diagnostics) = diagnostics {
+                self.client
+                    .publish_diagnostics(uri, diagnostics, None)
+                    .await;
+            }
+        }
+    }
+
     async fn update_document(&self, uri: Uri, text: String, is_fresh_load: bool) {
         let mut parser = Self::get_parser();
         if let Some(tree) = parser.parse(&text, None) {
             let parsed = parse_document(&text).ok();
 
-            let diagnostics = if let Some(ref p) = parsed {
+            let mut diagnostics = if let Some(ref p) = parsed {
                 debug!(uri = ?uri, action_count = p.actions.len(), "Document updated");
                 compute_diagnostics(p)
             } else {
@@ -77,13 +127,20 @@ impl Backend {
                 Vec::new()
             };
 
-            let last_saved_parsed = if is_fresh_load {
-                parsed.clone()
+            let (last_saved_parsed, workspace_diagnostics) = if is_fresh_load {
+                (parsed.clone(), self.workspace_diagnostics_for_uri(&uri))
             } else {
                 self.documents
                     .get(&uri)
-                    .and_then(|d| d.last_saved_parsed.clone())
+                    .map(|document| {
+                        (
+                            document.last_saved_parsed.clone(),
+                            document.workspace_diagnostics.clone(),
+                        )
+                    })
+                    .unwrap_or_else(|| (None, Vec::new()))
             };
+            diagnostics.extend(workspace_diagnostics.clone());
 
             self.documents.insert(
                 uri.clone(),
@@ -92,6 +149,7 @@ impl Backend {
                     tree: tree.clone(),
                     parsed,
                     last_saved_parsed,
+                    workspace_diagnostics,
                 },
             );
 
@@ -127,6 +185,65 @@ mod tests {
     use super::*;
     use clearhead_core::workspace::actions::format::FormatConfig;
     use clearhead_core::{TrustedDocument, format_trusted_source};
+
+    #[test]
+    fn workspace_state_findings_are_projected_as_lsp_diagnostics() {
+        let Ok(temp) = tempfile::tempdir() else {
+            panic!("temporary workspace should be created");
+        };
+        let charter_root = temp.path().join(".clearhead/charters");
+        assert!(std::fs::create_dir_all(&charter_root).is_ok());
+        assert!(
+            std::fs::write(
+                charter_root.join("root.md"),
+                "---\nid: 01951111-0000-7000-0000-000000000040\nalias: root\nstate: New\n---\n# Root\n",
+            )
+            .is_ok()
+        );
+        assert!(std::fs::write(charter_root.join("root.actions"), "").is_ok());
+        assert!(
+            std::fs::write(
+                charter_root.join("child.md"),
+                "---\nid: 01951111-0000-7000-0000-000000000041\nalias: child\nparent: root\nstate: Active\n---\n# Child\n",
+            )
+            .is_ok()
+        );
+        let child_path = charter_root.join("child.actions");
+        assert!(
+            std::fs::write(
+                &child_path,
+                "[-] Doing work #01951111-0000-7000-0000-000000000042\n",
+            )
+            .is_ok()
+        );
+
+        let (service, _) = LspService::new(|client| Backend {
+            client,
+            documents: DashMap::new(),
+            workspace_roots: OnceCell::new(),
+        });
+        let backend = service.inner();
+        let Some(uri) = Uri::from_file_path(child_path) else {
+            panic!("fixture path should convert to URI");
+        };
+        let diagnostics = backend.workspace_diagnostics_for_uri(&uri);
+        let codes: Vec<_> = diagnostics
+            .iter()
+            .filter_map(|diagnostic| diagnostic.code.as_ref())
+            .collect();
+
+        assert!(codes.contains(&&NumberOrString::String(
+            "active-charter-under-inactive-ancestor".into()
+        )));
+        assert!(codes.contains(&&NumberOrString::String(
+            "in-progress-action-under-inactive-charter".into()
+        )));
+        assert!(
+            diagnostics
+                .iter()
+                .all(|diagnostic| diagnostic.severity == Some(DiagnosticSeverity::WARNING))
+        );
+    }
 
     #[test]
     fn test_lsp_format_normalizes() {

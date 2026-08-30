@@ -1,5 +1,6 @@
 use chrono::{DateTime, Local};
 use clearhead_core::workspace::actions::{LintDiagnostic, LintSeverity, lint_document};
+use clearhead_core::workspace::{Finding, FindingSeverity};
 use clearhead_core::{ParsedDocument, SourceRange};
 use tower_lsp_server::ls_types::*;
 use tree_sitter::Tree;
@@ -36,6 +37,20 @@ pub fn compute_diagnostics(doc: &ParsedDocument) -> Vec<Diagnostic> {
         .into_iter()
         .map(lint_diagnostic_to_lsp)
         .collect()
+}
+
+pub fn finding_to_lsp(finding: &Finding) -> Diagnostic {
+    Diagnostic {
+        range: Range::new(Position::new(0, 0), Position::new(0, 0)),
+        severity: Some(match finding.severity {
+            FindingSeverity::Warning => DiagnosticSeverity::WARNING,
+            FindingSeverity::Violation => DiagnosticSeverity::ERROR,
+        }),
+        code: Some(NumberOrString::String(finding.code.clone())),
+        source: Some("clearhead-workspace".to_string()),
+        message: finding.message.clone(),
+        ..Default::default()
+    }
 }
 
 pub fn date_completion_items(now: DateTime<Local>) -> Vec<CompletionItem> {

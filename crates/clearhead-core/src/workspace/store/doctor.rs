@@ -6,7 +6,7 @@
 
 use super::findings::{Finding, FindingSeverity};
 use super::load::{WorkspaceRead, syntax_error_summary};
-use crate::domain::{Action, ActionState};
+use crate::domain::{Action, ActionState, CharterState};
 use crate::workspace::charter::MarkdownCharter;
 use crate::workspace::manifest::WorkspaceManifest;
 use crate::workspace::resource::{ResourceLocation, ResourceRevision, WorkspacePath};
@@ -129,6 +129,7 @@ pub fn diagnose(read: &WorkspaceRead, evidence: &DoctorEvidence) -> Diagnosis {
     check_dangling_predecessors(charters, &completed, &archived, &mut findings);
     check_charter_alias_collisions(charters, &mut findings);
     check_open_actions_under_unresolved_parents(charters, &mut findings);
+    findings.extend(state_coherence_findings(charters));
     let known_action_ids = collect_known_action_ids(charters, &completed);
     let has_quarantined_source = findings.iter().any(|f| f.code == "syntax-errors");
     if !has_quarantined_source {
@@ -180,6 +181,117 @@ pub fn diagnose(read: &WorkspaceRead, evidence: &DoctorEvidence) -> Diagnosis {
         checked_actions: open_actions + completed_actions,
         repairs,
     }
+}
+
+/// Diagnose lifecycle contradictions that require the complete Charter graph.
+///
+/// This is separate from file lint so doctor and long-lived clients such as the
+/// LSP consume one rule over the same assembled workspace state.
+pub fn state_coherence_findings(charters: &[MarkdownCharter]) -> Vec<Finding> {
+    let mut findings = Vec::new();
+
+    for charter in charters {
+        let ancestors = charter_ancestors(charter, charters);
+        let local_state = charter.state.unwrap_or_default();
+
+        if let Some((ancestor, state)) = ancestors.iter().find(|(_, state)| state.is_terminal()) {
+            if !local_state.is_terminal() {
+                findings.push(Finding::violation(
+                    "open-charter-under-terminal-ancestor",
+                    charter.actions_file.as_ref().or(charter.md_file.as_ref()).cloned().unwrap_or_else(|| PathBuf::from("<unknown>")),
+                    format!(
+                        "Charter '{}' is {} beneath terminal Charter '{}' ({state}); reconcile the descendant explicitly",
+                        charter.title, local_state, ancestor.title
+                    ),
+                ));
+            }
+        } else if local_state == CharterState::Active
+            && let Some((ancestor, state)) = ancestors
+                .iter()
+                .find(|(_, state)| matches!(state, CharterState::New | CharterState::Blocked))
+        {
+            findings.push(Finding::warning(
+                "active-charter-under-inactive-ancestor",
+                charter.actions_file.as_ref().or(charter.md_file.as_ref()).cloned().unwrap_or_else(|| PathBuf::from("<unknown>")),
+                format!(
+                    "Active Charter '{}' is beneath Charter '{}' ({state}); its work stream is not admitted",
+                    charter.title, ancestor.title
+                ),
+            ));
+        }
+
+        let scope = std::iter::once((charter, local_state))
+            .chain(ancestors.iter().copied())
+            .collect::<Vec<_>>();
+        let terminal = scope.iter().find(|(_, state)| state.is_terminal());
+        let inactive = scope
+            .iter()
+            .find(|(_, state)| matches!(state, CharterState::New | CharterState::Blocked));
+        let action_path = charter
+            .actions_file
+            .clone()
+            .unwrap_or_else(|| PathBuf::from("<unknown>"));
+
+        for sourced in &charter.actions {
+            let action = &sourced.action;
+            let is_open = !matches!(
+                action.state,
+                ActionState::Completed | ActionState::Cancelled
+            );
+            if is_open && let Some((ancestor, state)) = terminal {
+                findings.push(Finding::violation(
+                    "open-action-under-terminal-charter",
+                    action_path.clone(),
+                    format!(
+                        "Open Action '{}' is beneath terminal Charter '{}' ({state}); reconcile the Action explicitly",
+                        action.name, ancestor.title
+                    ),
+                ));
+            } else if action.state == ActionState::InProgress
+                && let Some((ancestor, state)) = inactive
+            {
+                findings.push(Finding::warning(
+                    "in-progress-action-under-inactive-charter",
+                    action_path.clone(),
+                    format!(
+                        "InProgress Action '{}' is beneath Charter '{}' ({state}); the work stream is not admitted",
+                        action.name, ancestor.title
+                    ),
+                ));
+            }
+        }
+    }
+
+    findings
+}
+
+fn charter_ancestors<'a>(
+    charter: &'a MarkdownCharter,
+    charters: &'a [MarkdownCharter],
+) -> Vec<(&'a MarkdownCharter, CharterState)> {
+    let mut ancestors = Vec::new();
+    let mut visited = HashSet::from([charter.id]);
+    let mut current = charter;
+
+    while let Some(parent_ref) = current.parent.as_deref() {
+        let Some(parent) = charters.iter().find(|candidate| {
+            crate::reference::match_entity_reference(
+                candidate.id,
+                candidate.alias.as_deref(),
+                parent_ref,
+            )
+            .is_some()
+        }) else {
+            break;
+        };
+        if !visited.insert(parent.id) {
+            break;
+        }
+        ancestors.push((parent, parent.state.unwrap_or_default()));
+        current = parent;
+    }
+
+    ancestors
 }
 
 fn check_workspace_identity(manifest: &WorkspaceManifest, findings: &mut Vec<Finding>) {

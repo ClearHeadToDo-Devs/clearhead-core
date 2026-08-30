@@ -137,6 +137,11 @@ impl LanguageServer for Backend {
                 warn!(error = %e, "Failed to update sidecar on save");
             }
         }
+
+        // Saving may change a cross-file state contradiction. Refresh every
+        // open document so a finding on a descendant updates immediately when
+        // its Charter ancestry changes elsewhere in the workspace.
+        self.refresh_workspace_diagnostics().await;
     }
 
     async fn did_close(&self, params: DidCloseTextDocumentParams) {

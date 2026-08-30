@@ -85,6 +85,67 @@ fn doctor_reports_clean_on_a_coherent_workspace() {
 }
 
 #[test]
+fn doctor_warns_about_active_work_beneath_new_ancestry() {
+    let workspace = make_workspace(&[
+        (
+            "root.md",
+            "---\nid: 01951111-0000-7000-0000-000000000020\nalias: root\nstate: New\n---\n# Root\n",
+        ),
+        ("root.actions", ""),
+        (
+            "child.md",
+            "---\nid: 01951111-0000-7000-0000-000000000021\nalias: child\nparent: root\nstate: Active\n---\n# Child\n",
+        ),
+        (
+            "child.actions",
+            "[-] Doing work #01951111-0000-7000-0000-000000000022\n",
+        ),
+    ]);
+
+    let diagnosis = clearhead_workspace_fs::diagnose_workspace(initialized(workspace.path()), None)
+        .expect("diagnose failed");
+    let codes: Vec<_> = diagnosis
+        .findings
+        .iter()
+        .map(|finding| finding.code.as_str())
+        .collect();
+
+    assert!(codes.contains(&"active-charter-under-inactive-ancestor"));
+    assert!(codes.contains(&"in-progress-action-under-inactive-charter"));
+}
+
+#[test]
+fn doctor_rejects_open_work_beneath_terminal_ancestry() {
+    let workspace = make_workspace(&[
+        (
+            "root.md",
+            "---\nid: 01951111-0000-7000-0000-000000000030\nalias: root\nstate: Closed\n---\n# Root\n",
+        ),
+        ("root.actions", ""),
+        (
+            "child.md",
+            "---\nid: 01951111-0000-7000-0000-000000000031\nalias: child\nparent: root\n---\n# Child\n",
+        ),
+        (
+            "child.actions",
+            "[ ] Remaining work #01951111-0000-7000-0000-000000000032\n",
+        ),
+    ]);
+
+    let diagnosis = clearhead_workspace_fs::diagnose_workspace(initialized(workspace.path()), None)
+        .expect("diagnose failed");
+    let codes: Vec<_> = diagnosis
+        .findings
+        .iter()
+        .map(|finding| finding.code.as_str())
+        .collect();
+
+    assert!(codes.contains(&"open-charter-under-terminal-ancestor"));
+    assert!(codes.contains(&"open-action-under-terminal-charter"));
+    assert_eq!(diagnosis.violations(), 2, "{:?}", diagnosis.findings);
+}
+
+#[test]
 fn doctor_flags_duplicate_uuids_across_files() {
     let uuid = "01951111-0000-7000-0000-000000000011";
     let workspace = make_workspace(&[
