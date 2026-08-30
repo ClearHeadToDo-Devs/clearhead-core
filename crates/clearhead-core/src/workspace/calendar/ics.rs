@@ -1,12 +1,12 @@
 //! ICS schedule file parser and exporter.
 //!
-//! **Parse direction** (`ics → domain`): VEVENT components become one-off or
-//! recurring [`Plan`]s. RRULE-bearing VTODOs remain Plan-compatible while the
-//! legacy standalone-VTODO Action projection is retired in stages.
+//! **Parse direction** (`ics → domain`): non-override VEVENT and VTODO
+//! components become one-off or recurring [`Plan`]s. `RRULE` changes Plan
+//! cardinality; it does not classify the component as a different domain type.
 //!
 //! **Export direction** (`domain → ics`): converts [`Plan`]s through the
 //! configured VEVENT or VTODO codec. Legacy [`Action`] VTODO helpers remain
-//! temporarily available to the existing sync path.
+//! temporarily available only to the explicit migration/sync transition.
 
 use crate::config::PlanComponentKind;
 use crate::domain::{Action, ActionState, Plan, Recurrence};
@@ -14,7 +14,7 @@ use crate::workspace::store::WorkspaceError;
 use chrono::{DateTime, Local, NaiveDate, NaiveDateTime, TimeZone, Utc};
 use icalendar::{
     Calendar, CalendarComponent, CalendarDateTime, Component, DatePerhapsTime, Event, EventLike,
-    Todo, TodoStatus,
+    Property, Todo, TodoStatus,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -31,6 +31,9 @@ use uuid::{Uuid, uuid};
 pub struct ICSPlan {
     pub path: PathBuf,
     pub plan: Plan,
+    /// Observed wire codec. Mutation follows the resource being patched rather
+    /// than assuming the workspace's current configured codec during migration.
+    pub component_kind: PlanComponentKind,
     /// Canonical keys of occurrence slots excluded from the series (`EXDATE`).
     pub exdates: BTreeSet<String>,
     /// Per-occurrence overrides (`RECURRENCE-ID` VTODOs), keyed by the same
@@ -100,16 +103,18 @@ pub fn action_id_from_vtodo_uid(uid: &str) -> Uuid {
 
 /// Parse Plan resources from bytes already supplied by a host.
 ///
-/// VEVENT components are Plans whether one-off or recurring. During the
-/// transition from the legacy mixed VTODO surface, only RRULE-bearing VTODOs
-/// are classified as Plans; standalone VTODOs continue through the Action-sync
-/// compatibility path until one-off Plan realization replaces it.
+/// Every non-override VEVENT or VTODO is a Plan, whether one-off or recurring.
+/// A UID may have exactly one master and all of its overrides must use that
+/// master's component kind; ambiguous mixed resources are rejected before any
+/// caller can select a traversal-order winner.
 ///
 /// `logical_path` is provenance only; parsing never reads it.
 pub fn parse_ics(content: &str, logical_path: &Path) -> Result<Vec<ICSPlan>, WorkspaceError> {
     let calendar: Calendar = content
         .parse()
         .map_err(|e: String| WorkspaceError::Parse(e))?;
+
+    validate_plan_component_identities(&calendar, logical_path)?;
 
     let events: Vec<&Event> = calendar
         .components
@@ -134,7 +139,8 @@ pub fn parse_ics(content: &str, logical_path: &Path) -> Result<Vec<ICSPlan>, Wor
         .copied()
         .filter(|event| event.property_value("RECURRENCE-ID").is_none())
     {
-        let Some(mut ics_plan) = component_to_plan(event, logical_path) else {
+        let Some(mut ics_plan) = component_to_plan(event, logical_path, PlanComponentKind::VEvent)
+        else {
             continue;
         };
         let master_uid = event.get_uid();
@@ -153,9 +159,10 @@ pub fn parse_ics(content: &str, logical_path: &Path) -> Result<Vec<ICSPlan>, Wor
     for todo in todos
         .iter()
         .copied()
-        .filter(|todo| todo.property_value("RRULE").is_some())
+        .filter(|todo| todo.property_value("RECURRENCE-ID").is_none())
     {
-        let Some(mut ics_plan) = component_to_plan(todo, logical_path) else {
+        let Some(mut ics_plan) = component_to_plan(todo, logical_path, PlanComponentKind::VTodo)
+        else {
             continue;
         };
         let master_uid = todo.get_uid();
@@ -174,14 +181,75 @@ pub fn parse_ics(content: &str, logical_path: &Path) -> Result<Vec<ICSPlan>, Wor
     Ok(plans)
 }
 
+fn validate_plan_component_identities(
+    calendar: &Calendar,
+    logical_path: &Path,
+) -> Result<(), WorkspaceError> {
+    let mut masters: BTreeMap<String, Vec<PlanComponentKind>> = BTreeMap::new();
+    let mut overrides: Vec<(String, PlanComponentKind)> = Vec::new();
+
+    for component in &calendar.components {
+        let (uid, kind, recurrence_id) = match component {
+            CalendarComponent::Event(event) => (
+                event.get_uid(),
+                PlanComponentKind::VEvent,
+                event.property_value("RECURRENCE-ID"),
+            ),
+            CalendarComponent::Todo(todo) => (
+                todo.get_uid(),
+                PlanComponentKind::VTodo,
+                todo.property_value("RECURRENCE-ID"),
+            ),
+            _ => continue,
+        };
+        let Some(uid) = uid else { continue };
+        if recurrence_id.is_some() {
+            overrides.push((uid.to_string(), kind));
+        } else {
+            masters.entry(uid.to_string()).or_default().push(kind);
+        }
+    }
+
+    for (uid, kinds) in &masters {
+        if kinds.len() > 1 {
+            let observed = kinds
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(", ");
+            return Err(WorkspaceError::Parse(format!(
+                "{} contains duplicate Plan masters for UID {uid}: {observed}",
+                logical_path.display()
+            )));
+        }
+    }
+    for (uid, override_kind) in overrides {
+        if let Some(master_kinds) = masters.get(&uid)
+            && master_kinds.first() != Some(&override_kind)
+        {
+            return Err(WorkspaceError::Parse(format!(
+                "{} mixes {} override with {} master for Plan UID {uid}",
+                logical_path.display(),
+                override_kind,
+                master_kinds[0]
+            )));
+        }
+    }
+    Ok(())
+}
+
 /// Build an [`ICSPlan`] from a Plan component's shared fields.
-/// Returns `None` if UID or SUMMARY is missing.
-fn component_to_plan<T: Component>(component: &T, path: &Path) -> Option<ICSPlan> {
+/// Returns `None` if required Plan identity, label, or DTSTART is missing.
+fn component_to_plan<T: Component>(
+    component: &T,
+    path: &Path,
+    component_kind: PlanComponentKind,
+) -> Option<ICSPlan> {
     let uid = component.get_uid()?;
     let summary = component.get_summary()?;
 
     let plan_id = plan_id_from_ics_uid(uid);
-    let dtstart = parse_dtstart(component);
+    let dtstart = parse_dtstart(component)?;
     let recurrence = component
         .property_value("RRULE")
         .and_then(Recurrence::from_rrule_str);
@@ -193,6 +261,7 @@ fn component_to_plan<T: Component>(component: &T, path: &Path) -> Option<ICSPlan
 
     Some(ICSPlan {
         path: path.to_path_buf(),
+        component_kind,
         exdates: BTreeSet::new(),
         overrides: BTreeMap::new(),
         plan: Plan {
@@ -200,7 +269,7 @@ fn component_to_plan<T: Component>(component: &T, path: &Path) -> Option<ICSPlan
             name: summary.to_string(),
             description,
             recurrence,
-            dtstart,
+            dtstart: Some(dtstart),
             external_id: Some(uid.to_string()),
             template_name,
             ..Default::default()
@@ -390,8 +459,9 @@ fn vtodo_state(todo: &Todo) -> ActionState {
 pub enum OccurrenceOp {
     /// Drop the slot from the series (`EXDATE`). It stops rendering entirely.
     Skip,
-    /// Mark the slot completed at `at` (a `RECURRENCE-ID` override carrying
-    /// `STATUS:COMPLETED` + `COMPLETED`).
+    /// Mark the slot completed at `at`. VTODO projects this as a completed
+    /// `RECURRENCE-ID` override for task-client compatibility; VEVENT leaves
+    /// completion entirely to the Action/archive lifecycle.
     Complete { at: DateTime<Local> },
     /// Move the slot to new times (a `RECURRENCE-ID` override). `None` clears
     /// that field on the override, inheriting nothing further from the master.
@@ -402,6 +472,11 @@ pub enum OccurrenceOp {
 }
 
 /// Render one occurrence deviation from host-supplied calendar bytes.
+///
+/// Mutation follows the observed master codec so an alternate-codec resource
+/// remains safely editable during migration. Completion is Action-owned:
+/// VTODO may project it for task-client compatibility, while VEVENT bytes stay
+/// unchanged.
 pub fn render_occurrence_deviation(
     content: &str,
     master_uid: &str,
@@ -409,38 +484,59 @@ pub fn render_occurrence_deviation(
     op: &OccurrenceOp,
 ) -> Result<String, WorkspaceError> {
     let mut calendar: Calendar = content.parse().map_err(WorkspaceError::Parse)?;
+    validate_plan_component_identities(&calendar, Path::new("calendar resource"))?;
+    let (_, component_kind) = recurring_master(&calendar, master_uid)?;
 
     match op {
         OccurrenceOp::Skip => add_exdate(&mut calendar, master_uid, occurrence_key)?,
         OccurrenceOp::Complete { at } => {
+            if component_kind == PlanComponentKind::VEvent {
+                return Ok(content.to_string());
+            }
             let at = *at;
-            upsert_override(&mut calendar, master_uid, occurrence_key, |todo| {
+            upsert_todo_override(&mut calendar, master_uid, occurrence_key, |todo| {
                 todo.status(TodoStatus::Completed);
                 todo.completed(at.with_timezone(&Utc));
-            })?
+            })?;
         }
         OccurrenceOp::Reschedule {
             scheduled_at,
             due_date,
         } => {
             let (scheduled_at, due_date) = (*scheduled_at, *due_date);
-            upsert_override(&mut calendar, master_uid, occurrence_key, |todo| {
-                todo.remove_starts();
-                if let Some(value) = scheduled_at {
-                    todo.starts(value.with_timezone(&Utc));
+            match component_kind {
+                PlanComponentKind::VEvent => {
+                    upsert_event_override(&mut calendar, master_uid, occurrence_key, |event| {
+                        event.remove_starts();
+                        if let Some(value) = scheduled_at {
+                            event.starts(value.with_timezone(&Utc));
+                        }
+                        event.remove_ends();
+                        if let Some(value) = due_date {
+                            event.ends(value.with_timezone(&Utc));
+                        }
+                    })?;
                 }
-                todo.remove_due();
-                if let Some(value) = due_date {
-                    todo.due(value.with_timezone(&Utc));
+                PlanComponentKind::VTodo => {
+                    upsert_todo_override(&mut calendar, master_uid, occurrence_key, |todo| {
+                        todo.remove_starts();
+                        if let Some(value) = scheduled_at {
+                            todo.starts(value.with_timezone(&Utc));
+                        }
+                        todo.remove_due();
+                        if let Some(value) = due_date {
+                            todo.due(value.with_timezone(&Utc));
+                        }
+                    })?;
                 }
-            })?
+            }
         }
     }
 
     Ok(calendar.to_string())
 }
 
-/// Render a canonical recurring-master roll-forward from host-supplied bytes.
+/// Render the VTODO-specific foreign roll-forward compatibility shape.
 pub fn render_master_rollforward(
     content: &str,
     master_uid: &str,
@@ -448,34 +544,28 @@ pub fn render_master_rollforward(
     completed_slots: &[(String, DateTime<Local>)],
 ) -> Result<String, WorkspaceError> {
     let mut calendar: Calendar = content.parse().map_err(WorkspaceError::Parse)?;
+    validate_plan_component_identities(&calendar, Path::new("calendar resource"))?;
 
-    // Reset the master anchor to the canonical origin.
-    let index = master_index(&calendar, master_uid).ok_or_else(|| {
-        WorkspaceError::Parse(format!("recurring master VTODO {master_uid} not found"))
-    })?;
-    if let CalendarComponent::Todo(master) = &mut calendar.components[index] {
-        master.remove_starts();
-        master.starts(base_dtstart.with_timezone(&Utc));
+    let (index, component_kind) = recurring_master(&calendar, master_uid)?;
+    if component_kind != PlanComponentKind::VTodo {
+        return Err(WorkspaceError::Parse(format!(
+            "master roll-forward compatibility requires VTODO Plan {master_uid}"
+        )));
     }
+    let CalendarComponent::Todo(master) = &mut calendar.components[index] else {
+        unreachable!("recurring_master returned the observed component kind")
+    };
+    master.remove_starts();
+    master.starts(base_dtstart.with_timezone(&Utc));
 
     // Record each passed slot as completed, skipping any slot that already carries
     // an override so re-detecting the same advance records nothing new.
     for (key, completed_at) in completed_slots {
-        let already = calendar.components.iter().any(|component| {
-            matches!(component, CalendarComponent::Todo(todo)
-                if todo.get_uid() == Some(master_uid)
-                    && todo
-                        .property_value("RECURRENCE-ID")
-                        .and_then(parse_ics_datetime_token)
-                        .map(canonical_occurrence_key)
-                        .as_deref()
-                        == Some(key.as_str()))
-        });
-        if already {
+        if override_index(&calendar, master_uid, key, PlanComponentKind::VTodo).is_some() {
             continue;
         }
         let completed_at = *completed_at;
-        upsert_override(&mut calendar, master_uid, key, |todo| {
+        upsert_todo_override(&mut calendar, master_uid, key, |todo| {
             todo.status(TodoStatus::Completed);
             todo.completed(completed_at.with_timezone(&Utc));
         })?;
@@ -484,62 +574,148 @@ pub fn render_master_rollforward(
     Ok(calendar.to_string())
 }
 
-/// Index of the recurring master VTODO for `uid` — the one carrying `RRULE` and
-/// no `RECURRENCE-ID` (which would make it an override, not the master).
-fn master_index(calendar: &Calendar, uid: &str) -> Option<usize> {
-    calendar.components.iter().position(|component| {
-        matches!(component, CalendarComponent::Todo(todo)
-            if todo.get_uid() == Some(uid)
-                && todo.property_value("RRULE").is_some()
-                && todo.property_value("RECURRENCE-ID").is_none())
-    })
+/// Locate exactly one recurring Plan master and report its observed codec.
+fn recurring_master(
+    calendar: &Calendar,
+    uid: &str,
+) -> Result<(usize, PlanComponentKind), WorkspaceError> {
+    let matches = calendar
+        .components
+        .iter()
+        .enumerate()
+        .filter_map(|(index, component)| match component {
+            CalendarComponent::Event(event)
+                if event.get_uid() == Some(uid)
+                    && event.property_value("RRULE").is_some()
+                    && event.property_value("RECURRENCE-ID").is_none() =>
+            {
+                Some((index, PlanComponentKind::VEvent))
+            }
+            CalendarComponent::Todo(todo)
+                if todo.get_uid() == Some(uid)
+                    && todo.property_value("RRULE").is_some()
+                    && todo.property_value("RECURRENCE-ID").is_none() =>
+            {
+                Some((index, PlanComponentKind::VTodo))
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    match matches.as_slice() {
+        [found] => Ok(*found),
+        [] => Err(WorkspaceError::Parse(format!(
+            "recurring Plan master {uid} not found"
+        ))),
+        _ => Err(WorkspaceError::Parse(format!(
+            "recurring Plan master {uid} is ambiguous"
+        ))),
+    }
 }
 
 fn add_exdate(calendar: &mut Calendar, uid: &str, key: &str) -> Result<(), WorkspaceError> {
-    let index = master_index(calendar, uid)
-        .ok_or_else(|| WorkspaceError::Parse(format!("recurring master VTODO {uid} not found")))?;
-    let CalendarComponent::Todo(master) = &mut calendar.components[index] else {
-        unreachable!("master_index only matches Todo components")
-    };
-    if parse_exdates(master).contains(key) {
-        return Ok(()); // already excluded — writing is idempotent
+    let (index, component_kind) = recurring_master(calendar, uid)?;
+    match (&mut calendar.components[index], component_kind) {
+        (CalendarComponent::Event(master), PlanComponentKind::VEvent) => {
+            if !parse_exdates(master).contains(key) {
+                master.add_multi_property("EXDATE", key);
+            }
+        }
+        (CalendarComponent::Todo(master), PlanComponentKind::VTodo) => {
+            if !parse_exdates(master).contains(key) {
+                master.add_multi_property("EXDATE", key);
+            }
+        }
+        _ => unreachable!("recurring_master returned the observed component kind"),
     }
-    master.add_multi_property("EXDATE", key);
     Ok(())
 }
 
-/// Find the `RECURRENCE-ID` override for `key` and patch it, or create one seeded
-/// from the master (UID, the slot as DTSTART, the master SUMMARY) and patch that.
-fn upsert_override(
+fn override_index(
+    calendar: &Calendar,
+    uid: &str,
+    key: &str,
+    component_kind: PlanComponentKind,
+) -> Option<usize> {
+    calendar
+        .components
+        .iter()
+        .position(|component| match (component, component_kind) {
+            (CalendarComponent::Event(event), PlanComponentKind::VEvent) => {
+                event.get_uid() == Some(uid)
+                    && event
+                        .property_value("RECURRENCE-ID")
+                        .and_then(parse_ics_datetime_token)
+                        .map(canonical_occurrence_key)
+                        .as_deref()
+                        == Some(key)
+            }
+            (CalendarComponent::Todo(todo), PlanComponentKind::VTodo) => {
+                todo.get_uid() == Some(uid)
+                    && todo
+                        .property_value("RECURRENCE-ID")
+                        .and_then(parse_ics_datetime_token)
+                        .map(canonical_occurrence_key)
+                        .as_deref()
+                        == Some(key)
+            }
+            _ => false,
+        })
+}
+
+fn master_summary(
+    calendar: &Calendar,
+    uid: &str,
+    component_kind: PlanComponentKind,
+) -> Result<Option<String>, WorkspaceError> {
+    let (index, observed_kind) = recurring_master(calendar, uid)?;
+    if observed_kind != component_kind {
+        return Err(WorkspaceError::Parse(format!(
+            "Plan {uid} is encoded as {observed_kind}, not {component_kind}"
+        )));
+    }
+    Ok(match &calendar.components[index] {
+        CalendarComponent::Event(master) => master.get_summary().map(str::to_string),
+        CalendarComponent::Todo(master) => master.get_summary().map(str::to_string),
+        _ => unreachable!("recurring_master only returns Plan components"),
+    })
+}
+
+fn upsert_event_override(
+    calendar: &mut Calendar,
+    uid: &str,
+    key: &str,
+    patch: impl FnOnce(&mut Event),
+) -> Result<(), WorkspaceError> {
+    let summary = master_summary(calendar, uid, PlanComponentKind::VEvent)?;
+    if let Some(index) = override_index(calendar, uid, key, PlanComponentKind::VEvent) {
+        let CalendarComponent::Event(event) = &mut calendar.components[index] else {
+            unreachable!()
+        };
+        patch(event);
+    } else {
+        let slot = parse_ics_datetime_token(key)
+            .ok_or_else(|| WorkspaceError::Parse(format!("invalid occurrence key {key}")))?;
+        let mut event = Event::new();
+        event.uid(uid);
+        event.add_property("RECURRENCE-ID", key);
+        event.starts(slot.with_timezone(&Utc));
+        if let Some(summary) = summary {
+            event.summary(&summary);
+        }
+        patch(&mut event);
+        calendar.push(event);
+    }
+    Ok(())
+}
+
+fn upsert_todo_override(
     calendar: &mut Calendar,
     uid: &str,
     key: &str,
     patch: impl FnOnce(&mut Todo),
 ) -> Result<(), WorkspaceError> {
-    let master_summary = {
-        let index = master_index(calendar, uid).ok_or_else(|| {
-            WorkspaceError::Parse(format!("recurring master VTODO {uid} not found"))
-        })?;
-        let CalendarComponent::Todo(master) = &calendar.components[index] else {
-            unreachable!("master_index only matches Todo components")
-        };
-        master.get_summary().map(str::to_string)
-    };
-
-    let existing = calendar.components.iter().position(|component| {
-        let CalendarComponent::Todo(todo) = component else {
-            return false;
-        };
-        todo.get_uid() == Some(uid)
-            && todo
-                .property_value("RECURRENCE-ID")
-                .and_then(parse_ics_datetime_token)
-                .map(canonical_occurrence_key)
-                .as_deref()
-                == Some(key)
-    });
-
-    if let Some(index) = existing {
+    let summary = master_summary(calendar, uid, PlanComponentKind::VTodo)?;
+    if let Some(index) = override_index(calendar, uid, key, PlanComponentKind::VTodo) {
         let CalendarComponent::Todo(todo) = &mut calendar.components[index] else {
             unreachable!()
         };
@@ -551,7 +727,7 @@ fn upsert_override(
         todo.uid(uid);
         todo.add_property("RECURRENCE-ID", key);
         todo.starts(slot.with_timezone(&Utc));
-        if let Some(summary) = master_summary {
+        if let Some(summary) = summary {
             todo.summary(&summary);
         }
         patch(&mut todo);
@@ -764,50 +940,144 @@ pub fn render_plan_resource_with_component(
         ));
     };
     let mut calendar: Calendar = existing.parse().map_err(WorkspaceError::Parse)?;
+    validate_plan_component_identities(&calendar, Path::new("calendar resource"))?;
     let uid = plan
         .external_id
         .clone()
         .unwrap_or_else(|| plan.id.to_string());
-    let matching_master = calendar
+    let observed_kind = calendar
         .components
         .iter()
-        .position(|component| match component {
-            CalendarComponent::Event(event) => {
-                event.get_uid() == Some(uid.as_str())
-                    && event.property_value("RECURRENCE-ID").is_none()
+        .find_map(|component| match component {
+            CalendarComponent::Event(event)
+                if event.get_uid() == Some(uid.as_str())
+                    && event.property_value("RECURRENCE-ID").is_none() =>
+            {
+                Some(PlanComponentKind::VEvent)
             }
-            CalendarComponent::Todo(todo) => {
-                todo.get_uid() == Some(uid.as_str())
-                    && todo.property_value("RECURRENCE-ID").is_none()
+            CalendarComponent::Todo(todo)
+                if todo.get_uid() == Some(uid.as_str())
+                    && todo.property_value("RECURRENCE-ID").is_none() =>
+            {
+                Some(PlanComponentKind::VTodo)
             }
-            _ => false,
+            _ => None,
         });
-    let found = if let Some(index) = matching_master {
-        let component = &mut calendar.components[index];
-        match (component_kind, component) {
-            (PlanComponentKind::VEvent, CalendarComponent::Event(event)) => {
-                populate_plan_component(event, plan);
-            }
-            (PlanComponentKind::VTodo, CalendarComponent::Todo(todo)) => {
-                populate_plan_component(todo, plan);
-            }
-            (PlanComponentKind::VEvent, component) => {
-                *component = CalendarComponent::Event(plan_to_vevent(plan));
-            }
-            (PlanComponentKind::VTodo, component) => {
-                *component = CalendarComponent::Todo(plan_to_vtodo(plan));
+    let Some(observed_kind) = observed_kind else {
+        return Err(WorkspaceError::Parse(format!(
+            "Plan {uid} not found in calendar resource"
+        )));
+    };
+
+    match (observed_kind, component_kind) {
+        (PlanComponentKind::VEvent, PlanComponentKind::VEvent) => {
+            for component in &mut calendar.components {
+                if let CalendarComponent::Event(event) = component
+                    && event.get_uid() == Some(uid.as_str())
+                    && event.property_value("RECURRENCE-ID").is_none()
+                {
+                    populate_plan_component(event, plan);
+                }
             }
         }
-        true
-    } else {
-        false
-    };
-    if !found {
-        return Err(WorkspaceError::Parse(format!(
-            "Plan {uid} not found as configured {component_kind} component"
-        )));
+        (PlanComponentKind::VTodo, PlanComponentKind::VTodo) => {
+            for component in &mut calendar.components {
+                if let CalendarComponent::Todo(todo) = component
+                    && todo.get_uid() == Some(uid.as_str())
+                    && todo.property_value("RECURRENCE-ID").is_none()
+                {
+                    populate_plan_component(todo, plan);
+                }
+            }
+        }
+        (PlanComponentKind::VTodo, PlanComponentKind::VEvent) => {
+            for component in &mut calendar.components {
+                let replacement = match component {
+                    CalendarComponent::Todo(todo) if todo.get_uid() == Some(uid.as_str()) => {
+                        let is_master = todo.property_value("RECURRENCE-ID").is_none();
+                        let mut event = todo_as_event(todo);
+                        if is_master {
+                            populate_plan_component(&mut event, plan);
+                        }
+                        Some(CalendarComponent::Event(event))
+                    }
+                    _ => None,
+                };
+                if let Some(replacement) = replacement {
+                    *component = replacement;
+                }
+            }
+        }
+        (PlanComponentKind::VEvent, PlanComponentKind::VTodo) => {
+            for component in &mut calendar.components {
+                let replacement = match component {
+                    CalendarComponent::Event(event) if event.get_uid() == Some(uid.as_str()) => {
+                        let is_master = event.property_value("RECURRENCE-ID").is_none();
+                        let mut todo = event_as_todo(event);
+                        if is_master {
+                            populate_plan_component(&mut todo, plan);
+                        }
+                        Some(CalendarComponent::Todo(todo))
+                    }
+                    _ => None,
+                };
+                if let Some(replacement) = replacement {
+                    *component = replacement;
+                }
+            }
+        }
     }
     Ok(calendar.to_string())
+}
+
+fn copy_component(
+    source: &impl Component,
+    target: &mut impl Component,
+    omitted_properties: &[&str],
+) {
+    for property in source.properties().values() {
+        if !omitted_properties.contains(&property.key()) {
+            target.append_property(property.clone());
+        }
+    }
+    for property in source.multi_properties().values().flatten() {
+        if !omitted_properties.contains(&property.key()) {
+            target.append_multi_property(property.clone());
+        }
+    }
+    for child in source.components() {
+        target.append_component(child.clone());
+    }
+}
+
+fn renamed_property(source: &Property, key: &str) -> Property {
+    let mut target = Property::new(key, source.value());
+    for parameter in source.params().values() {
+        target.add_parameter(parameter.key(), parameter.value());
+    }
+    target
+}
+
+fn todo_as_event(source: &Todo) -> Event {
+    let mut target = Event::new();
+    copy_component(
+        source,
+        &mut target,
+        &["DUE", "STATUS", "COMPLETED", "PERCENT-COMPLETE"],
+    );
+    if let Some(due) = source.properties().get("DUE") {
+        target.append_property(renamed_property(due, "DTEND"));
+    }
+    target
+}
+
+fn event_as_todo(source: &Event) -> Todo {
+    let mut target = Todo::new();
+    copy_component(source, &mut target, &["DTEND"]);
+    if let Some(end) = source.properties().get("DTEND") {
+        target.append_property(renamed_property(end, "DUE"));
+    }
+    target
 }
 
 /// Render a Plan through the legacy VTODO codec.
@@ -1118,6 +1388,76 @@ mod tests {
         assert_eq!(over.state, ActionState::Completed);
     }
 
+    fn vevent_master_ics(uid: &str) -> NamedTempFile {
+        write_ics(&format!(
+            "BEGIN:VCALENDAR\r\nVERSION:2.0\r\n\
+             BEGIN:VEVENT\r\nUID:{uid}\r\nSUMMARY:Standup\r\n\
+             X-APPLE-SORT-ORDER:7\r\n\
+             DTSTART:20260504T090000Z\r\nDTEND:20260504T100000Z\r\n\
+             RRULE:FREQ=DAILY\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+        ))
+    }
+
+    #[test]
+    fn vevent_skip_and_reschedule_use_vevent_deviations() {
+        let uid = "standup@example.com";
+        let key = "20260505T090000Z";
+        let moved = Utc
+            .with_ymd_and_hms(2026, 5, 5, 14, 0, 0)
+            .unwrap()
+            .with_timezone(&Local);
+        let end = Utc
+            .with_ymd_and_hms(2026, 5, 5, 15, 0, 0)
+            .unwrap()
+            .with_timezone(&Local);
+        let f = vevent_master_ics(uid);
+
+        write_occurrence_deviation(f.path(), uid, key, &OccurrenceOp::Skip).unwrap();
+        write_occurrence_deviation(
+            f.path(),
+            uid,
+            key,
+            &OccurrenceOp::Reschedule {
+                scheduled_at: Some(moved),
+                due_date: Some(end),
+            },
+        )
+        .unwrap();
+
+        let plans = parse_ics_file(f.path()).unwrap();
+        assert_eq!(plans.len(), 1);
+        assert_eq!(plans[0].component_kind, PlanComponentKind::VEvent);
+        assert!(plans[0].exdates.contains(key));
+        let override_ = plans[0].overrides.get(key).unwrap();
+        assert_eq!(override_.scheduled_at, Some(moved));
+        assert_eq!(override_.due_date, Some(end));
+        let raw = std::fs::read_to_string(f.path()).unwrap();
+        assert_eq!(raw.matches("BEGIN:VEVENT").count(), 2);
+        assert!(!raw.contains("BEGIN:VTODO"));
+        assert!(raw.contains("X-APPLE-SORT-ORDER:7"));
+    }
+
+    #[test]
+    fn vevent_completion_is_action_owned_and_does_not_mutate_calendar() {
+        let uid = "standup@example.com";
+        let f = vevent_master_ics(uid);
+        let before = std::fs::read_to_string(f.path()).unwrap();
+        let at = Utc
+            .with_ymd_and_hms(2026, 5, 5, 9, 30, 0)
+            .unwrap()
+            .with_timezone(&Local);
+
+        write_occurrence_deviation(
+            f.path(),
+            uid,
+            "20260505T090000Z",
+            &OccurrenceOp::Complete { at },
+        )
+        .unwrap();
+
+        assert_eq!(std::fs::read_to_string(f.path()).unwrap(), before);
+    }
+
     #[test]
     fn parses_one_off_vevent_as_plan() {
         let f = write_ics(
@@ -1133,6 +1473,55 @@ mod tests {
         assert_eq!(
             plans[0].plan.external_id.as_deref(),
             Some("focus@example.com")
+        );
+    }
+
+    #[test]
+    fn parses_one_off_vtodo_as_plan() {
+        let plans = parse_ics(
+            "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VTODO\r\n\
+             UID:focus@example.com\r\nSUMMARY:Focus block\r\n\
+             DTSTART:20260504T090000Z\r\nDUE:20260504T100000Z\r\n\
+             END:VTODO\r\nEND:VCALENDAR\r\n",
+            Path::new("focus.ics"),
+        )
+        .unwrap();
+        assert_eq!(plans.len(), 1);
+        assert_eq!(plans[0].component_kind, PlanComponentKind::VTodo);
+        assert!(plans[0].plan.recurrence.is_none());
+    }
+
+    #[test]
+    fn duplicate_and_mixed_plan_components_are_diagnosed() {
+        let duplicate = parse_ics(
+            "BEGIN:VCALENDAR\r\nVERSION:2.0\r\n\
+             BEGIN:VEVENT\r\nUID:focus@example.com\r\nSUMMARY:One\r\n\
+             DTSTART:20260504T090000Z\r\nEND:VEVENT\r\n\
+             BEGIN:VTODO\r\nUID:focus@example.com\r\nSUMMARY:Two\r\n\
+             DTSTART:20260504T090000Z\r\nEND:VTODO\r\nEND:VCALENDAR\r\n",
+            Path::new("mixed.ics"),
+        )
+        .unwrap_err();
+        let message = duplicate.to_string();
+        assert!(message.contains("mixed.ics"));
+        assert!(message.contains("focus@example.com"));
+        assert!(message.contains("vevent"));
+        assert!(message.contains("vtodo"));
+
+        let mismatched_override = parse_ics(
+            "BEGIN:VCALENDAR\r\nVERSION:2.0\r\n\
+             BEGIN:VEVENT\r\nUID:focus@example.com\r\nSUMMARY:One\r\n\
+             DTSTART:20260504T090000Z\r\nRRULE:FREQ=DAILY\r\nEND:VEVENT\r\n\
+             BEGIN:VTODO\r\nUID:focus@example.com\r\nSUMMARY:One\r\n\
+             RECURRENCE-ID:20260505T090000Z\r\nDTSTART:20260505T100000Z\r\n\
+             END:VTODO\r\nEND:VCALENDAR\r\n",
+            Path::new("mixed-override.ics"),
+        )
+        .unwrap_err();
+        assert!(
+            mismatched_override
+                .to_string()
+                .contains("mixes vtodo override")
         );
     }
 
@@ -1239,7 +1628,14 @@ mod tests {
         );
         assert!(actions[0].due_date.is_some());
         assert!(actions[0].completed_at.is_some());
-        assert!(parse_ics_file(f.path()).unwrap().is_empty());
+
+        // The compatibility reader still exposes migration input as an Action,
+        // while normal Plan discovery now classifies the same one-off VTODO by
+        // domain meaning rather than by the presence of RRULE.
+        let plans = parse_ics_file(f.path()).unwrap();
+        assert_eq!(plans.len(), 1);
+        assert!(plans[0].plan.recurrence.is_none());
+        assert_eq!(plans[0].component_kind, PlanComponentKind::VTodo);
     }
 
     #[test]
@@ -1417,6 +1813,30 @@ mod tests {
         assert!(!rendered.contains("BEGIN:VTODO"));
         assert!(rendered.contains("SUMMARY:Updated"));
         assert!(rendered.contains("X-WR-CALNAME:Foreign"));
+    }
+
+    #[test]
+    fn codec_conversion_moves_master_and_overrides_as_one_identity() {
+        let source = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VTODO\r\nUID:weekly@example.com\r\nSUMMARY:Old\r\nDTSTART:20260810T143000Z\r\nDUE:20260810T153000Z\r\nRRULE:FREQ=WEEKLY\r\nEND:VTODO\r\nBEGIN:VTODO\r\nUID:weekly@example.com\r\nSUMMARY:Old\r\nRECURRENCE-ID:20260817T143000Z\r\nDTSTART:20260817T163000Z\r\nDUE:20260817T173000Z\r\nSTATUS:COMPLETED\r\nX-VENDOR-KEEP:yes\r\nBEGIN:VALARM\r\nACTION:DISPLAY\r\nTRIGGER:-PT15M\r\nDESCRIPTION:Reminder\r\nEND:VALARM\r\nEND:VTODO\r\nEND:VCALENDAR\r\n";
+        let plan = parse_ics(source, Path::new("weekly.ics")).unwrap()[0]
+            .plan
+            .clone();
+
+        let rendered =
+            render_plan_resource_with_component(Some(source), &plan, PlanComponentKind::VEvent)
+                .unwrap();
+
+        assert_eq!(rendered.matches("BEGIN:VEVENT").count(), 2);
+        assert!(!rendered.contains("BEGIN:VTODO"));
+        assert!(rendered.contains("RECURRENCE-ID:20260817T143000Z"));
+        assert!(rendered.contains("DTEND:20260817T173000Z"));
+        assert!(!rendered.contains("STATUS:COMPLETED"));
+        assert!(rendered.contains("X-VENDOR-KEEP:yes"));
+        assert!(rendered.contains("BEGIN:VALARM"));
+        let parsed = parse_ics(&rendered, Path::new("weekly.ics")).unwrap();
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].component_kind, PlanComponentKind::VEvent);
+        assert!(parsed[0].overrides.contains_key("20260817T143000Z"));
     }
 
     #[test]

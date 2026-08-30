@@ -90,6 +90,7 @@ impl From<Charter> for MarkdownCharter {
                 .map(|plan| ICSPlan {
                     path: PathBuf::new(),
                     plan,
+                    component_kind: crate::config::PlanComponentKind::default(),
                     exdates: Default::default(),
                     overrides: Default::default(),
                 })

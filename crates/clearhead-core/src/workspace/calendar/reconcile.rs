@@ -1396,6 +1396,12 @@ pub fn prepare_master_rollforward_changes(
         let mut rendered = resource.source.clone();
         let mut resource_dirty = false;
         for ics in plans {
+            // Master advancement is a VTODO client compatibility behavior.
+            // VEVENT DTSTART edits are ordinary calendar-side reschedules and
+            // must never be reinterpreted as completed Action occurrences.
+            if ics.component_kind != crate::config::PlanComponentKind::VTodo {
+                continue;
+            }
             let (Some(plan_uid), Some(current)) =
                 (ics.plan.external_id.as_deref(), ics.plan.dtstart)
             else {
@@ -1696,6 +1702,7 @@ mod tests {
         let ics = crate::workspace::calendar::ics::ICSPlan {
             path: PathBuf::from("review.ics"),
             plan,
+            component_kind: crate::config::PlanComponentKind::VTodo,
             exdates: BTreeSet::new(),
             overrides: BTreeMap::new(),
         };

@@ -216,6 +216,7 @@ mod tests {
         let plan = make_plan("weekly review", uid, dtstart, Some("weekly"));
         let ics_plan = ICSPlan {
             path: std::path::PathBuf::from("weekly.ics"),
+            component_kind: crate::config::PlanComponentKind::VTodo,
             exdates: BTreeSet::from([canonical_occurrence_key(excluded)]),
             overrides: BTreeMap::new(),
             plan,
@@ -250,6 +251,7 @@ mod tests {
         let dtstart = Local.with_ymd_and_hms(2026, 5, 3, 10, 0, 0).unwrap();
         let ics = ICSPlan {
             path: std::path::PathBuf::from("p.ics"),
+            component_kind: crate::config::PlanComponentKind::VTodo,
             plan: Plan {
                 name: "no uid".to_string(),
                 dtstart: Some(dtstart),
@@ -269,6 +271,7 @@ mod tests {
         use std::collections::{BTreeMap, BTreeSet};
         ICSPlan {
             path: std::path::PathBuf::from("w.ics"),
+            component_kind: crate::config::PlanComponentKind::VTodo,
             plan: make_plan("weekly review", "wk@example.com", dtstart, Some("weekly")),
             exdates: BTreeSet::new(),
             overrides: BTreeMap::new(),
