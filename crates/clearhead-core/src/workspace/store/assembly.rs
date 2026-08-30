@@ -383,6 +383,7 @@ fn collect_sidecar_actions(input: &WorkspaceAssemblyInput) -> BTreeMap<String, A
         for (key, action) in metadata.actions {
             let target: &mut ActionMeta = union.entry(key).or_default();
             target.created = target.created.or(action.created);
+            target.plan = target.plan.clone().or(action.plan);
             target.occurrence = target.occurrence.clone().or(action.occurrence);
         }
     }
@@ -694,6 +695,28 @@ mod tests {
             .unwrap();
         assert_eq!(finding.mount, MountId::ExternalPlans);
         assert_eq!(finding.path, PathBuf::from("orphan"));
+    }
+
+    #[test]
+    fn durable_sidecar_plan_link_hydrates_domain_relation() {
+        let id = Uuid::now_v7();
+        let uid = "calendar-owned@example.com";
+        let sidecar = format!(r#"{{"actions":{{"{id}":{{"plan":{{"uid":"{uid}"}}}}}}}}"#);
+        let read = assemble_workspace(&input(
+            WorkspaceScope::User,
+            &[
+                ("charters/work.actions", &format!("[ ] Linked #{id}")),
+                ("charters/.work.json", &sidecar),
+            ],
+            None,
+            &[],
+        ))
+        .unwrap();
+
+        assert_eq!(
+            read.charters[0].actions[0].action.plan_id,
+            Some(crate::workspace::calendar::ics::plan_id_from_ics_uid(uid))
+        );
     }
 
     #[test]

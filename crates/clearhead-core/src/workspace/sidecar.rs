@@ -156,10 +156,18 @@ pub fn hydrate_actions_map(
             .plan_id
             .map(|id| id.to_string())
             .unwrap_or_else(|| action.id.to_string());
-        if let Some(meta) = actions_meta.get(&key)
-            && action.created_at.is_none()
-        {
-            action.created_at = meta.created;
+        if let Some(meta) = actions_meta.get(&key) {
+            if action.created_at.is_none() {
+                action.created_at = meta.created;
+            }
+            if action.plan_id.is_none()
+                && let Some(link) = &meta.plan
+            {
+                action.plan_id = Some(crate::workspace::calendar::ics::plan_id_from_ics_uid(
+                    &link.uid,
+                ));
+                action.external_occurrence_key = link.occurrence_key.clone();
+            }
         }
     }
 }
@@ -409,6 +417,41 @@ mod tests {
 
         hydrate_actions(&mut actions, &meta);
         assert_eq!(actions[0].action.created_at, Some(created));
+    }
+
+    #[test]
+    fn hydrate_restores_durable_plan_relation() {
+        use crate::domain::Action;
+        use uuid::Uuid;
+
+        let id = Uuid::now_v7();
+        let uid = "foreign-plan@example.com";
+        let occurrence_key = "20260830T140000Z";
+        let mut actions = vec![make_sourced(Action {
+            id,
+            ..Default::default()
+        })];
+        let mut meta = CharterMetadata::default();
+        meta.actions.insert(
+            id.to_string(),
+            ActionMeta {
+                plan: Some(ActionPlanLink {
+                    uid: uid.into(),
+                    occurrence_key: Some(occurrence_key.into()),
+                }),
+                ..Default::default()
+            },
+        );
+
+        hydrate_actions(&mut actions, &meta);
+        assert_eq!(
+            actions[0].action.plan_id,
+            Some(crate::workspace::calendar::ics::plan_id_from_ics_uid(uid))
+        );
+        assert_eq!(
+            actions[0].action.external_occurrence_key.as_deref(),
+            Some(occurrence_key)
+        );
     }
 
     #[test]
