@@ -11,6 +11,8 @@ use serde_json::Value;
 
 const A: &str = "019f733d-4600-7000-8000-0000000000a1";
 const B: &str = "019f733d-4600-7000-8000-0000000000b2";
+const C: &str = "019f733d-4600-7000-8000-0000000000c3";
+const D: &str = "019f733d-4600-7000-8000-0000000000d4";
 const WS: &str = "00000000-0000-0000-0000-0000000000cc";
 
 fn seed(actions: &str) -> TestEnv {
@@ -80,4 +82,25 @@ fn top_level_action_has_no_charter_parent() {
         "charter must not be a parent: {solo}"
     );
     assert!(solo.get("parent_name").is_none(), "{solo}");
+}
+
+#[test]
+fn unscheduled_includes_in_progress_leaves_and_excludes_containers() {
+    let env = seed(&format!(
+        "[-] Continuing #{A}\n[ ] Container #{B}\n> [ ] Leaf #{C}\n[=] Blocked #{D}\n"
+    ));
+    let doc: Value = serde_json::from_slice(&run_index(&env, "unscheduled", "json")).expect("json");
+    let nodes = doc.as_array().expect("index json is the row array");
+    let names: Vec<&str> = nodes
+        .iter()
+        .map(|node| node["name"].as_str().expect("name string"))
+        .collect();
+
+    assert!(names.contains(&"Continuing"), "InProgress work: {nodes:?}");
+    assert!(names.contains(&"Leaf"), "lowest open child: {nodes:?}");
+    assert!(!names.contains(&"Container"), "container leaked: {nodes:?}");
+    assert!(
+        !names.contains(&"Blocked"),
+        "blocked work leaked: {nodes:?}"
+    );
 }

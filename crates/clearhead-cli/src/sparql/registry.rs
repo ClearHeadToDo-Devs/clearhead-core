@@ -61,10 +61,6 @@ pub const BUILT_IN: &[(&str, &str)] = &[
         include_str!("../queries/high-priority.sparql"),
     ),
     (
-        "next-actions",
-        include_str!("../queries/next-actions.sparql"),
-    ),
-    (
         "orphaned-actions",
         include_str!("../queries/orphaned-actions.sparql"),
     ),
@@ -309,5 +305,19 @@ mod tests {
         for good in ["agenda", "my-query", "weekly_rollup"] {
             assert!(is_safe_name(good), "{good:?} must be accepted");
         }
+    }
+
+    #[test]
+    fn unscheduled_is_the_only_builtin_next_work_query() {
+        assert!(
+            BUILT_IN_INDEX
+                .iter()
+                .any(|(name, _)| *name == "unscheduled"),
+            "the trusted next-work contract must remain an index view"
+        );
+        assert!(
+            BUILT_IN.iter().all(|(name, _)| *name != "next-actions"),
+            "the contradictory legacy flat query must not return"
+        );
     }
 }
