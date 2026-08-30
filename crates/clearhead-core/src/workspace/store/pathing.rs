@@ -93,7 +93,9 @@ pub fn infer_parent_charter_name_for_workspace(
 
     if let Some(project_name) = project_root_charter {
         if components.len() == 1 {
-            if is_primary_filename(filename) {
+            if is_primary_filename(filename)
+                || infer_charter_name(relative_path).as_deref() == Some(project_name)
+            {
                 return None;
             }
             return Some(project_name.to_string());
@@ -215,6 +217,19 @@ mod tests {
                 Some("platform")
             ),
             Some("platform".into())
+        );
+        assert_eq!(
+            infer_parent_charter_name_for_workspace(
+                Path::new("platform.actions"),
+                Some("platform")
+            ),
+            None,
+            "a legacy named root anchor must not parent the project to itself"
+        );
+        assert_eq!(
+            infer_parent_charter_name_for_workspace(Path::new("platform.md"), Some("platform")),
+            None,
+            "the root Charter document must not infer a self-parent"
         );
     }
 }

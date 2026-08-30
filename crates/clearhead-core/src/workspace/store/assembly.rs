@@ -655,6 +655,30 @@ mod tests {
     }
 
     #[test]
+    fn legacy_named_project_root_does_not_parent_itself() {
+        let id = Uuid::now_v7();
+        let Ok(read) = assemble_workspace(&input(
+            WorkspaceScope::Project {
+                root_charter_name: "platform".into(),
+            },
+            &[(
+                "charters/platform.actions",
+                &format!("[ ] Legacy root #{id}"),
+            )],
+            None,
+            &[],
+        )) else {
+            panic!("legacy project root should assemble");
+        };
+        let Some(root) = read.charters.first() else {
+            panic!("project root Charter should exist");
+        };
+
+        assert_eq!(root.alias.as_deref(), Some("platform"));
+        assert_eq!(root.parent, None);
+    }
+
+    #[test]
     fn external_empty_collection_is_not_flattened_into_workspace_plans() {
         let read = assemble_workspace(&input(
             WorkspaceScope::User,
