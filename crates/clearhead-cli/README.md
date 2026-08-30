@@ -74,6 +74,18 @@ clearhead query index agenda
 clearhead query tree
 ```
 
+## Governed work selection
+
+`clearhead query index unscheduled` is the trusted next-work view; `agenda`
+selects dated work that is actionable now. Both derive eligibility from Action
+state and schedule constraints plus the state of the owning Charter and its
+ancestors. Run `clearhead doctor` when expected work is absent: it reports
+cross-level state contradictions instead of silently normalizing source data.
+
+The normative readiness and Charter-state semantics live in the
+[process specification](https://github.com/ClearHeadToDo-Devs/specifications/blob/master/process.md).
+The CLI only evaluates and presents that shared contract.
+
 ## Editor integration
 
 The official Neovim plugin provides LSP setup, syntax highlighting, state cycling, depth hotkeys, workspace pickers, and archiving commands:

@@ -12,7 +12,21 @@ clearhead-lsp
 
 The protocol runtime has moved here from `clearhead-cli`. This crate now owns Tokio, Tower LSP, DashMap, tree-sitter document state, stdio startup, workspace routing, diagnostics, code actions, completion, inlay hints, semantic tokens, definition, references, formatting, protocol conversions, provider tests, and its NDJSON telemetry adapter.
 
-Archive mutations are intentionally absent from the LSP surface. Editor clients save their buffers, invoke the CLI's durable workspace operation, and reload or close the affected buffer only after success.
+Archive mutations are intentionally absent from the LSP surface. Editor clients
+save their buffers, invoke the CLI's durable workspace operation, and reload or
+close the affected buffer only after success.
+
+## Workspace-state diagnostics
+
+The LSP publishes Core's workspace-coherence findings at their source files,
+including Active or InProgress work beneath inactive Charter ancestry and open
+work beneath terminal ancestry. Saving a workspace document refreshes these
+shared findings for all open documents; the LSP does not infer or rewrite
+lifecycle state.
+
+The normative Charter-state and readiness semantics live in the
+[process specification](https://github.com/ClearHeadToDo-Devs/specifications/blob/master/process.md).
+This crate only projects the shared diagnostics into LSP.
 
 ## Ownership and releases
 
