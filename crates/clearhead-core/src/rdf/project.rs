@@ -139,13 +139,11 @@ fn project_charter(
     if let Some(alias) = &charter.alias {
         qs.add(&subject, actions_pred("hasAlias"), simple(alias));
     }
-    if let Some(state) = &charter.state {
-        qs.add_node(
-            &subject,
-            actions_pred("hasCharterState"),
-            charter_state_node(state),
-        );
-    }
+    qs.add_node(
+        &subject,
+        actions_pred("hasCharterState"),
+        charter_state_node(&charter.effective_state()),
+    );
 
     if let Some(parent_ref) = &charter.parent {
         let parent_uuid = charter_id_by_ref
@@ -555,6 +553,21 @@ mod tests {
         ));
         // Not the old bare-string literal.
         assert!(!has_o(&quads, &charter, HAS_CHARTER_STATE, "Active"));
+    }
+
+    #[test]
+    fn omitted_charter_state_projects_as_new() {
+        let mut model = sample_model();
+        model.charters[0].state = None;
+        let quads = project(&model);
+        let charter = format!("urn:uuid:{CHARTER}");
+
+        assert!(has_o(
+            &quads,
+            &charter,
+            HAS_CHARTER_STATE,
+            "https://clearhead.us/vocab/actions/v4#CharterNew"
+        ));
     }
 
     #[test]

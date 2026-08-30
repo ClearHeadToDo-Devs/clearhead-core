@@ -15,7 +15,8 @@ SELECT ?id ?parent ?name ?kind ?status ?priority ?source_file ?source_line ?char
             ?id a actions:Charter ; rdfs:label ?name .
             BIND("charter" AS ?kind)
             OPTIONAL { ?parent a actions:Charter ; actions:hasSubCharter ?id }
-            OPTIONAL { ?id actions:hasCharterState ?status }
+            ?id actions:hasCharterState ?raw_status .
+            BIND(REPLACE(STRAFTER(STR(?raw_status), "#"), "^Charter", "") AS ?status)
             OPTIONAL { ?id ws:hasSourceFile ?source_file }
         }
         UNION

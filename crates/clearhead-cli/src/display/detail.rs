@@ -83,9 +83,10 @@ pub fn render_charter_detail(charter: &Charter) -> String {
 
     opt(&mut rows, "alias", charter.alias.as_deref());
     opt(&mut rows, "parent", charter.parent.as_deref());
-    if let Some(state) = charter.state {
-        rows.push(("state", state.to_string().to_lowercase()));
-    }
+    rows.push((
+        "state",
+        charter.effective_state().to_string().to_lowercase(),
+    ));
     if let Some(objs) = &charter.objectives
         && !objs.is_empty()
     {

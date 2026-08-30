@@ -59,6 +59,7 @@ fn tree_nests_actions_under_their_charter() {
         .find(|n| n["kind"] == "charter")
         .expect("charter root present");
     assert_eq!(charter["name"], "work");
+    assert_eq!(charter["status"], "New", "omitted source state is explicit");
     let container = &charter["children"][0];
     assert_eq!(container["name"], "Container");
     assert_eq!(container["children"][0]["name"], "Child");

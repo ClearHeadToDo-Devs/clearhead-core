@@ -6,7 +6,7 @@ use tracing::info;
 
 use crate::argparser;
 use crate::commands::CommandContext;
-use clearhead_core::{ActionState, Charter};
+use clearhead_core::{ActionState, Charter, CharterState};
 
 use super::action::resolve_charter_across_workspaces;
 
@@ -114,9 +114,11 @@ pub fn read_charters(
         }
         Some(argparser::OutputMode::Json) => {
             // Charters have no canonical actions-schema shape yet; emit plain
-            // structured JSON of the domain charters until a charter schema exists.
+            // structured JSON while materializing semantic defaults that source
+            // round-tripping deliberately keeps implicit.
             for (_, model) in &models {
-                println!("{}", serde_json::to_string_pretty(&model.charters)?);
+                let semantic = semantic_charters_json(&model.charters)?;
+                println!("{}", serde_json::to_string_pretty(&semantic)?);
             }
         }
         Some(argparser::OutputMode::Ids) => {
@@ -151,6 +153,21 @@ pub fn read_charters(
         }
     }
     Ok(())
+}
+
+fn semantic_charters_json(charters: &[Charter]) -> serde_json::Result<serde_json::Value> {
+    let mut value = serde_json::to_value(charters)?;
+    if let Some(rows) = value.as_array_mut() {
+        for (row, charter) in rows.iter_mut().zip(charters) {
+            if let Some(object) = row.as_object_mut() {
+                object.insert(
+                    "state".into(),
+                    serde_json::to_value(charter.effective_state())?,
+                );
+            }
+        }
+    }
+    Ok(value)
 }
 
 fn print_charter_table(workspaces: &[(String, Vec<Charter>)], multi_ws: bool) {
@@ -308,7 +325,7 @@ pub fn add_charter(
         alias: alias.clone(),
         parent: parent.clone(),
         objectives: None,
-        state: None,
+        state: Some(CharterState::New),
         plans: vec![],
         actions: vec![],
     };
@@ -562,8 +579,6 @@ pub fn close_charter(
     dry_run: bool,
 ) -> anyhow::Result<()> {
     use clearhead_cli::mutations::{CharterUpdate, apply_charter_update};
-    use clearhead_core::CharterState;
-
     let ws_root = file
         .map(|f| ctx.workspace_for_file(f))
         .unwrap_or_else(|| ctx.data_dir.clone());

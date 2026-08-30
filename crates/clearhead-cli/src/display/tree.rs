@@ -77,10 +77,10 @@ fn charter_summary_label(charter: &Charter) -> String {
         String::new()
     };
 
-    let state_tag = charter
-        .state
-        .map(|s| format!("  [{}]", s.to_string().to_lowercase()))
-        .unwrap_or_default();
+    let state_tag = format!(
+        "  [{}]",
+        charter.effective_state().to_string().to_lowercase()
+    );
 
     let alias_tag = charter
         .alias
@@ -262,10 +262,10 @@ fn charter_label(charter: &Charter) -> String {
         .as_deref()
         .map(|a| format!("  /{}", a))
         .unwrap_or_default();
-    let state_tag = charter
-        .state
-        .map(|s| format!("  [{}]", s.to_string().to_lowercase()))
-        .unwrap_or_default();
+    let state_tag = format!(
+        "  [{}]",
+        charter.effective_state().to_string().to_lowercase()
+    );
     format!("📁 {}{}{}", charter.title, alias_tag, state_tag)
 }
 

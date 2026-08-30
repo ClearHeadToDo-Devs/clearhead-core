@@ -311,9 +311,10 @@ impl Recurrence {
 /// both terminal — either is a precondition for archival, at which point the
 /// charter and all its artifacts are moved into the `archive/` region
 /// (see [`CharterState::is_terminal`]).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum CharterState {
     /// Newly created, not yet active.
+    #[default]
     New,
     /// Actively being worked on.
     Active,
@@ -522,6 +523,15 @@ pub struct Charter {
 }
 
 impl Charter {
+    /// Semantic lifecycle state, applying [`CharterState::New`] when source
+    /// omitted the locally asserted state.
+    ///
+    /// This accessor preserves `state: None` for source round-tripping while
+    /// giving RDF, JSON, queries, and other read models one explicit value.
+    pub fn effective_state(&self) -> CharterState {
+        self.state.unwrap_or_default()
+    }
+
     /// Whether this charter is a hierarchy root — it declares no parent, or an
     /// empty one. Combine with an iterator to collect roots:
     /// `model.charters.iter().filter(|c| c.is_root())`.
@@ -791,6 +801,16 @@ mod tests {
             parent: parent.map(String::from),
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn omitted_charter_state_is_semantically_new() {
+        let mut charter = charter_with(Some("root"), None);
+        assert_eq!(charter.state, None, "source omission remains observable");
+        assert_eq!(charter.effective_state(), CharterState::New);
+
+        charter.state = Some(CharterState::Active);
+        assert_eq!(charter.effective_state(), CharterState::Active);
     }
 
     #[test]

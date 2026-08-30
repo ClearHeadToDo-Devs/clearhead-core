@@ -12,6 +12,40 @@ alias: my-charter
 ";
 
 #[test]
+fn add_charter_writes_explicit_new_state() {
+    let env = TestEnv::new();
+
+    env.command()
+        .args(["add", "charter", "Fresh Work", "--alias", "fresh-work"])
+        .assert()
+        .success();
+
+    let path = env.data_dir.join("charters/fresh-work.md");
+    let Ok(content) = fs::read_to_string(path) else {
+        panic!("new Charter document should be readable");
+    };
+    assert!(content.contains("state: New"), "{content}");
+}
+
+#[test]
+fn read_charters_json_materializes_omitted_state_as_new() {
+    let env = TestEnv::new();
+    env.write_text("charters/my-charter.md", CHARTER_MD);
+    env.write_actions("my-charter.actions", "");
+
+    let assert = env
+        .command()
+        .args(["read", "charters", "--format", "json"])
+        .assert()
+        .success();
+    let Ok(rows) = serde_json::from_slice::<serde_json::Value>(&assert.get_output().stdout) else {
+        panic!("read charters should emit JSON");
+    };
+
+    assert_eq!(rows[0]["state"], "New");
+}
+
+#[test]
 fn close_charter_by_query_updates_state() {
     let env = TestEnv::new();
     env.write_text("charters/my-charter.md", CHARTER_MD);
