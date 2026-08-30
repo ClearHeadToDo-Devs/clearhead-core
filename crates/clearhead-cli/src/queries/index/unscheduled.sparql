@@ -4,6 +4,7 @@
 # The date-light working view (charter: agenda-view): what could I pick up,
 # given nothing on the calendar demands it? The complement of the agenda —
 # an action appears when it is actionable now and *unplanned*:
+#   - owning Charter and every ancestor Charter are Active
 #   - open or in-progress (blocked is not actionable)
 #   - first in its dependency chain: no open predecessor, at this action or
 #     any ancestor — a blocked parent blocks every descendant beneath it
@@ -34,6 +35,27 @@ SELECT (?action AS ?id) ?name ?status ?source_file ?source_line ?charter_root ?p
         ?workspace_node a ws:Workspace ;
                         ws:charterRoot ?charter_root .
         FILTER(?raw_state = actions:NotStarted || ?raw_state = actions:InProgress)
+
+        # Admission is governed by the owning Charter and its full ancestry.
+        # Direct and nested Actions reach their owner through part_of; a
+        # Plan-generated Action reaches it through prescribes + Plan part_of.
+        {
+            ?action bfo:BFO_0000050+ ?owner .
+            ?owner a actions:Charter .
+        }
+        UNION
+        {
+            ?plan cco:ont00001942 ?action ;
+                  bfo:BFO_0000050 ?owner .
+            ?owner a actions:Charter .
+        }
+        ?owner actions:hasCharterState actions:CharterActive .
+        FILTER NOT EXISTS {
+            ?ancestor actions:hasSubCharter+ ?owner ;
+                      actions:hasCharterState ?ancestor_state .
+            FILTER(?ancestor_state != actions:CharterActive)
+        }
+
         OPTIONAL { ?action actions:hasPriority ?priority }
         # The denormalized parent edge is a parent *action*, not the charter a
         # top-level action is contained by (matching tree/work-map, and the
@@ -65,5 +87,6 @@ SELECT (?action AS ?id) ?name ?status ?source_file ?source_line ?charter_root ?p
         }
     }
     BIND(STRAFTER(STR(?raw_state), "#") AS ?status)
+    BIND(IF(?raw_state = actions:InProgress, 0, 1) AS ?state_rank)
 }
-ORDER BY ASC(COALESCE(?priority, 99)) ?name
+ORDER BY ?state_rank ASC(COALESCE(?priority, 99)) ?name

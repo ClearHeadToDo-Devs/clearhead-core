@@ -59,6 +59,10 @@ fn seeded_env() -> TestEnv {
         "workspace.json",
         r#"{"workspace_id":"00000000-0000-0000-0000-0000000000cc","workspace_name":"testws"}"#,
     );
+    env.write_text(
+        "charters/next.md",
+        "---\nalias: next\nstate: Active\n---\n# Next\n",
+    );
     env.write_actions(
         "next.actions",
         concat!(

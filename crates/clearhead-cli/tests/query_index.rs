@@ -21,6 +21,10 @@ fn seed(actions: &str) -> TestEnv {
         "workspace.json",
         &format!(r#"{{"workspace_id":"{WS}","workspace_name":"testws"}}"#),
     );
+    env.write_text(
+        "charters/work.md",
+        "---\nalias: work\nstate: Active\n---\n# Work\n",
+    );
     env.write_actions("work.actions", actions);
     env
 }
@@ -98,9 +102,49 @@ fn unscheduled_includes_in_progress_leaves_and_excludes_containers() {
 
     assert!(names.contains(&"Continuing"), "InProgress work: {nodes:?}");
     assert!(names.contains(&"Leaf"), "lowest open child: {nodes:?}");
+    assert_eq!(
+        names.first(),
+        Some(&"Continuing"),
+        "InProgress work ranks before ready NotStarted work: {nodes:?}"
+    );
     assert!(!names.contains(&"Container"), "container leaked: {nodes:?}");
     assert!(
         !names.contains(&"Blocked"),
         "blocked work leaked: {nodes:?}"
     );
+}
+
+#[test]
+fn engagement_views_require_active_charter_ancestry() {
+    let env = TestEnv::new();
+    env.write_text(
+        "workspace.json",
+        &format!(r#"{{"workspace_id":"{WS}","workspace_name":"testws"}}"#),
+    );
+    env.write_text(
+        "charters/root.md",
+        "---\nalias: root\nstate: New\n---\n# Root\n",
+    );
+    env.write_actions("root.actions", "");
+    env.write_text(
+        "charters/child.md",
+        "---\nalias: child\nparent: root\nstate: Active\n---\n# Child\n",
+    );
+    env.write_actions(
+        "child.actions",
+        &format!("[ ] Stranded undated #{A}\n[ ] Stranded dated @2000-01-01T00:00 #{B}\n"),
+    );
+
+    for view in ["unscheduled", "agenda"] {
+        let Ok(doc) = serde_json::from_slice::<Value>(&run_index(&env, view, "json")) else {
+            panic!("{view} should emit JSON");
+        };
+        let Some(nodes) = doc.as_array() else {
+            panic!("{view} JSON should be the row array");
+        };
+        assert!(
+            nodes.is_empty(),
+            "{view} admitted inactive ancestry: {nodes:?}"
+        );
+    }
 }

@@ -3,6 +3,7 @@
 # =============================================================================
 # The daily "just do it" list (charter: agenda-view). An action appears when
 # it is actionable *now*:
+#   - owning Charter and every ancestor Charter are Active
 #   - open or in-progress (blocked belongs to the weekly horizon)
 #   - first in its dependency chain: no open predecessor, at this action or
 #     any ancestor — a blocked parent blocks every descendant beneath it
@@ -38,6 +39,25 @@ SELECT (?action AS ?id) ?name ?status ?source_file ?source_line ?charter_root ?p
         ?workspace_node a ws:Workspace ;
                         ws:charterRoot ?charter_root .
         FILTER(?raw_state = actions:NotStarted || ?raw_state = actions:InProgress)
+
+        # Admission is governed by the owning Charter and its full ancestry.
+        {
+            ?action bfo:BFO_0000050+ ?owner .
+            ?owner a actions:Charter .
+        }
+        UNION
+        {
+            ?plan cco:ont00001942 ?action ;
+                  bfo:BFO_0000050 ?owner .
+            ?owner a actions:Charter .
+        }
+        ?owner actions:hasCharterState actions:CharterActive .
+        FILTER NOT EXISTS {
+            ?ancestor actions:hasSubCharter+ ?owner ;
+                      actions:hasCharterState ?ancestor_state .
+            FILTER(?ancestor_state != actions:CharterActive)
+        }
+
         OPTIONAL { ?action actions:hasScheduledDateTime ?scheduled_at }
         OPTIONAL { ?action actions:hasDueDateTime ?due_date }
         OPTIONAL { ?action actions:hasPriority ?priority }
@@ -64,9 +84,10 @@ SELECT (?action AS ?id) ?name ?status ?source_file ?source_line ?charter_root ?p
         }
     }
     BIND(STRAFTER(STR(?raw_state), "#") AS ?status)
+    BIND(IF(?raw_state = actions:InProgress, 0, 1) AS ?state_rank)
     FILTER(
         (BOUND(?scheduled_at) && ?scheduled_at <= ?END_OF_TODAY) ||
         (BOUND(?due_date) && ?due_date <= ?END_OF_TODAY)
     )
 }
-ORDER BY ASC(COALESCE(?priority, 99)) ?due_date ?scheduled_at ?name
+ORDER BY ?state_rank ASC(COALESCE(?priority, 99)) ?due_date ?scheduled_at ?name
