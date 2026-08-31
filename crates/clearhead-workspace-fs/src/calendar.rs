@@ -21,7 +21,7 @@ use clearhead_core::workspace::calendar::reconcile::{
     AppliedSync, CalendarSyncPreparationInput, MaterializedOccurrenceArchiveState,
     MaterializedOccurrencePreparationInput, PlanResourceState, SyncActionResourceState,
     SyncConflictResolution, SyncImport, SyncMirrorResourceState, SyncPlanLink, SyncPlanTemplate,
-    SyncReport, plan_one_off_sync, plan_sync, prepare_master_rollforward_changes,
+    SyncPlanUnlink, SyncReport, plan_one_off_sync, plan_sync, prepare_master_rollforward_changes,
     prepare_master_rollforwards, prepare_materialized_occurrence_resolution, prepare_sync,
     sync_import_actions_file,
 };
@@ -238,7 +238,6 @@ pub fn sync_calendar_with_component(
         mirrors: linked_mirrors,
         plan_ids: observed_one_off_plan_ids,
         unlinked: unlinked_one_off_plans,
-        mut warnings,
     } = sync_linked_one_off_resources(&observation.resources, &model)?;
     let mut linked_model = model.clone();
     let mut plan_links = Vec::new();
@@ -287,6 +286,43 @@ pub fn sync_calendar_with_component(
         }
     }
 
+    let linked_locations = linked_mirrors
+        .iter()
+        .map(|resource| (resource.action_id, resource.location.clone()))
+        .collect::<HashMap<_, _>>();
+    let newly_linked_ids = plan_links
+        .iter()
+        .map(|link| link.action_id)
+        .collect::<HashSet<_>>();
+    let mut plan_unlinks = Vec::new();
+    for action in linked_model.all_actions() {
+        let Some(plan_id) = action.plan_id else {
+            continue;
+        };
+        if action.external_occurrence_key.is_some() {
+            continue;
+        }
+        let calendar_location = linked_locations.get(&action.id).cloned();
+        let calendar_deleted = !observed_one_off_plan_ids.contains(&plan_id);
+        let action_unscheduled = !newly_linked_ids.contains(&action.id)
+            && action.scheduled_at.is_none()
+            && action.due_date.is_none();
+        if calendar_deleted || action_unscheduled {
+            plan_unlinks.push(SyncPlanUnlink {
+                action_id: action.id,
+                calendar_location: if action_unscheduled {
+                    calendar_location
+                } else {
+                    None
+                },
+            });
+        }
+    }
+    let unlink_ids = plan_unlinks
+        .iter()
+        .map(|unlink| unlink.action_id)
+        .collect::<HashSet<_>>();
+
     let (mut calendar_actions, mut mirror_resources) =
         sync_mirror_resources(&observation.resources)?;
     calendar_actions.retain(|_, resource| {
@@ -315,7 +351,9 @@ pub fn sync_calendar_with_component(
     report.imports.extend(lifecycle_imports);
     let linked_report = plan_one_off_sync(&linked_model, &store, &one_off_plans)?;
     report.entries.extend(linked_report.entries);
-    report.warnings.append(&mut warnings);
+    report
+        .entries
+        .retain(|entry| !unlink_ids.contains(&entry.action_id));
     mirror_resources.extend(linked_mirrors);
 
     let existing_mirror_ids = mirror_resources
@@ -415,6 +453,7 @@ pub fn sync_calendar_with_component(
             store,
             action_resources,
             plan_links,
+            plan_unlinks,
             mirror_resources,
             calendar_writes,
             templates,
@@ -628,7 +667,6 @@ struct LinkedOneOffResources {
     mirrors: Vec<SyncMirrorResourceState>,
     plan_ids: HashSet<Uuid>,
     unlinked: Vec<ObservedOneOffPlan>,
-    warnings: Vec<String>,
 }
 
 fn sync_linked_one_off_resources(
@@ -656,7 +694,6 @@ fn sync_linked_one_off_resources(
     let mut linked_plan_ids = HashSet::new();
     let mut linked_action_ids = HashSet::new();
     let mut unlinked = Vec::new();
-    let mut warnings = Vec::new();
     for resource in resources {
         let source = std::str::from_utf8(&resource.bytes)
             .map_err(|error| WorkspaceError::Parse(error.to_string()))?;
@@ -698,19 +735,11 @@ fn sync_linked_one_off_resources(
             plans.push(plan);
         }
     }
-    for (plan_id, action_id) in actions_by_plan {
-        if !linked_plan_ids.contains(&plan_id) {
-            warnings.push(format!(
-                "linked one-off Plan {plan_id} for Action {action_id} is missing; deletion-as-unscheduling is not implemented yet"
-            ));
-        }
-    }
     Ok(LinkedOneOffResources {
         plans,
         mirrors,
         plan_ids: linked_plan_ids,
         unlinked,
-        warnings,
     })
 }
 
@@ -1602,34 +1631,146 @@ mod tests {
     }
 
     #[test]
-    fn missing_linked_plan_deletion_is_explicitly_deferred() {
-        let temp = tempfile::tempdir().unwrap();
-        let project = temp.path().join("project");
-        let external_root = temp.path().join("vdir");
-        let actions = project.join(".clearhead/charters/inbox.actions");
-        std::fs::create_dir_all(actions.parent().unwrap()).unwrap();
-        std::fs::create_dir_all(external_root.join("inbox")).unwrap();
-        let action_id = Uuid::parse_str("019baaec-00b6-7991-be34-94b68212619c").unwrap();
-        std::fs::write(
-            &actions,
-            format!("[ ] Keep me @2026-04-20T10:00:00+00:00 #{action_id}\n"),
-        )
-        .unwrap();
-        write_plan_link_sidecar(&actions, action_id, "missing@example.com");
+    fn calendar_deletion_unschedules_unlinks_and_can_be_rescheduled_in_both_codecs() {
+        for (index, component_kind) in [PlanComponentKind::VEvent, PlanComponentKind::VTodo]
+            .into_iter()
+            .enumerate()
+        {
+            let temp = tempfile::tempdir().unwrap();
+            let project = temp.path().join("project");
+            let external_root = temp.path().join("vdir");
+            let actions = project.join(".clearhead/charters/inbox.actions");
+            std::fs::create_dir_all(actions.parent().unwrap()).unwrap();
+            std::fs::create_dir_all(external_root.join("inbox")).unwrap();
+            let action_id =
+                Uuid::parse_str(&format!("019baaec-00b6-7991-be34-94b6821261c{index}")).unwrap();
+            std::fs::write(
+                &actions,
+                format!(
+                    "[-] Keep me $detail$ @2026-04-20T10:00:00+00:00 :2026-04-20T11:00:00+00:00 !4 +local #{action_id}\n"
+                ),
+            )
+            .unwrap();
 
-        let result = sync_calendar(&project, Some(&external_root), None).unwrap();
+            sync_calendar_with_component(&project, Some(&external_root), None, component_kind)
+                .unwrap();
+            let resource = external_root.join(format!("inbox/{action_id}.ics"));
+            assert!(resource.exists());
+            std::fs::remove_file(&resource).unwrap();
 
-        assert!(
-            result
-                .report
-                .warnings
-                .iter()
-                .any(|warning| warning.contains("deletion-as-unscheduling is not implemented"))
-        );
-        let parsed = parse_actions(&std::fs::read_to_string(actions).unwrap()).unwrap();
-        assert_eq!(parsed.len(), 1);
-        assert_eq!(parsed[0].id, action_id);
-        assert!(parsed[0].scheduled_at.is_some());
+            sync_calendar_with_component(&project, Some(&external_root), None, component_kind)
+                .unwrap();
+
+            let parsed = parse_actions(&std::fs::read_to_string(&actions).unwrap()).unwrap();
+            assert_eq!(parsed.len(), 1);
+            let action = &parsed[0];
+            assert_eq!(action.id, action_id);
+            assert_eq!(action.state, ActionState::InProgress);
+            assert_eq!(action.name, "Keep me");
+            assert_eq!(action.description.as_deref(), Some("detail"));
+            assert_eq!(action.priority, Some(4));
+            assert_eq!(
+                action.contexts.as_deref(),
+                Some(["local".into()].as_slice())
+            );
+            assert!(action.scheduled_at.is_none());
+            assert!(action.due_date.is_none());
+            assert!(!resource.exists(), "deleted Plan must not be recreated");
+            let sidecar = parse_sidecar(
+                &std::fs::read_to_string(actions.parent().unwrap().join(".inbox.json")).unwrap(),
+            )
+            .unwrap();
+            assert!(!sidecar.actions.contains_key(&action_id.to_string()));
+            let store = read_plans_sync_store(&project, &external_root).unwrap();
+            assert!(!store.actions.contains_key(&action_id));
+
+            // Repeating deletion reconciliation is a no-op.
+            sync_calendar_with_component(&project, Some(&external_root), None, component_kind)
+                .unwrap();
+            assert!(!resource.exists());
+
+            // Scheduling the preserved Action again creates a fresh canonical Plan.
+            std::fs::write(
+                &actions,
+                format!(
+                    "[-] Keep me $detail$ @2026-04-22T10:00:00+00:00 :2026-04-22T11:00:00+00:00 !4 +local #{action_id}\n"
+                ),
+            )
+            .unwrap();
+            sync_calendar_with_component(&project, Some(&external_root), None, component_kind)
+                .unwrap();
+            let rendered = std::fs::read_to_string(&resource).unwrap();
+            match component_kind {
+                PlanComponentKind::VEvent => assert!(rendered.contains("BEGIN:VEVENT")),
+                PlanComponentKind::VTodo => assert!(rendered.contains("BEGIN:VTODO")),
+            }
+            let sidecar = parse_sidecar(
+                &std::fs::read_to_string(actions.parent().unwrap().join(".inbox.json")).unwrap(),
+            )
+            .unwrap();
+            assert_eq!(
+                sidecar.actions[&action_id.to_string()]
+                    .plan
+                    .as_ref()
+                    .unwrap()
+                    .uid,
+                action_id.to_string()
+            );
+        }
+    }
+
+    #[test]
+    fn action_schedule_clearing_removes_and_unlinks_both_codecs() {
+        for (index, component_kind) in [PlanComponentKind::VEvent, PlanComponentKind::VTodo]
+            .into_iter()
+            .enumerate()
+        {
+            let temp = tempfile::tempdir().unwrap();
+            let project = temp.path().join("project");
+            let external_root = temp.path().join("vdir");
+            let actions = project.join(".clearhead/charters/inbox.actions");
+            std::fs::create_dir_all(actions.parent().unwrap()).unwrap();
+            std::fs::create_dir_all(external_root.join("inbox")).unwrap();
+            let action_id =
+                Uuid::parse_str(&format!("019baaec-00b6-7991-be34-94b6821261d{index}")).unwrap();
+            std::fs::write(
+                &actions,
+                format!(
+                    "[ ] Clear me @2026-04-20T10:00:00+00:00 :2026-04-20T11:00:00+00:00 !2 +local #{action_id}\n"
+                ),
+            )
+            .unwrap();
+            sync_calendar_with_component(&project, Some(&external_root), None, component_kind)
+                .unwrap();
+            let resource = external_root.join(format!("inbox/{action_id}.ics"));
+            assert!(resource.exists());
+
+            std::fs::write(&actions, format!("[ ] Clear me !2 +local #{action_id}\n")).unwrap();
+            sync_calendar_with_component(&project, Some(&external_root), None, component_kind)
+                .unwrap();
+
+            assert!(!resource.exists());
+            let parsed = parse_actions(&std::fs::read_to_string(&actions).unwrap()).unwrap();
+            assert_eq!(parsed[0].id, action_id);
+            assert!(parsed[0].scheduled_at.is_none());
+            assert!(parsed[0].due_date.is_none());
+            assert_eq!(parsed[0].priority, Some(2));
+            let sidecar = parse_sidecar(
+                &std::fs::read_to_string(actions.parent().unwrap().join(".inbox.json")).unwrap(),
+            )
+            .unwrap();
+            assert!(!sidecar.actions.contains_key(&action_id.to_string()));
+            assert!(
+                !read_plans_sync_store(&project, &external_root)
+                    .unwrap()
+                    .actions
+                    .contains_key(&action_id)
+            );
+
+            sync_calendar_with_component(&project, Some(&external_root), None, component_kind)
+                .unwrap();
+            assert!(!resource.exists());
+        }
     }
 
     #[test]

@@ -468,6 +468,7 @@ fn test_sync_calendar_pulls_calendar_edit_into_action_file() {
 #[test]
 fn test_sync_calendar_pulls_all_owned_vtodo_fields_from_arbitrary_vdir_filename() {
     let env = TestEnv::new();
+    env.write_config(r#"{"plan_component":"vtodo"}"#);
     let uuid = "019baaec-00b6-7991-be34-94b68212619a";
     env.write_actions(
         "inbox.actions",
@@ -518,13 +519,13 @@ fn test_sync_calendar_pulls_all_owned_vtodo_fields_from_arbitrary_vdir_filename(
 #[test]
 fn test_sync_calendar_imports_calendar_created_vtodo_with_arbitrary_uid() {
     let env = TestEnv::new();
+    env.write_config(r#"{"plan_component":"vtodo"}"#);
     env.write_actions("inbox.actions", "");
     let uid = "calendar-client-generated@example.test";
-    let expected_id = clearhead_core::action_id_from_vtodo_uid(uid);
     env.write_text(
         "plans/inbox/client-resource.ics",
         &format!(
-            "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Calendar Client//EN\r\nBEGIN:VTODO\r\nUID:{}\r\nSUMMARY:Captured in calendar\r\nDESCRIPTION:created from the calendar UI\r\nSTATUS:IN-PROCESS\r\nPRIORITY:8\r\nCATEGORIES:errands,phone\r\nDUE:20260501T180000Z\r\nEND:VTODO\r\nEND:VCALENDAR\r\n",
+            "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Calendar Client//EN\r\nBEGIN:VTODO\r\nUID:{}\r\nSUMMARY:Captured in calendar\r\nDESCRIPTION:created from the calendar UI\r\nSTATUS:IN-PROCESS\r\nPRIORITY:8\r\nCATEGORIES:errands,phone\r\nDTSTART:20260501T170000Z\r\nDUE:20260501T180000Z\r\nEND:VTODO\r\nEND:VCALENDAR\r\n",
             uid
         ),
     );
@@ -540,9 +541,13 @@ fn test_sync_calendar_imports_calendar_created_vtodo_with_arbitrary_uid() {
     assert!(actions.contains("[-] Captured in calendar"), "{actions}");
     assert!(actions.contains("!8"), "{actions}");
     assert!(actions.contains("+errands,phone"), "{actions}");
-    assert!(actions.contains(&format!("#{}", expected_id)), "{actions}");
+    let adopted = clearhead_core::parse_actions(&actions).unwrap();
+    assert_eq!(adopted.len(), 1);
+    let adopted_id = adopted[0].id;
+    assert_eq!(adopted_id.get_version_num(), 7);
 
-    // Adoption is stable and does not rewrite the client's interoperable UID.
+    // Adoption is stable and does not rewrite the client's interoperable UID
+    // or transport-selected resource path.
     env.command()
         .arg("sync")
         .arg("calendar")
@@ -553,17 +558,20 @@ fn test_sync_calendar_imports_calendar_created_vtodo_with_arbitrary_uid() {
     let resource = fs::read_to_string(&original_resource).unwrap();
     assert!(resource.contains(&format!("UID:{}", uid)));
 
-    // Resource absence has no lifecycle meaning: recreate it with the original
-    // arbitrary UID remembered by the vdir projection store.
-    fs::remove_file(original_resource).unwrap();
+    // Deleting the calendar resource unschedules and unlinks the native Action;
+    // it does not recreate the projection or derive identity from the UID.
+    fs::remove_file(&original_resource).unwrap();
     env.command().arg("sync").arg("calendar").assert().success();
-    let recreated = env
-        .data_dir
-        .join(format!("plans/inbox/{}.ics", expected_id));
-    let resource = fs::read_to_string(recreated).unwrap();
-    assert!(resource.contains(&format!("UID:{}", uid)));
+    assert!(!original_resource.exists());
+    assert!(
+        !env.data_dir
+            .join(format!("plans/inbox/{adopted_id}.ics"))
+            .exists()
+    );
     let actions = fs::read_to_string(env.data_dir.join("charters/inbox.actions")).unwrap();
     assert!(actions.contains("[-] Captured in calendar"));
+    assert!(!actions.contains("@2026-05-01"), "{actions}");
+    assert!(!actions.contains(":2026-05-01"), "{actions}");
 }
 
 #[test]
@@ -619,41 +627,47 @@ fn test_sync_calendar_refuses_to_invent_a_charter_for_an_unowned_collection() {
 }
 
 #[test]
-fn test_sync_calendar_recreates_a_missing_projection_without_changing_state() {
+fn test_sync_calendar_deletion_unschedules_without_recreating_projection() {
     let env = TestEnv::new();
     let uuid = "019baaec-00b6-7991-be34-94b68212619a";
     env.write_actions(
         "inbox.actions",
-        &format!("[-] Keep the action !7 +work #{}", uuid),
+        &format!(
+            "[-] Keep the action @2026-04-28T10:00 :2026-04-29T17:00 !7 +work #{}",
+            uuid
+        ),
     );
     env.command().arg("sync").arg("calendar").assert().success();
     let resource = env.data_dir.join(format!("plans/inbox/{}.ics", uuid));
     fs::remove_file(&resource).unwrap();
 
-    env.command()
-        .arg("sync")
-        .arg("calendar")
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("push action → calendar"));
-    assert!(resource.exists());
+    env.command().arg("sync").arg("calendar").assert().success();
+    assert!(!resource.exists());
     let actions = fs::read_to_string(env.data_dir.join("charters/inbox.actions")).unwrap();
     assert!(actions.contains("[-] Keep the action"));
+    assert!(actions.contains("!7"), "{actions}");
+    assert!(actions.contains("+work"), "{actions}");
+    assert!(!actions.contains("@2026-04-28"), "{actions}");
+    assert!(!actions.contains(":2026-04-29"), "{actions}");
 }
 
 #[test]
 fn test_sync_calendar_status_cancelled_is_the_explicit_cancellation_signal() {
     let env = TestEnv::new();
+    env.write_config(r#"{"plan_component":"vtodo"}"#);
     let uuid = "019baaec-00b6-7991-be34-94b68212619a";
     env.write_actions(
         "inbox.actions",
-        &format!("[ ] Cancel from calendar #{}", uuid),
+        &format!(
+            "[ ] Cancel from calendar @2026-04-20T10:00:00+00:00 #{}",
+            uuid
+        ),
     );
     env.command().arg("sync").arg("calendar").assert().success();
     env.write_text(
         &format!("plans/inbox/{}.ics", uuid),
         &format!(
-            "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VTODO\r\nUID:{}\r\nSUMMARY:Cancel from calendar\r\nSTATUS:CANCELLED\r\nEND:VTODO\r\nEND:VCALENDAR\r\n",
+            "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VTODO\r\nUID:{}\r\nSUMMARY:Cancel from calendar\r\nDTSTART:20260420T100000Z\r\nSTATUS:CANCELLED\r\nEND:VTODO\r\nEND:VCALENDAR\r\n",
             uuid
         ),
     );

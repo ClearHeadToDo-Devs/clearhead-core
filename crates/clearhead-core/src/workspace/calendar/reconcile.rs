@@ -721,11 +721,21 @@ pub struct SyncPlanLink {
     pub uid: String,
 }
 
+/// One one-off Plan relationship to remove in the same transaction as its
+/// Action, sidecar, and projection-store updates.
+pub struct SyncPlanUnlink {
+    pub action_id: Uuid,
+    /// Present when an Action-authored unschedule must also remove the observed
+    /// calendar resource. Calendar-authored deletion has no remaining resource.
+    pub calendar_location: Option<ResourceLocation>,
+}
+
 pub struct CalendarSyncPreparationInput {
     pub workspace: Workspace,
     pub store: PlansSyncStore,
     pub action_resources: Vec<SyncActionResourceState>,
     pub plan_links: Vec<SyncPlanLink>,
+    pub plan_unlinks: Vec<SyncPlanUnlink>,
     pub mirror_resources: Vec<SyncMirrorResourceState>,
     pub calendar_writes: Vec<SyncCalendarWrite>,
     pub templates: Vec<SyncPlanTemplate>,
@@ -779,6 +789,7 @@ pub fn prepare_sync(
         mut store,
         mut action_resources,
         plan_links,
+        plan_unlinks,
         mirror_resources,
         calendar_writes,
         templates,
@@ -797,6 +808,60 @@ pub fn prepare_sync(
     )?;
     let mut effects = Vec::new();
     let mut dirty_sidecars = HashSet::new();
+    let unlink_ids = plan_unlinks
+        .iter()
+        .map(|unlink| unlink.action_id)
+        .collect::<HashSet<_>>();
+    changes
+        .mirrors
+        .retain(|mirror| !unlink_ids.contains(&mirror.action_id));
+    for unlink in &plan_unlinks {
+        let (charter_idx, action_idx) = locate_action(&workspace.charters, unlink.action_id)
+            .ok_or_else(|| {
+                WorkspaceError::Parse(format!(
+                    "Plan unlink Action not found in workspace: {}",
+                    unlink.action_id
+                ))
+            })?;
+        let action = &mut workspace.charters[charter_idx].actions[action_idx].action;
+        action.scheduled_at = None;
+        action.due_date = None;
+        action.plan_id = None;
+        let actions_file = workspace.charters[charter_idx]
+            .actions_file
+            .as_ref()
+            .ok_or_else(|| {
+                WorkspaceError::Parse(format!(
+                    "Plan unlink Action {} has no actions file",
+                    unlink.action_id
+                ))
+            })?;
+        changes.dirty_actions.insert(actions_file.clone());
+        let resource = action_resources
+            .iter_mut()
+            .find(|resource| &resource.actions_file == actions_file)
+            .ok_or_else(|| {
+                WorkspaceError::Parse(format!(
+                    "Plan unlink sidecar evidence is missing for {}",
+                    actions_file.display()
+                ))
+            })?;
+        if let Some(metadata) = resource
+            .sidecar
+            .actions
+            .get_mut(&unlink.action_id.to_string())
+        {
+            metadata.plan = None;
+            if metadata.created.is_none() && metadata.occurrence.is_none() {
+                resource
+                    .sidecar
+                    .actions
+                    .remove(&unlink.action_id.to_string());
+            }
+        }
+        dirty_sidecars.insert(resource.actions_file.clone());
+        store.clear_action_bases(unlink.action_id);
+    }
     for link in plan_links {
         let (charter_idx, action_idx) = locate_action(&workspace.charters, link.action_id)
             .ok_or_else(|| {
@@ -944,6 +1009,11 @@ pub fn prepare_sync(
                 path,
                 bytes: content.into_bytes(),
             }),
+    );
+    effects.extend(
+        plan_unlinks
+            .into_iter()
+            .filter_map(|unlink| unlink.calendar_location.map(|path| Effect::Remove { path })),
     );
 
     effects.push(Effect::Write {
@@ -1816,6 +1886,7 @@ mod tests {
                 action_id,
                 uid: "foreign@example.com".into(),
             }],
+            plan_unlinks: vec![],
             mirror_resources: vec![],
             calendar_writes: vec![],
             templates: vec![],
@@ -1850,6 +1921,137 @@ mod tests {
                     precondition.path == sidecar_location
                         && precondition.expected == ExpectedResource::Missing
                 })
+        );
+    }
+
+    #[test]
+    fn prepare_sync_unlinks_action_sidecar_calendar_and_store_in_one_guarded_batch() {
+        let action_id = Uuid::parse_str("019baaec-00b6-7991-be34-94b6821261b2").unwrap();
+        let actions_file = PathBuf::from("charters/inbox.actions");
+        let mut charter: MarkdownCharter = crate::domain::Charter {
+            title: "Inbox".into(),
+            alias: Some("inbox".into()),
+            actions: vec![Action {
+                id: action_id,
+                name: "Linked".into(),
+                scheduled_at: Some(t(20)),
+                due_date: Some(t(21)),
+                plan_id: Some(plan_id_from_ics_uid("foreign@example.com")),
+                ..Default::default()
+            }],
+            ..Default::default()
+        }
+        .into();
+        charter.actions_file = Some(actions_file.clone());
+        let action_location = ResourceLocation::workspace(
+            crate::workspace::WorkspacePath::new("charters/inbox.actions").unwrap(),
+        );
+        let sidecar_location = ResourceLocation::workspace(
+            crate::workspace::WorkspacePath::new("charters/.inbox.json").unwrap(),
+        );
+        let calendar_location = ResourceLocation::external_plans(
+            crate::workspace::WorkspacePath::new("inbox/transport.ics").unwrap(),
+        );
+        let store_location = ResourceLocation::workspace(
+            crate::workspace::WorkspacePath::new("sync/plans.json").unwrap(),
+        );
+        let mut sidecar = CharterMetadata::default();
+        sidecar.actions.insert(
+            action_id.to_string(),
+            ActionMeta {
+                plan: Some(ActionPlanLink {
+                    uid: "foreign@example.com".into(),
+                    occurrence_key: None,
+                }),
+                ..Default::default()
+            },
+        );
+        let mut store = PlansSyncStore::new(Path::new("/plans"));
+        store
+            .stamp(action_id, UID_FIELD, &"foreign@example.com")
+            .unwrap();
+        store.stamp_scheduled_at(action_id, Some(t(20)));
+        let input = CalendarSyncPreparationInput {
+            workspace: Workspace::from_parts(
+                PathBuf::from("/workspace"),
+                None,
+                None,
+                vec![charter],
+            ),
+            store,
+            action_resources: vec![SyncActionResourceState {
+                actions_file,
+                location: action_location.clone(),
+                expected: ExpectedResource::Revision(crate::workspace::ResourceRevision::new(
+                    "actions-revision",
+                )),
+                sidecar_location: sidecar_location.clone(),
+                sidecar_expected: ExpectedResource::Revision(
+                    crate::workspace::ResourceRevision::new("sidecar-revision"),
+                ),
+                sidecar,
+            }],
+            plan_links: vec![],
+            plan_unlinks: vec![SyncPlanUnlink {
+                action_id,
+                calendar_location: Some(calendar_location.clone()),
+            }],
+            mirror_resources: vec![SyncMirrorResourceState {
+                action_id,
+                location: calendar_location.clone(),
+                expected: ExpectedResource::Revision(crate::workspace::ResourceRevision::new(
+                    "calendar-revision",
+                )),
+                source: Some("calendar".into()),
+                component_kind: PlanComponentKind::VEvent,
+            }],
+            calendar_writes: vec![],
+            templates: vec![],
+            observed_resources: vec![],
+            now: t(20),
+            store_location: store_location.clone(),
+            store_expected: ExpectedResource::Revision(crate::workspace::ResourceRevision::new(
+                "store-revision",
+            )),
+        };
+
+        let prepared = prepare_sync(input, &SyncReport::default()).unwrap();
+
+        let action = &prepared.next_state().workspace.charters[0].actions[0].action;
+        assert!(action.scheduled_at.is_none());
+        assert!(action.due_date.is_none());
+        assert!(action.plan_id.is_none());
+        assert!(!prepared.next_state().store.actions.contains_key(&action_id));
+        for location in [
+            &action_location,
+            &sidecar_location,
+            &calendar_location,
+            &store_location,
+        ] {
+            assert!(
+                prepared
+                    .effects()
+                    .preconditions()
+                    .iter()
+                    .any(|precondition| &precondition.path == location),
+                "missing stale precondition for {location}"
+            );
+        }
+        assert!(
+            prepared.effects().effects().iter().any(
+                |effect| matches!(effect, Effect::Remove { path } if path == &calendar_location)
+            )
+        );
+        assert!(prepared.effects().effects().iter().any(
+            |effect| matches!(effect, Effect::Write { path, .. } if path == &action_location)
+        ));
+        assert!(prepared.effects().effects().iter().any(
+            |effect| matches!(effect, Effect::Write { path, .. } if path == &sidecar_location)
+        ));
+        assert!(
+            prepared.effects().effects().iter().any(
+                |effect| matches!(effect, Effect::Write { path, .. } if path == &store_location)
+            )
         );
     }
 

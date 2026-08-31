@@ -131,6 +131,11 @@ impl PlansSyncStore {
             .collect()
     }
 
+    /// Remove all projection-owned merge bases for one Action.
+    pub fn clear_action_bases(&mut self, action_id: Uuid) {
+        self.actions.remove(&action_id);
+    }
+
     /// Drop an occurrence's linkage once its deviation has landed. Removes the
     /// whole entry if no other merge bases remain under that id.
     pub fn clear_occurrence_link(&mut self, occurrence_id: Uuid) {
