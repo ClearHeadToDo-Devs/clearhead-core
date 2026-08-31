@@ -91,6 +91,8 @@ impl From<Charter> for MarkdownCharter {
                     path: PathBuf::new(),
                     plan,
                     component_kind: crate::config::PlanComponentKind::default(),
+                    schedule_end: None,
+                    task_fields: None,
                     exdates: Default::default(),
                     overrides: Default::default(),
                 })

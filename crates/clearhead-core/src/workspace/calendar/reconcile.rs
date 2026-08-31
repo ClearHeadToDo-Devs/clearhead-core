@@ -13,7 +13,7 @@ use uuid::Uuid;
 
 use super::expand::{next_active_slot, render_occurrence};
 use super::ics::{
-    OccurrenceOp, VTodoAction, action_to_vtodo, canonical_occurrence_key, parse_ics,
+    ICSPlan, OccurrenceOp, VTodoAction, action_to_vtodo, canonical_occurrence_key, parse_ics,
     render_master_rollforward, render_occurrence_deviation,
 };
 use super::sync_store::{
@@ -21,6 +21,7 @@ use super::sync_store::{
     PlansSyncStore, SCHEDULED_AT_FIELD, STATE_FIELD, TITLE_FIELD, UID_FIELD,
     serialize_plans_sync_store,
 };
+use crate::config::PlanComponentKind;
 use crate::domain::{Action, ActionState, DomainModel};
 use crate::workspace::actions::format::require_actions_formatting;
 use crate::workspace::charter::MarkdownCharter;
@@ -350,6 +351,120 @@ pub fn plan_sync(
         }
     }
     report.imports.sort_by_key(|import| import.action.id);
+    Ok(report)
+}
+
+/// Plan one-off Action/Plan reconciliation by the durable semantic relation.
+///
+/// This is the replacement seam for identity-coupled standalone-VTODO sync.
+/// It deliberately covers only already-linked pairs in this first slice;
+/// native creation, adoption, deletion, and delivery remain on the later
+/// transaction cutover. Recurring Plans and occurrence-linked Actions are
+/// excluded structurally.
+pub fn plan_one_off_sync(
+    model: &DomainModel,
+    store: &PlansSyncStore,
+    plans: &[ICSPlan],
+) -> Result<SyncReport, WorkspaceError> {
+    let scheduled_bases: HashMap<Uuid, Time> = store.field_bases(SCHEDULED_AT_FIELD)?;
+    let due_bases: HashMap<Uuid, Time> = store.field_bases(DUE_DATE_FIELD)?;
+    let state_bases: HashMap<Uuid, ActionState> = store.field_bases(STATE_FIELD)?;
+    let title_bases: HashMap<Uuid, String> = store.field_bases(TITLE_FIELD)?;
+    let description_bases: HashMap<Uuid, Option<String>> = store.field_bases(DESCRIPTION_FIELD)?;
+    let priority_bases: HashMap<Uuid, Option<u32>> = store.field_bases(PRIORITY_FIELD)?;
+    let contexts_bases: HashMap<Uuid, Option<Vec<String>>> = store.field_bases(CONTEXTS_FIELD)?;
+
+    let mut one_off = HashMap::new();
+    for plan in plans.iter().filter(|plan| plan.plan.recurrence.is_none()) {
+        if one_off.insert(plan.plan.id, plan).is_some() {
+            return Err(WorkspaceError::Parse(format!(
+                "one-off Plan {} appears more than once",
+                plan.plan.id
+            )));
+        }
+    }
+
+    let mut report = SyncReport::default();
+    for action in model.all_actions() {
+        if action.external_occurrence_key.is_some() {
+            continue;
+        }
+        let Some(plan_id) = action.plan_id else {
+            continue;
+        };
+        let Some(resource) = one_off.get(&plan_id) else {
+            continue;
+        };
+        let uid = resource
+            .plan
+            .external_id
+            .clone()
+            .unwrap_or_else(|| resource.plan.id.to_string());
+        let action_contexts = normalized_contexts(action.contexts.clone());
+        let (state, title, description, priority, contexts, completed_at) =
+            match (resource.component_kind, resource.task_fields.as_ref()) {
+                (PlanComponentKind::VTodo, Some(task)) => (
+                    reconcile(
+                        &action.state,
+                        state_bases.get(&action.id),
+                        Some(&task.state),
+                    ),
+                    reconcile(
+                        &action.name,
+                        title_bases.get(&action.id),
+                        Some(&resource.plan.name),
+                    ),
+                    reconcile(
+                        &action.description,
+                        description_bases.get(&action.id),
+                        Some(&resource.plan.description),
+                    ),
+                    reconcile(
+                        &action.priority,
+                        priority_bases.get(&action.id),
+                        Some(&task.priority),
+                    ),
+                    reconcile(
+                        &action_contexts,
+                        contexts_bases.get(&action.id),
+                        Some(&task.contexts),
+                    ),
+                    task.completed_at,
+                ),
+                _ => (
+                    Reconcile::NoOp,
+                    Reconcile::NoOp,
+                    Reconcile::NoOp,
+                    Reconcile::NoOp,
+                    Reconcile::NoOp,
+                    None,
+                ),
+            };
+        let entry = SyncEntry {
+            action_id: action.id,
+            uid,
+            name: action.name.clone(),
+            scheduled_at: reconcile(
+                &action.scheduled_at,
+                scheduled_bases.get(&action.id),
+                Some(&resource.plan.dtstart),
+            ),
+            due_date: reconcile(
+                &action.due_date,
+                due_bases.get(&action.id),
+                Some(&resource.schedule_end),
+            ),
+            state,
+            title,
+            description,
+            priority,
+            contexts,
+            calendar_completed_at: completed_at,
+        };
+        if !entry.is_noop() {
+            report.entries.push(entry);
+        }
+    }
     Ok(report)
 }
 
@@ -1590,6 +1705,199 @@ mod tests {
         );
     }
 
+    fn model_with(action: Action) -> DomainModel {
+        DomainModel {
+            objectives: vec![],
+            charters: vec![crate::domain::Charter {
+                actions: vec![action],
+                ..Default::default()
+            }],
+        }
+    }
+
+    #[test]
+    fn one_off_join_uses_plan_identity_not_foreign_uid_as_action_identity() {
+        let uid = "foreign-plan@example.com";
+        let plan = parse_ics(
+            &format!(
+                "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:{uid}\r\nSUMMARY:Foreign\r\nDTSTART:20260420T100000Z\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+            ),
+            Path::new("foreign.ics"),
+        )
+        .unwrap()
+        .remove(0);
+        let action_id = Uuid::now_v7();
+        assert_ne!(action_id.to_string(), uid);
+        let action = Action {
+            id: action_id,
+            plan_id: Some(plan.plan.id),
+            name: "Foreign".into(),
+            scheduled_at: plan.plan.dtstart,
+            ..Default::default()
+        };
+
+        let report = plan_one_off_sync(
+            &model_with(action),
+            &PlansSyncStore::new(Path::new("/tmp/plans")),
+            &[plan],
+        )
+        .unwrap();
+
+        assert_eq!(report.entries.len(), 1);
+        assert_eq!(report.entries[0].action_id, action_id);
+        assert_eq!(report.entries[0].uid, uid);
+    }
+
+    #[test]
+    fn one_off_vtodo_reconciles_the_full_task_profile() {
+        let uid = "task@example.com";
+        let plan = parse_ics(
+            &format!(
+                "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VTODO\r\nUID:{uid}\r\nSUMMARY:Calendar title\r\nDESCRIPTION:Calendar description\r\nDTSTART:20260421T100000Z\r\nDUE:20260422T100000Z\r\nSTATUS:COMPLETED\r\nCOMPLETED:20260422T110000Z\r\nPRIORITY:2\r\nCATEGORIES:calendar,home\r\nEND:VTODO\r\nEND:VCALENDAR\r\n"
+            ),
+            Path::new("task.ics"),
+        )
+        .unwrap()
+        .remove(0);
+        let id = Uuid::now_v7();
+        let base_time = Some(t(20));
+        let action = Action {
+            id,
+            plan_id: Some(plan.plan.id),
+            name: "Base title".into(),
+            description: Some("Base description".into()),
+            scheduled_at: base_time,
+            due_date: base_time,
+            state: ActionState::NotStarted,
+            priority: Some(5),
+            contexts: Some(vec!["base".into()]),
+            ..Default::default()
+        };
+        let mut store = PlansSyncStore::new(Path::new("/tmp/plans"));
+        store.stamp(id, SCHEDULED_AT_FIELD, &base_time).unwrap();
+        store.stamp(id, DUE_DATE_FIELD, &base_time).unwrap();
+        store
+            .stamp(id, STATE_FIELD, &ActionState::NotStarted)
+            .unwrap();
+        store.stamp(id, TITLE_FIELD, &"Base title").unwrap();
+        store
+            .stamp(id, DESCRIPTION_FIELD, &Some("Base description".to_string()))
+            .unwrap();
+        store.stamp(id, PRIORITY_FIELD, &Some(5_u32)).unwrap();
+        store
+            .stamp(id, CONTEXTS_FIELD, &Some(vec!["base".to_string()]))
+            .unwrap();
+
+        let entry = plan_one_off_sync(&model_with(action), &store, &[plan])
+            .unwrap()
+            .entries
+            .remove(0);
+        assert!(matches!(entry.scheduled_at, Reconcile::TakeCalendar(_)));
+        assert!(matches!(entry.due_date, Reconcile::TakeCalendar(_)));
+        assert_eq!(entry.state, Reconcile::TakeCalendar(ActionState::Completed));
+        assert_eq!(
+            entry.title,
+            Reconcile::TakeCalendar("Calendar title".into())
+        );
+        assert_eq!(
+            entry.description,
+            Reconcile::TakeCalendar(Some("Calendar description".into()))
+        );
+        assert_eq!(entry.priority, Reconcile::TakeCalendar(Some(2)));
+        assert_eq!(
+            entry.contexts,
+            Reconcile::TakeCalendar(Some(vec!["calendar".into(), "home".into()]))
+        );
+        assert!(entry.calendar_completed_at.is_some());
+    }
+
+    #[test]
+    fn one_off_vevent_reconciles_schedule_only() {
+        let uid = "event@example.com";
+        let plan = parse_ics(
+            &format!(
+                "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:{uid}\r\nSUMMARY:Calendar display\r\nDESCRIPTION:Calendar display description\r\nDTSTART:20260421T100000Z\r\nDTEND:20260422T100000Z\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+            ),
+            Path::new("event.ics"),
+        )
+        .unwrap()
+        .remove(0);
+        let id = Uuid::now_v7();
+        let base_time = Some(t(20));
+        let action = Action {
+            id,
+            plan_id: Some(plan.plan.id),
+            name: "Local title".into(),
+            description: Some("Local description".into()),
+            scheduled_at: base_time,
+            due_date: base_time,
+            state: ActionState::InProgress,
+            priority: Some(1),
+            contexts: Some(vec!["local".into()]),
+            ..Default::default()
+        };
+        let mut store = PlansSyncStore::new(Path::new("/tmp/plans"));
+        store.stamp(id, SCHEDULED_AT_FIELD, &base_time).unwrap();
+        store.stamp(id, DUE_DATE_FIELD, &base_time).unwrap();
+
+        let entry = plan_one_off_sync(&model_with(action), &store, &[plan])
+            .unwrap()
+            .entries
+            .remove(0);
+        assert!(matches!(entry.scheduled_at, Reconcile::TakeCalendar(_)));
+        assert!(matches!(entry.due_date, Reconcile::TakeCalendar(_)));
+        assert_eq!(entry.state, Reconcile::NoOp);
+        assert_eq!(entry.title, Reconcile::NoOp);
+        assert_eq!(entry.description, Reconcile::NoOp);
+        assert_eq!(entry.priority, Reconcile::NoOp);
+        assert_eq!(entry.contexts, Reconcile::NoOp);
+    }
+
+    #[test]
+    fn one_off_planner_excludes_recurring_plans_and_occurrence_actions() {
+        let mut recurring = parse_ics(
+            "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:series@example.com\r\nSUMMARY:Series\r\nDTSTART:20260421T100000Z\r\nRRULE:FREQ=DAILY\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n",
+            Path::new("series.ics"),
+        )
+        .unwrap()
+        .remove(0);
+        let recurring_action = Action {
+            plan_id: Some(recurring.plan.id),
+            name: "Series".into(),
+            scheduled_at: recurring.plan.dtstart,
+            ..Default::default()
+        };
+        assert!(
+            plan_one_off_sync(
+                &model_with(recurring_action),
+                &PlansSyncStore::new(Path::new("/tmp/plans")),
+                &[recurring.clone()],
+            )
+            .unwrap()
+            .entries
+            .is_empty()
+        );
+
+        recurring.plan.recurrence = None;
+        let occurrence = Action {
+            plan_id: Some(recurring.plan.id),
+            external_occurrence_key: Some("20260421T100000Z".into()),
+            name: "Occurrence".into(),
+            scheduled_at: recurring.plan.dtstart,
+            ..Default::default()
+        };
+        assert!(
+            plan_one_off_sync(
+                &model_with(occurrence),
+                &PlansSyncStore::new(Path::new("/tmp/plans")),
+                &[recurring],
+            )
+            .unwrap()
+            .entries
+            .is_empty()
+        );
+    }
+
     #[test]
     fn patch_preserves_vendor_properties_and_alarms() {
         let id = Uuid::new_v4();
@@ -1703,6 +2011,8 @@ mod tests {
             path: PathBuf::from("review.ics"),
             plan,
             component_kind: crate::config::PlanComponentKind::VTodo,
+            schedule_end: None,
+            task_fields: None,
             exdates: BTreeSet::new(),
             overrides: BTreeMap::new(),
         };

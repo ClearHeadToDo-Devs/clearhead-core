@@ -31,6 +31,10 @@ use uuid::{Uuid, uuid};
 pub struct ICSPlan {
     pub path: PathBuf,
     pub plan: Plan,
+    /// Normalized end/due side of the Plan's schedule interval.
+    pub schedule_end: Option<DateTime<Local>>,
+    /// Task-client fields present only when the observed codec is VTODO.
+    pub task_fields: Option<PlanTaskFields>,
     /// Observed wire codec. Mutation follows the resource being patched rather
     /// than assuming the workspace's current configured codec during migration.
     pub component_kind: PlanComponentKind,
@@ -42,11 +46,17 @@ pub struct ICSPlan {
     pub overrides: BTreeMap<String, OccurrenceOverride>,
 }
 
+/// Interoperable Action fields exposed by the VTODO task-client profile.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlanTaskFields {
+    pub state: ActionState,
+    pub completed_at: Option<DateTime<Local>>,
+    pub priority: Option<u32>,
+    pub contexts: Option<Vec<String>>,
+}
+
 /// One materialized deviation of a recurring [`Plan`] occurrence: the renderable
-/// fields carried by a `RECURRENCE-ID` VTODO that replaces the occurrence at a
-/// single slot. `None` fields inherit from the master when the occurrence is
-/// rendered. Predecessors, hierarchy, and other ClearHead-only structure have no
-/// per-occurrence meaning and are intentionally absent.
+/// fields carried by a same-UID `RECURRENCE-ID` component.
 #[derive(Debug, Clone, PartialEq)]
 pub struct OccurrenceOverride {
     pub scheduled_at: Option<DateTime<Local>>,
@@ -165,6 +175,15 @@ pub fn parse_ics(content: &str, logical_path: &Path) -> Result<Vec<ICSPlan>, Wor
         else {
             continue;
         };
+        ics_plan.schedule_end = todo.get_due().and_then(date_perhaps_time_to_local);
+        ics_plan.task_fields = Some(PlanTaskFields {
+            state: vtodo_state(todo),
+            completed_at: todo
+                .get_completed()
+                .map(|value| value.with_timezone(&Local)),
+            priority: todo.get_priority().filter(|value| (1..=9).contains(value)),
+            contexts: parse_categories(todo),
+        });
         let master_uid = todo.get_uid();
         ics_plan.exdates = parse_exdates(todo);
         ics_plan.overrides = todos
@@ -261,6 +280,8 @@ fn component_to_plan<T: Component>(
 
     Some(ICSPlan {
         path: path.to_path_buf(),
+        schedule_end: component.get_end().and_then(date_perhaps_time_to_local),
+        task_fields: None,
         component_kind,
         exdates: BTreeSet::new(),
         overrides: BTreeMap::new(),
