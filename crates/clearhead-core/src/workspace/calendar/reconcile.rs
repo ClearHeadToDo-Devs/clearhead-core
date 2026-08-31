@@ -14,7 +14,7 @@ use uuid::Uuid;
 use super::expand::{next_active_slot, render_occurrence};
 use super::ics::{
     ICSPlan, OccurrenceOp, VTodoAction, action_to_vtodo, canonical_occurrence_key, parse_ics,
-    render_master_rollforward, render_occurrence_deviation,
+    plan_id_from_ics_uid, render_master_rollforward, render_occurrence_deviation,
 };
 use super::sync_store::{
     CONTEXTS_FIELD, DESCRIPTION_FIELD, DUE_DATE_FIELD, MASTER_DTSTART_FIELD, PRIORITY_FIELD,
@@ -28,7 +28,9 @@ use crate::workspace::charter::MarkdownCharter;
 use crate::workspace::resource::{
     Effect, EffectBatch, ExpectedResource, PreparedMutation, ResourceLocation, ResourcePrecondition,
 };
-use crate::workspace::sidecar::{ActionMeta, CharterMetadata, OccurrenceSnapshot, render_sidecar};
+use crate::workspace::sidecar::{
+    ActionMeta, ActionPlanLink, CharterMetadata, OccurrenceSnapshot, render_sidecar,
+};
 use crate::workspace::store::{Workspace, WorkspaceError};
 use crate::workspace::templates::instantiate_template;
 use crate::workspace::{OutputFormat, SourcedAction, format};
@@ -681,6 +683,9 @@ pub struct SyncActionResourceState {
     pub actions_file: PathBuf,
     pub location: ResourceLocation,
     pub expected: ExpectedResource,
+    pub sidecar_location: ResourceLocation,
+    pub sidecar_expected: ExpectedResource,
+    pub sidecar: CharterMetadata,
 }
 
 /// Immutable calendar-mirror evidence supplied by a host for sync preparation.
@@ -711,10 +716,16 @@ pub struct SyncPlanTemplate {
 }
 
 /// Immutable host evidence and explicit nondeterministic inputs for sync preparation.
+pub struct SyncPlanLink {
+    pub action_id: Uuid,
+    pub uid: String,
+}
+
 pub struct CalendarSyncPreparationInput {
     pub workspace: Workspace,
     pub store: PlansSyncStore,
     pub action_resources: Vec<SyncActionResourceState>,
+    pub plan_links: Vec<SyncPlanLink>,
     pub mirror_resources: Vec<SyncMirrorResourceState>,
     pub calendar_writes: Vec<SyncCalendarWrite>,
     pub templates: Vec<SyncPlanTemplate>,
@@ -766,7 +777,8 @@ pub fn prepare_sync(
     let CalendarSyncPreparationInput {
         mut workspace,
         mut store,
-        action_resources,
+        mut action_resources,
+        plan_links,
         mirror_resources,
         calendar_writes,
         templates,
@@ -784,10 +796,56 @@ pub fn prepare_sync(
         now,
     )?;
     let mut effects = Vec::new();
+    let mut dirty_sidecars = HashSet::new();
+    for link in plan_links {
+        let (charter_idx, action_idx) = locate_action(&workspace.charters, link.action_id)
+            .ok_or_else(|| {
+                WorkspaceError::Parse(format!(
+                    "Plan link Action not found in workspace: {}",
+                    link.action_id
+                ))
+            })?;
+        workspace.charters[charter_idx].actions[action_idx]
+            .action
+            .plan_id = Some(plan_id_from_ics_uid(&link.uid));
+        let actions_file = workspace.charters[charter_idx]
+            .actions_file
+            .as_ref()
+            .ok_or_else(|| {
+                WorkspaceError::Parse(format!(
+                    "Plan link Action {} has no actions file",
+                    link.action_id
+                ))
+            })?;
+        let resource = action_resources
+            .iter_mut()
+            .find(|resource| &resource.actions_file == actions_file)
+            .ok_or_else(|| {
+                WorkspaceError::Parse(format!(
+                    "Plan link sidecar evidence is missing for {}",
+                    actions_file.display()
+                ))
+            })?;
+        resource
+            .sidecar
+            .actions
+            .entry(link.action_id.to_string())
+            .or_default()
+            .plan = Some(ActionPlanLink {
+            uid: link.uid,
+            occurrence_key: None,
+        });
+        dirty_sidecars.insert(resource.actions_file.clone());
+    }
     let mut expected_by_location = BTreeMap::new();
     for (location, expected) in action_resources
         .iter()
-        .map(|resource| (&resource.location, &resource.expected))
+        .flat_map(|resource| {
+            [
+                (&resource.location, &resource.expected),
+                (&resource.sidecar_location, &resource.sidecar_expected),
+            ]
+        })
         .chain(
             mirror_resources
                 .iter()
@@ -838,6 +896,17 @@ pub fn prepare_sync(
         effects.push(Effect::Write {
             path: resource.location.clone(),
             bytes: render_actions(&charter.actions)?.into_bytes(),
+        });
+    }
+
+    for actions_file in dirty_sidecars {
+        let resource = action_resources
+            .iter()
+            .find(|resource| resource.actions_file == actions_file)
+            .expect("dirty sidecar has resource evidence");
+        effects.push(Effect::Write {
+            path: resource.sidecar_location.clone(),
+            bytes: render_sidecar(&resource.sidecar)?.into_bytes(),
         });
     }
 
@@ -1381,15 +1450,28 @@ pub fn render_action_mirror(
     component_kind: PlanComponentKind,
 ) -> Result<String, WorkspaceError> {
     let Some(content) = content else {
-        if component_kind != PlanComponentKind::VTodo {
-            return Err(WorkspaceError::Parse(
-                "one-off VEVENT creation is not implemented in the linked-pair cutover".into(),
-            ));
-        }
         let mut calendar = Calendar::new().name("ClearHead Actions").done();
-        let mut todo = action_to_vtodo(action);
-        todo.uid(uid);
-        calendar.push(todo);
+        match component_kind {
+            PlanComponentKind::VTodo => {
+                let mut todo = action_to_vtodo(action);
+                todo.uid(uid);
+                calendar.push(todo);
+            }
+            PlanComponentKind::VEvent => {
+                let mut event = Event::new();
+                event.uid(uid).summary(&action.name);
+                if let Some(description) = &action.description {
+                    event.description(description);
+                }
+                if let Some(value) = action.scheduled_at {
+                    event.starts(value.with_timezone(&Utc));
+                }
+                if let Some(value) = action.due_date {
+                    event.ends(value.with_timezone(&Utc));
+                }
+                calendar.push(event);
+            }
+        }
         return Ok(calendar.to_string());
     };
 
@@ -1685,6 +1767,90 @@ mod tests {
             Reconcile::Conflict { .. }
         ));
         assert_eq!(reconcile(&"a", None, None), Reconcile::TakeAction("a"));
+    }
+
+    #[test]
+    fn prepare_sync_persists_plan_link_with_sidecar_precondition() {
+        let action_id = Uuid::parse_str("019baaec-00b6-7991-be34-94b6821261b1").unwrap();
+        let actions_file = PathBuf::from("charters/inbox.actions");
+        let mut charter: MarkdownCharter = crate::domain::Charter {
+            title: "Inbox".into(),
+            alias: Some("inbox".into()),
+            actions: vec![Action {
+                id: action_id,
+                name: "Linked".into(),
+                ..Default::default()
+            }],
+            ..Default::default()
+        }
+        .into();
+        charter.actions_file = Some(actions_file.clone());
+        let action_location = ResourceLocation::workspace(
+            crate::workspace::WorkspacePath::new("charters/inbox.actions").unwrap(),
+        );
+        let sidecar_location = ResourceLocation::workspace(
+            crate::workspace::WorkspacePath::new("charters/.inbox.json").unwrap(),
+        );
+        let store_location = ResourceLocation::workspace(
+            crate::workspace::WorkspacePath::new("sync/plans.json").unwrap(),
+        );
+        let input = CalendarSyncPreparationInput {
+            workspace: Workspace::from_parts(
+                PathBuf::from("/workspace"),
+                None,
+                None,
+                vec![charter],
+            ),
+            store: PlansSyncStore::new(Path::new("/plans")),
+            action_resources: vec![SyncActionResourceState {
+                actions_file,
+                location: action_location,
+                expected: ExpectedResource::Revision(crate::workspace::ResourceRevision::new(
+                    "actions-revision",
+                )),
+                sidecar_location: sidecar_location.clone(),
+                sidecar_expected: ExpectedResource::Missing,
+                sidecar: CharterMetadata::default(),
+            }],
+            plan_links: vec![SyncPlanLink {
+                action_id,
+                uid: "foreign@example.com".into(),
+            }],
+            mirror_resources: vec![],
+            calendar_writes: vec![],
+            templates: vec![],
+            observed_resources: vec![],
+            now: t(20),
+            store_location,
+            store_expected: ExpectedResource::Missing,
+        };
+
+        let prepared = prepare_sync(input, &SyncReport::default()).unwrap();
+
+        assert_eq!(
+            prepared.next_state().workspace.charters[0].actions[0]
+                .action
+                .plan_id,
+            Some(plan_id_from_ics_uid("foreign@example.com"))
+        );
+        assert!(prepared.effects().effects().iter().any(|effect| {
+            matches!(
+                effect,
+                Effect::Write { path, bytes }
+                    if path == &sidecar_location
+                        && String::from_utf8_lossy(bytes).contains("foreign@example.com")
+            )
+        }));
+        assert!(
+            prepared
+                .effects()
+                .preconditions()
+                .iter()
+                .any(|precondition| {
+                    precondition.path == sidecar_location
+                        && precondition.expected == ExpectedResource::Missing
+                })
+        );
     }
 
     #[test]

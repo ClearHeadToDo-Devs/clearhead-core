@@ -118,10 +118,11 @@ pub fn sync_calendar(
         return Ok(());
     }
 
-    let result = clearhead_workspace_fs::sync_calendar(
+    let result = clearhead_workspace_fs::sync_calendar_with_component(
         &ctx.data_dir,
         ctx.plan_override().as_deref(),
         conflict_resolution(conflict),
+        ctx.config.plan_component,
     )?;
     render_sync_report(&result.report);
     let rolled_forward = result.rolled_forward;

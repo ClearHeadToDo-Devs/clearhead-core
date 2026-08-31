@@ -31,7 +31,7 @@ pub use plans::{
 pub use reconcile::{
     AppliedSync, CalendarSyncPreparationInput, CalendarSyncState, OutcomeKind, Reconcile,
     SyncActionResourceState, SyncConflictResolution, SyncEntry, SyncField, SyncImport,
-    SyncMirrorResourceState, SyncPlanTemplate, SyncReport, SyncTally, VTodoResource,
+    SyncMirrorResourceState, SyncPlanLink, SyncPlanTemplate, SyncReport, SyncTally, VTodoResource,
     plan_one_off_sync, plan_sync, prepare_sync, reconcile, sync_import_actions_file,
 };
 pub use sync_store::{PlansSyncStore, decode_plans_sync_store, encode_plans_sync_store};
