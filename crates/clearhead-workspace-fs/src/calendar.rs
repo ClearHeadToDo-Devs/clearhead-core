@@ -1,6 +1,6 @@
 //! Native plans-vdir discovery, immutable reads, and sync-store persistence.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use chrono::Local;
@@ -11,8 +11,8 @@ use clearhead_core::PlanComponentKind;
 use clearhead_core::domain::DomainModel;
 use clearhead_core::workspace::OccurrenceOp;
 use clearhead_core::workspace::calendar::ics::{
-    ICSPlan, VTodoAction, parse_ics, parse_vtodo_actions_content, render_occurrence_deviation,
-    render_plan_resource_with_component,
+    ICSPlan, VTodoAction, parse_ics, parse_vtodo_actions_content, plan_id_from_ics_uid,
+    render_occurrence_deviation, render_plan_resource_with_component,
 };
 use clearhead_core::workspace::calendar::plans::{
     infer_plan_charter_name_for_workspace, infer_plan_parent_for_workspace,
@@ -20,8 +20,8 @@ use clearhead_core::workspace::calendar::plans::{
 use clearhead_core::workspace::calendar::reconcile::{
     AppliedSync, CalendarSyncPreparationInput, MaterializedOccurrenceArchiveState,
     MaterializedOccurrencePreparationInput, PlanResourceState, SyncActionResourceState,
-    SyncConflictResolution, SyncMirrorResourceState, SyncPlanTemplate, SyncReport, plan_sync,
-    prepare_master_rollforward_changes, prepare_master_rollforwards,
+    SyncConflictResolution, SyncMirrorResourceState, SyncPlanTemplate, SyncReport,
+    plan_one_off_sync, plan_sync, prepare_master_rollforward_changes, prepare_master_rollforwards,
     prepare_materialized_occurrence_resolution, prepare_sync, sync_import_actions_file,
 };
 use clearhead_core::workspace::calendar::sync_store::{PlansSyncStore, decode_plans_sync_store};
@@ -214,12 +214,43 @@ pub fn sync_calendar(
     let rolled_forward = rollforwards.recorded;
     let calendar_writes = rollforwards.calendar_writes;
     let store = rollforwards.store;
-    let (calendar_actions, mut mirror_resources) = sync_mirror_resources(&observation.resources)?;
     let model = DomainModel {
         objectives: Vec::new(),
         charters: workspace.charters.iter().cloned().map(Into::into).collect(),
     };
-    let report = plan_sync(&model, &store, &calendar_actions)?.resolve_conflicts(conflict);
+    let LinkedOneOffResources {
+        plans: one_off_plans,
+        mirrors: linked_mirrors,
+        plan_ids: linked_plan_ids,
+        mut warnings,
+    } = sync_linked_one_off_resources(&observation.resources, &model)?;
+    let (mut calendar_actions, mut mirror_resources) =
+        sync_mirror_resources(&observation.resources)?;
+    calendar_actions.retain(|_, resource| {
+        !linked_plan_ids.contains(&plan_id_from_ics_uid(&resource.action.uid))
+    });
+    let linked_action_ids = linked_mirrors
+        .iter()
+        .map(|resource| resource.action_id)
+        .collect::<HashSet<_>>();
+    mirror_resources.retain(|resource| !linked_action_ids.contains(&resource.action_id));
+
+    let mut report = plan_sync(&model, &store, &calendar_actions)?;
+    report.entries.retain(|entry| {
+        model
+            .all_actions()
+            .into_iter()
+            .find(|action| action.id == entry.action_id)
+            .is_some_and(|action| action.plan_id.is_none())
+    });
+    report
+        .imports
+        .retain(|import| !linked_plan_ids.contains(&plan_id_from_ics_uid(&import.action.uid)));
+    let linked_report = plan_one_off_sync(&model, &store, &one_off_plans)?;
+    report.entries.extend(linked_report.entries);
+    report.warnings.append(&mut warnings);
+    let report = report.resolve_conflicts(conflict);
+    mirror_resources.extend(linked_mirrors);
 
     for entry in &report.entries {
         if mirror_resources
@@ -263,6 +294,7 @@ pub fn sync_calendar(
             location,
             expected: ExpectedResource::Missing,
             source: None,
+            component_kind: PlanComponentKind::VTodo,
         });
     }
 
@@ -469,10 +501,87 @@ fn sync_mirror_resources(
                 location: resource.location.clone(),
                 expected: ExpectedResource::Revision(resource.revision.clone()),
                 source: Some(source.to_owned()),
+                component_kind: PlanComponentKind::VTodo,
             });
         }
     }
     Ok((actions, mirrors))
+}
+
+struct LinkedOneOffResources {
+    plans: Vec<ICSPlan>,
+    mirrors: Vec<SyncMirrorResourceState>,
+    plan_ids: HashSet<Uuid>,
+    warnings: Vec<String>,
+}
+
+fn sync_linked_one_off_resources(
+    resources: &[CalendarResource],
+    model: &DomainModel,
+) -> Result<LinkedOneOffResources, WorkspaceError> {
+    let mut actions_by_plan = HashMap::new();
+    for action in model
+        .all_actions()
+        .into_iter()
+        .filter(|action| action.external_occurrence_key.is_none())
+    {
+        let Some(plan_id) = action.plan_id else {
+            continue;
+        };
+        if actions_by_plan.insert(plan_id, action.id).is_some() {
+            return Err(WorkspaceError::Parse(format!(
+                "one-off Plan {plan_id} is linked to more than one Action"
+            )));
+        }
+    }
+
+    let mut plans = Vec::new();
+    let mut mirrors = Vec::new();
+    let mut linked_plan_ids = HashSet::new();
+    let mut linked_action_ids = HashSet::new();
+    let mut warnings = Vec::new();
+    for resource in resources {
+        let source = std::str::from_utf8(&resource.bytes)
+            .map_err(|error| WorkspaceError::Parse(error.to_string()))?;
+        for plan in parse_ics(source, &resource.relative_path)? {
+            if plan.plan.recurrence.is_none() {
+                if let Some(&action_id) = actions_by_plan.get(&plan.plan.id) {
+                    if !linked_action_ids.insert(action_id) {
+                        return Err(WorkspaceError::Parse(format!(
+                            "Action {action_id} is linked to more than one one-off Plan resource"
+                        )));
+                    }
+                    linked_plan_ids.insert(plan.plan.id);
+                    mirrors.push(SyncMirrorResourceState {
+                        action_id,
+                        location: resource.location.clone(),
+                        expected: ExpectedResource::Revision(resource.revision.clone()),
+                        source: Some(source.to_owned()),
+                        component_kind: plan.component_kind,
+                    });
+                } else if plan.component_kind == PlanComponentKind::VEvent {
+                    warnings.push(format!(
+                        "calendar-created one-off VEVENT adoption is not implemented yet: {}",
+                        resource.relative_path.display()
+                    ));
+                }
+            }
+            plans.push(plan);
+        }
+    }
+    for (plan_id, action_id) in actions_by_plan {
+        if !linked_plan_ids.contains(&plan_id) {
+            warnings.push(format!(
+                "linked one-off Plan {plan_id} for Action {action_id} is missing; deletion-as-unscheduling is not implemented yet"
+            ));
+        }
+    }
+    Ok(LinkedOneOffResources {
+        plans,
+        mirrors,
+        plan_ids: linked_plan_ids,
+        warnings,
+    })
 }
 
 fn sync_action_resources(
@@ -1079,6 +1188,204 @@ mod tests {
         assert!(rendered.contains("SUMMARY:First changed"));
         assert!(rendered.contains("SUMMARY:Second changed"));
         assert_eq!(rendered.matches("BEGIN:VCALENDAR").count(), 1);
+    }
+
+    fn write_plan_link_sidecar(actions: &Path, action_id: Uuid, uid: &str) {
+        let sidecar = actions.parent().unwrap().join(".inbox.json");
+        std::fs::write(
+            sidecar,
+            format!(r#"{{"actions":{{"{action_id}":{{"plan":{{"uid":"{uid}"}}}}}}}}"#),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn unlinked_vevent_adoption_is_explicitly_deferred() {
+        let temp = tempfile::tempdir().unwrap();
+        let project = temp.path().join("project");
+        let external_root = temp.path().join("vdir");
+        let actions = project.join(".clearhead/charters/inbox.actions");
+        let calendar = external_root.join("inbox/event.ics");
+        std::fs::create_dir_all(actions.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(calendar.parent().unwrap()).unwrap();
+        std::fs::write(&actions, "").unwrap();
+        std::fs::write(
+            calendar,
+            "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:new@example.com\r\nSUMMARY:New\r\nDTSTART:20260420T100000Z\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n",
+        )
+        .unwrap();
+
+        let result = sync_calendar(&project, Some(&external_root), None).unwrap();
+
+        assert!(
+            result
+                .report
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("VEVENT adoption is not implemented"))
+        );
+        assert!(
+            parse_actions(&std::fs::read_to_string(actions).unwrap())
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn missing_linked_plan_deletion_is_explicitly_deferred() {
+        let temp = tempfile::tempdir().unwrap();
+        let project = temp.path().join("project");
+        let external_root = temp.path().join("vdir");
+        let actions = project.join(".clearhead/charters/inbox.actions");
+        std::fs::create_dir_all(actions.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(external_root.join("inbox")).unwrap();
+        let action_id = Uuid::parse_str("019baaec-00b6-7991-be34-94b68212619c").unwrap();
+        std::fs::write(
+            &actions,
+            format!("[ ] Keep me @2026-04-20T10:00:00+00:00 #{action_id}\n"),
+        )
+        .unwrap();
+        write_plan_link_sidecar(&actions, action_id, "missing@example.com");
+
+        let result = sync_calendar(&project, Some(&external_root), None).unwrap();
+
+        assert!(
+            result
+                .report
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("deletion-as-unscheduling is not implemented"))
+        );
+        let parsed = parse_actions(&std::fs::read_to_string(actions).unwrap()).unwrap();
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].id, action_id);
+        assert!(parsed[0].scheduled_at.is_some());
+    }
+
+    #[test]
+    fn linked_vevent_reschedule_updates_only_action_schedule() {
+        let temp = tempfile::tempdir().unwrap();
+        let project = temp.path().join("project");
+        let external_root = temp.path().join("vdir");
+        let actions = project.join(".clearhead/charters/inbox.actions");
+        let calendar = external_root.join("inbox/event.ics");
+        std::fs::create_dir_all(actions.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(calendar.parent().unwrap()).unwrap();
+        let action_id = Uuid::parse_str("019baaec-00b6-7991-be34-94b68212619a").unwrap();
+        let uid = "foreign-event@example.com";
+        std::fs::write(
+            &actions,
+            format!(
+                "[ ] Local title @2026-04-20T10:00:00+00:00 :2026-04-20T11:00:00+00:00 !1 +local #{action_id}\n"
+            ),
+        )
+        .unwrap();
+        write_plan_link_sidecar(&actions, action_id, uid);
+        let initial = format!(
+            "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:{uid}\r\nSUMMARY:Calendar display\r\nDTSTART:20260420T100000Z\r\nDTEND:20260420T110000Z\r\nX-VENDOR-KEEP:yes\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+        );
+        std::fs::write(&calendar, &initial).unwrap();
+        sync_calendar(&project, Some(&external_root), None).unwrap();
+
+        std::fs::write(
+            &calendar,
+            initial
+                .replace("SUMMARY:Calendar display", "SUMMARY:Peer renamed")
+                .replace("20260420T100000Z", "20260421T120000Z")
+                .replace("20260420T110000Z", "20260421T130000Z"),
+        )
+        .unwrap();
+        let result = sync_calendar(&project, Some(&external_root), None).unwrap();
+
+        assert_eq!(result.applied.take_calendar, 1);
+        let parsed = parse_actions(&std::fs::read_to_string(&actions).unwrap()).unwrap();
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].id, action_id);
+        assert_eq!(parsed[0].name, "Local title");
+        assert_eq!(
+            parsed[0].state,
+            clearhead_core::domain::ActionState::NotStarted
+        );
+        assert_eq!(parsed[0].priority, Some(1));
+        assert_eq!(
+            parsed[0].contexts.as_deref(),
+            Some(["local".to_string()].as_slice())
+        );
+        assert_eq!(
+            parsed[0]
+                .scheduled_at
+                .unwrap()
+                .with_timezone(&chrono::Utc)
+                .format("%Y%m%dT%H%M%SZ")
+                .to_string(),
+            "20260421T120000Z"
+        );
+        let rendered = std::fs::read_to_string(calendar).unwrap();
+        assert!(rendered.contains("SUMMARY:Peer renamed"));
+        assert!(rendered.contains("X-VENDOR-KEEP:yes"));
+    }
+
+    #[test]
+    fn linked_vtodo_peer_edit_updates_full_profile_without_reidentifying_action() {
+        let temp = tempfile::tempdir().unwrap();
+        let project = temp.path().join("project");
+        let external_root = temp.path().join("vdir");
+        let actions = project.join(".clearhead/charters/inbox.actions");
+        let calendar = external_root.join("inbox/task.ics");
+        std::fs::create_dir_all(actions.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(calendar.parent().unwrap()).unwrap();
+        let action_id = Uuid::parse_str("019baaec-00b6-7991-be34-94b68212619b").unwrap();
+        let uid = "foreign-task@example.com";
+        std::fs::write(
+            &actions,
+            format!(
+                "[ ] Base title $Base description$ @2026-04-20T10:00:00+00:00 :2026-04-20T11:00:00+00:00 !5 +base #{action_id}\n"
+            ),
+        )
+        .unwrap();
+        write_plan_link_sidecar(&actions, action_id, uid);
+        let initial = format!(
+            "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VTODO\r\nUID:{uid}\r\nSUMMARY:Base title\r\nDESCRIPTION:Base description\r\nDTSTART:20260420T100000Z\r\nDUE:20260420T110000Z\r\nSTATUS:NEEDS-ACTION\r\nPRIORITY:5\r\nCATEGORIES:base\r\nX-VENDOR-KEEP:yes\r\nEND:VTODO\r\nEND:VCALENDAR\r\n"
+        );
+        std::fs::write(&calendar, &initial).unwrap();
+        sync_calendar(&project, Some(&external_root), None).unwrap();
+
+        let edited = format!(
+            "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VTODO\r\nUID:{uid}\r\nSUMMARY:Calendar title\r\nDESCRIPTION:Calendar description\r\nDTSTART:20260421T120000Z\r\nDUE:20260421T130000Z\r\nSTATUS:IN-PROCESS\r\nPRIORITY:2\r\nCATEGORIES:calendar,home\r\nX-VENDOR-KEEP:yes\r\nEND:VTODO\r\nEND:VCALENDAR\r\n"
+        );
+        std::fs::write(&calendar, edited).unwrap();
+        let result = sync_calendar(&project, Some(&external_root), None).unwrap();
+
+        assert_eq!(result.applied.take_calendar, 1);
+        let parsed = parse_actions(&std::fs::read_to_string(&actions).unwrap()).unwrap();
+        assert_eq!(parsed.len(), 1);
+        let action = &parsed[0];
+        assert_eq!(action.id, action_id);
+        assert_eq!(action.name, "Calendar title");
+        assert_eq!(action.description.as_deref(), Some("Calendar description"));
+        assert_eq!(
+            action.state,
+            clearhead_core::domain::ActionState::InProgress
+        );
+        assert_eq!(action.priority, Some(2));
+        assert_eq!(
+            action.contexts.as_deref(),
+            Some(["calendar".to_string(), "home".to_string()].as_slice())
+        );
+        assert_eq!(
+            action
+                .scheduled_at
+                .unwrap()
+                .with_timezone(&chrono::Utc)
+                .format("%Y%m%dT%H%M%SZ")
+                .to_string(),
+            "20260421T120000Z"
+        );
+        assert!(
+            std::fs::read_to_string(calendar)
+                .unwrap()
+                .contains("X-VENDOR-KEEP:yes")
+        );
     }
 
     #[test]

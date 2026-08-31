@@ -6,7 +6,7 @@
 //! conflict in one field never blocks safe changes in another.
 
 use chrono::{DateTime, Local, Utc};
-use icalendar::{Calendar, CalendarComponent, Component, EventLike, Todo, TodoStatus};
+use icalendar::{Calendar, CalendarComponent, Component, Event, EventLike, Todo, TodoStatus};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
@@ -690,6 +690,9 @@ pub struct SyncMirrorResourceState {
     pub location: ResourceLocation,
     pub expected: ExpectedResource,
     pub source: Option<String>,
+    /// Observed profile for an existing linked Plan. New legacy resources use
+    /// VTODO until creation moves to the Plan-oriented lifecycle.
+    pub component_kind: PlanComponentKind,
 }
 
 /// One pure calendar-resource rewrite prepared before field reconciliation.
@@ -856,7 +859,13 @@ pub fn prepare_sync(
             .get(&resource.location)
             .map(String::as_str)
             .or(resource.source.as_deref());
-        let rendered = render_action_mirror(source, &mirror.uid, &mirror.action, &mirror.fields)?;
+        let rendered = render_action_mirror(
+            source,
+            &mirror.uid,
+            &mirror.action,
+            &mirror.fields,
+            resource.component_kind,
+        )?;
         rendered_mirrors.insert(resource.location.clone(), rendered);
     }
     effects.extend(
@@ -1369,8 +1378,14 @@ pub fn render_action_mirror(
     uid: &str,
     action: &Action,
     fields: &[SyncField],
+    component_kind: PlanComponentKind,
 ) -> Result<String, WorkspaceError> {
     let Some(content) = content else {
+        if component_kind != PlanComponentKind::VTodo {
+            return Err(WorkspaceError::Parse(
+                "one-off VEVENT creation is not implemented in the linked-pair cutover".into(),
+            ));
+        }
         let mut calendar = Calendar::new().name("ClearHead Actions").done();
         let mut todo = action_to_vtodo(action);
         todo.uid(uid);
@@ -1383,21 +1398,48 @@ pub fn render_action_mirror(
         .map_err(|error: String| WorkspaceError::Parse(error))?;
     let mut found = false;
     for component in &mut calendar.components {
-        let CalendarComponent::Todo(todo) = component else {
-            continue;
-        };
-        if todo.get_uid() == Some(uid) && todo.property_value("RRULE").is_none() {
-            patch_todo(todo, action, fields);
-            found = true;
-            break;
+        match (component_kind, component) {
+            (PlanComponentKind::VTodo, CalendarComponent::Todo(todo))
+                if todo.get_uid() == Some(uid)
+                    && todo.property_value("RECURRENCE-ID").is_none() =>
+            {
+                patch_todo(todo, action, fields);
+                found = true;
+                break;
+            }
+            (PlanComponentKind::VEvent, CalendarComponent::Event(event))
+                if event.get_uid() == Some(uid)
+                    && event.property_value("RECURRENCE-ID").is_none() =>
+            {
+                patch_event(event, action, fields);
+                found = true;
+                break;
+            }
+            _ => {}
         }
     }
     if !found {
         return Err(WorkspaceError::Parse(format!(
-            "action mirror does not contain standalone VTODO UID {uid}"
+            "linked one-off Plan does not contain {component_kind} UID {uid}"
         )));
     }
     Ok(calendar.to_string())
+}
+
+fn patch_event(event: &mut Event, action: &Action, fields: &[SyncField]) {
+    let fields: HashSet<_> = fields.iter().copied().collect();
+    if fields.contains(&SyncField::ScheduledAt) {
+        event.remove_starts();
+        if let Some(value) = action.scheduled_at {
+            event.starts(value.with_timezone(&Utc));
+        }
+    }
+    if fields.contains(&SyncField::DueDate) {
+        event.remove_ends();
+        if let Some(value) = action.due_date {
+            event.ends(value.with_timezone(&Utc));
+        }
+    }
 }
 
 fn patch_todo(todo: &mut Todo, action: &Action, fields: &[SyncField]) {
