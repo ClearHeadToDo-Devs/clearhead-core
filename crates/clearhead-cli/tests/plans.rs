@@ -2,7 +2,35 @@ mod common;
 use chrono::{Local, TimeZone};
 use common::TestEnv;
 use predicates::prelude::*;
+use std::collections::BTreeMap;
 use std::fs;
+use std::path::{Path, PathBuf};
+
+fn snapshot_tree(root: &Path) -> BTreeMap<PathBuf, Option<Vec<u8>>> {
+    fn visit(root: &Path, path: &Path, snapshot: &mut BTreeMap<PathBuf, Option<Vec<u8>>>) {
+        if !path.exists() {
+            return;
+        }
+        let relative = path.strip_prefix(root).unwrap().to_path_buf();
+        if path.is_dir() {
+            snapshot.insert(relative, None);
+            let mut children = fs::read_dir(path)
+                .unwrap()
+                .map(|entry| entry.unwrap().path())
+                .collect::<Vec<_>>();
+            children.sort();
+            for child in children {
+                visit(root, &child, snapshot);
+            }
+        } else {
+            snapshot.insert(relative, Some(fs::read(path).unwrap()));
+        }
+    }
+
+    let mut snapshot = BTreeMap::new();
+    visit(root, root, &mut snapshot);
+    snapshot
+}
 
 fn write_plans_sync_store(env: &TestEnv, action_id: &str, scheduled_at: &str) {
     let content = serde_json::json!({
@@ -21,7 +49,7 @@ fn write_plans_sync_store(env: &TestEnv, action_id: &str, scheduled_at: &str) {
 }
 
 #[test]
-fn fresh_init_charter_plan_sync_stamps_into_the_real_charter() {
+fn fresh_init_charter_calendar_sync_stamps_into_the_real_charter() {
     let env = TestEnv::new();
 
     env.command().arg("init").assert().success();
@@ -393,6 +421,140 @@ fn test_sync_events_command() {
 }
 
 #[test]
+fn test_sync_calendar_dry_run_matches_vevent_creation_and_unlink_lifecycle_without_writes() {
+    let env = TestEnv::new();
+    let uuid = "019baaec-00b6-7991-be34-94b6821261e1";
+    let actions_path = env.data_dir.join("charters/inbox.actions");
+    let resource = env.data_dir.join(format!("plans/inbox/{uuid}.ics"));
+    env.write_actions(
+        "inbox.actions",
+        &format!("[ ] Focus @2026-04-28T10:00 :2026-04-28T11:00 #{uuid}"),
+    );
+
+    let before = snapshot_tree(&env.data_dir);
+    env.command()
+        .args(["sync", "calendar", "--dry-run"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("push action → calendar"))
+        .stdout(predicate::str::contains(
+            "Dry run complete. 1 push, 0 pull, 0 converged, 0 conflict.",
+        ));
+    assert_eq!(snapshot_tree(&env.data_dir), before);
+    assert!(!resource.exists());
+
+    env.command()
+        .args(["sync", "calendar"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "Sync complete. 1 push, 0 pull, 0 converged, 0 conflict.",
+        ));
+    assert!(
+        fs::read_to_string(&resource)
+            .unwrap()
+            .contains("BEGIN:VEVENT")
+    );
+
+    fs::remove_file(&resource).unwrap();
+    let before_delete = snapshot_tree(&env.data_dir);
+    env.command()
+        .args(["sync", "calendar", "--dry-run"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "pull calendar → action unscheduled",
+        ))
+        .stdout(predicate::str::contains(
+            "Dry run complete. 0 push, 1 pull, 0 converged, 0 conflict.",
+        ));
+    assert_eq!(snapshot_tree(&env.data_dir), before_delete);
+    env.command()
+        .args(["sync", "calendar"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "Sync complete. 0 push, 1 pull, 0 converged, 0 conflict.",
+        ));
+    let unscheduled = fs::read_to_string(&actions_path).unwrap();
+    assert!(!unscheduled.contains("@2026-04-28"), "{unscheduled}");
+
+    fs::write(
+        &actions_path,
+        format!("[ ] Focus @2026-04-29T10:00 :2026-04-29T11:00 #{uuid}\n"),
+    )
+    .unwrap();
+    env.command().args(["sync", "calendar"]).assert().success();
+    fs::write(&actions_path, format!("[ ] Focus #{uuid}\n")).unwrap();
+    let before_clear = snapshot_tree(&env.data_dir);
+    env.command()
+        .args(["sync", "calendar", "--dry-run"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "push action → calendar Plan removed",
+        ))
+        .stdout(predicate::str::contains(
+            "Dry run complete. 1 push, 0 pull, 0 converged, 0 conflict.",
+        ));
+    assert_eq!(snapshot_tree(&env.data_dir), before_clear);
+    assert!(resource.exists());
+    env.command()
+        .args(["sync", "calendar"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "Sync complete. 1 push, 0 pull, 0 converged, 0 conflict.",
+        ));
+    assert!(!resource.exists());
+}
+
+#[test]
+fn test_sync_calendar_dry_run_matches_vtodo_adoption_without_writes() {
+    let env = TestEnv::new();
+    env.write_config(r#"{"plan_component":"vtodo"}"#);
+    env.write_actions("inbox.actions", "");
+    let resource = env.data_dir.join("plans/inbox/client-resource.ics");
+    env.write_text(
+        "plans/inbox/client-resource.ics",
+        "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VTODO\r\nUID:foreign-dry-run@example.test\r\nSUMMARY:Peer task\r\nDESCRIPTION:Peer detail\r\nDTSTART:20260420T100000Z\r\nDUE:20260420T110000Z\r\nSTATUS:IN-PROCESS\r\nPRIORITY:3\r\nCATEGORIES:home,phone\r\nEND:VTODO\r\nEND:VCALENDAR\r\n",
+    );
+
+    let before = snapshot_tree(&env.data_dir);
+    env.command()
+        .args(["sync", "calendar", "--dry-run"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("pull calendar → new action"))
+        .stdout(predicate::str::contains(
+            "Dry run complete. 0 push, 1 pull, 0 converged, 0 conflict.",
+        ));
+    assert_eq!(snapshot_tree(&env.data_dir), before);
+
+    env.command()
+        .args(["sync", "calendar"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("pull calendar → new action"))
+        .stdout(predicate::str::contains(
+            "Sync complete. 0 push, 1 pull, 0 converged, 0 conflict.",
+        ));
+    let actions = fs::read_to_string(env.data_dir.join("charters/inbox.actions")).unwrap();
+    let adopted = clearhead_core::parse_actions(&actions).unwrap();
+    assert_eq!(adopted.len(), 1);
+    assert_eq!(adopted[0].id.get_version_num(), 7);
+    assert_eq!(
+        adopted[0].state,
+        clearhead_core::domain::ActionState::InProgress
+    );
+    assert!(
+        fs::read_to_string(resource)
+            .unwrap()
+            .contains("UID:foreign-dry-run@example.test")
+    );
+}
+
+#[test]
 fn test_sync_calendar_creates_action_mirror_and_stamps_sync_store() {
     let env = TestEnv::new();
     let uuid = "019baaec-00b6-7991-be34-94b68212619a";
@@ -587,7 +749,7 @@ fn test_sync_calendar_routes_next_collection_to_root_not_nested_primary_file() {
     );
     env.write_text(
         "plans/next/client-resource.ics",
-        "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Calendar Client//EN\r\nBEGIN:VTODO\r\nUID:root-capture@example.test\r\nSUMMARY:Captured in root collection\r\nSTATUS:NEEDS-ACTION\r\nEND:VTODO\r\nEND:VCALENDAR\r\n",
+        "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Calendar Client//EN\r\nBEGIN:VTODO\r\nUID:root-capture@example.test\r\nSUMMARY:Captured in root collection\r\nDTSTART:20260501T170000Z\r\nSTATUS:NEEDS-ACTION\r\nEND:VTODO\r\nEND:VCALENDAR\r\n",
     );
 
     env.command()
@@ -615,7 +777,7 @@ fn test_sync_calendar_refuses_to_invent_a_charter_for_an_unowned_collection() {
     let env = TestEnv::new();
     env.write_text(
         "plans/fresh/client.ics",
-        "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VTODO\r\nUID:fresh-task@example.test\r\nSUMMARY:Fresh capture\r\nSTATUS:NEEDS-ACTION\r\nEND:VTODO\r\nEND:VCALENDAR\r\n",
+        "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VTODO\r\nUID:fresh-task@example.test\r\nSUMMARY:Fresh capture\r\nDTSTART:20260501T170000Z\r\nSTATUS:NEEDS-ACTION\r\nEND:VTODO\r\nEND:VCALENDAR\r\n",
     );
     env.command()
         .arg("sync")
@@ -721,10 +883,10 @@ fn test_sync_calendar_conflict_can_be_resolved_toward_action() {
         .join("plans")
         .join("inbox")
         .join(format!("{}.ics", uuid));
-    let actions = clearhead_workspace_fs::read_vtodo_file(&ics_path).unwrap();
-    assert_eq!(actions.len(), 1);
-    assert_eq!(actions[0].id.to_string(), uuid);
-    let dt = actions[0].scheduled_at.unwrap();
+    let plans = clearhead_workspace_fs::read_ics_file(&ics_path).unwrap();
+    assert_eq!(plans.len(), 1);
+    assert_eq!(plans[0].plan.external_id.as_deref(), Some(uuid));
+    let dt = plans[0].plan.dtstart.unwrap();
     assert_eq!(dt.format("%Y-%m-%dT%H:%M").to_string(), "2026-04-29T10:00");
 }
 

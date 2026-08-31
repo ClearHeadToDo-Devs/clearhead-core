@@ -13,8 +13,8 @@ use uuid::Uuid;
 
 use super::expand::{next_active_slot, render_occurrence};
 use super::ics::{
-    ICSPlan, OccurrenceOp, VTodoAction, action_to_vtodo, canonical_occurrence_key, parse_ics,
-    plan_id_from_ics_uid, render_master_rollforward, render_occurrence_deviation,
+    ICSPlan, OccurrenceOp, PlanActionProjection, action_to_vtodo, canonical_occurrence_key,
+    parse_ics, plan_id_from_ics_uid, render_master_rollforward, render_occurrence_deviation,
 };
 use super::sync_store::{
     CONTEXTS_FIELD, DESCRIPTION_FIELD, DUE_DATE_FIELD, MASTER_DTSTART_FIELD, PRIORITY_FIELD,
@@ -173,23 +173,28 @@ pub struct SyncTally {
 /// selected by its containing vdir directory.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SyncImport {
-    pub action: VTodoAction,
+    pub action: PlanActionProjection,
     pub plans_dir: PathBuf,
     pub charter_name: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct VTodoResource {
-    pub action: VTodoAction,
-    pub path: PathBuf,
-    pub plans_dir: PathBuf,
-    pub charter_name: String,
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SyncLifecycleKind {
+    CalendarDeleted,
+    ActionUnscheduled,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SyncLifecycleEntry {
+    pub action_id: Uuid,
+    pub kind: SyncLifecycleKind,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SyncReport {
     pub entries: Vec<SyncEntry>,
     pub imports: Vec<SyncImport>,
+    pub lifecycle: Vec<SyncLifecycleEntry>,
     pub warnings: Vec<String>,
 }
 
@@ -202,7 +207,10 @@ pub enum SyncConflictResolution {
 
 impl SyncReport {
     pub fn is_empty(&self) -> bool {
-        self.entries.is_empty() && self.imports.is_empty() && self.warnings.is_empty()
+        self.entries.is_empty()
+            && self.imports.is_empty()
+            && self.lifecycle.is_empty()
+            && self.warnings.is_empty()
     }
 
     pub fn resolve_conflicts(mut self, choice: Option<SyncConflictResolution>) -> Self {
@@ -226,6 +234,12 @@ impl SyncReport {
             take_calendar: self.imports.len(),
             ..SyncTally::default()
         };
+        for lifecycle in &self.lifecycle {
+            match lifecycle.kind {
+                SyncLifecycleKind::CalendarDeleted => tally.take_calendar += 1,
+                SyncLifecycleKind::ActionUnscheduled => tally.take_action += 1,
+            }
+        }
         for entry in &self.entries {
             let outcomes = entry.outcomes();
             tally.take_action += usize::from(
@@ -257,112 +271,11 @@ impl SyncReport {
     }
 }
 
-/// Plan a field-wise sync without touching disk.
-pub fn plan_sync(
-    model: &DomainModel,
-    store: &PlansSyncStore,
-    calendar: &HashMap<Uuid, VTodoResource>,
-) -> Result<SyncReport, WorkspaceError> {
-    let scheduled_bases: HashMap<Uuid, Time> = store.field_bases(SCHEDULED_AT_FIELD)?;
-    let due_bases: HashMap<Uuid, Time> = store.field_bases(DUE_DATE_FIELD)?;
-    let state_bases: HashMap<Uuid, ActionState> = store.field_bases(STATE_FIELD)?;
-    let title_bases: HashMap<Uuid, String> = store.field_bases(TITLE_FIELD)?;
-    let description_bases: HashMap<Uuid, Option<String>> = store.field_bases(DESCRIPTION_FIELD)?;
-    let priority_bases: HashMap<Uuid, Option<u32>> = store.field_bases(PRIORITY_FIELD)?;
-    let contexts_bases: HashMap<Uuid, Option<Vec<String>>> = store.field_bases(CONTEXTS_FIELD)?;
-    let uid_bases: HashMap<Uuid, String> = store.field_bases(UID_FIELD)?;
-
-    let mut report = SyncReport::default();
-    let existing_ids: HashSet<_> = model
-        .all_actions()
-        .into_iter()
-        .map(|action| action.id)
-        .collect();
-
-    // A materialized occurrence token is represented on the calendar by its
-    // master's RRULE + deviations, never as a standalone VTODO — and its grafted
-    // template steps stay local in `.actions` entirely. Both are ordinary
-    // materialized lines a window-0 load keeps, so without this they would push
-    // as duplicate standalone todos on the next sync (the double-vision the master
-    // already covers). This is the materialized-token analog of the window-0 seal
-    // that removes *projected* occurrences before they ever reach here.
-    let occurrence_owned = occurrence_subtree_ids(model, store);
-
-    for action in model.all_actions() {
-        if occurrence_owned.contains(&action.id) {
-            continue;
-        }
-        let calendar_action = calendar.get(&action.id).map(|resource| &resource.action);
-        let action_contexts = normalized_contexts(action.contexts.clone());
-        let entry = SyncEntry {
-            action_id: action.id,
-            uid: calendar_action
-                .map(|value| value.uid.clone())
-                .or_else(|| uid_bases.get(&action.id).cloned())
-                .unwrap_or_else(|| action.id.to_string()),
-            name: action.name.clone(),
-            scheduled_at: reconcile(
-                &action.scheduled_at,
-                scheduled_bases.get(&action.id),
-                calendar_action.map(|value| &value.scheduled_at),
-            ),
-            due_date: reconcile(
-                &action.due_date,
-                due_bases.get(&action.id),
-                calendar_action.map(|value| &value.due_date),
-            ),
-            state: reconcile(
-                &action.state,
-                state_bases.get(&action.id),
-                calendar_action.map(|value| &value.state),
-            ),
-            title: reconcile(
-                &action.name,
-                title_bases.get(&action.id),
-                calendar_action.map(|value| &value.title),
-            ),
-            description: reconcile(
-                &action.description,
-                description_bases.get(&action.id),
-                calendar_action.map(|value| &value.description),
-            ),
-            priority: reconcile(
-                &action.priority,
-                priority_bases.get(&action.id),
-                calendar_action.map(|value| &value.priority),
-            ),
-            contexts: reconcile(
-                &action_contexts,
-                contexts_bases.get(&action.id),
-                calendar_action.map(|value| &value.contexts),
-            ),
-            calendar_completed_at: calendar_action.and_then(|value| value.completed_at),
-        };
-        if !entry.is_noop() {
-            report.entries.push(entry);
-        }
-    }
-
-    for resource in calendar.values() {
-        if !existing_ids.contains(&resource.action.id) {
-            report.imports.push(SyncImport {
-                action: resource.action.clone(),
-                plans_dir: resource.plans_dir.clone(),
-                charter_name: resource.charter_name.clone(),
-            });
-        }
-    }
-    report.imports.sort_by_key(|import| import.action.id);
-    Ok(report)
-}
-
 /// Plan one-off Action/Plan reconciliation by the durable semantic relation.
 ///
-/// This is the replacement seam for identity-coupled standalone-VTODO sync.
-/// It deliberately covers only already-linked pairs in this first slice;
-/// native creation, adoption, deletion, and delivery remain on the later
-/// transaction cutover. Recurring Plans and occurrence-linked Actions are
-/// excluded structurally.
+/// Already-linked Actions join Plans by `Action.plan_id`. An unlinked scheduled
+/// Action produces the initial Action-owned projection; unscheduled Actions,
+/// recurring Plans, occurrence tokens, and their grafted subtrees remain local.
 pub fn plan_one_off_sync(
     model: &DomainModel,
     store: &PlansSyncStore,
@@ -387,11 +300,29 @@ pub fn plan_one_off_sync(
     }
 
     let mut report = SyncReport::default();
+    let occurrence_owned = occurrence_subtree_ids(model, store);
     for action in model.all_actions() {
-        if action.external_occurrence_key.is_some() {
+        if action.external_occurrence_key.is_some() || occurrence_owned.contains(&action.id) {
             continue;
         }
         let Some(plan_id) = action.plan_id else {
+            if action.scheduled_at.is_none() {
+                continue;
+            }
+            let action_contexts = normalized_contexts(action.contexts.clone());
+            report.entries.push(SyncEntry {
+                action_id: action.id,
+                uid: action.id.to_string(),
+                name: action.name.clone(),
+                scheduled_at: Reconcile::TakeAction(action.scheduled_at),
+                due_date: Reconcile::TakeAction(action.due_date),
+                state: Reconcile::TakeAction(action.state),
+                title: Reconcile::TakeAction(action.name.clone()),
+                description: Reconcile::TakeAction(action.description.clone()),
+                priority: Reconcile::TakeAction(action.priority),
+                contexts: Reconcile::TakeAction(action_contexts),
+                calendar_completed_at: None,
+            });
             continue;
         };
         let Some(resource) = one_off.get(&plan_id) else {
@@ -476,8 +407,8 @@ pub fn plan_one_off_sync(
 /// ([`stamp_occurrence_link`](PlansSyncStore::stamp_occurrence_link)); its grafted
 /// template steps are its descendants by `parent_id`. Together they are the actions
 /// the plans vdir represents through the master (RRULE occurrence + completion
-/// deviations) or keeps purely local — so [`plan_sync`] excludes them from
-/// standalone reconciliation. Returns an empty set when no tokens are stamped, the
+/// deviations) or keeps purely local — so one-off reconciliation excludes them
+/// from standalone creation. Returns an empty set when no tokens are stamped, the
 /// non-recurring common case.
 fn occurrence_subtree_ids(model: &DomainModel, store: &PlansSyncStore) -> HashSet<Uuid> {
     let roots = store.occurrence_links();
@@ -550,7 +481,7 @@ fn apply_report(
     for import in &report.imports {
         let charter_idx = locate_import_charter(&workspace.charters, import)?;
         let actions_relative = import_actions_file(&mut workspace.charters[charter_idx], import);
-        let action = action_from_vtodo(&import.action);
+        let action = action_from_projection(&import.action);
         workspace.charters[charter_idx].actions.push(SourcedAction {
             action,
             source_metadata: None,
@@ -1395,7 +1326,7 @@ fn import_actions_file(charter: &mut MarkdownCharter, import: &SyncImport) -> Pa
     path
 }
 
-fn action_from_vtodo(source: &VTodoAction) -> Action {
+fn action_from_projection(source: &PlanActionProjection) -> Action {
     Action {
         id: source.id,
         state: source.state,
@@ -1414,7 +1345,7 @@ fn action_from_vtodo(source: &VTodoAction) -> Action {
 
 fn stamp_projection(
     store: &mut PlansSyncStore,
-    source: &VTodoAction,
+    source: &PlanActionProjection,
 ) -> Result<(), WorkspaceError> {
     store.stamp(source.id, UID_FIELD, &source.uid)?;
     store.stamp(source.id, SCHEDULED_AT_FIELD, &source.scheduled_at)?;
@@ -2065,56 +1996,6 @@ mod tests {
         assert_eq!(reconcile(&none, None, None), Reconcile::TakeAction(None));
     }
 
-    #[test]
-    fn fields_reconcile_independently() {
-        let id = Uuid::new_v4();
-        let action = Action {
-            id,
-            name: "base title".into(),
-            scheduled_at: Some(t(28)),
-            ..Default::default()
-        };
-        let model = DomainModel {
-            objectives: vec![],
-            charters: vec![crate::domain::Charter {
-                actions: vec![action],
-                ..Default::default()
-            }],
-        };
-        let mut store = PlansSyncStore::new(Path::new("/tmp/plans"));
-        store.stamp(id, SCHEDULED_AT_FIELD, &Some(t(27))).unwrap();
-        store.stamp(id, TITLE_FIELD, &"base title").unwrap();
-        let calendar = HashMap::from([(
-            id,
-            VTodoResource {
-                action: VTodoAction {
-                    id,
-                    uid: id.to_string(),
-                    scheduled_at: Some(t(27)),
-                    due_date: None,
-                    state: ActionState::NotStarted,
-                    title: "calendar title".into(),
-                    description: None,
-                    priority: None,
-                    contexts: None,
-                    completed_at: None,
-                },
-                path: PathBuf::from("/tmp/plans/work/item.ics"),
-                plans_dir: PathBuf::from("work"),
-                charter_name: "work".into(),
-            },
-        )]);
-        let report = plan_sync(&model, &store, &calendar).unwrap();
-        assert_eq!(
-            report.entries[0].scheduled_at,
-            Reconcile::TakeAction(Some(t(28)))
-        );
-        assert_eq!(
-            report.entries[0].title,
-            Reconcile::TakeCalendar("calendar title".into())
-        );
-    }
-
     fn model_with(action: Action) -> DomainModel {
         DomainModel {
             objectives: vec![],
@@ -2123,6 +2004,42 @@ mod tests {
                 ..Default::default()
             }],
         }
+    }
+
+    #[test]
+    fn one_off_planner_creates_only_unlinked_scheduled_actions() {
+        let scheduled_id = Uuid::now_v7();
+        let unscheduled_id = Uuid::now_v7();
+        let model = DomainModel {
+            objectives: vec![],
+            charters: vec![crate::domain::Charter {
+                actions: vec![
+                    Action {
+                        id: scheduled_id,
+                        name: "Scheduled".into(),
+                        scheduled_at: Some(t(20)),
+                        priority: Some(2),
+                        ..Default::default()
+                    },
+                    Action {
+                        id: unscheduled_id,
+                        name: "Local".into(),
+                        ..Default::default()
+                    },
+                ],
+                ..Default::default()
+            }],
+        };
+
+        let report =
+            plan_one_off_sync(&model, &PlansSyncStore::new(Path::new("/tmp/plans")), &[]).unwrap();
+
+        assert_eq!(report.entries.len(), 1);
+        let entry = &report.entries[0];
+        assert_eq!(entry.action_id, scheduled_id);
+        assert_eq!(entry.uid, scheduled_id.to_string());
+        assert_eq!(entry.scheduled_at, Reconcile::TakeAction(Some(t(20))));
+        assert_eq!(entry.priority, Reconcile::TakeAction(Some(2)));
     }
 
     #[test]
@@ -2332,7 +2249,7 @@ mod tests {
     #[test]
     fn imported_vtodo_preserves_every_owned_action_field() {
         let completed_at = t(30);
-        let source = VTodoAction {
+        let source = PlanActionProjection {
             id: Uuid::now_v7(),
             uid: "foreign@example.com".to_string(),
             scheduled_at: Some(t(20)),
@@ -2345,7 +2262,7 @@ mod tests {
             completed_at: Some(completed_at),
         };
 
-        let action = action_from_vtodo(&source);
+        let action = action_from_projection(&source);
 
         assert_eq!(
             action,
@@ -2368,7 +2285,7 @@ mod tests {
     fn calendar_imports_contribute_to_the_take_calendar_tally() {
         let report = SyncReport {
             imports: vec![SyncImport {
-                action: VTodoAction {
+                action: PlanActionProjection {
                     id: Uuid::now_v7(),
                     uid: "foreign@example.com".to_string(),
                     scheduled_at: None,
@@ -2599,8 +2516,8 @@ mod tests {
             .stamp_occurrence_link(token, plan_id, "20260420T170000Z")
             .unwrap();
 
-        // Empty vdir: without the seal every action here would push as a new VTODO.
-        let report = plan_sync(&model, &store, &HashMap::new()).unwrap();
+        // Empty vdir: without the seal every action here would push as a new Plan.
+        let report = plan_one_off_sync(&model, &store, &[]).unwrap();
         let pushed: HashSet<Uuid> = report.entries.iter().map(|e| e.action_id).collect();
 
         assert!(

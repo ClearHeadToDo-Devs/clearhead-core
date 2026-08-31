@@ -99,17 +99,14 @@ pub fn sync_calendar(
     ctx.require_source_integrity("sync calendar")?;
 
     if dry_run {
-        let plans_root = ctx.plans_root();
-        let model = ctx.load_model()?;
-        let sync_store = clearhead_workspace_fs::read_plans_sync_store(&ctx.data_dir, &plans_root)?;
-        let calendar_actions = clearhead_workspace_fs::read_vtodo_actions(
+        let preview = clearhead_workspace_fs::preview_calendar_sync_with_component(
             &ctx.data_dir,
             ctx.plan_override().as_deref(),
+            conflict_resolution(conflict),
+            ctx.config.plan_component,
         )?;
-        let report = clearhead_core::plan_sync(&model, &sync_store, &calendar_actions)?
-            .resolve_conflicts(conflict_resolution(conflict));
-        render_sync_report(&report);
-        let tally = report.tally();
+        render_sync_report(&preview.report);
+        let tally = preview.report.tally();
         info!(?tally, "Calendar sync dry run complete");
         println!(
             "Dry run complete. {} push, {} pull, {} converged, {} conflict.",
@@ -164,6 +161,18 @@ fn render_sync_report(report: &clearhead_core::SyncReport) {
     }
     for entry in &report.entries {
         println!("{}", render_sync_entry(entry));
+    }
+    for lifecycle in &report.lifecycle {
+        match lifecycle.kind {
+            clearhead_core::SyncLifecycleKind::CalendarDeleted => println!(
+                "pull calendar → action unscheduled: #{}",
+                lifecycle.action_id
+            ),
+            clearhead_core::SyncLifecycleKind::ActionUnscheduled => println!(
+                "push action → calendar Plan removed: #{}",
+                lifecycle.action_id
+            ),
+        }
     }
 }
 

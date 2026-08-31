@@ -69,10 +69,6 @@ pub struct OccurrenceOverride {
 
 /// Namespace UUID for deriving deterministic Plan and occurrence identities.
 const ICS_NAMESPACE: Uuid = uuid!("6ba7b810-9dad-11d1-80b4-00c04fd430c8");
-/// Separate namespace for adopting calendar-created standalone VTODOs whose
-/// RFC 5545 UID is valid text but not itself a UUID.
-const VTODO_ACTION_NAMESPACE: Uuid = uuid!("87ca0d84-1793-5b27-91f4-607bf8d38f87");
-
 /// Derive the stable domain Plan ID for an iCalendar UID.
 pub fn plan_id_from_ics_uid(uid: &str) -> uuid::Uuid {
     Uuid::new_v5(&ICS_NAMESPACE, uid.as_bytes())
@@ -102,13 +98,6 @@ pub fn canonical_occurrence_key(slot: DateTime<Local>) -> String {
     slot.with_timezone(&Utc)
         .format("%Y%m%dT%H%M%SZ")
         .to_string()
-}
-
-/// Resolve a standalone VTODO UID to its Action identity. ClearHead-authored
-/// UUID UIDs remain unchanged; arbitrary client-generated UIDs get a stable
-/// UUIDv5 without rewriting the interoperable UID.
-pub fn action_id_from_vtodo_uid(uid: &str) -> Uuid {
-    Uuid::parse_str(uid).unwrap_or_else(|_| Uuid::new_v5(&VTODO_ACTION_NAMESPACE, uid.as_bytes()))
 }
 
 /// Parse Plan resources from bytes already supplied by a host.
@@ -757,13 +746,12 @@ fn upsert_todo_override(
     Ok(())
 }
 
-/// The interoperable fields ClearHead owns in a standalone VTODO projection.
+/// Action-owned fields projected through a one-off Plan integration profile.
 /// Transport metadata, alarms, and vendor extensions deliberately stay out of
-/// this value and are preserved when an existing file is updated.
+/// this value and are preserved when an existing resource is updated.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct VTodoAction {
-    /// ClearHead Action identity, equal to `uid` when the UID is a UUID and
-    /// deterministically derived otherwise.
+pub struct PlanActionProjection {
+    /// Native ClearHead Action identity, independent of the interoperable UID.
     pub id: Uuid,
     /// Original RFC 5545 identity. Never rewritten merely to fit Action's UUID.
     pub uid: String,
@@ -775,53 +763,6 @@ pub struct VTodoAction {
     pub priority: Option<u32>,
     pub contexts: Option<Vec<String>>,
     pub completed_at: Option<DateTime<Local>>,
-}
-
-/// Parse standalone VTODO projections from host-supplied calendar bytes.
-pub fn parse_vtodo_actions_content(content: &str) -> Result<Vec<VTodoAction>, WorkspaceError> {
-    let calendar: Calendar = content
-        .parse()
-        .map_err(|e: String| WorkspaceError::Parse(e))?;
-    let mut actions = Vec::new();
-
-    for component in calendar.components {
-        let CalendarComponent::Todo(todo) = component else {
-            continue;
-        };
-        // A recurring master (RRULE) is a Plan, and a RECURRENCE-ID component is an
-        // occurrence override *of* its master — neither is a standalone Action.
-        if todo.property_value("RRULE").is_some() || todo.property_value("RECURRENCE-ID").is_some()
-        {
-            continue;
-        }
-        let Some(uid) = todo.get_uid() else {
-            continue;
-        };
-        let id = action_id_from_vtodo_uid(uid);
-        let Some(title) = todo.get_summary() else {
-            continue;
-        };
-
-        actions.push(VTodoAction {
-            id,
-            uid: uid.to_string(),
-            scheduled_at: todo.get_start().and_then(date_perhaps_time_to_local),
-            due_date: todo.get_due().and_then(date_perhaps_time_to_local),
-            state: vtodo_state(&todo),
-            title: title.to_string(),
-            description: todo
-                .get_description()
-                .filter(|value| !value.is_empty())
-                .map(str::to_string),
-            priority: todo.get_priority().filter(|value| (1..=9).contains(value)),
-            contexts: parse_categories(&todo),
-            completed_at: todo
-                .get_completed()
-                .map(|value| value.with_timezone(&Local)),
-        });
-    }
-
-    Ok(actions)
 }
 
 fn parse_categories(todo: &Todo) -> Option<Vec<String>> {
@@ -1202,10 +1143,6 @@ mod tests {
         parse_ics(&std::fs::read_to_string(path)?, path)
     }
 
-    fn parse_vtodo_actions(path: &Path) -> Result<Vec<VTodoAction>, WorkspaceError> {
-        parse_vtodo_actions_content(&std::fs::read_to_string(path)?)
-    }
-
     fn write_occurrence_deviation(
         path: &Path,
         uid: &str,
@@ -1568,26 +1505,6 @@ mod tests {
     }
 
     #[test]
-    fn standalone_parse_ignores_masters_and_overrides() {
-        // A recurring master and its RECURRENCE-ID override are Plan/deviation, not
-        // standalone Actions — the standalone reader must skip both, or the sync
-        // path would pull an override VTODO in as a spurious new action.
-        let uid = "standup@example.com";
-        let f = write_ics(&format!(
-            "BEGIN:VCALENDAR\r\nVERSION:2.0\r\n\
-             BEGIN:VTODO\r\nUID:{uid}\r\nSUMMARY:Standup\r\n\
-             DTSTART:20260504T090000Z\r\nRRULE:FREQ=DAILY\r\nEND:VTODO\r\n\
-             BEGIN:VTODO\r\nUID:{uid}\r\nSUMMARY:Standup\r\n\
-             RECURRENCE-ID:20260505T090000Z\r\nDTSTART:20260505T090000Z\r\n\
-             STATUS:COMPLETED\r\nEND:VTODO\r\nEND:VCALENDAR\r\n"
-        ));
-        assert!(
-            parse_vtodo_actions(f.path()).unwrap().is_empty(),
-            "neither the master nor its override is a standalone action"
-        );
-    }
-
-    #[test]
     fn write_to_absent_master_errors() {
         let f = master_ics("standup@example.com");
         let result = write_occurrence_deviation(
@@ -1625,14 +1542,18 @@ mod tests {
         let f = write_ics(&format!(
             "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VTODO\r\nUID:{id}\r\nSUMMARY:Edited elsewhere\r\nDESCRIPTION:portable task\r\nSTATUS:COMPLETED\r\nPRIORITY:8\r\nCATEGORIES:home,deep\\,focus\r\nCATEGORIES:errands\r\nDTSTART;TZID=America/New_York:20260427T100000\r\nDUE;VALUE=DATE:20260428\r\nCOMPLETED:20260427T150000Z\r\nEND:VTODO\r\nEND:VCALENDAR\r\n"
         ));
-        let actions = parse_vtodo_actions(f.path()).unwrap();
-        assert_eq!(actions.len(), 1);
-        assert_eq!(actions[0].id, id);
-        assert_eq!(actions[0].state, ActionState::Completed);
-        assert_eq!(actions[0].description.as_deref(), Some("portable task"));
-        assert_eq!(actions[0].priority, Some(8));
+        let plans = parse_ics_file(f.path()).unwrap();
+        assert_eq!(plans.len(), 1);
         assert_eq!(
-            actions[0].contexts.as_deref(),
+            plans[0].plan.external_id.as_deref(),
+            Some(id.to_string().as_str())
+        );
+        assert_eq!(plans[0].plan.description.as_deref(), Some("portable task"));
+        let task = plans[0].task_fields.as_ref().unwrap();
+        assert_eq!(task.state, ActionState::Completed);
+        assert_eq!(task.priority, Some(8));
+        assert_eq!(
+            task.contexts.as_deref(),
             Some(
                 [
                     "deep".into(),
@@ -1644,29 +1565,14 @@ mod tests {
             )
         );
         assert_eq!(
-            actions[0].scheduled_at.unwrap().with_timezone(&Utc).hour(),
+            plans[0].plan.dtstart.unwrap().with_timezone(&Utc).hour(),
             14
         );
-        assert!(actions[0].due_date.is_some());
-        assert!(actions[0].completed_at.is_some());
+        assert!(plans[0].schedule_end.is_some());
+        assert!(task.completed_at.is_some());
 
-        // The compatibility reader still exposes migration input as an Action,
-        // while normal Plan discovery now classifies the same one-off VTODO by
-        // domain meaning rather than by the presence of RRULE.
-        let plans = parse_ics_file(f.path()).unwrap();
-        assert_eq!(plans.len(), 1);
         assert!(plans[0].plan.recurrence.is_none());
         assert_eq!(plans[0].component_kind, PlanComponentKind::VTodo);
-    }
-
-    #[test]
-    fn arbitrary_vtodo_uid_derives_stable_action_uuid() {
-        let uid = "client-generated-uid@example.test";
-        let first = action_id_from_vtodo_uid(uid);
-        assert_eq!(first, action_id_from_vtodo_uid(uid));
-        assert_ne!(first, action_id_from_vtodo_uid("other@example.test"));
-        let uuid = Uuid::new_v4();
-        assert_eq!(action_id_from_vtodo_uid(&uuid.to_string()), uuid);
     }
 
     #[test]
@@ -1674,8 +1580,9 @@ mod tests {
         let f = write_ics(
             "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VTODO\r\nUID:weekly\r\nSUMMARY:Weekly\r\nDTSTART:20260427T100000Z\r\nRRULE:FREQ=WEEKLY\r\nEND:VTODO\r\nEND:VCALENDAR\r\n",
         );
-        assert!(parse_vtodo_actions(f.path()).unwrap().is_empty());
-        assert_eq!(parse_ics_file(f.path()).unwrap().len(), 1);
+        let plans = parse_ics_file(f.path()).unwrap();
+        assert_eq!(plans.len(), 1);
+        assert!(plans[0].plan.recurrence.is_some());
     }
 
     #[test]

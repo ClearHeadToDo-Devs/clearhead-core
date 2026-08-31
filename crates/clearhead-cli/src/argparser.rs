@@ -1125,7 +1125,7 @@ pub enum SyncTarget {
         #[arg(long)]
         dry_run: bool,
     },
-    /// Reconcile Actions with standalone VTODOs in the configured plans vdir
+    /// Reconcile Actions with one-off VEVENT/VTODO Plans in the configured vdir
     Calendar {
         /// Dry run: show what would be changed without writing
         #[arg(long)]
