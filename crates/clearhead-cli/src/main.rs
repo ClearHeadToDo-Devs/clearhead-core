@@ -435,6 +435,11 @@ fn dispatch(cli: &argparser::Cli, ctx: &CommandContext) -> anyhow::Result<()> {
                 dry_run,
             } => commands::action::reopen_action(ctx, query, charter, file, *dry_run),
         },
+        Verb::Jot {
+            text,
+            charter,
+            dry_run,
+        } => commands::charter::jot(ctx, text, charter.as_deref(), *dry_run),
         Verb::Apply { target } => match target {
             argparser::ApplyTarget::Template {
                 name,

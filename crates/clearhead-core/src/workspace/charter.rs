@@ -226,6 +226,59 @@ pub fn format_charter(charter: &Charter) -> String {
     out
 }
 
+/// Append a single log entry as a bullet under the charter's `## Log` section,
+/// returning the new markdown.
+///
+/// This is a *surgical* text edit: every byte of `content` outside the touched
+/// region is preserved. It deliberately does not round-trip through
+/// [`parse_charter`]/[`format_charter`], which regenerate the file from the
+/// parsed model and would silently drop unmodeled frontmatter (e.g. `defaults`)
+/// and normalize whitespace — wrong for an append-only log.
+///
+/// If a `## Log` section exists, the bullet is inserted after the last non-blank
+/// line of that section (before trailing blank lines or a following heading).
+/// Otherwise a `## Log` section is created at the end of the document.
+pub fn append_log_entry(content: &str, entry: &str) -> String {
+    let bullet = format!("- {}", entry.trim());
+    let lines: Vec<&str> = content.lines().collect();
+
+    let Some(start) = lines.iter().position(|line| line.trim() == "## Log") else {
+        // No log section: create one at the end, separated from prior content.
+        let mut result = content.trim_end().to_string();
+        if !result.is_empty() {
+            result.push_str("\n\n");
+        }
+        result.push_str("## Log\n\n");
+        result.push_str(&bullet);
+        result.push('\n');
+        return result;
+    };
+
+    // The section runs until the next heading (level 1 or 2) or end of file.
+    let end = lines[start + 1..]
+        .iter()
+        .position(|line| line.starts_with("# ") || line.starts_with("## "))
+        .map(|rel| start + 1 + rel)
+        .unwrap_or(lines.len());
+    // Insert right after the last non-blank line inside the section, so the
+    // bullet joins the list rather than landing past trailing blank lines.
+    let insert_at = (start + 1..end)
+        .rev()
+        .find(|&i| !lines[i].trim().is_empty())
+        .map(|i| i + 1)
+        .unwrap_or(end);
+
+    let mut out: Vec<&str> = Vec::with_capacity(lines.len() + 1);
+    out.extend_from_slice(&lines[..insert_at]);
+    out.push(bullet.as_str());
+    out.extend_from_slice(&lines[insert_at..]);
+    let mut result = out.join("\n");
+    if content.ends_with('\n') {
+        result.push('\n');
+    }
+    result
+}
+
 /// Split content into optional YAML frontmatter and body.
 ///
 /// Frontmatter must start on line 1 with `---` and close with `---`.
@@ -444,5 +497,41 @@ Stay healthy and fit through regular exercise and diet.
         let charter = parse_charter(content).unwrap();
         assert_eq!(charter.title, "Just a Title");
         assert!(charter.description.is_none());
+    }
+
+    #[test]
+    fn append_log_creates_section_when_absent() {
+        let content = "---\nid: x\n---\n# Title\n\nSome description.\n";
+        let out = append_log_entry(content, "first finding");
+        assert_eq!(
+            out,
+            "---\nid: x\n---\n# Title\n\nSome description.\n\n## Log\n\n- first finding\n"
+        );
+    }
+
+    #[test]
+    fn append_log_adds_bullet_to_existing_section() {
+        let content = "# Title\n\n## Log\n\n- old entry\n";
+        let out = append_log_entry(content, "new entry");
+        assert_eq!(out, "# Title\n\n## Log\n\n- old entry\n- new entry\n");
+    }
+
+    #[test]
+    fn append_log_inserts_before_following_section_and_preserves_it() {
+        // The log is not the last section; the bullet must land inside it and
+        // the trailing sibling section must be untouched.
+        let content = "# T\n\n## Log\n\n- a\n\n## Notes\n\nkeep me\n";
+        let out = append_log_entry(content, "b");
+        assert_eq!(out, "# T\n\n## Log\n\n- a\n- b\n\n## Notes\n\nkeep me\n");
+    }
+
+    #[test]
+    fn append_log_preserves_unmodeled_frontmatter() {
+        // The whole point of the surgical edit: `defaults` survives, where a
+        // format_charter round-trip would drop it.
+        let content = "---\nid: x\ndefaults:\n  priority: 3\n---\n# T\n";
+        let out = append_log_entry(content, "note");
+        assert!(out.contains("defaults:\n  priority: 3"), "{out}");
+        assert!(out.ends_with("## Log\n\n- note\n"), "{out}");
     }
 }

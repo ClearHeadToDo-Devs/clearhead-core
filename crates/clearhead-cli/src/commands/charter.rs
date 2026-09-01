@@ -1,4 +1,5 @@
 use anyhow::Context;
+use chrono::Local;
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 
@@ -9,6 +10,34 @@ use crate::commands::CommandContext;
 use clearhead_core::{ActionState, Charter, CharterState};
 
 use super::action::resolve_charter_across_workspaces;
+
+/// Resolve the `.md` path for a charter, and whether it must be created.
+///
+/// An existing `md_file` is used verbatim. Otherwise the path is derived to sit
+/// beside the charter's `.actions` file (same stem), falling back to a slug of
+/// the title — mirroring where `close`/`add` materialize a charter document.
+fn charter_md_path(
+    mc: &clearhead_core::MarkdownCharter,
+    charter_root: &Path,
+    title: &str,
+) -> (PathBuf, bool) {
+    if let Some(md_rel) = &mc.md_file {
+        return (charter_root.join(md_rel), false);
+    }
+    let path = mc
+        .actions_file
+        .as_ref()
+        .and_then(|p| {
+            let stem = p.file_stem()?.to_str()?;
+            let dir = p.parent().unwrap_or(Path::new(""));
+            Some(charter_root.join(dir).join(format!("{}.md", stem)))
+        })
+        .unwrap_or_else(|| {
+            let slug = title.to_lowercase().replace(' ', "-").replace('&', "and");
+            charter_root.join(format!("{}.md", slug))
+        });
+    (path, true)
+}
 
 /// Return the directory within `ws_root`'s charter tree where children of `parent` should live.
 ///
@@ -590,27 +619,7 @@ pub fn close_charter(
     let mc_full = find_target_charter(&mcs, query, file, &charter_root)?;
     let mut updated = Charter::from(mc_full.clone());
 
-    let (md_path, is_new) = if let Some(md_rel) = &mc_full.md_file {
-        (charter_root.join(md_rel), false)
-    } else {
-        let path = mc_full
-            .actions_file
-            .as_ref()
-            .and_then(|p| {
-                let stem = p.file_stem()?.to_str()?;
-                let dir = p.parent().unwrap_or(std::path::Path::new(""));
-                Some(charter_root.join(dir).join(format!("{}.md", stem)))
-            })
-            .unwrap_or_else(|| {
-                let slug = updated
-                    .title
-                    .to_lowercase()
-                    .replace(' ', "-")
-                    .replace('&', "and");
-                charter_root.join(format!("{}.md", slug))
-            });
-        (path, true)
-    };
+    let (md_path, is_new) = charter_md_path(&mc_full, &charter_root, &updated.title);
 
     apply_charter_update(
         &mut updated,
@@ -646,4 +655,96 @@ pub fn close_charter(
     );
 
     Ok(())
+}
+
+/// Append a timestamped finding to a charter's `## Log` — the `jot`/`capture`
+/// verb. This is a surgical text edit on the charter's markdown (via
+/// [`clearhead_core::append_log_entry`]) that preserves everything else, and it
+/// materializes a minimal `.md` (and the `## Log` section) when none exists yet,
+/// so capture never stalls on setup.
+pub fn jot(
+    ctx: &CommandContext,
+    text: &str,
+    charter: Option<&str>,
+    dry_run: bool,
+) -> anyhow::Result<()> {
+    let ws_root = ctx.data_dir.clone();
+    let plan_override = ctx.plan_override();
+    let mcs = clearhead_workspace_fs::load_workspace(&ws_root, plan_override.as_deref())?;
+    let charter_root = clearhead_workspace_fs::charter_root(&ws_root);
+
+    let mc_full = resolve_jot_charter(&mcs, charter)?;
+    let charter_model = Charter::from(mc_full.clone());
+    let (md_path, is_new) = charter_md_path(mc_full, &charter_root, &charter_model.title);
+
+    // Guard against a known charter-subsystem gap: `.md` name-inference does not
+    // mirror `charter_stem`'s special-casing of the primary `next.actions`
+    // file, so a derived `next.md` infers to the literal "next" and lands as a
+    // phantom, colliding charter instead of pairing. Refuse to auto-create in
+    // that case rather than corrupt the workspace. Tracked as a follow-up.
+    let is_primary_file = mc_full
+        .actions_file
+        .as_ref()
+        .and_then(|p| p.file_name())
+        .and_then(|n| n.to_str())
+        == Some("next.actions");
+    if is_new && is_primary_file {
+        anyhow::bail!(
+            "charter '{}' has no `.md` yet, and auto-creating one for a primary (`next.actions`) \
+             charter would not pair correctly (see the charter stem-detection gap). Run \
+             `clearhead close charter` first, or jot into a named charter with `--charter`",
+            charter_model.title
+        );
+    }
+
+    // Base content: the existing file, or a freshly materialized *minimal*
+    // charter document when none exists yet. Deliberately not `format_charter`:
+    // for an implicit charter that regenerator emits a derived `alias`/`parent`
+    // that reads as a second, colliding charter (doctor `alias-collision`). The
+    // `id` alone pairs the new `.md` with its `.actions`; everything else stays
+    // in the sidecar/derived model where it already lives.
+    let base = if is_new {
+        format!("---\nid: {}\n---\n# {}\n", charter_model.id, charter_model.title)
+    } else {
+        std::fs::read_to_string(&md_path)
+            .with_context(|| format!("Failed to read '{}'", md_path.display()))?
+    };
+
+    let stamp = Local::now().format("%Y-%m-%dT%H:%M");
+    let entry = format!("{stamp} — {}", text.trim());
+    let updated = clearhead_core::append_log_entry(&base, &entry);
+
+    if dry_run {
+        let verb = if is_new { "Would create" } else { "Would update" };
+        println!("{} {}:\n{}", verb, md_path.display(), updated);
+        return Ok(());
+    }
+
+    clearhead_workspace_fs::durability::atomic_write(&md_path, &updated)
+        .with_context(|| format!("Failed to write '{}'", md_path.display()))?;
+    info!(charter = %charter_model.title, path = %md_path.display(), created = is_new, "Jotted log entry");
+    println!("Jotted to '{}' ({})", charter_model.title, md_path.display());
+    Ok(())
+}
+
+/// Resolve the charter to jot into: an explicit query, or — when omitted — the
+/// sole actionable charter in the workspace. Refuses to guess among several.
+fn resolve_jot_charter<'a>(
+    mcs: &'a [clearhead_core::MarkdownCharter],
+    charter: Option<&str>,
+) -> anyhow::Result<&'a clearhead_core::MarkdownCharter> {
+    if let Some(q) = charter {
+        let charters: Vec<Charter> = mcs.iter().cloned().map(Charter::from).collect();
+        let mc = resolve_charter(&charters, q)?
+            .ok_or_else(|| anyhow::anyhow!("No charter found matching '{}'", q))?;
+        return mcs
+            .iter()
+            .find(|c| c.id == mc.id)
+            .ok_or_else(|| anyhow::anyhow!("Internal: MarkdownCharter for '{}' missing", q));
+    }
+    match mcs {
+        [only] => Ok(only),
+        [] => anyhow::bail!("No charters in this workspace; create one with `add charter`"),
+        _ => anyhow::bail!("Multiple charters; specify which with --charter <name|alias|uuid>"),
+    }
 }

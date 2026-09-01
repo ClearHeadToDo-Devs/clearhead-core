@@ -33,6 +33,9 @@ clearhead complete action "Buy oat milk"
 # Changed your mind? Reopen it (moves the whole subtree back, all NotStarted)
 clearhead reopen action "Buy oat milk"
 
+# Jot a timestamped finding into a charter's ## Log (frictionless capture)
+clearhead jot "range reads need a cache keyed on Last-Modified" --charter inbox
+
 # Archive completed actions out of active files
 clearhead archive actions
 

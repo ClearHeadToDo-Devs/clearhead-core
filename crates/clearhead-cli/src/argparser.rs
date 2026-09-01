@@ -243,6 +243,21 @@ pub enum Verb {
         target: ReopenTarget,
     },
 
+    /// Jot a timestamped finding into a charter's `## Log` (frictionless capture)
+    #[command(alias = "capture")]
+    Jot {
+        /// The finding to record — a single distilled line worth keeping
+        text: String,
+
+        /// Charter to jot into (name, alias, or UUID). Defaults to the sole charter when unambiguous.
+        #[arg(long)]
+        charter: Option<String>,
+
+        /// Preview the resulting `## Log` without writing
+        #[arg(long)]
+        dry_run: bool,
+    },
+
     /// Apply a template or pattern to a charter
     Apply {
         #[command(subcommand)]
