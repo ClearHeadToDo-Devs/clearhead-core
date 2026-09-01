@@ -1,13 +1,13 @@
 # Compose ClearHead with Radicale and vdirsyncer
 
-This recipe publishes ClearHead Actions and recurring Plans to CalDAV while keeping the integration server-agnostic.
+This recipe publishes ClearHead Plans to CalDAV while keeping the integration server-agnostic.
 
 - ClearHead owns `.actions` files and reads/writes a configured iCalendar vdir.
 - vdirsyncer transports vdir resources through CalDAV.
 - Radicale owns its private server storage and serves CalDAV clients.
 - Calendar or task clients communicate with Radicale, not with ClearHead files.
 
-The normative identity, field mapping, and reconciliation rules are defined by the [iCalendar VTODO projection specification](https://github.com/ClearHeadToDo-Devs/specifications/blob/master/ics_schedule_spec.md). This document only describes one operational composition.
+The normative identity, field mapping, recurrence, migration, and reconciliation rules are defined by the [iCalendar Plan projection specification](https://github.com/ClearHeadToDo-Devs/specifications/blob/master/ics_schedule_spec.md). This document only describes one operational composition.
 
 ## Topology
 
@@ -34,9 +34,17 @@ Install and configure:
 - `clearhead` with a user workspace;
 - `vdirsyncer`;
 - a reachable Radicale account;
-- a VTODO-capable calendar or task client.
+- an ordinary VEVENT calendar client, or a VTODO-capable task client.
 
-Some calendar applications synchronize CalDAV events but do not display tasks. Use a client that explicitly supports VTODO when testing the user interface.
+Choose the integration profile in configuration. `vevent` is the default and synchronizes schedules through ordinary calendars. `vtodo` additionally synchronizes supported task fields such as state, title, priority, and categories:
+
+```json
+{
+  "plan_component": "vevent"
+}
+```
+
+Use a client that explicitly supports VTODO only when selecting the `vtodo` profile.
 
 Back up the ClearHead plans vdir and the dedicated Radicale collections before changing an existing deployment.
 
@@ -114,11 +122,11 @@ Discover collections and inspect the proposed mapping:
 vdirsyncer discover clearhead
 ```
 
-The local charter directories and remote CalDAV collections should correspond. Resolve naming surprises before the first synchronization. Discovery records the current collection set; when ClearHead later creates a VTODO in a new charter directory, run discovery again and explicitly approve the matching remote collection. Collection creation is intentionally not automated by the timer.
+The local charter directories and remote CalDAV collections should correspond. Resolve naming surprises before the first synchronization. Discovery records the current collection set; when ClearHead later creates a Plan resource in a new charter directory, run discovery again and explicitly approve the matching remote collection. Collection creation is intentionally not automated by the timer.
 
 ## Seed a fresh remote
 
-For a genuinely new, dedicated remote collection set, the local VTODO vdir can be the initial source:
+For a genuinely new, dedicated remote collection set, the local Plan vdir can be the initial source:
 
 ```sh
 vdirsyncer sync clearhead
@@ -138,8 +146,8 @@ Do not automate the composition until both directions work manually.
 
 ### Calendar to ClearHead
 
-1. Create a standalone task in the VTODO-capable client.
-2. Give it a distinctive title, priority, and category.
+1. Create an event in the VEVENT profile, or a task in the VTODO profile.
+2. Give it a distinctive schedule. For VTODO, also set a title, priority, and category.
 3. Synchronize the transport:
 
    ```sh
@@ -158,11 +166,11 @@ Do not automate the composition until both directions work manually.
    clearhead sync calendar
    ```
 
-6. Confirm that a new root Action appears in the charter selected by the resource's collection directory.
+6. Confirm that a new scheduled root Action appears in the charter selected by the resource's collection directory. VEVENT seeds display text at adoption but subsequently reconciles schedule only; VTODO continues to reconcile supported task fields.
 
 ### ClearHead to calendar
 
-1. Add or edit an Action, including a priority or context.
+1. Add or reschedule an Action. In the VTODO profile, also edit a priority or context.
 2. Project it into the vdir:
 
    ```sh
@@ -175,19 +183,19 @@ Do not automate the composition until both directions work manually.
    vdirsyncer sync clearhead
    ```
 
-4. Confirm that the client shows the updated VTODO.
+4. Confirm that the client shows the updated VEVENT or VTODO.
 
 ### Acceptance checklist
 
 Before enabling a timer, verify:
 
-- calendar-created VTODO → new Action;
-- Action title and description edits → calendar client;
-- `PRIORITY` values 1–9 in both directions;
-- contexts ↔ `CATEGORIES`;
-- `STATUS:CANCELLED` → cancelled Action;
-- deleting a projected resource causes ClearHead to recreate it rather than cancelling or deleting the Action;
-- an arbitrary client-generated UID is retained after synchronization;
+- calendar-created VEVENT/VTODO → a new native Action without reusing the foreign UID as Action identity;
+- schedule moves in either direction, including a recurring `RECURRENCE-ID` move, retain the same Action and original occurrence key;
+- VEVENT leaves Action state and task metadata local;
+- VTODO title, description, `PRIORITY` 1–9, `CATEGORIES`, and supported state changes reconcile in both directions;
+- deleting an established Plan unschedules the Action without cancelling or deleting it;
+- an arbitrary client-generated UID and transport-selected filename are retained after synchronization;
+- changing `plan_component` is shown by `--dry-run`, converts each master with all same-UID overrides, and is idempotent on the next sync;
 - alarms and unrecognized calendar properties survive ClearHead-owned field updates.
 
 ## Routine synchronization order
@@ -212,7 +220,7 @@ After the manual acceptance test passes, a user service can preserve the require
 
 ```ini
 [Unit]
-Description=Synchronize ClearHead VTODOs through CalDAV
+Description=Synchronize ClearHead Plans through CalDAV
 After=network-online.target
 Wants=network-online.target
 
@@ -230,7 +238,7 @@ Adjust executable paths using `command -v clearhead` and `command -v vdirsyncer`
 
 ```ini
 [Unit]
-Description=Periodically synchronize ClearHead calendar tasks
+Description=Periodically synchronize ClearHead calendar Plans
 
 [Timer]
 OnBootSec=2m
@@ -263,7 +271,7 @@ Multiple `ExecStart` lines are intentional for a `Type=oneshot` service. If a st
 Two independent conflict layers exist:
 
 1. **vdirsyncer conflicts** concern two versions of an iCalendar resource.
-2. **ClearHead conflicts** concern independently edited Action and VTODO fields relative to their last agreed merge base.
+2. **ClearHead conflicts** concern independently edited Action and Plan fields relative to their last agreed merge base.
 
 Resolve the layer reporting the conflict. Do not delete synchronization state or choose a blanket winner merely to make the next timer run green.
 
@@ -276,7 +284,7 @@ clearhead debug
 clearhead doctor
 ```
 
-A missing VTODO resource does not mean cancellation. Use an explicit VTODO `STATUS:CANCELLED` edit or `clearhead cancel action` for lifecycle changes.
+Deleting an established Plan resource unschedules its Action; it does not cancel or delete the Action. Use `clearhead cancel action` for a local lifecycle change, or VTODO `STATUS:CANCELLED` when using the task-client profile.
 
 ## Reset and reseed
 
@@ -296,4 +304,4 @@ Never reset Radicale's entire storage directory as part of this procedure. Radic
 
 ## Replaceable components
 
-This recipe chooses Radicale, vdirsyncer, and systemd, but none are required by the ClearHead data contract. Another CalDAV server, filesystem synchronization tool, scheduler, or manual process can replace them as long as ClearHead sees a standards-compliant VTODO vdir at its configured `plan_path`.
+This recipe chooses Radicale, vdirsyncer, and systemd, but none are required by the ClearHead data contract. Another CalDAV server, filesystem synchronization tool, scheduler, or manual process can replace them as long as ClearHead sees a standards-compliant VEVENT/VTODO vdir at its configured `plan_path`.

@@ -18,10 +18,11 @@ pub mod sync_store;
 
 pub use expand::render_occurrences;
 pub use ics::{
-    ICSPlan, OccurrenceOp, OccurrenceOverride, PlanActionProjection, PlanTaskFields,
-    action_to_vtodo, actions_to_icalendar, canonical_occurrence_key, occurrence_action_id,
-    plan_to_vevent, plan_to_vtodo, plans_to_icalendar, plans_to_icalendar_with_component,
-    render_master_rollforward, render_occurrence_deviation, render_plan_resource_with_component,
+    ICSPlan, OccurrenceActionFields, OccurrenceOp, OccurrenceOverride, PlanActionProjection,
+    PlanTaskFields, action_to_vtodo, actions_to_icalendar, canonical_occurrence_key,
+    occurrence_action_id, plan_to_vevent, plan_to_vtodo, plans_to_icalendar,
+    plans_to_icalendar_with_component, render_master_rollforward, render_occurrence_action,
+    render_occurrence_deviation, render_plan_resource_with_component,
 };
 pub use plans::{
     action_mirror_path, charter_plans_dir_relative, infer_plan_charter_name, infer_plan_parent,
@@ -29,9 +30,9 @@ pub use plans::{
 };
 pub use reconcile::{
     AppliedSync, CalendarSyncPreparationInput, CalendarSyncState, OutcomeKind, Reconcile,
-    SyncActionResourceState, SyncConflictResolution, SyncEntry, SyncField, SyncImport,
-    SyncLifecycleEntry, SyncLifecycleKind, SyncMirrorResourceState, SyncPlanLink, SyncPlanTemplate,
-    SyncPlanUnlink, SyncReport, SyncTally, plan_one_off_sync, prepare_sync, reconcile,
-    sync_import_actions_file,
+    SyncActionResourceState, SyncCodecMigration, SyncConflictResolution, SyncEntry, SyncField,
+    SyncImport, SyncLifecycleEntry, SyncLifecycleKind, SyncMirrorResourceState, SyncPlanLink,
+    SyncPlanTemplate, SyncPlanUnlink, SyncReport, SyncTally, plan_one_off_sync,
+    plan_recurring_occurrence_sync, prepare_sync, reconcile, sync_import_actions_file,
 };
 pub use sync_store::{PlansSyncStore, decode_plans_sync_store, encode_plans_sync_store};

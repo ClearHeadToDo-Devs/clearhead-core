@@ -68,11 +68,25 @@ pub(crate) fn render_occurrence(
     slot: DateTime<Local>,
 ) -> Action {
     let key = canonical_occurrence_key(slot);
+    let schedule_end = ics_plan
+        .schedule_end
+        .zip(ics_plan.plan.dtstart)
+        .map(|(end, start)| slot + (end - start));
     let mut action = Action {
         id: occurrence_action_id(plan_uid, &key),
-        state: ActionState::NotStarted,
+        state: ics_plan
+            .task_fields
+            .as_ref()
+            .map_or(ActionState::NotStarted, |task| task.state),
         name: ics_plan.plan.name.clone(),
+        description: ics_plan.plan.description.clone(),
         scheduled_at: Some(slot),
+        due_date: schedule_end,
+        priority: ics_plan.task_fields.as_ref().and_then(|task| task.priority),
+        contexts: ics_plan
+            .task_fields
+            .as_ref()
+            .and_then(|task| task.contexts.clone()),
         plan_id: Some(ics_plan.plan.id),
         // The occurrence handle: `plan_id` locates the master (and its UID and
         // file), and this canonical slot key names the slot a deviation write
@@ -90,7 +104,9 @@ pub(crate) fn render_occurrence(
 /// Overlay a `RECURRENCE-ID` override onto its rendered occurrence. `None`
 /// fields inherit the value already rendered from the master.
 fn apply_override(action: &mut Action, over: &OccurrenceOverride) {
-    action.state = over.state;
+    if let Some(state) = over.state {
+        action.state = state;
+    }
     if over.scheduled_at.is_some() {
         action.scheduled_at = over.scheduled_at;
     }
@@ -103,6 +119,12 @@ fn apply_override(action: &mut Action, over: &OccurrenceOverride) {
     }
     if over.description.is_some() {
         action.description = over.description.clone();
+    }
+    if over.priority.is_some() {
+        action.priority = over.priority;
+    }
+    if over.contexts.is_some() {
+        action.contexts = over.contexts.clone();
     }
 }
 
@@ -152,7 +174,17 @@ pub fn next_active_slot(
         .into_iter()
         .filter(|&slot| after_exclusive.is_none_or(|a| slot > a))
         .filter(|&slot| slot >= now)
-        .find(|slot| !ics_plan.exdates.contains(&canonical_occurrence_key(*slot)))
+        .find(|slot| {
+            let key = canonical_occurrence_key(*slot);
+            !ics_plan.exdates.contains(&key)
+                && !ics_plan
+                    .overrides
+                    .get(&key)
+                    .and_then(|over| over.state)
+                    .is_some_and(|state| {
+                        matches!(state, ActionState::Completed | ActionState::Cancelled)
+                    })
+        })
 }
 
 // ============================================================================
@@ -325,5 +357,61 @@ mod tests {
         ics.exdates = BTreeSet::from([canonical_occurrence_key(dtstart)]);
         let slot = next_active_slot(&ics, None, now()).unwrap();
         assert_eq!(slot, dtstart + chrono::Duration::days(7));
+    }
+
+    #[test]
+    fn active_slot_skips_a_cancelled_override() {
+        let dtstart = now();
+        let mut ics = weekly_ics(dtstart);
+        ics.overrides.insert(
+            canonical_occurrence_key(dtstart),
+            OccurrenceOverride {
+                scheduled_at: Some(dtstart),
+                due_date: None,
+                state: Some(ActionState::Cancelled),
+                completed_at: None,
+                title: None,
+                description: None,
+                priority: None,
+                contexts: None,
+            },
+        );
+        let slot = next_active_slot(&ics, None, now()).unwrap();
+        assert_eq!(slot, dtstart + chrono::Duration::days(7));
+    }
+
+    #[test]
+    fn schedule_only_override_inherits_master_task_fields() {
+        use crate::workspace::calendar::ics::PlanTaskFields;
+        let dtstart = now();
+        let mut ics = weekly_ics(dtstart);
+        ics.task_fields = Some(PlanTaskFields {
+            state: ActionState::InProgress,
+            completed_at: None,
+            priority: Some(2),
+            contexts: Some(vec!["deep".into()]),
+        });
+        ics.overrides.insert(
+            canonical_occurrence_key(dtstart),
+            OccurrenceOverride {
+                scheduled_at: Some(dtstart + chrono::Duration::hours(1)),
+                due_date: None,
+                state: None,
+                completed_at: None,
+                title: None,
+                description: None,
+                priority: None,
+                contexts: None,
+            },
+        );
+
+        let action = render_occurrence(&ics, "wk@example.com", dtstart);
+        assert_eq!(action.state, ActionState::InProgress);
+        assert_eq!(action.priority, Some(2));
+        assert_eq!(action.contexts, Some(vec!["deep".into()]));
+        assert_eq!(
+            action.scheduled_at,
+            Some(dtstart + chrono::Duration::hours(1))
+        );
     }
 }

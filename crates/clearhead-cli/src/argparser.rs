@@ -429,7 +429,7 @@ pub enum ShowTarget {
 
 #[derive(Subcommand)]
 pub enum AddTarget {
-    /// Add a new recurring schedule Plan (.ics VTODO+RRULE)
+    /// Add a new recurring schedule Plan using the configured iCalendar codec
     Plan {
         /// Name of the plan
         name: String,
@@ -546,7 +546,7 @@ pub enum AddTarget {
 
 #[derive(Subcommand)]
 pub enum UpdateTarget {
-    /// Update an existing recurring schedule Plan (.ics VTODO+RRULE)
+    /// Update an existing recurring schedule Plan using its observed codec
     Plan {
         /// UUID, short UUID, alias, or name of the plan to update
         query: String,
@@ -686,7 +686,7 @@ pub enum CompleteTarget {
 
 #[derive(Subcommand)]
 pub enum DeleteTarget {
-    /// Delete a recurring schedule Plan (.ics VTODO+RRULE)
+    /// Delete a recurring schedule Plan resource
     Plan {
         /// UUID or name of the plan to delete
         query: String,
@@ -1077,9 +1077,9 @@ pub enum RdfExportFormat {
 
 #[derive(Subcommand)]
 pub enum ImportTarget {
-    /// Import recurring VTODO Plan resources into vdir storage
+    /// Import recurring VEVENT/VTODO Plan resources into vdir storage
     Plans {
-        /// Source .ics file containing recurring VTODOs
+        /// Source .ics file containing recurring VEVENTs or VTODOs
         source: PathBuf,
 
         /// Target charter (name, alias, or UUID). Defaults to source filename stem.
@@ -1125,7 +1125,7 @@ pub enum SyncTarget {
         #[arg(long)]
         dry_run: bool,
     },
-    /// Reconcile Actions with one-off VEVENT/VTODO Plans in the configured vdir
+    /// Reconcile one-off and recurring Action realizations with configured Plan resources
     Calendar {
         /// Dry run: show what would be changed without writing
         #[arg(long)]

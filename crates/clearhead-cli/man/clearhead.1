@@ -173,7 +173,7 @@ List all available column names and exit.
 [\fB\-\-file\fR \fIpath\fR]
 [\fB\-\-stdio\fR]
 .PP
-List recurring schedule Plans (\fB.ics\fR VTODOs) across the workspace or scoped to a charter.
+List recurring schedule Plans (\fB.ics\fR VEVENT/VTODO resources) across the workspace or scoped to a charter.
 .RS 4
 .TP
 \fB\-\-charter\fR \fIname\fR
@@ -216,7 +216,7 @@ Searches open actions first, then \fB.completed.actions\fR.
 [\fB\-\-file\fR \fIpath\fR]
 [\fB\-F\fR \fIfmt\fR]
 .PP
-Print all fields of a single recurring VTODO Plan.
+Print all fields of a single recurring Plan.
 .PP
 .B clearhead show charter
 \fIquery\fR
@@ -279,13 +279,13 @@ Plans describe \fIwhen\fR actions should be generated; they do not hold action s
 .RS 4
 .TP
 \fB\-\-scheduled\-at\fR \fIdatetime\fR
-DTSTART for the VTODO (RFC 3339).
+DTSTART for the configured Plan component (RFC 3339).
 .TP
 \fB\-\-rrule\fR \fIRRULE\fR
 RFC 5545 recurrence rule, e.g. \fIFREQ=WEEKLY;BYDAY=MO\fR.
 .TP
 \fB\-\-template\fR \fIname\fR
-Template to bind via VTODO DESCRIPTION (stem of a \fBtemplates/\fR file).
+Template to bind via Plan DESCRIPTION (stem of a \fBtemplates/\fR file).
 .RE
 .PP
 .B clearhead add charter
@@ -342,7 +342,7 @@ New state: \fBnot\-started\fR, \fBin\-progress\fR, \fBblocked\fR,
 [\fB\-\-file\fR \fIpath\fR]
 [\fB\-\-dry\-run\fR]
 .PP
-Update fields on a recurring VTODO Plan.
+Update fields on a recurring Plan.
 .PP
 .B clearhead update charter
 \fIquery\fR
@@ -397,7 +397,7 @@ This is destructive; prefer \fBcancel\fR for audit-trail preservation.
 [\fB\-\-file\fR \fIpath\fR]
 [\fB\-\-dry\-run\fR]
 .PP
-Remove a recurring VTODO Plan resource from the workspace.
+Remove a recurring Plan resource from the workspace.
 .\" --------------------------------------------------------------------
 .SS "archive \(em move completed work out of active files"
 .PP
@@ -595,7 +595,7 @@ Include sub-charter plans (requires \fIreference\fR).
 [\fB\-\-overwrite\fR]
 [\fB\-\-dry\-run\fR]
 .PP
-Import recurring VTODO schedules and write individual VTODO+RRULE resources
+Import recurring VEVENT/VTODO schedules and write individual configured-codec resources
 inside the target charter's \fBplans/\fR vdir.
 .RS 4
 .TP
@@ -630,8 +630,12 @@ Backfill action-created telemetry records for existing actions.
 [\fB\-\-dry\-run\fR]
 [\fB\-\-conflict\fR \fIaction|calendar\fR]
 .PP
-Synchronize standalone Action VTODOs through the configured plans vdir.
-Calendar-created VTODOs become Actions; missing projections are recreated.
+Reconcile one-off and recurring Action realizations with Plan resources in the
+configured vdir.  VEVENT is the schedule-only profile; VTODO additionally
+synchronizes supported task fields.  Calendar-created Plans adopt or create
+native Actions, calendar deletion unschedules rather than deletes them, and a
+configured codec change migrates each master plus its recurrence overrides as
+one guarded write.  Dry-run reports codec migration before any bytes change.
 No CalDAV server or transport implementation is assumed.
 .\" --------------------------------------------------------------------
 .SS "start \(em launch services"

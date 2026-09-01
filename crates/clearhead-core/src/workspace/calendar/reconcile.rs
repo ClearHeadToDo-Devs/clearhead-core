@@ -13,8 +13,9 @@ use uuid::Uuid;
 
 use super::expand::{next_active_slot, render_occurrence};
 use super::ics::{
-    ICSPlan, OccurrenceOp, PlanActionProjection, action_to_vtodo, canonical_occurrence_key,
-    parse_ics, plan_id_from_ics_uid, render_master_rollforward, render_occurrence_deviation,
+    ICSPlan, OccurrenceActionFields, OccurrenceOp, PlanActionProjection, action_to_vtodo,
+    canonical_occurrence_key, parse_ics, plan_id_from_ics_uid, render_master_rollforward,
+    render_occurrence_action, render_occurrence_deviation,
 };
 use super::sync_store::{
     CONTEXTS_FIELD, DESCRIPTION_FIELD, DUE_DATE_FIELD, MASTER_DTSTART_FIELD, PRIORITY_FIELD,
@@ -22,7 +23,7 @@ use super::sync_store::{
     serialize_plans_sync_store,
 };
 use crate::config::PlanComponentKind;
-use crate::domain::{Action, ActionState, DomainModel};
+use crate::domain::{Action, ActionState, DomainModel, Plan};
 use crate::workspace::actions::format::require_actions_formatting;
 use crate::workspace::charter::MarkdownCharter;
 use crate::workspace::resource::{
@@ -99,6 +100,9 @@ pub struct SyncEntry {
     pub action_id: Uuid,
     /// Original interoperable UID, which may not itself be a UUID.
     pub uid: String,
+    /// Canonical original slot when this entry reconciles a materialized
+    /// recurring occurrence. One-off Plan entries leave this absent.
+    pub occurrence_key: Option<String>,
     pub name: String,
     pub scheduled_at: Reconcile<Time>,
     pub due_date: Reconcile<Time>,
@@ -313,6 +317,7 @@ pub fn plan_one_off_sync(
             report.entries.push(SyncEntry {
                 action_id: action.id,
                 uid: action.id.to_string(),
+                occurrence_key: None,
                 name: action.name.clone(),
                 scheduled_at: Reconcile::TakeAction(action.scheduled_at),
                 due_date: Reconcile::TakeAction(action.due_date),
@@ -376,6 +381,7 @@ pub fn plan_one_off_sync(
         let entry = SyncEntry {
             action_id: action.id,
             uid,
+            occurrence_key: None,
             name: action.name.clone(),
             scheduled_at: reconcile(
                 &action.scheduled_at,
@@ -386,6 +392,136 @@ pub fn plan_one_off_sync(
                 &action.due_date,
                 due_bases.get(&action.id),
                 Some(&resource.schedule_end),
+            ),
+            state,
+            title,
+            description,
+            priority,
+            contexts,
+            calendar_completed_at: completed_at,
+        };
+        if !entry.is_noop() {
+            report.entries.push(entry);
+        }
+    }
+    Ok(report)
+}
+
+/// Plan recurring-occurrence schedule reconciliation by the durable token link.
+///
+/// The token's Action UUID locates its materialized line while `(Plan id,
+/// canonical slot)` in [`PlansSyncStore`] locates the immutable recurrence
+/// address. The rendered override supplies the calendar side of the merge; a
+/// move never changes either identity.
+pub fn plan_recurring_occurrence_sync(
+    model: &DomainModel,
+    store: &PlansSyncStore,
+    plans: &[ICSPlan],
+) -> Result<SyncReport, WorkspaceError> {
+    let scheduled_bases: HashMap<Uuid, Time> = store.field_bases(SCHEDULED_AT_FIELD)?;
+    let due_bases: HashMap<Uuid, Time> = store.field_bases(DUE_DATE_FIELD)?;
+    let state_bases: HashMap<Uuid, ActionState> = store.field_bases(STATE_FIELD)?;
+    let title_bases: HashMap<Uuid, String> = store.field_bases(TITLE_FIELD)?;
+    let description_bases: HashMap<Uuid, Option<String>> = store.field_bases(DESCRIPTION_FIELD)?;
+    let priority_bases: HashMap<Uuid, Option<u32>> = store.field_bases(PRIORITY_FIELD)?;
+    let contexts_bases: HashMap<Uuid, Option<Vec<String>>> = store.field_bases(CONTEXTS_FIELD)?;
+    let actions = model
+        .all_actions()
+        .into_iter()
+        .map(|action| (action.id, action))
+        .collect::<HashMap<_, _>>();
+    let mut recurring = HashMap::new();
+    for plan in plans.iter().filter(|plan| plan.plan.recurrence.is_some()) {
+        if recurring.insert(plan.plan.id, plan).is_some() {
+            return Err(WorkspaceError::Parse(format!(
+                "recurring Plan {} appears more than once",
+                plan.plan.id
+            )));
+        }
+    }
+
+    let mut report = SyncReport::default();
+    for (occurrence_id, (plan_id, slot_key)) in store.occurrence_links() {
+        let Some(action) = actions.get(&occurrence_id) else {
+            continue;
+        };
+        let Some(plan) = recurring.get(&plan_id) else {
+            continue;
+        };
+        let uid = plan
+            .plan
+            .external_id
+            .clone()
+            .unwrap_or_else(|| plan.plan.id.to_string());
+        let slot = parse_occurrence_key(&slot_key).ok_or_else(|| {
+            WorkspaceError::Parse(format!(
+                "materialized occurrence {occurrence_id} has invalid canonical slot {slot_key}"
+            ))
+        })?;
+        let calendar = render_occurrence(plan, &uid, slot);
+        // Stores written before occurrence schedule reconciliation did not stamp
+        // a base. The canonical original slot is a safe scheduled-at baseline:
+        // it distinguishes a peer move from an Action move without guessing by
+        // timestamps. New stamps persist both schedule bases explicitly.
+        let fallback_scheduled_base = Some(slot);
+        let scheduled_base = scheduled_bases
+            .get(&occurrence_id)
+            .or(Some(&fallback_scheduled_base));
+        let action_contexts = normalized_contexts(action.contexts.clone());
+        let (state, title, description, priority, contexts, completed_at) =
+            if plan.component_kind == PlanComponentKind::VTodo {
+                (
+                    reconcile(
+                        &action.state,
+                        state_bases.get(&occurrence_id),
+                        Some(&calendar.state),
+                    ),
+                    reconcile(
+                        &action.name,
+                        title_bases.get(&occurrence_id),
+                        Some(&calendar.name),
+                    ),
+                    reconcile(
+                        &action.description,
+                        description_bases.get(&occurrence_id),
+                        Some(&calendar.description),
+                    ),
+                    reconcile(
+                        &action.priority,
+                        priority_bases.get(&occurrence_id),
+                        Some(&calendar.priority),
+                    ),
+                    reconcile(
+                        &action_contexts,
+                        contexts_bases.get(&occurrence_id),
+                        Some(&normalized_contexts(calendar.contexts.clone())),
+                    ),
+                    calendar.completed_at,
+                )
+            } else {
+                (
+                    Reconcile::NoOp,
+                    Reconcile::NoOp,
+                    Reconcile::NoOp,
+                    Reconcile::NoOp,
+                    Reconcile::NoOp,
+                    None,
+                )
+            };
+        let entry = SyncEntry {
+            action_id: occurrence_id,
+            uid,
+            occurrence_key: Some(slot_key),
+            name: action.name.clone(),
+            scheduled_at: reconcile(
+                &action.scheduled_at,
+                scheduled_base,
+                Some(&calendar.scheduled_at),
+            ),
+            due_date: reconcile(
+                &action.due_date,
+                due_bases.get(&occurrence_id),
+                Some(&calendar.due_date),
             ),
             state,
             title,
@@ -459,6 +595,7 @@ pub struct AppliedSync {
 struct PendingActionMirror {
     action_id: Uuid,
     uid: String,
+    occurrence_key: Option<String>,
     action: Action,
     fields: Vec<SyncField>,
 }
@@ -596,6 +733,7 @@ fn apply_report(
             mirrors.push(PendingActionMirror {
                 action_id: entry.action_id,
                 uid: entry.uid.clone(),
+                occurrence_key: entry.occurrence_key.clone(),
                 action: action_for_calendar,
                 fields: push_fields,
             });
@@ -638,6 +776,16 @@ pub struct SyncCalendarWrite {
     pub content: String,
 }
 
+/// One configured-codec conversion applied after field reconciliation so a
+/// VTODO's richer peer edits are not discarded before they reach the Action.
+#[derive(Clone, Debug)]
+pub struct SyncCodecMigration {
+    pub location: ResourceLocation,
+    pub source: String,
+    pub plan: Plan,
+    pub component_kind: PlanComponentKind,
+}
+
 /// Parsed template steps and host-supplied identities for one possible Plan token.
 #[derive(Clone, Debug)]
 pub struct SyncPlanTemplate {
@@ -669,6 +817,7 @@ pub struct CalendarSyncPreparationInput {
     pub plan_unlinks: Vec<SyncPlanUnlink>,
     pub mirror_resources: Vec<SyncMirrorResourceState>,
     pub calendar_writes: Vec<SyncCalendarWrite>,
+    pub codec_migrations: Vec<SyncCodecMigration>,
     pub templates: Vec<SyncPlanTemplate>,
     pub observed_resources: Vec<ResourcePrecondition>,
     pub now: DateTime<Local>,
@@ -723,6 +872,7 @@ pub fn prepare_sync(
         plan_unlinks,
         mirror_resources,
         calendar_writes,
+        codec_migrations,
         templates,
         observed_resources,
         now,
@@ -730,6 +880,103 @@ pub fn prepare_sync(
         store_expected,
     } = input;
     let mut changes = apply_report(&mut workspace, &mut store, report)?;
+    let mut dirty_sidecars = HashSet::new();
+    let mut resolved_occurrences = Vec::new();
+    // A terminal VTODO occurrence edit — whether pulled from the peer or pushed
+    // from a raw Action edit — crosses the same crystallization boundary as the
+    // explicit completion command. Snapshot lineage onto the active sidecar so
+    // normal archival carries it forward, clear the live link, then let the
+    // single-token stamper advance from the completed deviation.
+    for entry in report
+        .entries
+        .iter()
+        .filter(|entry| entry.occurrence_key.is_some())
+    {
+        if matches!(entry.state, Reconcile::NoOp | Reconcile::Conflict { .. }) {
+            continue;
+        }
+        let Some((charter_idx, action_idx)) = locate_action(&workspace.charters, entry.action_id)
+        else {
+            continue;
+        };
+        let action = &workspace.charters[charter_idx].actions[action_idx].action;
+        if !is_resolved(action.state) {
+            continue;
+        }
+        let Some((plan_id, slot_key)) = store.occurrence_link(entry.action_id) else {
+            continue;
+        };
+        let Some(plan) = workspace
+            .charters
+            .iter()
+            .find_map(|charter| charter.plans.iter().find(|plan| plan.plan.id == plan_id))
+        else {
+            return Err(WorkspaceError::Parse(format!(
+                "terminal occurrence {} has no recurring Plan {plan_id}",
+                entry.action_id
+            )));
+        };
+        let actions_file = workspace.charters[charter_idx]
+            .actions_file
+            .clone()
+            .ok_or_else(|| {
+                WorkspaceError::Parse(format!(
+                    "terminal occurrence {} has no actions file",
+                    entry.action_id
+                ))
+            })?;
+        let resource = action_resources
+            .iter_mut()
+            .find(|resource| resource.actions_file == actions_file)
+            .ok_or_else(|| {
+                WorkspaceError::Parse(format!(
+                    "terminal occurrence sidecar evidence is missing for {}",
+                    actions_file.display()
+                ))
+            })?;
+        resource
+            .sidecar
+            .actions
+            .entry(entry.action_id.to_string())
+            .or_default()
+            .occurrence
+            .get_or_insert_with(|| OccurrenceSnapshot {
+                plan_id,
+                plan_uid: plan.plan.external_id.clone(),
+                occurrence_key: slot_key.clone(),
+                plan_title: plan.plan.name.clone(),
+                scheduled_at: action.scheduled_at,
+                rrule: plan.plan.recurrence.as_ref().map(|recurrence| {
+                    let text = recurrence.to_string();
+                    text.strip_prefix("R:").unwrap_or(&text).to_string()
+                }),
+                template: plan.plan.template_name.clone(),
+            });
+        dirty_sidecars.insert(actions_file);
+        resolved_occurrences.push((
+            charter_idx,
+            plan.clone(),
+            parse_occurrence_key(&slot_key).ok_or_else(|| {
+                WorkspaceError::Parse(format!(
+                    "terminal occurrence {} has invalid canonical slot {slot_key}",
+                    entry.action_id
+                ))
+            })?,
+        ));
+        store.clear_occurrence_link(entry.action_id);
+    }
+    for (charter_idx, plan, floor) in resolved_occurrences {
+        if let Some(actions_file) = stage_prepared_plan_token(
+            &mut workspace.charters[charter_idx],
+            &mut store,
+            &plan,
+            Some(floor),
+            &templates,
+            now,
+        )? {
+            changes.dirty_actions.insert(actions_file);
+        }
+    }
     ensure_active_occurrences_prepared(
         &mut workspace.charters,
         &mut store,
@@ -738,7 +985,6 @@ pub fn prepare_sync(
         now,
     )?;
     let mut effects = Vec::new();
-    let mut dirty_sidecars = HashSet::new();
     let unlink_ids = plan_unlinks
         .iter()
         .map(|unlink| unlink.action_id)
@@ -924,14 +1170,117 @@ pub fn prepare_sync(
             .get(&resource.location)
             .map(String::as_str)
             .or(resource.source.as_deref());
-        let rendered = render_action_mirror(
-            source,
-            &mirror.uid,
-            &mirror.action,
-            &mirror.fields,
-            resource.component_kind,
-        )?;
+        let rendered = if let Some(occurrence_key) = &mirror.occurrence_key {
+            render_occurrence_action(
+                source.ok_or_else(|| {
+                    WorkspaceError::Parse(format!(
+                        "recurring occurrence {} has no master resource",
+                        mirror.action_id
+                    ))
+                })?,
+                &mirror.uid,
+                occurrence_key,
+                &mirror.action,
+                resource.component_kind,
+                OccurrenceActionFields {
+                    scheduled_at: mirror.fields.contains(&SyncField::ScheduledAt),
+                    due_date: mirror.fields.contains(&SyncField::DueDate),
+                    state: mirror.fields.contains(&SyncField::State),
+                    title: mirror.fields.contains(&SyncField::Title),
+                    description: mirror.fields.contains(&SyncField::Description),
+                    priority: mirror.fields.contains(&SyncField::Priority),
+                    contexts: mirror.fields.contains(&SyncField::Contexts),
+                },
+            )?
+        } else {
+            render_action_mirror(
+                source,
+                &mirror.uid,
+                &mirror.action,
+                &mirror.fields,
+                resource.component_kind,
+            )?
+        };
         rendered_mirrors.insert(resource.location.clone(), rendered);
+    }
+    for migration in codec_migrations {
+        let source = rendered_mirrors
+            .get(&migration.location)
+            .map(String::as_str)
+            .unwrap_or(&migration.source);
+        let reconciled_plan = parse_ics(source, Path::new(migration.location.path.as_str()))?
+            .into_iter()
+            .find(|plan| plan.plan.id == migration.plan.id)
+            .ok_or_else(|| {
+                WorkspaceError::Parse(format!(
+                    "codec migration Plan {} disappeared during reconciliation",
+                    migration.plan.id
+                ))
+            })?;
+        let mut rendered = super::ics::render_plan_resource_with_component(
+            Some(source),
+            &reconciled_plan.plan,
+            migration.component_kind,
+        )?;
+        // VEVENT -> VTODO introduces the richer profile. Seed it from the
+        // reconciled native Action in this same transaction so the next sync
+        // cannot mistake codec defaults for peer edits.
+        if migration.component_kind == PlanComponentKind::VTodo {
+            let uid = migration
+                .plan
+                .external_id
+                .clone()
+                .unwrap_or_else(|| migration.plan.id.to_string());
+            if migration.plan.recurrence.is_none() {
+                if let Some((charter_idx, action_idx)) = workspace
+                    .charters
+                    .iter()
+                    .enumerate()
+                    .find_map(|(charter_idx, charter)| {
+                        charter
+                            .actions
+                            .iter()
+                            .position(|action| action.action.plan_id == Some(migration.plan.id))
+                            .map(|action_idx| (charter_idx, action_idx))
+                    })
+                {
+                    rendered = render_action_mirror(
+                        Some(&rendered),
+                        &uid,
+                        &workspace.charters[charter_idx].actions[action_idx].action,
+                        &[
+                            SyncField::ScheduledAt,
+                            SyncField::DueDate,
+                            SyncField::State,
+                            SyncField::Title,
+                            SyncField::Description,
+                            SyncField::Priority,
+                            SyncField::Contexts,
+                        ],
+                        PlanComponentKind::VTodo,
+                    )?;
+                }
+            } else {
+                for (occurrence_id, (plan_id, slot_key)) in store.occurrence_links() {
+                    if plan_id != migration.plan.id {
+                        continue;
+                    }
+                    if let Some((charter_idx, action_idx)) =
+                        locate_action(&workspace.charters, occurrence_id)
+                    {
+                        rendered = render_occurrence_action(
+                            &rendered,
+                            &uid,
+                            &slot_key,
+                            &workspace.charters[charter_idx].actions[action_idx].action,
+                            PlanComponentKind::VTodo,
+                            OccurrenceActionFields::all(),
+                        )?;
+                    }
+                }
+            }
+        }
+        rendered_mirrors.insert(migration.location, rendered);
     }
     effects.extend(
         rendered_mirrors
@@ -1246,7 +1595,7 @@ fn stage_prepared_plan_token(
         ))
     })?;
     charter.actions.push(SourcedAction {
-        action: occurrence,
+        action: occurrence.clone(),
         source_metadata: None,
     });
 
@@ -1279,6 +1628,19 @@ fn stage_prepared_plan_token(
         }
     }
     store.stamp_occurrence_link(occurrence_id, plan.plan.id, &slot_key)?;
+    store.stamp(occurrence_id, SCHEDULED_AT_FIELD, &occurrence.scheduled_at)?;
+    store.stamp(occurrence_id, DUE_DATE_FIELD, &occurrence.due_date)?;
+    if plan.component_kind == PlanComponentKind::VTodo {
+        store.stamp(occurrence_id, STATE_FIELD, &occurrence.state)?;
+        store.stamp(occurrence_id, TITLE_FIELD, &occurrence.name)?;
+        store.stamp(occurrence_id, DESCRIPTION_FIELD, &occurrence.description)?;
+        store.stamp(occurrence_id, PRIORITY_FIELD, &occurrence.priority)?;
+        store.stamp(
+            occurrence_id,
+            CONTEXTS_FIELD,
+            &normalized_contexts(occurrence.contexts.clone()),
+        )?;
+    }
     Ok(Some(actions_file))
 }
 
@@ -1820,6 +2182,7 @@ mod tests {
             plan_unlinks: vec![],
             mirror_resources: vec![],
             calendar_writes: vec![],
+            codec_migrations: vec![],
             templates: vec![],
             observed_resources: vec![],
             now: t(20),
@@ -1937,6 +2300,7 @@ mod tests {
                 component_kind: PlanComponentKind::VEvent,
             }],
             calendar_writes: vec![],
+            codec_migrations: vec![],
             templates: vec![],
             observed_resources: vec![],
             now: t(20),
@@ -2222,6 +2586,83 @@ mod tests {
             .unwrap()
             .entries
             .is_empty()
+        );
+    }
+
+    #[test]
+    fn recurring_occurrence_calendar_move_pulls_without_changing_identity() {
+        let slot = t(20);
+        let moved = t(22);
+        let uid = "series@example.com";
+        let key = canonical_occurrence_key(slot);
+        let source = format!(
+            "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:{uid}\r\nSUMMARY:Series\r\nDTSTART:{}\r\nRRULE:FREQ=DAILY\r\nEND:VEVENT\r\nBEGIN:VEVENT\r\nUID:{uid}\r\nRECURRENCE-ID:{key}\r\nSUMMARY:Series\r\nDTSTART:{}\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n",
+            slot.with_timezone(&Utc).format("%Y%m%dT%H%M%SZ"),
+            moved.with_timezone(&Utc).format("%Y%m%dT%H%M%SZ"),
+        );
+        let plan = parse_ics(&source, Path::new("series.ics"))
+            .unwrap()
+            .remove(0);
+        let occurrence_id = super::super::ics::occurrence_action_id(uid, &key);
+        let action = Action {
+            id: occurrence_id,
+            name: "Series".into(),
+            scheduled_at: Some(slot),
+            ..Default::default()
+        };
+        let mut store = PlansSyncStore::new(Path::new("/tmp/plans"));
+        store
+            .stamp_occurrence_link(occurrence_id, plan.plan.id, &key)
+            .unwrap();
+        store.stamp_scheduled_at(occurrence_id, Some(slot));
+
+        let report = plan_recurring_occurrence_sync(&model_with(action), &store, &[plan]).unwrap();
+        assert_eq!(report.entries.len(), 1);
+        assert_eq!(report.entries[0].action_id, occurrence_id);
+        assert_eq!(
+            report.entries[0].occurrence_key.as_deref(),
+            Some(key.as_str())
+        );
+        assert_eq!(
+            report.entries[0].scheduled_at,
+            Reconcile::TakeCalendar(Some(moved))
+        );
+    }
+
+    #[test]
+    fn recurring_occurrence_action_move_pushes_matching_slot() {
+        let slot = t(20);
+        let moved = t(23);
+        let uid = "series@example.com";
+        let key = canonical_occurrence_key(slot);
+        let source = format!(
+            "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:{uid}\r\nSUMMARY:Series\r\nDTSTART:{}\r\nRRULE:FREQ=DAILY\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n",
+            slot.with_timezone(&Utc).format("%Y%m%dT%H%M%SZ"),
+        );
+        let plan = parse_ics(&source, Path::new("series.ics"))
+            .unwrap()
+            .remove(0);
+        let occurrence_id = super::super::ics::occurrence_action_id(uid, &key);
+        let action = Action {
+            id: occurrence_id,
+            name: "Series".into(),
+            scheduled_at: Some(moved),
+            ..Default::default()
+        };
+        let mut store = PlansSyncStore::new(Path::new("/tmp/plans"));
+        store
+            .stamp_occurrence_link(occurrence_id, plan.plan.id, &key)
+            .unwrap();
+        store.stamp_scheduled_at(occurrence_id, Some(slot));
+
+        let report = plan_recurring_occurrence_sync(&model_with(action), &store, &[plan]).unwrap();
+        assert_eq!(
+            report.entries[0].scheduled_at,
+            Reconcile::TakeAction(Some(moved))
+        );
+        assert_eq!(
+            report.entries[0].occurrence_key.as_deref(),
+            Some(key.as_str())
         );
     }
 

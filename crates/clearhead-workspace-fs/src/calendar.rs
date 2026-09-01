@@ -20,9 +20,10 @@ use clearhead_core::workspace::calendar::plans::{
 use clearhead_core::workspace::calendar::reconcile::{
     AppliedSync, CalendarSyncPreparationInput, CalendarSyncState,
     MaterializedOccurrenceArchiveState, MaterializedOccurrencePreparationInput, PlanResourceState,
-    SyncActionResourceState, SyncConflictResolution, SyncImport, SyncLifecycleEntry,
-    SyncLifecycleKind, SyncMirrorResourceState, SyncPlanLink, SyncPlanTemplate, SyncPlanUnlink,
-    SyncReport, plan_one_off_sync, prepare_master_rollforward_changes, prepare_master_rollforwards,
+    SyncActionResourceState, SyncCodecMigration, SyncConflictResolution, SyncImport,
+    SyncLifecycleEntry, SyncLifecycleKind, SyncMirrorResourceState, SyncPlanLink, SyncPlanTemplate,
+    SyncPlanUnlink, SyncReport, plan_one_off_sync, plan_recurring_occurrence_sync,
+    prepare_master_rollforward_changes, prepare_master_rollforwards,
     prepare_materialized_occurrence_resolution, prepare_sync, sync_import_actions_file,
 };
 use clearhead_core::workspace::calendar::sync_store::{PlansSyncStore, decode_plans_sync_store};
@@ -304,6 +305,8 @@ fn prepare_calendar_sync(
     let mut linked_model = model.clone();
     let mut plan_links = Vec::new();
     let mut lifecycle_imports = Vec::new();
+    let uid_evidence: HashMap<Uuid, String> =
+        store.field_bases(clearhead_core::workspace::calendar::sync_store::UID_FIELD)?;
     for observed in unlinked_one_off_plans {
         let uid = observed.plan.plan.external_id.clone().ok_or_else(|| {
             WorkspaceError::Parse(format!(
@@ -311,20 +314,28 @@ fn prepare_calendar_sync(
                 observed.plan.plan.id
             ))
         })?;
-        let migration_action = Uuid::parse_str(&uid).ok().and_then(|candidate| {
-            workspace
-                .charters
-                .iter()
-                .find(|charter| charter.plans_dir == observed.plans_dir)
-                .and_then(|charter| {
-                    charter.actions.iter().find(|action| {
-                        action.action.id == candidate
-                            && action.action.plan_id.is_none()
-                            && action.action.external_occurrence_key.is_none()
-                    })
-                })
-                .map(|_| candidate)
-        });
+        let migration_candidates = workspace
+            .charters
+            .iter()
+            .filter(|charter| charter.plans_dir == observed.plans_dir)
+            .flat_map(|charter| &charter.actions)
+            .filter(|action| {
+                action.action.plan_id.is_none()
+                    && action.action.external_occurrence_key.is_none()
+                    && (Uuid::parse_str(&uid).ok() == Some(action.action.id)
+                        || uid_evidence.get(&action.action.id) == Some(&uid))
+            })
+            .map(|action| action.action.id)
+            .collect::<Vec<_>>();
+        let migration_action = match migration_candidates.as_slice() {
+            [] => None,
+            [action_id] => Some(*action_id),
+            _ => {
+                return Err(WorkspaceError::Parse(format!(
+                    "legacy VTODO UID {uid} matches more than one unlinked Action in its charter"
+                )));
+            }
+        };
 
         let action_id = if let Some(action_id) = migration_action {
             for charter in &mut linked_model.charters {
@@ -404,9 +415,16 @@ fn prepare_calendar_sync(
         .collect::<HashSet<_>>();
 
     let mut report = plan_one_off_sync(&linked_model, &store, &one_off_plans)?;
+    let recurring_report = plan_recurring_occurrence_sync(&linked_model, &store, &one_off_plans)?;
+    report.entries.extend(recurring_report.entries);
+    report.warnings.extend(recurring_report.warnings);
     report.imports.extend(lifecycle_imports);
     report.lifecycle = lifecycle;
     let mut mirror_resources = linked_mirrors;
+    mirror_resources.extend(sync_recurring_mirror_resources(
+        &observation.resources,
+        &store,
+    )?);
     report
         .entries
         .retain(|entry| !unlink_ids.contains(&entry.action_id));
@@ -442,7 +460,23 @@ fn prepare_calendar_sync(
             }
         }
     }
-    let report = report.resolve_conflicts(conflict);
+    let mut report = report.resolve_conflicts(conflict);
+    let codec_migrations = if report.tally().conflict == 0 {
+        let migrations = prepare_codec_migrations(&observation.resources, configured_component)?;
+        if !migrations.is_empty() {
+            report.warnings.push(format!(
+                "migrate {} Plan resource(s) to configured {} codec",
+                migrations.len(),
+                configured_component
+            ));
+        }
+        migrations
+    } else {
+        report.warnings.push(
+            "codec migration deferred until calendar synchronization conflicts are resolved".into(),
+        );
+        Vec::new()
+    };
 
     for entry in &report.entries {
         if mirror_resources
@@ -511,6 +545,7 @@ fn prepare_calendar_sync(
             plan_unlinks,
             mirror_resources,
             calendar_writes,
+            codec_migrations,
             templates,
             observed_resources,
             now: Local::now(),
@@ -683,6 +718,69 @@ struct LinkedOneOffResources {
     mirrors: Vec<SyncMirrorResourceState>,
     plan_ids: HashSet<Uuid>,
     unlinked: Vec<ObservedOneOffPlan>,
+}
+
+fn prepare_codec_migrations(
+    resources: &[CalendarResource],
+    configured_component: PlanComponentKind,
+) -> Result<Vec<SyncCodecMigration>, WorkspaceError> {
+    let mut migrations = Vec::new();
+    for resource in resources {
+        let source = std::str::from_utf8(&resource.bytes)
+            .map_err(|error| WorkspaceError::Parse(error.to_string()))?;
+        for plan in parse_ics(source, &resource.relative_path)? {
+            if plan.component_kind != configured_component {
+                migrations.push(SyncCodecMigration {
+                    location: resource.location.clone(),
+                    source: source.to_owned(),
+                    plan: plan.plan,
+                    component_kind: configured_component,
+                });
+            }
+        }
+    }
+    Ok(migrations)
+}
+
+fn sync_recurring_mirror_resources(
+    resources: &[CalendarResource],
+    store: &PlansSyncStore,
+) -> Result<Vec<SyncMirrorResourceState>, WorkspaceError> {
+    let links = store.occurrence_links();
+    let occurrence_ids_by_plan = links.into_iter().fold(
+        HashMap::<Uuid, Vec<Uuid>>::new(),
+        |mut by_plan, (occurrence_id, (plan_id, _))| {
+            by_plan.entry(plan_id).or_default().push(occurrence_id);
+            by_plan
+        },
+    );
+    let mut mirrors = Vec::new();
+    let mut found_plans = HashSet::new();
+    for resource in resources {
+        let source = std::str::from_utf8(&resource.bytes)
+            .map_err(|error| WorkspaceError::Parse(error.to_string()))?;
+        for plan in parse_ics(source, &resource.relative_path)? {
+            let Some(occurrence_ids) = occurrence_ids_by_plan.get(&plan.plan.id) else {
+                continue;
+            };
+            if !found_plans.insert(plan.plan.id) {
+                return Err(WorkspaceError::Parse(format!(
+                    "recurring Plan {} is present in more than one calendar resource",
+                    plan.plan.id
+                )));
+            }
+            for &action_id in occurrence_ids {
+                mirrors.push(SyncMirrorResourceState {
+                    action_id,
+                    location: resource.location.clone(),
+                    expected: ExpectedResource::Revision(resource.revision.clone()),
+                    source: Some(source.to_owned()),
+                    component_kind: plan.component_kind,
+                });
+            }
+        }
+    }
+    Ok(mirrors)
 }
 
 fn sync_linked_one_off_resources(
@@ -1236,6 +1334,7 @@ pub fn read_plans_sync_store(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::Timelike;
 
     const PLAN: &str = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VTODO\r\nUID:weekly@example.com\r\nSUMMARY:Weekly\r\nDTSTART:20260821T120000Z\r\nRRULE:FREQ=WEEKLY\r\nEND:VTODO\r\nEND:VCALENDAR\r\n";
 
@@ -1620,6 +1719,335 @@ mod tests {
     }
 
     #[test]
+    fn arbitrary_uid_migration_reuses_projection_store_evidence() {
+        let temp = tempfile::tempdir().unwrap();
+        let project = temp.path().join("project");
+        let external_root = temp.path().join("vdir");
+        let actions = project.join(".clearhead/charters/inbox.actions");
+        let resource = external_root.join("inbox/legacy.ics");
+        let action_id = Uuid::parse_str("019baaec-00b6-7991-be34-94b6821261a4").unwrap();
+        std::fs::create_dir_all(actions.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(resource.parent().unwrap()).unwrap();
+        std::fs::write(
+            &actions,
+            format!("[ ] Existing @2026-04-20T10:00:00+00:00 #{action_id}\n"),
+        )
+        .unwrap();
+        std::fs::write(
+            &resource,
+            "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VTODO\r\nUID:legacy@example.com\r\nSUMMARY:Existing\r\nDTSTART:20260420T100000Z\r\nSTATUS:NEEDS-ACTION\r\nEND:VTODO\r\nEND:VCALENDAR\r\n",
+        )
+        .unwrap();
+        let mut store = PlansSyncStore::new(&external_root);
+        store
+            .stamp(
+                action_id,
+                clearhead_core::workspace::calendar::sync_store::UID_FIELD,
+                &"legacy@example.com",
+            )
+            .unwrap();
+        let store_path = project.join(".clearhead/sync/plans.json");
+        std::fs::create_dir_all(store_path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &store_path,
+            clearhead_core::workspace::calendar::sync_store::encode_plans_sync_store(&store)
+                .unwrap(),
+        )
+        .unwrap();
+
+        sync_calendar_with_component(
+            &project,
+            Some(&external_root),
+            None,
+            PlanComponentKind::VTodo,
+        )
+        .unwrap();
+
+        let parsed = parse_actions(&std::fs::read_to_string(&actions).unwrap()).unwrap();
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].id, action_id);
+        let sidecar = parse_sidecar(
+            &std::fs::read_to_string(actions.parent().unwrap().join(".inbox.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            sidecar.actions[&action_id.to_string()]
+                .plan
+                .as_ref()
+                .unwrap()
+                .uid,
+            "legacy@example.com"
+        );
+    }
+
+    #[test]
+    fn configured_codec_migration_is_atomic_idempotent_and_seeds_vtodo_profile() {
+        let temp = tempfile::tempdir().unwrap();
+        let project = temp.path().join("project");
+        let external_root = temp.path().join("vdir");
+        let actions = project.join(".clearhead/charters/inbox.actions");
+        let action_id = Uuid::parse_str("019baaec-00b6-7991-be34-94b6821261a5").unwrap();
+        std::fs::create_dir_all(actions.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(external_root.join("inbox")).unwrap();
+        std::fs::write(
+            &actions,
+            format!("[-] Focus $Detail$ @2026-04-20T10:00:00+00:00 :2026-04-20T11:00:00+00:00 !3 +deep #{action_id}\n"),
+        )
+        .unwrap();
+        sync_calendar_with_component(
+            &project,
+            Some(&external_root),
+            None,
+            PlanComponentKind::VTodo,
+        )
+        .unwrap();
+        let resource = external_root.join(format!("inbox/{action_id}.ics"));
+        let source = std::fs::read_to_string(&resource)
+            .unwrap()
+            .replace("END:VTODO", "X-VENDOR-KEEP:yes\r\nEND:VTODO");
+        std::fs::write(&resource, source).unwrap();
+
+        let preview = preview_calendar_sync_with_component(
+            &project,
+            Some(&external_root),
+            None,
+            PlanComponentKind::VEvent,
+        )
+        .unwrap();
+        assert!(
+            preview
+                .report
+                .warnings
+                .iter()
+                .any(|value| value.contains("migrate 1"))
+        );
+        sync_calendar_with_component(
+            &project,
+            Some(&external_root),
+            None,
+            PlanComponentKind::VEvent,
+        )
+        .unwrap();
+        let event = std::fs::read_to_string(&resource).unwrap();
+        assert!(event.contains("BEGIN:VEVENT"));
+        assert!(!event.contains("BEGIN:VTODO"));
+        assert!(event.contains("X-VENDOR-KEEP:yes"));
+        assert_eq!(
+            parse_actions(&std::fs::read_to_string(&actions).unwrap())
+                .unwrap()
+                .len(),
+            1
+        );
+
+        sync_calendar_with_component(
+            &project,
+            Some(&external_root),
+            None,
+            PlanComponentKind::VTodo,
+        )
+        .unwrap();
+        let todo = std::fs::read_to_string(&resource).unwrap();
+        assert!(todo.contains("BEGIN:VTODO"));
+        assert!(todo.contains("STATUS:IN-PROCESS"));
+        assert!(todo.contains("PRIORITY:3"));
+        assert!(todo.contains("CATEGORIES:deep"));
+        assert!(todo.contains("X-VENDOR-KEEP:yes"));
+        sync_calendar_with_component(
+            &project,
+            Some(&external_root),
+            None,
+            PlanComponentKind::VTodo,
+        )
+        .unwrap();
+        assert_eq!(std::fs::read_to_string(&resource).unwrap(), todo);
+    }
+
+    #[test]
+    fn recurring_vevent_moves_roundtrip_through_the_materialized_action() {
+        let temp = tempfile::tempdir().unwrap();
+        let project = temp.path().join("project");
+        let external_root = temp.path().join("vdir");
+        let actions = project.join(".clearhead/charters/inbox.actions");
+        let resource = external_root.join("inbox/series.ics");
+        std::fs::create_dir_all(actions.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(resource.parent().unwrap()).unwrap();
+        std::fs::write(&actions, "").unwrap();
+        let now = Local::now()
+            .with_timezone(&chrono::Utc)
+            .with_nanosecond(0)
+            .unwrap()
+            .with_second(0)
+            .unwrap();
+        let anchor = now + chrono::Duration::hours(1);
+        let key = anchor.format("%Y%m%dT%H%M%SZ").to_string();
+        std::fs::write(
+            &resource,
+            format!("BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:series@example.com\r\nSUMMARY:Series\r\nDTSTART:{key}\r\nRRULE:FREQ=DAILY\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"),
+        )
+        .unwrap();
+        sync_calendar_with_component(
+            &project,
+            Some(&external_root),
+            None,
+            PlanComponentKind::VEvent,
+        )
+        .unwrap();
+        let initial = parse_actions(&std::fs::read_to_string(&actions).unwrap()).unwrap();
+        assert_eq!(initial.len(), 1);
+        let occurrence_id = initial[0].id;
+
+        let calendar_move = anchor + chrono::Duration::hours(2);
+        let calendar_move_text = calendar_move.format("%Y%m%dT%H%M%SZ");
+        let source = std::fs::read_to_string(&resource)
+            .unwrap()
+            .replace(
+                "END:VCALENDAR",
+                &format!("BEGIN:VEVENT\r\nUID:series@example.com\r\nRECURRENCE-ID:{key}\r\nSUMMARY:Series\r\nDTSTART:{calendar_move_text}\r\nEND:VEVENT\r\nEND:VCALENDAR"),
+            );
+        std::fs::write(&resource, source).unwrap();
+        sync_calendar_with_component(
+            &project,
+            Some(&external_root),
+            None,
+            PlanComponentKind::VEvent,
+        )
+        .unwrap();
+        let pulled = parse_actions(&std::fs::read_to_string(&actions).unwrap()).unwrap();
+        assert_eq!(pulled[0].id, occurrence_id);
+        assert_eq!(
+            pulled[0].scheduled_at.unwrap().with_timezone(&chrono::Utc),
+            calendar_move
+        );
+
+        let action_move = calendar_move + chrono::Duration::hours(1);
+        std::fs::write(
+            &actions,
+            format!(
+                "[ ] Series @{} #{occurrence_id}\n",
+                action_move.to_rfc3339()
+            ),
+        )
+        .unwrap();
+        sync_calendar_with_component(
+            &project,
+            Some(&external_root),
+            None,
+            PlanComponentKind::VEvent,
+        )
+        .unwrap();
+        let rendered = std::fs::read_to_string(&resource).unwrap();
+        assert_eq!(rendered.matches(&format!("RECURRENCE-ID:{key}")).count(), 1);
+        assert!(rendered.contains(&format!("DTSTART:{}", action_move.format("%Y%m%dT%H%M%SZ"))));
+    }
+
+    #[test]
+    fn recurring_vtodo_terminal_pull_snapshots_lineage_and_advances_once() {
+        let temp = tempfile::tempdir().unwrap();
+        let project = temp.path().join("project");
+        let external_root = temp.path().join("vdir");
+        let actions = project.join(".clearhead/charters/inbox.actions");
+        let resource = external_root.join("inbox/series.ics");
+        std::fs::create_dir_all(actions.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(resource.parent().unwrap()).unwrap();
+        std::fs::write(&actions, "").unwrap();
+        let anchor = Local::now()
+            .with_timezone(&chrono::Utc)
+            .with_nanosecond(0)
+            .unwrap()
+            .with_second(0)
+            .unwrap()
+            + chrono::Duration::hours(1);
+        let key = anchor.format("%Y%m%dT%H%M%SZ").to_string();
+        std::fs::write(
+            &resource,
+            format!("BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VTODO\r\nUID:series-task@example.com\r\nSUMMARY:Series task\r\nDTSTART:{key}\r\nRRULE:FREQ=DAILY\r\nSTATUS:NEEDS-ACTION\r\nEND:VTODO\r\nEND:VCALENDAR\r\n"),
+        )
+        .unwrap();
+        sync_calendar_with_component(
+            &project,
+            Some(&external_root),
+            None,
+            PlanComponentKind::VTodo,
+        )
+        .unwrap();
+        let first = parse_actions(&std::fs::read_to_string(&actions).unwrap()).unwrap();
+        let completed_id = first[0].id;
+        let completed_at = (anchor + chrono::Duration::minutes(5))
+            .format("%Y%m%dT%H%M%SZ")
+            .to_string();
+        let source = std::fs::read_to_string(&resource)
+            .unwrap()
+            .replace(
+                "END:VCALENDAR",
+                &format!("BEGIN:VTODO\r\nUID:series-task@example.com\r\nRECURRENCE-ID:{key}\r\nSUMMARY:Series task\r\nDTSTART:{key}\r\nSTATUS:COMPLETED\r\nCOMPLETED:{completed_at}\r\nEND:VTODO\r\nEND:VCALENDAR"),
+            );
+        std::fs::write(&resource, source).unwrap();
+
+        sync_calendar_with_component(
+            &project,
+            Some(&external_root),
+            None,
+            PlanComponentKind::VTodo,
+        )
+        .unwrap();
+
+        let parsed = parse_actions(&std::fs::read_to_string(&actions).unwrap()).unwrap();
+        assert_eq!(
+            parsed
+                .iter()
+                .filter(|action| action.id == completed_id)
+                .count(),
+            1
+        );
+        assert_eq!(
+            parsed
+                .iter()
+                .find(|action| action.id == completed_id)
+                .unwrap()
+                .state,
+            ActionState::Completed
+        );
+        assert_eq!(
+            parsed
+                .iter()
+                .filter(|action| action.state == ActionState::NotStarted)
+                .count(),
+            1,
+            "exactly one next token is stamped"
+        );
+        let sidecar = parse_sidecar(
+            &std::fs::read_to_string(actions.parent().unwrap().join(".inbox.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            sidecar.actions[&completed_id.to_string()]
+                .occurrence
+                .as_ref()
+                .unwrap()
+                .occurrence_key,
+            key
+        );
+        let store = read_plans_sync_store(&project, &external_root).unwrap();
+        assert!(store.occurrence_link(completed_id).is_none());
+        assert_eq!(store.occurrence_links().len(), 1);
+
+        sync_calendar_with_component(
+            &project,
+            Some(&external_root),
+            None,
+            PlanComponentKind::VTodo,
+        )
+        .unwrap();
+        assert_eq!(
+            parse_actions(&std::fs::read_to_string(&actions).unwrap())
+                .unwrap()
+                .len(),
+            2,
+            "repeat sync does not advance twice"
+        );
+    }
+
+    #[test]
     fn calendar_deletion_unschedules_unlinks_and_can_be_rescheduled_in_both_codecs() {
         for (index, component_kind) in [PlanComponentKind::VEvent, PlanComponentKind::VTodo]
             .into_iter()
@@ -1785,7 +2213,13 @@ mod tests {
             "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:{uid}\r\nSUMMARY:Calendar display\r\nDTSTART:20260420T100000Z\r\nDTEND:20260420T110000Z\r\nX-VENDOR-KEEP:yes\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
         );
         std::fs::write(&calendar, &initial).unwrap();
-        sync_calendar(&project, Some(&external_root), None).unwrap();
+        sync_calendar_with_component(
+            &project,
+            Some(&external_root),
+            None,
+            PlanComponentKind::VEvent,
+        )
+        .unwrap();
 
         std::fs::write(
             &calendar,
@@ -1795,7 +2229,13 @@ mod tests {
                 .replace("20260420T110000Z", "20260421T130000Z"),
         )
         .unwrap();
-        let result = sync_calendar(&project, Some(&external_root), None).unwrap();
+        let result = sync_calendar_with_component(
+            &project,
+            Some(&external_root),
+            None,
+            PlanComponentKind::VEvent,
+        )
+        .unwrap();
 
         assert_eq!(result.applied.take_calendar, 1);
         let parsed = parse_actions(&std::fs::read_to_string(&actions).unwrap()).unwrap();

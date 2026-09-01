@@ -5,8 +5,8 @@
 //! cardinality; it does not classify the component as a different domain type.
 //!
 //! **Export direction** (`domain → ics`): converts [`Plan`]s through the
-//! configured VEVENT or VTODO codec. Legacy [`Action`] VTODO helpers remain
-//! temporarily available only to the explicit migration/sync transition.
+//! configured VEVENT or VTODO codec. [`Action`] rendering supplies the richer
+//! VTODO integration profile for linked one-off and recurring realizations.
 
 use crate::config::PlanComponentKind;
 use crate::domain::{Action, ActionState, Plan, Recurrence};
@@ -61,10 +61,12 @@ pub struct PlanTaskFields {
 pub struct OccurrenceOverride {
     pub scheduled_at: Option<DateTime<Local>>,
     pub due_date: Option<DateTime<Local>>,
-    pub state: ActionState,
+    pub state: Option<ActionState>,
     pub completed_at: Option<DateTime<Local>>,
     pub title: Option<String>,
     pub description: Option<String>,
+    pub priority: Option<u32>,
+    pub contexts: Option<Vec<String>>,
 }
 
 /// Namespace UUID for deriving deterministic Plan and occurrence identities.
@@ -355,11 +357,8 @@ fn date_perhaps_time_to_local(value: DatePerhapsTime) -> Option<DateTime<Local>>
     }
 }
 
-/// Parse one raw RFC 5545 date-time token (as found in an `EXDATE` or
-/// `RECURRENCE-ID` value) into local time. Handles UTC (`…Z`), floating
-/// date-time, and all-day `DATE` forms; a `TZID` parameter on the property is
-/// not yet resolved here (our own emit uses UTC) and is left for the
-/// interoperability-hardening pass.
+/// Parse one raw RFC 5545 date-time token into local time. Bare values use the
+/// normal UTC/floating/DATE rules; property-aware callers preserve `TZID`.
 fn parse_ics_datetime_token(token: &str) -> Option<DateTime<Local>> {
     let token = token.trim();
     if let Some(utc) = token.strip_suffix('Z') {
@@ -376,6 +375,19 @@ fn parse_ics_datetime_token(token: &str) -> Option<DateTime<Local>> {
         .earliest()
 }
 
+fn parse_ics_datetime_property(property: &Property, token: &str) -> Option<DateTime<Local>> {
+    if property.params().get("TZID").is_none() {
+        return parse_ics_datetime_token(token);
+    }
+    let mut start = Property::new("DTSTART", token.trim());
+    for parameter in property.params().values() {
+        start.add_parameter(parameter.key(), parameter.value());
+    }
+    let mut todo = Todo::new();
+    todo.append_property(start);
+    todo.get_start().and_then(date_perhaps_time_to_local)
+}
+
 /// Read a master's `EXDATE` slots as canonical occurrence keys. `EXDATE` may be
 /// a single comma-joined property or repeated; both are unioned.
 fn parse_exdates<T: Component>(component: &T) -> BTreeSet<String> {
@@ -387,25 +399,32 @@ fn parse_exdates<T: Component>(component: &T) -> BTreeSet<String> {
         .flatten();
     single
         .chain(repeated)
-        .flat_map(|property| property.value().split(','))
-        .filter_map(parse_ics_datetime_token)
+        .flat_map(|property| {
+            property
+                .value()
+                .split(',')
+                .filter_map(|token| parse_ics_datetime_property(property, token))
+        })
         .map(canonical_occurrence_key)
         .collect()
 }
 
 /// Build one schedule-only occurrence override from a `RECURRENCE-ID` VEVENT.
 fn override_from_event(event: &Event) -> Option<(String, OccurrenceOverride)> {
-    let slot = parse_ics_datetime_token(event.property_value("RECURRENCE-ID")?)?;
+    let recurrence_id = event.properties().get("RECURRENCE-ID")?;
+    let slot = parse_ics_datetime_property(recurrence_id, recurrence_id.value())?;
     let over = OccurrenceOverride {
         scheduled_at: event.get_start().and_then(date_perhaps_time_to_local),
         due_date: event.get_end().and_then(date_perhaps_time_to_local),
-        state: ActionState::NotStarted,
+        state: None,
         completed_at: None,
         title: event.get_summary().map(str::to_string),
         description: event
             .get_description()
             .filter(|value| !value.is_empty())
             .map(str::to_string),
+        priority: None,
+        contexts: None,
     };
     Some((canonical_occurrence_key(slot), over))
 }
@@ -414,11 +433,12 @@ fn override_from_event(event: &Event) -> Option<(String, OccurrenceOverride)> {
 /// when the component carries no parseable `RECURRENCE-ID` — without a slot it
 /// cannot be keyed to an occurrence.
 fn override_from_todo(todo: &Todo) -> Option<(String, OccurrenceOverride)> {
-    let slot = parse_ics_datetime_token(todo.property_value("RECURRENCE-ID")?)?;
+    let recurrence_id = todo.properties().get("RECURRENCE-ID")?;
+    let slot = parse_ics_datetime_property(recurrence_id, recurrence_id.value())?;
     let over = OccurrenceOverride {
         scheduled_at: todo.get_start().and_then(date_perhaps_time_to_local),
         due_date: todo.get_due().and_then(date_perhaps_time_to_local),
-        state: vtodo_state(todo),
+        state: vtodo_state_if_present(todo),
         completed_at: todo
             .get_completed()
             .map(|value| value.with_timezone(&Local)),
@@ -427,6 +447,8 @@ fn override_from_todo(todo: &Todo) -> Option<(String, OccurrenceOverride)> {
             .get_description()
             .filter(|value| !value.is_empty())
             .map(str::to_string),
+        priority: todo.get_priority(),
+        contexts: parse_categories(todo),
     };
     Some((canonical_occurrence_key(slot), over))
 }
@@ -434,6 +456,14 @@ fn override_from_todo(todo: &Todo) -> Option<(String, OccurrenceOverride)> {
 /// Derive [`ActionState`] from a VTODO's status, honoring ClearHead's
 /// `X-CLEARHEAD-STATUS:blocked` extension and the percent-complete / `COMPLETED`
 /// fallbacks. Shared by standalone-action and occurrence-override parsing.
+fn vtodo_state_if_present(todo: &Todo) -> Option<ActionState> {
+    let has_state = todo.get_status().is_some()
+        || todo.get_percent_complete().is_some()
+        || todo.get_completed().is_some()
+        || todo.property_value("X-CLEARHEAD-STATUS").is_some();
+    has_state.then(|| vtodo_state(todo))
+}
+
 fn vtodo_state(todo: &Todo) -> ActionState {
     let standard_status = todo.get_status();
     let blocked = matches!(standard_status, Some(TodoStatus::NeedsAction) | None)
@@ -546,6 +576,126 @@ pub fn render_occurrence_deviation(
     Ok(calendar.to_string())
 }
 
+/// Field selection for one materialized-occurrence calendar patch.
+/// Unselected fields — including unresolved conflicts — remain byte-preserved.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct OccurrenceActionFields {
+    pub scheduled_at: bool,
+    pub due_date: bool,
+    pub state: bool,
+    pub title: bool,
+    pub description: bool,
+    pub priority: bool,
+    pub contexts: bool,
+}
+
+impl OccurrenceActionFields {
+    pub const fn all() -> Self {
+        Self {
+            scheduled_at: true,
+            due_date: true,
+            state: true,
+            title: true,
+            description: true,
+            priority: true,
+            contexts: true,
+        }
+    }
+}
+
+/// Render selected Action-owned fields for one materialized recurring occurrence.
+///
+/// VEVENT receives only selected schedule fields. VTODO receives selected
+/// task-client fields on the same-UID, same-`RECURRENCE-ID` override. Existing
+/// override alarms, vendor properties, unrelated components, and unresolved
+/// fields remain untouched.
+pub fn render_occurrence_action(
+    content: &str,
+    master_uid: &str,
+    occurrence_key: &str,
+    action: &Action,
+    component_kind: PlanComponentKind,
+    fields: OccurrenceActionFields,
+) -> Result<String, WorkspaceError> {
+    let mut calendar: Calendar = content.parse().map_err(WorkspaceError::Parse)?;
+    validate_plan_component_identities(&calendar, Path::new("calendar resource"))?;
+    let (_, observed_kind) = recurring_master(&calendar, master_uid)?;
+    if observed_kind != component_kind {
+        return Err(WorkspaceError::Parse(format!(
+            "Plan {master_uid} is encoded as {observed_kind}, not {component_kind}"
+        )));
+    }
+    match component_kind {
+        PlanComponentKind::VEvent => {
+            upsert_event_override(&mut calendar, master_uid, occurrence_key, |event| {
+                if fields.scheduled_at {
+                    event.remove_starts();
+                    if let Some(value) = action.scheduled_at {
+                        event.starts(value.with_timezone(&Utc));
+                    }
+                }
+                if fields.due_date {
+                    event.remove_ends();
+                    if let Some(value) = action.due_date {
+                        event.ends(value.with_timezone(&Utc));
+                    }
+                }
+            })?;
+        }
+        PlanComponentKind::VTodo => {
+            upsert_todo_override(&mut calendar, master_uid, occurrence_key, |todo| {
+                if fields.scheduled_at {
+                    todo.remove_starts();
+                    if let Some(value) = action.scheduled_at {
+                        todo.starts(value.with_timezone(&Utc));
+                    }
+                }
+                if fields.due_date {
+                    todo.remove_due();
+                    if let Some(value) = action.due_date {
+                        todo.due(value.with_timezone(&Utc));
+                    }
+                }
+                if fields.state {
+                    todo.status(action_state_to_todo_status(action.state));
+                    todo.remove_property("X-CLEARHEAD-STATUS");
+                    if action.state == ActionState::BlockedOrAwaiting {
+                        todo.add_property("X-CLEARHEAD-STATUS", "blocked");
+                    }
+                    todo.remove_completed();
+                    if let Some(value) = action.completed_at {
+                        todo.completed(value.with_timezone(&Utc));
+                    }
+                }
+                if fields.title {
+                    todo.summary(&action.name);
+                }
+                if fields.description {
+                    todo.remove_description();
+                    if let Some(value) = &action.description {
+                        todo.description(value);
+                    }
+                }
+                if fields.priority {
+                    todo.remove_priority();
+                    if let Some(value) = action.priority {
+                        todo.priority(value);
+                    }
+                }
+                if fields.contexts {
+                    todo.remove_property("CATEGORIES");
+                    if let Some(values) = &action.contexts
+                        && !values.is_empty()
+                    {
+                        todo.add_property("CATEGORIES", values.join(","));
+                    }
+                }
+            })?;
+        }
+    }
+    Ok(calendar.to_string())
+}
+
 /// Render the VTODO-specific foreign roll-forward compatibility shape.
 pub fn render_master_rollforward(
     content: &str,
@@ -653,8 +803,11 @@ fn override_index(
             (CalendarComponent::Event(event), PlanComponentKind::VEvent) => {
                 event.get_uid() == Some(uid)
                     && event
-                        .property_value("RECURRENCE-ID")
-                        .and_then(parse_ics_datetime_token)
+                        .properties()
+                        .get("RECURRENCE-ID")
+                        .and_then(|property| {
+                            parse_ics_datetime_property(property, property.value())
+                        })
                         .map(canonical_occurrence_key)
                         .as_deref()
                         == Some(key)
@@ -662,8 +815,11 @@ fn override_index(
             (CalendarComponent::Todo(todo), PlanComponentKind::VTodo) => {
                 todo.get_uid() == Some(uid)
                     && todo
-                        .property_value("RECURRENCE-ID")
-                        .and_then(parse_ics_datetime_token)
+                        .properties()
+                        .get("RECURRENCE-ID")
+                        .and_then(|property| {
+                            parse_ics_datetime_property(property, property.value())
+                        })
                         .map(canonical_occurrence_key)
                         .as_deref()
                         == Some(key)
@@ -812,11 +968,19 @@ fn split_text_list(value: &str) -> Vec<String> {
 /// Convert one recurring [`Plan`] to its canonical VTODO master.
 /// Populate the fields shared by both Plan component codecs.
 fn populate_plan_component<T: Component + EventLike>(component: &mut T, plan: &Plan) {
-    component.remove_property("SUMMARY").summary(&plan.name);
+    patch_plan_component_text(component, plan);
     component.remove_starts();
     if let Some(dtstart) = plan.dtstart {
         component.starts(dtstart.with_timezone(&Utc));
     }
+}
+
+/// Patch only non-temporal Plan fields during a codec conversion. `DTSTART`,
+/// `DUE`, and `DTEND` are copied from the observed component verbatim so a
+/// codec swap never rewrites the recurrence anchor's value type or `TZID`
+/// frame into UTC.
+fn patch_plan_component_text<T: Component>(component: &mut T, plan: &Plan) {
+    component.remove_property("SUMMARY").summary(&plan.name);
     component.remove_property("RRULE");
     if let Some(recurrence) = &plan.recurrence {
         let recurrence = recurrence.to_string();
@@ -959,7 +1123,7 @@ pub fn render_plan_resource_with_component(
                         let is_master = todo.property_value("RECURRENCE-ID").is_none();
                         let mut event = todo_as_event(todo);
                         if is_master {
-                            populate_plan_component(&mut event, plan);
+                            patch_plan_component_text(&mut event, plan);
                         }
                         Some(CalendarComponent::Event(event))
                     }
@@ -977,7 +1141,7 @@ pub fn render_plan_resource_with_component(
                         let is_master = event.property_value("RECURRENCE-ID").is_none();
                         let mut todo = event_as_todo(event);
                         if is_master {
-                            populate_plan_component(&mut todo, plan);
+                            patch_plan_component_text(&mut todo, plan);
                         }
                         Some(CalendarComponent::Todo(todo))
                     }
@@ -1209,6 +1373,23 @@ mod tests {
     }
 
     #[test]
+    fn tzid_exdate_and_recurrence_id_share_the_canonical_instant() {
+        let source = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:tz@example.com\r\nSUMMARY:TZID\r\nDTSTART;TZID=America/New_York:20260420T100000\r\nRRULE:FREQ=WEEKLY\r\nEXDATE;TZID=America/New_York:20260427T100000\r\nEND:VEVENT\r\nBEGIN:VEVENT\r\nUID:tz@example.com\r\nRECURRENCE-ID;TZID=America/New_York:20260504T100000\r\nSUMMARY:Moved\r\nDTSTART;TZID=America/New_York:20260504T120000\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+        let plan = parse_ics(source, Path::new("tz.ics")).unwrap().remove(0);
+        assert!(plan.exdates.contains("20260427T140000Z"));
+        assert!(plan.overrides.contains_key("20260504T140000Z"));
+        assert_eq!(
+            plan.overrides["20260504T140000Z"]
+                .scheduled_at
+                .unwrap()
+                .with_timezone(&Utc)
+                .format("%Y%m%dT%H%M%SZ")
+                .to_string(),
+            "20260504T160000Z"
+        );
+    }
+
+    #[test]
     fn parse_ics_file_attaches_exdate_and_recurrence_overrides() {
         let uid = "standup@example.com";
         let f = write_ics(&format!(
@@ -1240,7 +1421,7 @@ mod tests {
             .overrides
             .get("20260506T090000Z")
             .expect("override keyed by the canonical slot it replaces");
-        assert_eq!(over.state, ActionState::Completed);
+        assert_eq!(over.state, Some(ActionState::Completed));
         assert_eq!(over.title.as_deref(), Some("Standup (moved)"));
         // The override's own DTSTART (11:00Z) is the moved time, distinct from
         // the 09:00Z slot key — proving we hash the slot, not the new value.
@@ -1304,7 +1485,7 @@ mod tests {
             .overrides
             .get(key)
             .expect("override keyed by the completed slot");
-        assert_eq!(over.state, ActionState::Completed);
+        assert_eq!(over.state, Some(ActionState::Completed));
         assert!(over.completed_at.is_some());
     }
 
@@ -1343,7 +1524,81 @@ mod tests {
         let over = plan.overrides.get(key).unwrap();
         // The reschedule (moved time) and the completion coexist on one override.
         assert_eq!(over.scheduled_at.unwrap().with_timezone(&Utc).hour(), 14);
-        assert_eq!(over.state, ActionState::Completed);
+        assert_eq!(over.state, Some(ActionState::Completed));
+    }
+
+    #[test]
+    fn occurrence_action_patch_preserves_identity_extensions_and_profile_boundary() {
+        let uid = "series@example.com";
+        let key = "20260102T100000Z";
+        let vtodo = format!(
+            "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VTODO\r\nUID:{uid}\r\nSUMMARY:Series\r\nDTSTART:20260101T100000Z\r\nRRULE:FREQ=DAILY\r\nEND:VTODO\r\nBEGIN:VTODO\r\nUID:{uid}\r\nRECURRENCE-ID:{key}\r\nSUMMARY:Old\r\nDTSTART:{key}\r\nX-PEER:keep\r\nBEGIN:VALARM\r\nACTION:DISPLAY\r\nTRIGGER:-PT5M\r\nEND:VALARM\r\nEND:VTODO\r\nEND:VCALENDAR\r\n"
+        );
+        let action = Action {
+            state: ActionState::InProgress,
+            name: "Moved".into(),
+            description: Some("Details".into()),
+            priority: Some(3),
+            contexts: Some(vec!["home".into(), "focus".into()]),
+            scheduled_at: parse_ics_datetime_token("20260102T120000Z"),
+            due_date: parse_ics_datetime_token("20260102T130000Z"),
+            ..Default::default()
+        };
+        let schedule_only = render_occurrence_action(
+            &vtodo,
+            uid,
+            key,
+            &action,
+            PlanComponentKind::VTodo,
+            OccurrenceActionFields {
+                scheduled_at: true,
+                ..OccurrenceActionFields::default()
+            },
+        )
+        .unwrap();
+        assert!(schedule_only.contains("SUMMARY:Old"));
+        assert!(!schedule_only.contains("STATUS:IN-PROCESS"));
+        assert!(!schedule_only.contains("PRIORITY:3"));
+
+        let rendered = render_occurrence_action(
+            &vtodo,
+            uid,
+            key,
+            &action,
+            PlanComponentKind::VTodo,
+            OccurrenceActionFields::all(),
+        )
+        .unwrap();
+        assert!(rendered.contains(&format!("RECURRENCE-ID:{key}")));
+        assert_eq!(rendered.matches(&format!("UID:{uid}")).count(), 2);
+        assert!(rendered.contains("DTSTART:20260102T120000Z"));
+        assert!(rendered.contains("DUE:20260102T130000Z"));
+        assert!(rendered.contains("STATUS:IN-PROCESS"));
+        assert!(rendered.contains("SUMMARY:Moved"));
+        assert!(rendered.contains("DESCRIPTION:Details"));
+        assert!(rendered.contains("PRIORITY:3"));
+        let reparsed = parse_ics(&rendered, Path::new("series.ics")).unwrap();
+        assert_eq!(
+            reparsed[0].overrides[key].contexts,
+            Some(vec!["focus".into(), "home".into()])
+        );
+        assert!(rendered.contains("X-PEER:keep"));
+        assert!(rendered.contains("BEGIN:VALARM"));
+
+        let vevent_file = vevent_master_ics(uid);
+        let vevent = std::fs::read_to_string(vevent_file.path()).unwrap();
+        let rendered = render_occurrence_action(
+            &vevent,
+            uid,
+            key,
+            &action,
+            PlanComponentKind::VEvent,
+            OccurrenceActionFields::all(),
+        )
+        .unwrap();
+        assert!(rendered.contains("BEGIN:VEVENT"));
+        assert!(!rendered.contains("STATUS:IN-PROCESS"));
+        assert!(!rendered.contains("PRIORITY:3"));
     }
 
     fn vevent_master_ics(uid: &str) -> NamedTempFile {
@@ -1501,7 +1756,9 @@ mod tests {
             11
         );
         assert_eq!(override_.due_date.unwrap().with_timezone(&Utc).hour(), 12);
-        assert_eq!(override_.state, ActionState::NotStarted);
+        // A schedule-only VEVENT override carries no task lifecycle at all;
+        // the occurrence inherits the master's state instead of defaulting.
+        assert!(override_.state.is_none());
     }
 
     #[test]
@@ -1765,6 +2022,34 @@ mod tests {
         assert_eq!(parsed.len(), 1);
         assert_eq!(parsed[0].component_kind, PlanComponentKind::VEvent);
         assert!(parsed[0].overrides.contains_key("20260817T143000Z"));
+    }
+
+    #[test]
+    fn codec_conversion_preserves_temporal_value_types_and_frames() {
+        let source = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VTODO\r\nUID:tzid@example.com\r\nSUMMARY:Wall clock\r\nDTSTART;TZID=America/New_York:20260420T100000\r\nDUE;VALUE=DATE:20260421\r\nRRULE:FREQ=WEEKLY\r\nEND:VTODO\r\nEND:VCALENDAR\r\n";
+        let plan = parse_ics(source, Path::new("tzid.ics")).unwrap()[0]
+            .plan
+            .clone();
+
+        let rendered =
+            render_plan_resource_with_component(Some(source), &plan, PlanComponentKind::VEvent)
+                .unwrap();
+
+        assert!(rendered.contains("BEGIN:VEVENT"));
+        assert!(rendered.contains("DTSTART;TZID=America/New_York:20260420T100000"));
+        assert!(rendered.contains("DTEND;VALUE=DATE:20260421"));
+        assert!(!rendered.contains("DTSTART:20260420T140000Z"));
+
+        let back = render_plan_resource_with_component(
+            Some(&rendered),
+            &parse_ics(&rendered, Path::new("tzid.ics")).unwrap()[0]
+                .plan
+                .clone(),
+            PlanComponentKind::VTodo,
+        )
+        .unwrap();
+        assert!(back.contains("DTSTART;TZID=America/New_York:20260420T100000"));
+        assert!(back.contains("DUE;VALUE=DATE:20260421"));
     }
 
     #[test]
