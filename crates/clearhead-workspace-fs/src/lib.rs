@@ -47,11 +47,11 @@ use clearhead_core::workspace::resource::{
 use clearhead_core::workspace::sidecar::CharterMetadata;
 use clearhead_core::workspace::{
     ActionResourceState, FileState, PreparedArchiveOutcome, PreparedCloseOutcome,
-    PreparedDeleteOutcome, PreparedInsertOutcome, PreparedTransactionOutcome,
-    PreparedUpdateOutcome, SidecarResourceState, TransactionModel, TransactionRequest,
-    WorkspaceError, completed_actions_path, normalize_request, parse_actions,
+    PreparedDeleteOutcome, PreparedInsertOutcome, PreparedReopenOutcome,
+    PreparedTransactionOutcome, PreparedUpdateOutcome, SidecarResourceState, TransactionModel,
+    TransactionRequest, WorkspaceError, completed_actions_path, normalize_request, parse_actions,
     prepare_action_archive, prepare_action_delete, prepare_action_insert, prepare_action_update,
-    prepare_close_action_subtree, prepare_transaction, sidecar_path,
+    prepare_close_action_subtree, prepare_reopen_action_subtree, prepare_transaction, sidecar_path,
 };
 use clearhead_core::{Action, ActionSelector};
 
@@ -90,6 +90,15 @@ pub struct CloseActionResult {
     pub source_path: PathBuf,
     pub completed_path: PathBuf,
     pub already_closed: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReopenActionResult {
+    pub action_id: uuid::Uuid,
+    pub reopened_count: usize,
+    pub source_path: PathBuf,
+    pub completed_path: PathBuf,
+    pub already_open: bool,
 }
 
 pub fn insert_action(
@@ -219,6 +228,26 @@ pub fn close_action_subtree(
     Ok(map_close(data_root, outcome))
 }
 
+pub fn reopen_action_subtree(
+    workspace_root: &Path,
+    source_path: &Path,
+    selector: &ActionSelector,
+) -> Result<ReopenActionResult, WorkspaceError> {
+    let (mounts, journal_dir, _lock) = begin_mutation(workspace_root, source_path)?;
+    let data_root = &mounts.workspace;
+    let completed_path = completed_actions_path(source_path);
+    let (active_snapshot, active_expected) = snapshot(data_root, source_path)?;
+    let (completed_snapshot, completed_expected) = snapshot(data_root, &completed_path)?;
+    let prepared = prepare_reopen_action_subtree(
+        action_state(active_snapshot, active_expected)?,
+        action_state(completed_snapshot, completed_expected)?,
+        selector,
+    )
+    .map_err(|error| WorkspaceError::Actions(error.to_string()))?;
+    let outcome = deliver(&mounts, &journal_dir, prepared)?;
+    Ok(map_reopen(data_root, outcome))
+}
+
 fn action_state(
     snapshot: ResourceSnapshot,
     expected: ExpectedResource,
@@ -298,6 +327,16 @@ fn map_close(data_root: &Path, outcome: PreparedCloseOutcome) -> CloseActionResu
         source_path: data_root.join(outcome.source_path.as_str()),
         completed_path: data_root.join(outcome.completed_path.as_str()),
         already_closed: outcome.already_closed,
+    }
+}
+
+fn map_reopen(data_root: &Path, outcome: PreparedReopenOutcome) -> ReopenActionResult {
+    ReopenActionResult {
+        action_id: outcome.action_id,
+        reopened_count: outcome.reopened_count,
+        source_path: data_root.join(outcome.source_path.as_str()),
+        completed_path: data_root.join(outcome.completed_path.as_str()),
+        already_open: outcome.already_open,
     }
 }
 

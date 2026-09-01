@@ -118,6 +118,15 @@ pub struct ClosePreparedState {
     pub completed: ActionList,
 }
 
+#[derive(Debug, Clone)]
+pub struct PreparedReopenOutcome {
+    pub action_id: Uuid,
+    pub reopened_count: usize,
+    pub source_path: WorkspacePath,
+    pub completed_path: WorkspacePath,
+    pub already_open: bool,
+}
+
 pub fn prepare_action_archive(
     active: ActionResourceState,
     completed: ActionResourceState,
@@ -272,6 +281,123 @@ pub fn prepare_close_action_subtree(
     ))
 }
 
+/// Pure preparation for reopening a completed subtree — the inverse of
+/// [`prepare_close_action_subtree`]. The target is resolved in the *completed*
+/// file, its subtree is driven back to `NotStarted` (see
+/// [`reopen_subtree`](crate::domain::reopen_subtree)), removed from the
+/// completed history, and appended to the active file.
+///
+/// When the selector matches nothing in the completed file but an open action
+/// in the active file, this is a no-op with `already_open == true`, mirroring
+/// how closing an already-terminal action reports `already_closed`.
+pub fn prepare_reopen_action_subtree(
+    active: ActionResourceState,
+    completed: ActionResourceState,
+    selector: &ActionSelector,
+) -> Result<PreparedMutation<ClosePreparedState, PreparedReopenOutcome>, ActionPrepareError> {
+    let mut active_actions = active.actions;
+    let mut completed_actions = completed.actions;
+    let completed_id = unique_selector_match(&completed_actions, selector)
+        .map_err(|error| ActionPrepareError::Domain(error.to_string()))?;
+    let Some(action_id) = completed_id else {
+        // Nothing to reopen in history. If it's already an open line, treat the
+        // request as satisfied rather than an error — the desired end state
+        // (action live in the active file) already holds.
+        if let Some(open_id) = unique_selector_match(&active_actions, selector)
+            .map_err(|error| ActionPrepareError::Domain(error.to_string()))?
+        {
+            let batch = read_set_batch(&active.path, active.expected, &completed.path, completed.expected)?;
+            return Ok(PreparedMutation::with_outcome(
+                ClosePreparedState {
+                    active: active_actions,
+                    completed: completed_actions,
+                },
+                batch,
+                PreparedReopenOutcome {
+                    action_id: open_id,
+                    reopened_count: 0,
+                    source_path: active.path,
+                    completed_path: completed.path,
+                    already_open: true,
+                },
+            ));
+        }
+        return Err(ActionPrepareError::Domain(format!(
+            "completed action not found in history: {}",
+            selector.id
+        )));
+    };
+    let subtree_ids = collect_subtree_ids(&completed_actions, action_id);
+    if active_actions
+        .iter()
+        .any(|action| subtree_ids.contains(&action.id))
+    {
+        return Err(ActionPrepareError::Domain(format!(
+            "active file already contains part of subtree: {action_id}"
+        )));
+    }
+    let mut reopened = crate::domain::reopen_subtree(&completed_actions, action_id);
+    completed_actions.retain(|action| !subtree_ids.contains(&action.id));
+    let reopened_count = reopened.len();
+    active_actions.append(&mut reopened);
+    let batch = EffectBatch::new(
+        vec![
+            write_effect(&active.path, &active_actions)?,
+            write_effect(&completed.path, &completed_actions)?,
+        ],
+        vec![
+            ResourcePrecondition {
+                path: ResourceLocation::workspace(active.path.clone()),
+                expected: active.expected,
+            },
+            ResourcePrecondition {
+                path: ResourceLocation::workspace(completed.path.clone()),
+                expected: completed.expected,
+            },
+        ],
+    )
+    .map_err(|error| ActionPrepareError::Domain(error.to_string()))?;
+    Ok(PreparedMutation::with_outcome(
+        ClosePreparedState {
+            active: active_actions,
+            completed: completed_actions,
+        },
+        batch,
+        PreparedReopenOutcome {
+            action_id,
+            reopened_count,
+            source_path: active.path,
+            completed_path: completed.path,
+            already_open: false,
+        },
+    ))
+}
+
+/// The read-set-only precondition batch (no effects) shared by no-op mutation
+/// paths: nothing changes, but the resources consulted are still pinned so a
+/// concurrent write is detected.
+fn read_set_batch(
+    active_path: &WorkspacePath,
+    active_expected: crate::workspace::resource::ExpectedResource,
+    completed_path: &WorkspacePath,
+    completed_expected: crate::workspace::resource::ExpectedResource,
+) -> Result<EffectBatch, ActionPrepareError> {
+    EffectBatch::new(
+        Vec::new(),
+        vec![
+            ResourcePrecondition {
+                path: ResourceLocation::workspace(active_path.clone()),
+                expected: active_expected,
+            },
+            ResourcePrecondition {
+                path: ResourceLocation::workspace(completed_path.clone()),
+                expected: completed_expected,
+            },
+        ],
+    )
+    .map_err(|error| ActionPrepareError::Domain(error.to_string()))
+}
+
 fn write_effect(path: &WorkspacePath, actions: &[Action]) -> Result<Effect, ActionPrepareError> {
     let bytes = format(&actions.to_vec(), OutputFormat::Actions, None, None)
         .map_err(ActionPrepareError::Domain)?
@@ -390,5 +516,64 @@ mod tests {
         .unwrap();
         assert!(prepared.effects().is_empty());
         assert_eq!(prepared.effects().preconditions().len(), 2);
+    }
+
+    #[test]
+    fn reopen_resets_whole_subtree_to_not_started_and_clears_completion() {
+        let root = {
+            let mut r = action("done root", ActionState::Completed, None);
+            r.completed_at = Some(Local::now());
+            r
+        };
+        let child = {
+            let mut c = action("done child", ActionState::Cancelled, Some(root.id));
+            c.completed_at = Some(Local::now());
+            c
+        };
+        let reopened = crate::domain::reopen_subtree(&[root.clone(), child.clone()], root.id);
+        assert_eq!(reopened.len(), 2);
+        assert!(
+            reopened
+                .iter()
+                .all(|a| a.state == ActionState::NotStarted && a.completed_at.is_none())
+        );
+        // The intra-subtree parent link survives; the root stays detached.
+        assert_eq!(reopened[0].parent_id, None);
+        assert_eq!(reopened[1].parent_id, Some(root.id));
+    }
+
+    #[cfg(feature = "formatting")]
+    #[test]
+    fn reopen_preparation_moves_subtree_from_completed_to_active() {
+        let root = {
+            let mut r = action("done", ActionState::Completed, None);
+            r.completed_at = Some(Local::now());
+            r
+        };
+        let prepared = prepare_reopen_action_subtree(
+            resource("charters/work.actions", vec![]),
+            resource("charters/work.completed.actions", vec![root.clone()]),
+            &ActionSelector::from(&root),
+        )
+        .unwrap();
+        assert_eq!(prepared.effects().effects().len(), 2);
+        assert_eq!(prepared.outcome().reopened_count, 1);
+        assert!(!prepared.outcome().already_open);
+        assert_eq!(prepared.outcome().action_id, root.id);
+    }
+
+    #[cfg(feature = "formatting")]
+    #[test]
+    fn reopen_of_an_already_open_action_is_a_no_op() {
+        let open = action("still open", ActionState::NotStarted, None);
+        let prepared = prepare_reopen_action_subtree(
+            resource("charters/work.actions", vec![open.clone()]),
+            resource("charters/work.completed.actions", vec![]),
+            &ActionSelector::from(&open),
+        )
+        .unwrap();
+        assert!(prepared.effects().is_empty());
+        assert!(prepared.outcome().already_open);
+        assert_eq!(prepared.outcome().reopened_count, 0);
     }
 }

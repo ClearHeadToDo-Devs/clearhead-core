@@ -728,6 +728,39 @@ pub fn close_subtree(
         .collect()
 }
 
+/// Reopen `root_id` and its full subtree in `actions` — the inverse of
+/// [`close_subtree`]. Clears `completed_at` and drives every action in the
+/// subtree back to [`ActionState::NotStarted`], returning the reopened subtree
+/// (root first, then descendants in discovery order) for the caller to append
+/// to the active `.actions` file.
+///
+/// The whole subtree returns `NotStarted`, not each action's pre-completion
+/// state: closing already collapsed the subtree to a single terminal state, so
+/// the original per-action states are gone by the time anything can be
+/// reopened. `NotStarted` is the honest floor, and it keeps a completed line
+/// from being stranded among open siblings — the malformed shape the
+/// `update --state` terminal guard exists to prevent
+/// ([`crate::disallowed_terminal_update`]).
+///
+/// Parent links are left as the close path recorded them: the root was detached
+/// from its external parent at close time, so it returns as a top-level action
+/// under its file; descendants keep their intra-subtree links. `actions` itself
+/// is untouched — removing the reopened ids from the completed list is the
+/// caller's job, mirroring [`close_subtree`].
+pub fn reopen_subtree(actions: &[Action], root_id: Uuid) -> Vec<Action> {
+    let subtree_ids = collect_subtree_ids(actions, root_id);
+    actions
+        .iter()
+        .filter(|a| subtree_ids.contains(&a.id))
+        .map(|a| {
+            let mut reopened = a.clone();
+            reopened.state = ActionState::NotStarted;
+            reopened.completed_at = None;
+            reopened
+        })
+        .collect()
+}
+
 /// Hierarchical domain model: Objectives → Charters → Plans → Actions.
 ///
 /// Each charter contains its plans, and each plan contains its actions.

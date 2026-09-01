@@ -17,6 +17,9 @@ fn prose(outcome: &VerbOutcome) -> String {
         VerbOutcome::Cancelled { id, children } => {
             format!("Cancelled action {} (+{} children)", bare(id), children)
         }
+        VerbOutcome::Reopened { id, children } => {
+            format!("Reopened action {} (+{} children)", bare(id), children)
+        }
         VerbOutcome::Updated { id } => format!("Updated action {}", bare(id)),
     }
 }

@@ -620,6 +620,158 @@ pub fn cancel_action(
     )
 }
 
+/// Reopen a completed action and its subtree — the inverse of `complete`/
+/// `cancel`. Resolves the target in the `.completed.actions` history, then hands
+/// the locked read-plan-apply move back to the active file to core via
+/// `clearhead-workspace-fs`.
+///
+/// The whole subtree returns `NotStarted` (child states were collapsed at
+/// completion) and the root returns detached from its old parent (that link was
+/// nulled at completion) — see `reopen_subtree` in core for the rationale.
+pub fn reopen_action(
+    ctx: &CommandContext,
+    query: &str,
+    charter: &Option<String>,
+    file: &Option<PathBuf>,
+    dry_run: bool,
+) -> anyhow::Result<()> {
+    let Some((actions_path, completed)) =
+        find_and_load_completed_actions(ctx, file, charter, query)?
+    else {
+        return Err(reopen_target_error(ctx, query)?.into());
+    };
+
+    let (action_id, selector) = match find_best_match(&completed, query, is_closed_action)? {
+        Some(action) => (action.id, clearhead_core::ActionSelector::from(action)),
+        None => return Err(verb_target_error(ctx, query)?.into()),
+    };
+    let subtree_ids = clearhead_core::collect_subtree_ids(&completed, action_id);
+
+    if dry_run {
+        println!(
+            "Would reopen action {} and {} child(ren)",
+            &action_id.to_string()[..8],
+            subtree_ids.len() - 1,
+        );
+        return Ok(());
+    }
+
+    let workspace_root = ctx.workspace_for_file(&actions_path);
+    let result =
+        clearhead_workspace_fs::reopen_action_subtree(&workspace_root, &actions_path, &selector)?;
+    let children = result.reopened_count.saturating_sub(1);
+    let outcome = VerbOutcome::Reopened {
+        id: canonical_id(result.action_id),
+        children,
+    };
+    info!(action_id = %result.action_id, children, "Action subtree reopened");
+    emit(&outcome);
+    Ok(())
+}
+
+/// Locate the `.completed.actions` file holding a match for `query` and return
+/// its source `.actions` path alongside the loaded completed list. Mirrors
+/// [`find_and_load_open_actions`] but consults completed history: an explicit
+/// `--file`/`--charter` names the *active* file, whose completed sibling is
+/// read; otherwise every workspace is scanned.
+fn find_and_load_completed_actions(
+    ctx: &CommandContext,
+    file: &Option<PathBuf>,
+    charter: &Option<String>,
+    query: &str,
+) -> anyhow::Result<Option<(PathBuf, ActionList)>> {
+    if let Some(path) = file {
+        let completed = read_completed_sibling(path)?;
+        return Ok(Some((path.clone(), completed)));
+    }
+    if let Some(charter_query) = charter {
+        let (mc, ws_root) = resolve_charter_across_workspaces(ctx, charter_query)?;
+        let rel = mc.actions_file.as_ref().ok_or_else(|| {
+            anyhow::anyhow!("Charter '{}' has no associated actions file", mc.title)
+        })?;
+        let path = clearhead_workspace_fs::charter_root(&ws_root).join(rel);
+        let completed = read_completed_sibling(&path)?;
+        return Ok(Some((path, completed)));
+    }
+    for (_, ws_dir) in ctx.workspace_dirs() {
+        match find_act_in_completed_files(&ws_dir, query) {
+            Ok(Some(found)) => return Ok(Some(found)),
+            Ok(None) => {}
+            Err(e) if ws_dir == ctx.data_dir => return Err(e),
+            Err(_) => {}
+        }
+    }
+    Ok(None)
+}
+
+/// Build the typed error for a `reopen` whose query matched nothing in the
+/// completed history — the mirror of [`verb_target_error`]. An open match means
+/// the action is already in the desired live state (`AlreadyOpen`, branchable by
+/// an idempotent loop); no match anywhere is `NotFound`.
+fn reopen_target_error(ctx: &CommandContext, query: &str) -> anyhow::Result<VerbError> {
+    for (_, ws_dir) in ctx.workspace_dirs() {
+        let open_files = clearhead_workspace_fs::list_action_files(&ws_dir).unwrap_or_default();
+        for path in &open_files {
+            let Ok(actions) = action_files::read_actions(path) else {
+                continue;
+            };
+            if let Some(action) = find_best_match(&actions, query, is_open_action)? {
+                return Ok(VerbError::AlreadyOpen {
+                    id: canonical_id(action.id),
+                    state: format!("{:?}", action.state),
+                    query: query.to_string(),
+                });
+            }
+        }
+    }
+    Ok(VerbError::NotFound {
+        query: query.to_string(),
+    })
+}
+
+/// Read the `.completed.actions` sibling of an active `.actions` path, treating
+/// a missing history as empty.
+fn read_completed_sibling(actions_path: &Path) -> anyhow::Result<ActionList> {
+    let completed_path = clearhead_core::completed_actions_path(actions_path);
+    if completed_path.exists() {
+        Ok(action_files::read_actions(&completed_path)?)
+    } else {
+        Ok(ActionList::new())
+    }
+}
+
+/// Scan each active file's completed sibling for a terminal action matching
+/// `query`; return the *active* source path (what the reopen move writes back
+/// into) and the loaded completed list. `Ok(None)` when nothing matches.
+fn find_act_in_completed_files(
+    data_dir: &Path,
+    query: &str,
+) -> anyhow::Result<Option<(PathBuf, ActionList)>> {
+    let paths =
+        clearhead_workspace_fs::list_action_files(data_dir).context("Failed to list workspace")?;
+    let mut loaded = Vec::with_capacity(paths.len());
+    for path in paths {
+        let completed = read_completed_sibling(&path)?;
+        if !completed.is_empty() {
+            loaded.push((path, completed));
+        }
+    }
+
+    let candidates: Vec<&Action> = loaded
+        .iter()
+        .flat_map(|(_, actions)| actions.iter())
+        .collect();
+    let Some(target_id) =
+        find_best_match(&candidates, query, is_closed_action)?.map(|action| action.id)
+    else {
+        return Ok(None);
+    };
+
+    Ok(loaded
+        .into_iter()
+        .find(|(_, actions)| actions.iter().any(|action| action.id == target_id)))
+}
+
 // ============================================================================
 // read actions
 // ============================================================================
@@ -1220,6 +1372,13 @@ fn collect_all_actions(
 
 fn is_open_action(action: &Action) -> bool {
     !matches!(
+        action.state,
+        ActionState::Completed | ActionState::Cancelled
+    )
+}
+
+fn is_closed_action(action: &Action) -> bool {
+    matches!(
         action.state,
         ActionState::Completed | ActionState::Cancelled
     )

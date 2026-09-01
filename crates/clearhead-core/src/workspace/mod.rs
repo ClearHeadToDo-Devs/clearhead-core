@@ -33,7 +33,8 @@ pub use actions::{
 };
 pub use archive_actions::{
     ActionArchivePlan, ClosePreparedState, PreparedArchiveOutcome, PreparedCloseOutcome,
-    plan_action_archive, prepare_action_archive, prepare_close_action_subtree,
+    PreparedReopenOutcome, plan_action_archive, prepare_action_archive,
+    prepare_close_action_subtree, prepare_reopen_action_subtree,
 };
 pub use archive_charter::{
     ArchivePolicyError, archive_charter_name, archive_charter_subtree,

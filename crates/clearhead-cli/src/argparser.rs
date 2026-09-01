@@ -237,6 +237,12 @@ pub enum Verb {
         target: CancelTarget,
     },
 
+    /// Reopen a completed item (inverse of complete/cancel: moves it back to the active file)
+    Reopen {
+        #[command(subcommand)]
+        target: ReopenTarget,
+    },
+
     /// Apply a template or pattern to a charter
     Apply {
         #[command(subcommand)]
@@ -1017,6 +1023,31 @@ pub enum CancelTarget {
         file: Option<PathBuf>,
 
         /// Preview what would be cancelled without writing
+        #[arg(long)]
+        dry_run: bool,
+    },
+}
+
+// =============================================================================
+// Reopen targets
+// =============================================================================
+
+#[derive(Subcommand)]
+pub enum ReopenTarget {
+    /// Reopen a completed action and its subtree (all set back to NotStarted)
+    Action {
+        /// UUID, short prefix (at least 4 hex digits), alias, or name of the completed action
+        query: String,
+
+        /// Scope search to a specific charter (name, alias, or UUID). Makes resolution deterministic when names collide across charters.
+        #[arg(long)]
+        charter: Option<String>,
+
+        /// File containing the .actions file (the completed sidecar is derived). If not provided, workspace search.
+        #[arg(short, long)]
+        file: Option<PathBuf>,
+
+        /// Preview what would be reopened without writing
         #[arg(long)]
         dry_run: bool,
     },

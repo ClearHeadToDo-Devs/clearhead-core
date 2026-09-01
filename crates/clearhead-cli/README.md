@@ -30,6 +30,9 @@ clearhead read actions --open-only
 # Complete it
 clearhead complete action "Buy oat milk"
 
+# Changed your mind? Reopen it (moves the whole subtree back, all NotStarted)
+clearhead reopen action "Buy oat milk"
+
 # Archive completed actions out of active files
 clearhead archive actions
 

@@ -33,6 +33,7 @@ pub fn bare(id: &str) -> &str {
 pub enum VerbOutcome {
     Completed { id: String, children: usize },
     Cancelled { id: String, children: usize },
+    Reopened { id: String, children: usize },
     Updated { id: String },
 }
 
@@ -57,6 +58,14 @@ pub enum VerbError {
         state: String,
         query: String,
     },
+    /// The query resolves to an action that is already open (not in any
+    /// completed archive) — the mirror of `AlreadyClosed` for `reopen`, so an
+    /// idempotent loop can branch on "already in the desired live state".
+    AlreadyOpen {
+        id: String,
+        state: String,
+        query: String,
+    },
 }
 
 impl std::fmt::Display for VerbError {
@@ -76,6 +85,9 @@ impl std::fmt::Display for VerbError {
             ),
             VerbError::AlreadyClosed { id, state, .. } => {
                 write!(f, "Action {} is already closed ({state})", bare(id))
+            }
+            VerbError::AlreadyOpen { id, state, .. } => {
+                write!(f, "Action {} is already open ({state})", bare(id))
             }
         }
     }

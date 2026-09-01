@@ -417,6 +417,14 @@ fn dispatch(cli: &argparser::Cli, ctx: &CommandContext) -> anyhow::Result<()> {
                 dry_run,
             } => commands::action::cancel_action(ctx, query, charter, file, *dry_run),
         },
+        Verb::Reopen { target } => match target {
+            argparser::ReopenTarget::Action {
+                query,
+                charter,
+                file,
+                dry_run,
+            } => commands::action::reopen_action(ctx, query, charter, file, *dry_run),
+        },
         Verb::Apply { target } => match target {
             argparser::ApplyTarget::Template {
                 name,
