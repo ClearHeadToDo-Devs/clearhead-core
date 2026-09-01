@@ -54,4 +54,8 @@ SELECT ?id ?parent ?name ?kind ?status ?priority ?source_file ?source_line ?char
         }
     }
 }
-ORDER BY ?kind ?name
+# Deterministic sibling order: priority first (1 is highest; unprioritized
+# actions and all charters fall to the end via the 999 sentinel), then name as
+# a stable tiebreak. The tree framer preserves this row order when grouping
+# children under each parent, so a human work-map reads important-first.
+ORDER BY ?kind COALESCE(?priority, 999) ?name

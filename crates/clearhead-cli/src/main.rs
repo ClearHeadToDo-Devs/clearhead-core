@@ -105,6 +105,16 @@ fn run_command(cli: &argparser::Cli) -> anyhow::Result<()> {
     // Init bootstraps the workspace — runs before CommandContext to avoid
     // creating XDG dirs in a directory that isn't yet initialized.
     if let Verb::Init = &cli.command {
+        // `--workspace` is global (it restricts other commands to an existing
+        // named workspace), but it is meaningless for `init`, which *creates* a
+        // workspace in the current directory. Reject it rather than silently
+        // ignore, so the misuse surfaces instead of confusing.
+        if cli.workspace.is_some() {
+            anyhow::bail!(
+                "`--workspace` selects an existing workspace by name; `init` creates a new one \
+                 in the current directory and does not accept it"
+            );
+        }
         return commands::init::run(cli.config.clone());
     }
 

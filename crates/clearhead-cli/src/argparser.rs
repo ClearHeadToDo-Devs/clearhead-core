@@ -478,7 +478,7 @@ pub enum AddTarget {
         #[arg(short, long, conflicts_with = "charter")]
         file: Option<PathBuf>,
 
-        /// Parent action UUID or short UUID
+        /// Parent action: UUID, short prefix (at least 4 hex digits), alias, or name
         #[arg(long)]
         parent: Option<String>,
 
