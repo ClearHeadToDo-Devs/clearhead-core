@@ -306,7 +306,12 @@ pub fn prepare_reopen_action_subtree(
         if let Some(open_id) = unique_selector_match(&active_actions, selector)
             .map_err(|error| ActionPrepareError::Domain(error.to_string()))?
         {
-            let batch = read_set_batch(&active.path, active.expected, &completed.path, completed.expected)?;
+            let batch = read_set_batch(
+                &active.path,
+                active.expected,
+                &completed.path,
+                completed.expected,
+            )?;
             return Ok(PreparedMutation::with_outcome(
                 ClosePreparedState {
                     active: active_actions,

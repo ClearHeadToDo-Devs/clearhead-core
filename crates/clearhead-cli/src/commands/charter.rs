@@ -619,7 +619,7 @@ pub fn close_charter(
     let mc_full = find_target_charter(&mcs, query, file, &charter_root)?;
     let mut updated = Charter::from(mc_full.clone());
 
-    let (md_path, is_new) = charter_md_path(&mc_full, &charter_root, &updated.title);
+    let (md_path, is_new) = charter_md_path(mc_full, &charter_root, &updated.title);
 
     apply_charter_update(
         &mut updated,
@@ -704,7 +704,10 @@ pub fn jot(
     // `id` alone pairs the new `.md` with its `.actions`; everything else stays
     // in the sidecar/derived model where it already lives.
     let base = if is_new {
-        format!("---\nid: {}\n---\n# {}\n", charter_model.id, charter_model.title)
+        format!(
+            "---\nid: {}\n---\n# {}\n",
+            charter_model.id, charter_model.title
+        )
     } else {
         std::fs::read_to_string(&md_path)
             .with_context(|| format!("Failed to read '{}'", md_path.display()))?
@@ -715,7 +718,11 @@ pub fn jot(
     let updated = clearhead_core::append_log_entry(&base, &entry);
 
     if dry_run {
-        let verb = if is_new { "Would create" } else { "Would update" };
+        let verb = if is_new {
+            "Would create"
+        } else {
+            "Would update"
+        };
         println!("{} {}:\n{}", verb, md_path.display(), updated);
         return Ok(());
     }
@@ -723,7 +730,11 @@ pub fn jot(
     clearhead_workspace_fs::durability::atomic_write(&md_path, &updated)
         .with_context(|| format!("Failed to write '{}'", md_path.display()))?;
     info!(charter = %charter_model.title, path = %md_path.display(), created = is_new, "Jotted log entry");
-    println!("Jotted to '{}' ({})", charter_model.title, md_path.display());
+    println!(
+        "Jotted to '{}' ({})",
+        charter_model.title,
+        md_path.display()
+    );
     Ok(())
 }
 
