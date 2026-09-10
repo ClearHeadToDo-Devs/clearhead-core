@@ -83,6 +83,82 @@ fn close_charter_creates_md_for_implicit_charter() {
 }
 
 #[test]
+fn jot_into_project_root_charter_creates_readme_not_phantom() {
+    // Project layout: a `.clearhead/` under the working dir. The root
+    // `next.actions` charter is named for the project and pairs with README.md;
+    // a derived `next.md` would infer to a separate "next" charter — the bug.
+    let env = TestEnv::new();
+    let charters = env.work_dir.join(".clearhead/charters");
+    fs::create_dir_all(&charters).unwrap();
+    fs::write(charters.join("next.actions"), "").unwrap();
+
+    // jot used to bail on a primary charter with no `.md`; it now materializes
+    // the correctly-paired document instead.
+    env.command()
+        .args(["jot", "a project finding"])
+        .assert()
+        .success();
+
+    let readme = charters.join("README.md");
+    assert!(readme.exists(), "project root should materialize README.md");
+    assert!(
+        !charters.join("next.md").exists(),
+        "must not create a phantom next.md"
+    );
+    assert!(
+        fs::read_to_string(&readme)
+            .unwrap()
+            .contains("a project finding")
+    );
+
+    let assert = env
+        .command()
+        .args(["read", "charters", "--format", "json"])
+        .assert()
+        .success();
+    let rows: serde_json::Value = serde_json::from_slice(&assert.get_output().stdout).unwrap();
+    assert_eq!(
+        rows.as_array().map(|r| r.len()),
+        Some(1),
+        "next.actions + README.md must pair into one charter, not collide: {rows}"
+    );
+}
+
+#[test]
+fn jot_into_user_root_charter_creates_next_md_not_phantom() {
+    // User/XDG layout (no project root): the root charter is genuinely "next"
+    // and pairs with next.md; README.md would infer to "README" and collide.
+    let env = TestEnv::new();
+    env.write_actions("next.actions", "");
+
+    env.command()
+        .args(["jot", "a user finding"])
+        .assert()
+        .success();
+
+    assert!(
+        env.data_dir.join("charters/next.md").exists(),
+        "user-layout root should materialize next.md"
+    );
+    assert!(
+        !env.data_dir.join("charters/README.md").exists(),
+        "must not create a phantom README.md"
+    );
+
+    let assert = env
+        .command()
+        .args(["read", "charters", "--format", "json"])
+        .assert()
+        .success();
+    let rows: serde_json::Value = serde_json::from_slice(&assert.get_output().stdout).unwrap();
+    assert_eq!(
+        rows.as_array().map(|r| r.len()),
+        Some(1),
+        "next.actions + next.md must pair into one charter, not collide: {rows}"
+    );
+}
+
+#[test]
 fn close_charter_by_file_resolves_from_actions_path() {
     let env = TestEnv::new();
     env.write_text("charters/my-charter.md", CHARTER_MD);
