@@ -32,11 +32,17 @@ impl NativeWorkspaceMounts {
     pub fn resolve(workspace_root: &Path, external_plans: Option<&Path>) -> Self {
         let project_data = workspace_root.join(".clearhead");
         let (workspace, scope) = if project_data.is_dir() {
-            let root_charter_name = workspace_root
-                .file_name()
-                .and_then(|name| name.to_str())
-                .unwrap_or("workspace")
-                .to_owned();
+            let root_charter_name = std::fs::read_to_string(project_data.join("workspace.json"))
+                .ok()
+                .and_then(|s| clearhead_core::workspace::parse_workspace_manifest(&s).ok())
+                .and_then(|m| m.workspace_name)
+                .or_else(|| {
+                    workspace_root
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .map(str::to_owned)
+                })
+                .unwrap_or_else(|| "workspace".to_owned());
             (project_data, WorkspaceScope::Project { root_charter_name })
         } else {
             (workspace_root.to_path_buf(), WorkspaceScope::User)
