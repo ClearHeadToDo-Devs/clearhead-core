@@ -86,28 +86,3 @@ fn transact_dry_run_stages_nothing() {
     }
     assert_eq!(read_actions(&source).unwrap().len(), 2);
 }
-
-#[test]
-fn transact_recovers_an_interrupted_commit_before_folding() {
-    let (temp, source) = workspace_with(&format!("[ ] Alpha #{A}\n"));
-    let charters = temp.path().join("charters");
-    let tmp = charters.join(".tmp.recover");
-    std::fs::write(&tmp, format!("[ ] Gamma #{A}\n")).unwrap();
-    std::fs::write(
-        charters.join(".pending"),
-        format!("{}\t{}\n", tmp.display(), source.display()),
-    )
-    .unwrap();
-    let request: TransactionRequest = serde_json::from_str(&format!(
-        r#"{{"operations":[
-            {{"op":"update-action","target":"urn:uuid:{A}","set":{{"priority":1}}}}
-        ]}}"#
-    ))
-    .unwrap();
-
-    transact(temp.path(), request, false).unwrap();
-    let active = read_actions(&source).unwrap();
-    assert_eq!(active[0].name, "Gamma");
-    assert_eq!(active[0].priority, Some(1));
-    assert!(!charters.join(".pending").exists());
-}

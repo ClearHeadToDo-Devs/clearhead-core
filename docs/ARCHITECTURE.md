@@ -11,7 +11,7 @@ Core is a host-neutral decision library. It owns the domain model, semantic
 configuration, representation codecs, reference resolution, publication, and
 the decisions behind workspace mutations and calendar reconciliation. It does
 not discover files, inspect directories, read environment variables, acquire
-locks, recover journals, or deliver effects.
+locks, or deliver effects.
 
 The governing rule is:
 
@@ -24,10 +24,11 @@ A host supplies explicit evidence:
 - workspace scope and mount identity;
 - typed mutation or synchronization requests.
 
-Core parses that evidence, applies policy, and returns typed outcomes plus an
-`EffectBatch`. An adapter validates the preconditions and delivers the effects.
-A `PreparedMutation` remains speculative until the adapter reports successful
-delivery; conflicts or delivery failures discard it.
+Core parses that evidence, applies policy, and returns a typed outcome paired
+with an `EffectBatch`. An adapter validates the batch's preconditions (a
+per-resource revision compare-and-swap) and delivers the effects; a precondition
+conflict or delivery failure means the caller reloads and recomputes. Core keeps
+no speculative next-state: files remain the truth, so a driver simply re-reads.
 
 The native implementation of observation and delivery is the sibling
 `clearhead-workspace-fs` crate. CLI, LSP, Neovim, operating-system paths,
@@ -82,9 +83,11 @@ Core and delivery adapters communicate through
 - `ResourceRevision` is opaque concurrency evidence.
 - `ResourcePrecondition` records the revision or absence expected at delivery.
 - `Effect` describes a logical write, remove, or move.
-- `EffectBatch` groups effects and validates their internal consistency.
-- `PreparedMutation` pairs speculative next state with effects and adopts the
-  outcome only after successful delivery.
+- `EffectBatch` groups effects with their preconditions and validates their
+  internal consistency (every affected resource carries a precondition).
+- A mutation verb returns a plain `(EffectBatch, outcome)`; the effects are
+  applied in additive order (writes and moves before removals) so an interrupted
+  multi-file delivery leaves a recoverable duplicate, never a hole.
 
 Path values may occur as inert source-location or representation data. Calling
 filesystem APIs on those values is an adapter responsibility.
@@ -107,8 +110,9 @@ or invoke those downstream hosts.
 
 The boundary is protected by repository gates:
 
-- `scripts/pure-core-source-gate.sh` rejects production filesystem observation
-  or delivery APIs in Core source;
+- the crate boundary keeps Core filesystem-free by construction: it does not
+  depend on `clearhead-workspace-fs`, so the compiler enforces the purity a
+  source-gate script once policed by hand;
 - `scripts/wasm-dependency-gate.sh` rejects native-only dependencies from
   Core's portable dependency graph;
 - the workspace build checks Core without default features;

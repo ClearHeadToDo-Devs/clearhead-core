@@ -32,9 +32,9 @@ pub use actions::{
     parse_actions_with_mode, parse_document, parse_tree, parse_trusted_document, patch_action_list,
 };
 pub use archive_actions::{
-    ActionArchivePlan, ClosePreparedState, PreparedArchiveOutcome, PreparedCloseOutcome,
-    PreparedReopenOutcome, plan_action_archive, prepare_action_archive,
-    prepare_close_action_subtree, prepare_reopen_action_subtree,
+    ActionArchivePlan, PreparedArchiveOutcome, PreparedCloseOutcome, PreparedReopenOutcome,
+    plan_action_archive, prepare_action_archive, prepare_close_action_subtree,
+    prepare_reopen_action_subtree,
 };
 pub use archive_charter::{
     ArchivePolicyError, archive_charter_name, archive_charter_subtree,
@@ -54,11 +54,11 @@ pub use calendar::plans::{
     plan_file_name, plan_output_path, slugify,
 };
 pub use calendar::reconcile::{
-    AppliedSync, CalendarSyncPreparationInput, CalendarSyncState, OutcomeKind, Reconcile,
-    SyncActionResourceState, SyncCodecMigration, SyncConflictResolution, SyncEntry, SyncField,
-    SyncImport, SyncLifecycleEntry, SyncLifecycleKind, SyncMirrorResourceState, SyncPlanTemplate,
-    SyncReport, SyncTally, plan_one_off_sync, plan_recurring_occurrence_sync, prepare_sync,
-    reconcile, sync_import_actions_file,
+    AppliedSync, CalendarSyncPreparationInput, OutcomeKind, Reconcile, SyncActionResourceState,
+    SyncCodecMigration, SyncConflictResolution, SyncEntry, SyncField, SyncImport,
+    SyncLifecycleEntry, SyncLifecycleKind, SyncMirrorResourceState, SyncPlanTemplate, SyncReport,
+    SyncTally, plan_one_off_sync, plan_recurring_occurrence_sync, prepare_sync, reconcile,
+    sync_import_actions_file,
 };
 pub use calendar::sync_store::{PlansSyncStore, decode_plans_sync_store, encode_plans_sync_store};
 pub use charter::{
@@ -66,16 +66,16 @@ pub use charter::{
 };
 pub use manifest::{WorkspaceManifest, parse_workspace_manifest, render_workspace_manifest};
 pub use mutate_actions::{
-    ActionPrepareError, ActionResourceState, DeletePreparedState, PreparedDeleteOutcome,
-    PreparedInsertOutcome, PreparedUpdateOutcome, SidecarResourceState, plan_action_insert,
-    prepare_action_delete, prepare_action_insert, prepare_action_update,
+    ActionPrepareError, ActionResourceState, PreparedDeleteOutcome, PreparedInsertOutcome,
+    PreparedUpdateOutcome, SidecarResourceState, plan_action_insert, prepare_action_delete,
+    prepare_action_insert, prepare_action_update,
 };
 pub use resource::{
-    AppliedMutation, DeliveryError, Effect, EffectBatch, EffectBatchError, ExpectedResource,
-    MountId, MountInventory, MountReadEvidence, PreparedMutation, ReadPlan, ResourceConflict,
-    ResourceLocation, ResourcePrecondition, ResourceReadFailure, ResourceRevision,
-    ResourceSnapshot, SnapshotError, WorkspaceInventory, WorkspaceMounts, WorkspacePath,
-    WorkspacePathError, WorkspaceScope, WorkspaceSnapshot, plan_workspace_read,
+    DeliveryError, Effect, EffectBatch, EffectBatchError, ExpectedResource, MountId,
+    MountInventory, MountReadEvidence, ReadPlan, ResourceConflict, ResourceLocation,
+    ResourcePrecondition, ResourceReadFailure, ResourceRevision, ResourceSnapshot, SnapshotError,
+    WorkspaceInventory, WorkspaceMounts, WorkspacePath, WorkspacePathError, WorkspaceScope,
+    WorkspaceSnapshot, plan_workspace_read,
 };
 pub use selector::ActionSelector;
 pub use sidecar::{

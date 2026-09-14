@@ -507,64 +507,6 @@ pub enum DeliveryError<E: fmt::Display> {
     },
 }
 
-/// A pure mutation decision whose state remains speculative until delivery.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct PreparedMutation<S, O = ()> {
-    next_state: S,
-    effects: EffectBatch,
-    outcome: O,
-}
-
-impl<S> PreparedMutation<S> {
-    pub fn new(next_state: S, effects: EffectBatch) -> Self {
-        Self::with_outcome(next_state, effects, ())
-    }
-}
-
-impl<S, O> PreparedMutation<S, O> {
-    pub fn with_outcome(next_state: S, effects: EffectBatch, outcome: O) -> Self {
-        Self {
-            next_state,
-            effects,
-            outcome,
-        }
-    }
-
-    /// Inspect, but do not adopt, the speculative state.
-    pub fn next_state(&self) -> &S {
-        &self.next_state
-    }
-
-    pub fn effects(&self) -> &EffectBatch {
-        &self.effects
-    }
-
-    pub fn outcome(&self) -> &O {
-        &self.outcome
-    }
-
-    /// Resolve host delivery and adopt the speculative state only on success.
-    ///
-    /// Conflicts and failures consume the prepared value without exposing its
-    /// next state, forcing the caller to reload and recompute.
-    pub fn adopt<E: fmt::Display>(
-        self,
-        delivery: Result<(), DeliveryError<E>>,
-    ) -> Result<AppliedMutation<S, O>, DeliveryError<E>> {
-        delivery.map(|()| AppliedMutation {
-            state: self.next_state,
-            outcome: self.outcome,
-        })
-    }
-}
-
-/// State and public outcome released only after successful host delivery.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct AppliedMutation<S, O> {
-    pub state: S,
-    pub outcome: O,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -660,25 +602,5 @@ mod tests {
             },
         ];
         assert!(EffectBatch::new(effects, complete).is_ok());
-    }
-
-    #[test]
-    fn next_state_is_adopted_only_after_delivery_succeeds() {
-        let batch = EffectBatch::new(Vec::new(), Vec::new()).unwrap();
-        let prepared = PreparedMutation::new("next", batch.clone());
-        assert_eq!(prepared.next_state(), &"next");
-        assert_eq!(
-            prepared.adopt::<&str>(Ok(())),
-            Ok(AppliedMutation {
-                state: "next",
-                outcome: (),
-            })
-        );
-
-        let failed = PreparedMutation::new("must remain speculative", batch);
-        assert_eq!(
-            failed.adopt(Err(DeliveryError::NotApplied("host failed"))),
-            Err(DeliveryError::NotApplied("host failed"))
-        );
     }
 }

@@ -27,7 +27,7 @@ use crate::domain::{Action, ActionState, DomainModel, Plan};
 use crate::workspace::actions::format::require_actions_formatting;
 use crate::workspace::charter::MarkdownCharter;
 use crate::workspace::resource::{
-    Effect, EffectBatch, ExpectedResource, PreparedMutation, ResourceLocation, ResourcePrecondition,
+    Effect, EffectBatch, ExpectedResource, ResourceLocation, ResourcePrecondition,
 };
 use crate::workspace::sidecar::{
     ActionMeta, ActionPlanLink, CharterMetadata, OccurrenceSnapshot, render_sidecar,
@@ -849,12 +849,6 @@ pub struct MaterializedOccurrencePreparationInput {
     pub store_expected: ExpectedResource,
 }
 
-/// Speculative workspace and merge-base state produced by pure sync preparation.
-pub struct CalendarSyncState {
-    pub workspace: Workspace,
-    pub store: PlansSyncStore,
-}
-
 /// Apply a resolved sync report to immutable host evidence and prepare one effect batch.
 ///
 /// The host owns locking, recovery, inventory, reads, stale validation, and delivery.
@@ -862,7 +856,7 @@ pub struct CalendarSyncState {
 pub fn prepare_sync(
     input: CalendarSyncPreparationInput,
     report: &SyncReport,
-) -> Result<PreparedMutation<CalendarSyncState, AppliedSync>, WorkspaceError> {
+) -> Result<(EffectBatch, AppliedSync), WorkspaceError> {
     require_actions_formatting().map_err(WorkspaceError::Actions)?;
     let CalendarSyncPreparationInput {
         mut workspace,
@@ -1303,8 +1297,7 @@ pub fn prepare_sync(
     let batch = EffectBatch::new(effects, preconditions)
         .map_err(|error| WorkspaceError::Actions(error.to_string()))?;
     let tally = report.tally();
-    Ok(PreparedMutation::with_outcome(
-        CalendarSyncState { workspace, store },
+    Ok((
         batch,
         AppliedSync {
             take_action: tally.take_action,
@@ -1318,7 +1311,7 @@ pub fn prepare_sync(
 /// Resolve a materialized recurring token without touching a host.
 pub fn prepare_materialized_occurrence_resolution(
     input: MaterializedOccurrencePreparationInput,
-) -> Result<PreparedMutation<CalendarSyncState, bool>, WorkspaceError> {
+) -> Result<(EffectBatch, bool), WorkspaceError> {
     require_actions_formatting().map_err(WorkspaceError::Actions)?;
     let MaterializedOccurrencePreparationInput {
         mut workspace,
@@ -1337,11 +1330,7 @@ pub fn prepare_materialized_occurrence_resolution(
     let Some((plan_id, slot_key)) = store.occurrence_link(occurrence_id) else {
         let batch = EffectBatch::new(Vec::new(), observed_resources)
             .map_err(|error| WorkspaceError::Actions(error.to_string()))?;
-        return Ok(PreparedMutation::with_outcome(
-            CalendarSyncState { workspace, store },
-            batch,
-            false,
-        ));
+        return Ok((batch, false));
     };
 
     let mut matched = None;
@@ -1493,11 +1482,7 @@ pub fn prepare_materialized_occurrence_resolution(
             .collect(),
     )
     .map_err(|error| WorkspaceError::Actions(error.to_string()))?;
-    Ok(PreparedMutation::with_outcome(
-        CalendarSyncState { workspace, store },
-        batch,
-        true,
-    ))
+    Ok((batch, true))
 }
 
 /// A resolved occurrence no longer holds the token — the next may be stamped.
@@ -2065,7 +2050,7 @@ pub fn prepare_master_rollforwards(
     store_location: ResourceLocation,
     store_expected: ExpectedResource,
     resources: &[PlanResourceState],
-) -> Result<PreparedMutation<PlansSyncStore, usize>, WorkspaceError> {
+) -> Result<(EffectBatch, usize), WorkspaceError> {
     let changes = prepare_master_rollforward_changes(store, resources)?;
     let mut effects = changes
         .calendar_writes
@@ -2094,11 +2079,7 @@ pub fn prepare_master_rollforwards(
     });
     let batch = EffectBatch::new(effects, preconditions)
         .map_err(|error| WorkspaceError::Actions(error.to_string()))?;
-    Ok(PreparedMutation::with_outcome(
-        changes.store,
-        batch,
-        changes.recorded,
-    ))
+    Ok((batch, changes.recorded))
 }
 
 #[cfg(test)]
@@ -2190,15 +2171,12 @@ mod tests {
             store_expected: ExpectedResource::Missing,
         };
 
-        let prepared = prepare_sync(input, &SyncReport::default()).unwrap();
+        let (batch, _outcome) = prepare_sync(input, &SyncReport::default()).unwrap();
 
-        assert_eq!(
-            prepared.next_state().workspace.charters[0].actions[0]
-                .action
-                .plan_id,
-            Some(plan_id_from_ics_uid("foreign@example.com"))
-        );
-        assert!(prepared.effects().effects().iter().any(|effect| {
+        // The sidecar write carrying the UID is the observable evidence that the
+        // action was linked to the foreign plan (the old assertion inspected the
+        // speculative next_state; the effect is now the source of truth).
+        assert!(batch.effects().iter().any(|effect| {
             matches!(
                 effect,
                 Effect::Write { path, bytes }
@@ -2206,16 +2184,10 @@ mod tests {
                         && String::from_utf8_lossy(bytes).contains("foreign@example.com")
             )
         }));
-        assert!(
-            prepared
-                .effects()
-                .preconditions()
-                .iter()
-                .any(|precondition| {
-                    precondition.path == sidecar_location
-                        && precondition.expected == ExpectedResource::Missing
-                })
-        );
+        assert!(batch.preconditions().iter().any(|precondition| {
+            precondition.path == sidecar_location
+                && precondition.expected == ExpectedResource::Missing
+        }));
     }
 
     #[test]
@@ -2310,13 +2282,35 @@ mod tests {
             )),
         };
 
-        let prepared = prepare_sync(input, &SyncReport::default()).unwrap();
+        let (batch, _outcome) = prepare_sync(input, &SyncReport::default()).unwrap();
 
-        let action = &prepared.next_state().workspace.charters[0].actions[0].action;
-        assert!(action.scheduled_at.is_none());
-        assert!(action.due_date.is_none());
-        assert!(action.plan_id.is_none());
-        assert!(!prepared.next_state().store.actions.contains_key(&action_id));
+        // The action write must clear scheduling and the plan link (previously
+        // read off the speculative next_state; now asserted on emitted bytes).
+        let action_bytes = batch
+            .effects()
+            .iter()
+            .find_map(|effect| match effect {
+                Effect::Write { path, bytes } if path == &action_location => Some(bytes.clone()),
+                _ => None,
+            })
+            .expect("a write to the action file");
+        let written = crate::workspace::parse_actions(&String::from_utf8(action_bytes).unwrap())
+            .expect("action write parses");
+        assert!(written[0].scheduled_at.is_none());
+        assert!(written[0].due_date.is_none());
+        assert!(written[0].plan_id.is_none());
+
+        // The store write must no longer key the unlinked action.
+        let store_bytes = batch
+            .effects()
+            .iter()
+            .find_map(|effect| match effect {
+                Effect::Write { path, bytes } if path == &store_location => Some(bytes.clone()),
+                _ => None,
+            })
+            .expect("a write to the sync store");
+        assert!(!String::from_utf8_lossy(&store_bytes).contains(&action_id.to_string()));
+
         for location in [
             &action_location,
             &sidecar_location,
@@ -2324,8 +2318,7 @@ mod tests {
             &store_location,
         ] {
             assert!(
-                prepared
-                    .effects()
+                batch
                     .preconditions()
                     .iter()
                     .any(|precondition| &precondition.path == location),
@@ -2333,18 +2326,18 @@ mod tests {
             );
         }
         assert!(
-            prepared.effects().effects().iter().any(
+            batch.effects().iter().any(
                 |effect| matches!(effect, Effect::Remove { path } if path == &calendar_location)
             )
         );
-        assert!(prepared.effects().effects().iter().any(
+        assert!(batch.effects().iter().any(
             |effect| matches!(effect, Effect::Write { path, .. } if path == &action_location)
         ));
-        assert!(prepared.effects().effects().iter().any(
+        assert!(batch.effects().iter().any(
             |effect| matches!(effect, Effect::Write { path, .. } if path == &sidecar_location)
         ));
         assert!(
-            prepared.effects().effects().iter().any(
+            batch.effects().iter().any(
                 |effect| matches!(effect, Effect::Write { path, .. } if path == &store_location)
             )
         );

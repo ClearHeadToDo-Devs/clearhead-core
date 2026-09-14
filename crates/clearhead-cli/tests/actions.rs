@@ -541,30 +541,6 @@ fn test_archive_actions_keeps_a_terminal_parent_with_an_open_child() {
 }
 
 #[test]
-fn test_archive_actions_refuses_to_race_an_existing_writer() {
-    let env = TestEnv::new();
-    env.write_actions("inbox.actions", "[x] Done\n");
-    let _lock = clearhead_workspace_fs::durability::WorkspaceLock::try_acquire(&env.data_dir)
-        .unwrap()
-        .unwrap();
-
-    env.command()
-        .arg("archive")
-        .arg("actions")
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("Workspace is locked"));
-
-    let active = fs::read_to_string(env.data_dir.join("charters/inbox.actions")).unwrap();
-    assert!(active.contains("Done"));
-    assert!(
-        !env.data_dir
-            .join("charters/inbox.completed.actions")
-            .exists()
-    );
-}
-
-#[test]
 fn test_complete_command_already_closed_is_typed_data() {
     // Verb errors are data (query_output.md): with stdout piped, an
     // already-completed target comes back as a branchable JSON result,

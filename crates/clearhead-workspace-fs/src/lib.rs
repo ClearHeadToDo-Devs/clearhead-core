@@ -35,14 +35,13 @@ pub use mounts::{
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
-use crate::durability::{PendingBatch, WorkspaceLock, recover_pending};
+use crate::durability::atomic_write;
 use chrono::Local;
 pub use clearhead_core::TransactionOutcome;
 use clearhead_core::domain::update::ActionUpdate;
-use clearhead_core::workspace::resource::PreparedMutation;
 use clearhead_core::workspace::resource::{
-    DeliveryError, Effect, ExpectedResource, ResourceConflict, ResourceRevision, ResourceSnapshot,
-    WorkspacePath,
+    DeliveryError, Effect, EffectBatch, ExpectedResource, ResourceConflict, ResourceRevision,
+    ResourceSnapshot, WorkspacePath,
 };
 use clearhead_core::workspace::sidecar::CharterMetadata;
 use clearhead_core::workspace::{
@@ -107,7 +106,7 @@ pub fn insert_action(
     new_action: Action,
     parent: Option<&ActionSelector>,
 ) -> Result<InsertActionResult, WorkspaceError> {
-    let (mounts, journal_dir, _lock) = begin_mutation(workspace_root, source_path)?;
+    let mounts = begin_mutation(workspace_root, source_path)?;
     let data_root = &mounts.workspace;
     let (snapshot, expected) = snapshot(data_root, source_path)?;
     let source = ActionResourceState {
@@ -115,9 +114,9 @@ pub fn insert_action(
         actions: parse_snapshot(&snapshot)?,
         expected,
     };
-    let prepared = prepare_action_insert(source, new_action, parent)
+    let (batch, outcome) = prepare_action_insert(source, new_action, parent)
         .map_err(|error| WorkspaceError::Actions(error.to_string()))?;
-    let outcome = deliver(&mounts, &journal_dir, prepared)?;
+    deliver(&mounts, &batch)?;
     Ok(map_insert(data_root, outcome))
 }
 
@@ -127,7 +126,7 @@ pub fn update_action(
     selector: &ActionSelector,
     update: ActionUpdate,
 ) -> Result<UpdateActionResult, WorkspaceError> {
-    let (mounts, journal_dir, _lock) = begin_mutation(workspace_root, source_path)?;
+    let mounts = begin_mutation(workspace_root, source_path)?;
     let data_root = &mounts.workspace;
     let (snapshot, expected) = snapshot(data_root, source_path)?;
     let source = ActionResourceState {
@@ -135,9 +134,9 @@ pub fn update_action(
         actions: parse_snapshot(&snapshot)?,
         expected,
     };
-    let prepared = prepare_action_update(source, selector, update)
+    let (batch, outcome) = prepare_action_update(source, selector, update)
         .map_err(|error| WorkspaceError::Actions(error.to_string()))?;
-    let outcome = deliver(&mounts, &journal_dir, prepared)?;
+    deliver(&mounts, &batch)?;
     Ok(map_update(data_root, outcome))
 }
 
@@ -146,7 +145,7 @@ pub fn delete_action(
     source_path: &Path,
     selector: &ActionSelector,
 ) -> Result<DeleteActionResult, WorkspaceError> {
-    let (mounts, journal_dir, _lock) = begin_mutation(workspace_root, source_path)?;
+    let mounts = begin_mutation(workspace_root, source_path)?;
     let data_root = &mounts.workspace;
     let completed_path = completed_actions_path(source_path);
     let active_sidecar_path = sidecar_path(source_path);
@@ -157,7 +156,7 @@ pub fn delete_action(
         snapshot(data_root, &active_sidecar_path)?;
     let (completed_sidecar_snapshot, completed_sidecar_expected) =
         snapshot(data_root, &completed_sidecar_path)?;
-    let prepared = prepare_action_delete(
+    let (batch, outcome) = prepare_action_delete(
         ActionResourceState {
             path: active_snapshot.path().clone(),
             actions: parse_snapshot(&active_snapshot)?,
@@ -181,7 +180,7 @@ pub fn delete_action(
         selector,
     )
     .map_err(|error| WorkspaceError::Actions(error.to_string()))?;
-    let outcome = deliver(&mounts, &journal_dir, prepared)?;
+    deliver(&mounts, &batch)?;
     Ok(map_delete(data_root, outcome))
 }
 
@@ -189,18 +188,18 @@ pub fn archive_actions(
     workspace_root: &Path,
     source_path: &Path,
 ) -> Result<ActionArchiveResult, WorkspaceError> {
-    let (mounts, journal_dir, _lock) = begin_mutation(workspace_root, source_path)?;
+    let mounts = begin_mutation(workspace_root, source_path)?;
     let data_root = &mounts.workspace;
     let completed_path = completed_actions_path(source_path);
     let (active_snapshot, active_expected) = snapshot(data_root, source_path)?;
     let (completed_snapshot, completed_expected) = snapshot(data_root, &completed_path)?;
-    let prepared = prepare_action_archive(
+    let (batch, outcome) = prepare_action_archive(
         action_state(active_snapshot, active_expected)?,
         action_state(completed_snapshot, completed_expected)?,
         Local::now(),
     )
     .map_err(|error| WorkspaceError::Actions(error.to_string()))?;
-    let outcome = deliver(&mounts, &journal_dir, prepared)?;
+    deliver(&mounts, &batch)?;
     Ok(map_archive(data_root, outcome))
 }
 
@@ -211,12 +210,12 @@ pub fn close_action_subtree(
     closing_state: clearhead_core::ActionState,
     completed_at: chrono::DateTime<Local>,
 ) -> Result<CloseActionResult, WorkspaceError> {
-    let (mounts, journal_dir, _lock) = begin_mutation(workspace_root, source_path)?;
+    let mounts = begin_mutation(workspace_root, source_path)?;
     let data_root = &mounts.workspace;
     let completed_path = completed_actions_path(source_path);
     let (active_snapshot, active_expected) = snapshot(data_root, source_path)?;
     let (completed_snapshot, completed_expected) = snapshot(data_root, &completed_path)?;
-    let prepared = prepare_close_action_subtree(
+    let (batch, outcome) = prepare_close_action_subtree(
         action_state(active_snapshot, active_expected)?,
         action_state(completed_snapshot, completed_expected)?,
         selector,
@@ -224,7 +223,7 @@ pub fn close_action_subtree(
         completed_at,
     )
     .map_err(|error| WorkspaceError::Actions(error.to_string()))?;
-    let outcome = deliver(&mounts, &journal_dir, prepared)?;
+    deliver(&mounts, &batch)?;
     Ok(map_close(data_root, outcome))
 }
 
@@ -233,18 +232,18 @@ pub fn reopen_action_subtree(
     source_path: &Path,
     selector: &ActionSelector,
 ) -> Result<ReopenActionResult, WorkspaceError> {
-    let (mounts, journal_dir, _lock) = begin_mutation(workspace_root, source_path)?;
+    let mounts = begin_mutation(workspace_root, source_path)?;
     let data_root = &mounts.workspace;
     let completed_path = completed_actions_path(source_path);
     let (active_snapshot, active_expected) = snapshot(data_root, source_path)?;
     let (completed_snapshot, completed_expected) = snapshot(data_root, &completed_path)?;
-    let prepared = prepare_reopen_action_subtree(
+    let (batch, outcome) = prepare_reopen_action_subtree(
         action_state(active_snapshot, active_expected)?,
         action_state(completed_snapshot, completed_expected)?,
         selector,
     )
     .map_err(|error| WorkspaceError::Actions(error.to_string()))?;
-    let outcome = deliver(&mounts, &journal_dir, prepared)?;
+    deliver(&mounts, &batch)?;
     Ok(map_reopen(data_root, outcome))
 }
 
@@ -263,15 +262,12 @@ fn action_state(
 fn begin_mutation(
     workspace_root: &Path,
     source_path: &Path,
-) -> Result<(NativeWorkspaceMounts, PathBuf, WorkspaceLock), WorkspaceError> {
+) -> Result<NativeWorkspaceMounts, WorkspaceError> {
     let mounts = NativeWorkspaceMounts::resolve(workspace_root, None);
-    let journal_dir = mounts.workspace.join("charters");
-    validate_source_path(source_path, &journal_dir)?;
-    std::fs::create_dir_all(&journal_dir)?;
-    let lock = WorkspaceLock::try_acquire(&mounts.workspace)?
-        .ok_or_else(|| WorkspaceError::WorkspaceLocked(mounts.workspace.clone()))?;
-    recover_pending(&journal_dir)?;
-    Ok((mounts, journal_dir, lock))
+    let charter_root = mounts.workspace.join("charters");
+    validate_source_path(source_path, &charter_root)?;
+    std::fs::create_dir_all(&charter_root)?;
+    Ok(mounts)
 }
 
 fn validate_source_path(source_path: &Path, charter_root: &Path) -> Result<(), WorkspaceError> {
@@ -299,17 +295,11 @@ fn parse_sidecar_snapshot(snapshot: &ResourceSnapshot) -> Result<CharterMetadata
         .map_err(|error| WorkspaceError::Parse(format!("sidecar: {error}")))
 }
 
-fn deliver<S, O>(
-    mounts: &NativeWorkspaceMounts,
-    journal_dir: &Path,
-    prepared: PreparedMutation<S, O>,
-) -> Result<O, WorkspaceError> {
-    validate_preconditions(mounts, prepared.effects().preconditions())?;
-    execute_effects(mounts, journal_dir, prepared.effects().effects())?;
-    Ok(prepared
-        .adopt::<String>(Ok(()))
-        .expect("successful native delivery releases prepared state")
-        .outcome)
+/// Validate the batch's preconditions against the live workspace, then apply it.
+fn deliver(mounts: &NativeWorkspaceMounts, batch: &EffectBatch) -> Result<(), WorkspaceError> {
+    validate_preconditions(mounts, batch.preconditions())?;
+    execute_effects(mounts, batch.effects())?;
+    Ok(())
 }
 
 fn map_archive(data_root: &Path, outcome: PreparedArchiveOutcome) -> ActionArchiveResult {
@@ -379,25 +369,17 @@ pub fn transact(
         .collect();
     let mounts = NativeWorkspaceMounts::resolve(workspace_root, None);
     let data_root = &mounts.workspace;
-    let journal_dir = data_root.join("charters");
-    std::fs::create_dir_all(&journal_dir)?;
-    let _lock = WorkspaceLock::try_acquire(data_root)?
-        .ok_or_else(|| WorkspaceError::WorkspaceLocked(data_root.clone()))?;
-    recover_pending(&journal_dir)?;
+    std::fs::create_dir_all(data_root.join("charters"))?;
 
     let model = load_target_files(workspace_root, data_root, &target_ids)?;
-    let prepared = prepare_transaction(model, &operations, Local::now(), dry_run)
+    let (batch, outcome) = prepare_transaction(model, &operations, Local::now(), dry_run)
         .map_err(|error| WorkspaceError::Actions(error.to_string()))?;
 
-    if !prepared.effects().is_empty() {
-        validate_preconditions(&mounts, prepared.effects().preconditions())?;
-        execute_effects(&mounts, &journal_dir, prepared.effects().effects())?;
+    if !batch.is_empty() {
+        deliver(&mounts, &batch)?;
     }
 
-    let applied = prepared
-        .adopt::<String>(Ok(()))
-        .expect("successful native delivery releases prepared state");
-    Ok(map_outcome(data_root, applied.outcome))
+    Ok(map_outcome(data_root, outcome))
 }
 
 fn load_target_files(
@@ -511,26 +493,53 @@ fn validate_preconditions(
     Ok(())
 }
 
+/// Apply a validated effect batch directly to the filesystem.
+///
+/// There is no write-ahead journal: each write is a single-file POSIX atomic
+/// replace ([`atomic_write`] = temp + fsync + rename). Effects are applied in
+/// *additive order* — content-producing effects (writes, moves) before removals
+/// — so an interrupted multi-file mutation leaves a recoverable duplicate for
+/// `doctor` to reconcile rather than a hole. The finer add-before-subtract
+/// ordering *between two writes* is Core's responsibility (it emits the
+/// destination-gaining write first; see the direct-delivery charter §4), since
+/// an `Effect::Write` is opaque bytes here and cannot be classified.
 fn execute_effects(
     mounts: &NativeWorkspaceMounts,
-    journal_dir: &Path,
     effects: &[Effect],
 ) -> Result<(), WorkspaceError> {
-    let mut batch = PendingBatch::new(journal_dir.to_path_buf());
-    for effect in effects {
+    // Stable partition preserves Core's emission order within each group.
+    let (removals, additions): (Vec<&Effect>, Vec<&Effect>) = effects
+        .iter()
+        .partition(|effect| matches!(effect, Effect::Remove { .. }));
+
+    for effect in additions {
         match effect {
-            Effect::Write { path, bytes } => batch.stage(mounts.physical_path(path)?, bytes)?,
+            Effect::Write { path, bytes } => {
+                atomic_write(&mounts.physical_path(path)?, bytes)?;
+            }
             Effect::Move {
                 source,
                 destination,
-            } => batch.stage_move(
-                mounts.physical_path(source)?,
-                mounts.physical_path(destination)?,
-            )?,
-            Effect::Remove { path } => batch.stage_remove(mounts.physical_path(path)?)?,
+            } => {
+                let destination = mounts.physical_path(destination)?;
+                if let Some(parent) = destination.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
+                std::fs::rename(mounts.physical_path(source)?, destination)?;
+            }
+            Effect::Remove { .. } => unreachable!("removals are partitioned out and applied last"),
         }
     }
-    batch.commit()?;
+
+    for effect in removals {
+        if let Effect::Remove { path } = effect {
+            match std::fs::remove_file(mounts.physical_path(path)?) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error.into()),
+            }
+        }
+    }
     Ok(())
 }
 
@@ -577,12 +586,10 @@ mod mounted_effect_tests {
     }
 
     #[test]
-    fn one_pending_batch_delivers_workspace_and_external_plan_writes() {
+    fn delivers_workspace_and_external_plan_writes() {
         let temp = tempfile::tempdir().unwrap();
         let workspace = temp.path().join("workspace");
         let external = temp.path().join("external-plans");
-        let journal = workspace.join("charters");
-        std::fs::create_dir_all(&journal).unwrap();
         std::fs::create_dir_all(&external).unwrap();
         let mounts = NativeWorkspaceMounts {
             workspace: workspace.clone(),
@@ -616,7 +623,7 @@ mod mounted_effect_tests {
         .unwrap();
 
         validate_preconditions(&mounts, batch.preconditions()).unwrap();
-        execute_effects(&mounts, &journal, batch.effects()).unwrap();
+        execute_effects(&mounts, batch.effects()).unwrap();
 
         assert_eq!(
             std::fs::read(workspace.join("sync/plans.json")).unwrap(),
@@ -626,6 +633,5 @@ mod mounted_effect_tests {
             std::fs::read(external.join("inbox/action.ics")).unwrap(),
             b"calendar"
         );
-        assert!(!journal.join(".pending").exists());
     }
 }

@@ -41,7 +41,4 @@ pub enum WorkspaceError {
     /// A path provided was not within the workspace or was otherwise invalid.
     #[error("Invalid path: {0}")]
     InvalidPath(PathBuf),
-    /// Another process currently owns the workspace mutation lock.
-    #[error("Workspace is locked by another writer: {0}")]
-    WorkspaceLocked(PathBuf),
 }

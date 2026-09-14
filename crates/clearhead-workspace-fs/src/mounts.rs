@@ -161,16 +161,11 @@ pub fn read_workspace(
     assemble_native(workspace_root, external_plans)
 }
 
-/// Healing native load: recover pending workspace intent before inventory.
+/// Native load: inventory, read, and surface findings as warnings.
 pub fn load_workspace(
     workspace_root: &Path,
     external_plans: Option<&Path>,
 ) -> Result<Vec<MarkdownCharter>, WorkspaceError> {
-    let mounts = NativeWorkspaceMounts::resolve(workspace_root, external_plans);
-    let charter_root = mounts.workspace.join("charters");
-    if charter_root.is_dir() {
-        crate::durability::recover_pending(&charter_root)?;
-    }
     let read = assemble_native(workspace_root, external_plans)?;
     for finding in &read.findings {
         eprintln!("warning: [{}] {}", finding.path.display(), finding.message);

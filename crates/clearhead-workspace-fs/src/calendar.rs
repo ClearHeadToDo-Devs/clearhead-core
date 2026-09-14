@@ -6,7 +6,6 @@ use std::path::{Path, PathBuf};
 use chrono::Local;
 use uuid::Uuid;
 
-use crate::durability::{WorkspaceLock, recover_pending};
 use clearhead_core::PlanComponentKind;
 use clearhead_core::domain::{ActionState, DomainModel};
 use clearhead_core::workspace::OccurrenceOp;
@@ -18,18 +17,18 @@ use clearhead_core::workspace::calendar::plans::{
     infer_plan_charter_name_for_workspace, infer_plan_parent_for_workspace,
 };
 use clearhead_core::workspace::calendar::reconcile::{
-    AppliedSync, CalendarSyncPreparationInput, CalendarSyncState,
-    MaterializedOccurrenceArchiveState, MaterializedOccurrencePreparationInput, PlanResourceState,
-    SyncActionResourceState, SyncCodecMigration, SyncConflictResolution, SyncImport,
-    SyncLifecycleEntry, SyncLifecycleKind, SyncMirrorResourceState, SyncPlanLink, SyncPlanTemplate,
-    SyncPlanUnlink, SyncReport, plan_one_off_sync, plan_recurring_occurrence_sync,
-    prepare_master_rollforward_changes, prepare_master_rollforwards,
-    prepare_materialized_occurrence_resolution, prepare_sync, sync_import_actions_file,
+    AppliedSync, CalendarSyncPreparationInput, MaterializedOccurrenceArchiveState,
+    MaterializedOccurrencePreparationInput, PlanResourceState, SyncActionResourceState,
+    SyncCodecMigration, SyncConflictResolution, SyncImport, SyncLifecycleEntry, SyncLifecycleKind,
+    SyncMirrorResourceState, SyncPlanLink, SyncPlanTemplate, SyncPlanUnlink, SyncReport,
+    plan_one_off_sync, plan_recurring_occurrence_sync, prepare_master_rollforward_changes,
+    prepare_master_rollforwards, prepare_materialized_occurrence_resolution, prepare_sync,
+    sync_import_actions_file,
 };
 use clearhead_core::workspace::calendar::sync_store::{PlansSyncStore, decode_plans_sync_store};
 use clearhead_core::workspace::resource::{
-    Effect, EffectBatch, ExpectedResource, MountId, MountInventory, PreparedMutation, ReadPlan,
-    ResourceLocation, ResourcePrecondition, ResourceRevision, WorkspaceMounts, WorkspacePath,
+    Effect, EffectBatch, ExpectedResource, MountId, MountInventory, ReadPlan, ResourceLocation,
+    ResourcePrecondition, ResourceRevision, WorkspaceMounts, WorkspacePath,
 };
 use clearhead_core::workspace::{
     WorkspaceError, completed_actions_path, parse_actions, parse_sidecar, sidecar_path,
@@ -78,7 +77,7 @@ struct PreparedCalendarSync {
     mounts: NativeWorkspaceMounts,
     inventory: clearhead_core::workspace::resource::WorkspaceMounts<MountInventory>,
     report: SyncReport,
-    prepared: PreparedMutation<CalendarSyncState, AppliedSync>,
+    prepared: (EffectBatch, AppliedSync),
     rolled_forward: usize,
 }
 
@@ -195,11 +194,6 @@ pub fn sync_calendar_with_component(
     configured_component: PlanComponentKind,
 ) -> Result<CalendarSyncResult, WorkspaceError> {
     let mounts = NativeWorkspaceMounts::resolve(workspace_root, external_plans);
-    let journal_dir = mounts.workspace.join("charters");
-    std::fs::create_dir_all(&journal_dir)?;
-    let _lock = WorkspaceLock::try_acquire(&mounts.workspace)?
-        .ok_or_else(|| WorkspaceError::WorkspaceLocked(mounts.workspace.clone()))?;
-    recover_pending(&journal_dir)?;
 
     let planned = prepare_calendar_sync(
         workspace_root,
@@ -213,7 +207,8 @@ pub fn sync_calendar_with_component(
             "workspace or plans vdir changed before calendar sync delivery".into(),
         ));
     }
-    let applied = super::deliver(&planned.mounts, &journal_dir, planned.prepared)?;
+    let (batch, applied) = planned.prepared;
+    super::deliver(&planned.mounts, &batch)?;
     Ok(CalendarSyncResult {
         report: planned.report,
         applied,
@@ -573,11 +568,6 @@ pub fn resolve_materialized_occurrence(
     now: chrono::DateTime<Local>,
 ) -> Result<bool, WorkspaceError> {
     let mounts = NativeWorkspaceMounts::resolve(workspace_root, external_plans);
-    let journal_dir = mounts.workspace.join("charters");
-    std::fs::create_dir_all(&journal_dir)?;
-    let _lock = WorkspaceLock::try_acquire(&mounts.workspace)?
-        .ok_or_else(|| WorkspaceError::WorkspaceLocked(mounts.workspace.clone()))?;
-    recover_pending(&journal_dir)?;
 
     let inventory = mounts.inventory()?;
     let workspace = crate::mounts::load_workspace_model(workspace_root, external_plans)?;
@@ -609,7 +599,7 @@ pub fn resolve_materialized_occurrence(
     let templates = sync_plan_templates(&workspace, &mounts.workspace)?;
     let archive = materialized_occurrence_archive(&workspace, &mounts, occurrence_id)?;
     let observed_resources = sync_read_preconditions(&mounts, &inventory)?;
-    let prepared =
+    let (batch, changed) =
         prepare_materialized_occurrence_resolution(MaterializedOccurrencePreparationInput {
             workspace,
             store,
@@ -624,7 +614,7 @@ pub fn resolve_materialized_occurrence(
             store_location,
             store_expected,
         })?;
-    if !prepared.outcome() {
+    if !changed {
         return Ok(false);
     }
     if mounts.inventory()? != inventory {
@@ -632,7 +622,8 @@ pub fn resolve_materialized_occurrence(
             "workspace or plans vdir changed before occurrence delivery".into(),
         ));
     }
-    super::deliver(&mounts, &journal_dir, prepared)
+    super::deliver(&mounts, &batch)?;
+    Ok(true)
 }
 
 fn materialized_occurrence_archive(
@@ -1051,13 +1042,6 @@ pub fn apply_occurrence_op(
     occurrence_key: &str,
     op: &OccurrenceOp,
 ) -> Result<(), WorkspaceError> {
-    let mounts = NativeWorkspaceMounts::resolve(workspace_root, external_plans);
-    let journal_dir = mounts.workspace.join("charters");
-    std::fs::create_dir_all(&journal_dir)?;
-    let _lock = WorkspaceLock::try_acquire(&mounts.workspace)?
-        .ok_or_else(|| WorkspaceError::WorkspaceLocked(mounts.workspace.clone()))?;
-    recover_pending(&journal_dir)?;
-
     let observation = observe_calendar_resources(workspace_root, external_plans)?;
     let mut matched: Option<(&CalendarResource, ICSPlan)> = None;
     for resource in &observation.resources {
@@ -1109,7 +1093,7 @@ pub fn apply_occurrence_op(
         ));
     }
     crate::validate_preconditions(&observation.mounts, effects.preconditions())?;
-    crate::execute_effects(&observation.mounts, &journal_dir, effects.effects())
+    crate::execute_effects(&observation.mounts, effects.effects())
 }
 
 /// Normalize foreign recurring-master roll-forwards in one mounted transaction.
@@ -1117,13 +1101,6 @@ pub fn sync_master_rollforwards(
     workspace_root: &Path,
     external_plans: Option<&Path>,
 ) -> Result<usize, WorkspaceError> {
-    let mounts = NativeWorkspaceMounts::resolve(workspace_root, external_plans);
-    let journal_dir = mounts.workspace.join("charters");
-    std::fs::create_dir_all(&journal_dir)?;
-    let _lock = WorkspaceLock::try_acquire(&mounts.workspace)?
-        .ok_or_else(|| WorkspaceError::WorkspaceLocked(mounts.workspace.clone()))?;
-    recover_pending(&journal_dir)?;
-
     let observation = observe_calendar_resources(workspace_root, external_plans)?;
     let plans_root = observation
         .mounts
@@ -1161,23 +1138,16 @@ pub fn sync_master_rollforwards(
             })
         })
         .collect::<Result<Vec<_>, WorkspaceError>>()?;
-    let prepared = prepare_master_rollforwards(store, store_location, store_expected, &resources)?;
+    let (batch, recorded) =
+        prepare_master_rollforwards(store, store_location, store_expected, &resources)?;
 
     if effective_inventory(&observation.mounts)? != observation.inventory {
         return Err(WorkspaceError::Actions(
             "configured plans vdir changed before roll-forward delivery".into(),
         ));
     }
-    crate::validate_preconditions(&observation.mounts, prepared.effects().preconditions())?;
-    crate::execute_effects(
-        &observation.mounts,
-        &journal_dir,
-        prepared.effects().effects(),
-    )?;
-    Ok(prepared
-        .adopt::<String>(Ok(()))
-        .expect("successful native calendar delivery releases prepared state")
-        .outcome)
+    super::deliver(&observation.mounts, &batch)?;
+    Ok(recorded)
 }
 
 fn absolute_path(path: &Path) -> Result<PathBuf, WorkspaceError> {
@@ -1238,11 +1208,6 @@ pub fn write_plan_file(
     component_kind: PlanComponentKind,
 ) -> Result<(), WorkspaceError> {
     let (mounts, location, target) = mutation_target(workspace_root, configured_external, path)?;
-    let journal_dir = mounts.workspace.join("charters");
-    std::fs::create_dir_all(&journal_dir)?;
-    let _lock = WorkspaceLock::try_acquire(&mounts.workspace)?
-        .ok_or_else(|| WorkspaceError::WorkspaceLocked(mounts.workspace.clone()))?;
-    recover_pending(&journal_dir)?;
     let (source, expected) = match std::fs::read(&target) {
         Ok(bytes) => {
             let source = std::str::from_utf8(&bytes)
@@ -1271,7 +1236,7 @@ pub fn write_plan_file(
     )
     .map_err(|error| WorkspaceError::Actions(error.to_string()))?;
     crate::validate_preconditions(&mounts, effects.preconditions())?;
-    crate::execute_effects(&mounts, &journal_dir, effects.effects())
+    crate::execute_effects(&mounts, effects.effects())
 }
 
 /// Delete one explicitly selected Plan resource through durable removal.
@@ -1281,11 +1246,6 @@ pub fn delete_plan_file(
     path: &Path,
 ) -> Result<(), WorkspaceError> {
     let (mounts, location, target) = mutation_target(workspace_root, configured_external, path)?;
-    let journal_dir = mounts.workspace.join("charters");
-    std::fs::create_dir_all(&journal_dir)?;
-    let _lock = WorkspaceLock::try_acquire(&mounts.workspace)?
-        .ok_or_else(|| WorkspaceError::WorkspaceLocked(mounts.workspace.clone()))?;
-    recover_pending(&journal_dir)?;
     let bytes = std::fs::read(&target)?;
     let effects = EffectBatch::new(
         vec![Effect::Remove {
@@ -1298,7 +1258,7 @@ pub fn delete_plan_file(
     )
     .map_err(|error| WorkspaceError::Actions(error.to_string()))?;
     crate::validate_preconditions(&mounts, effects.preconditions())?;
-    crate::execute_effects(&mounts, &journal_dir, effects.effects())
+    crate::execute_effects(&mounts, effects.effects())
 }
 
 /// Read and parse one explicitly named calendar file.

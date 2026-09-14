@@ -1,10 +1,9 @@
-use clearhead_core::domain::update::ActionUpdate;
+use clearhead_core::ActionSelector;
 use clearhead_core::workspace::sidecar::{ActionMeta, CharterMetadata, sidecar_path};
-use clearhead_core::{Action, ActionSelector, ActionState};
+use clearhead_workspace_fs::delete_action;
 use clearhead_workspace_fs::read_actions;
 use clearhead_workspace_fs::sidecar::read_sidecar;
 use clearhead_workspace_fs::sidecar::write_sidecar;
-use clearhead_workspace_fs::{delete_action, insert_action, update_action};
 use uuid::Uuid;
 
 fn selector(id: Uuid, name: &str) -> ActionSelector {
@@ -20,17 +19,6 @@ fn workspace() -> (tempfile::TempDir, std::path::PathBuf) {
     let charters = temp.path().join("charters");
     std::fs::create_dir_all(&charters).unwrap();
     (temp, charters.join("work.actions"))
-}
-
-fn plant(source: &std::path::Path, content: &str) {
-    let charters = source.parent().unwrap();
-    let tmp = charters.join(".tmp.recover");
-    std::fs::write(&tmp, content).unwrap();
-    std::fs::write(
-        charters.join(".pending"),
-        format!("{}\t{}\n", tmp.display(), source.display()),
-    )
-    .unwrap();
 }
 
 #[test]
@@ -83,70 +71,4 @@ fn delete_reaches_completed_subtree_without_rewriting_active() {
     assert!(result.from_completed);
     assert!(read_actions(&completed).unwrap().is_empty());
     assert_eq!(std::fs::read(&source).unwrap(), active_before);
-}
-
-#[test]
-fn insert_recovers_before_preparing() {
-    let (temp, source) = workspace();
-    std::fs::write(
-        &source,
-        "[ ] Existing #019f733d-4600-7000-8000-000000000001\n",
-    )
-    .unwrap();
-    plant(
-        &source,
-        "[ ] Existing #019f733d-4600-7000-8000-000000000001\n[ ] X #019f733d-4600-7000-8000-000000000002\n",
-    );
-    insert_action(
-        temp.path(),
-        &source,
-        Action {
-            id: Uuid::new_v4(),
-            name: "Y".into(),
-            state: ActionState::NotStarted,
-            ..Default::default()
-        },
-        None,
-    )
-    .unwrap();
-    assert_eq!(
-        read_actions(&source)
-            .unwrap()
-            .iter()
-            .map(|a| a.name.as_str())
-            .collect::<Vec<_>>(),
-        ["Existing", "X", "Y"]
-    );
-}
-
-#[test]
-fn update_recovers_before_preparing() {
-    let (temp, source) = workspace();
-    let id: Uuid = "019f733d-4600-7000-8000-000000000001".parse().unwrap();
-    std::fs::write(&source, format!("[ ] Task #{id}\n")).unwrap();
-    plant(&source, &format!("[ ] Renamed #{id}\n"));
-    update_action(
-        temp.path(),
-        &source,
-        &selector(id, "Task"),
-        ActionUpdate {
-            priority: Some(2),
-            ..Default::default()
-        },
-    )
-    .unwrap();
-    let actions = read_actions(&source).unwrap();
-    assert_eq!(actions[0].name, "Renamed");
-    assert_eq!(actions[0].priority, Some(2));
-}
-
-#[test]
-fn delete_recovers_before_preparing() {
-    let (temp, source) = workspace();
-    let a: Uuid = "019f733d-4600-7000-8000-000000000001".parse().unwrap();
-    let b: Uuid = "019f733d-4600-7000-8000-000000000002".parse().unwrap();
-    std::fs::write(&source, format!("[ ] A #{a}\n[ ] B #{b}\n")).unwrap();
-    plant(&source, &format!("[ ] B #{b}\n"));
-    delete_action(temp.path(), &source, &selector(b, "B")).unwrap();
-    assert!(read_actions(&source).unwrap().is_empty());
 }

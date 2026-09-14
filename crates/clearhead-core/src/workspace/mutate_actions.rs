@@ -7,8 +7,7 @@ use crate::domain::collect_subtree_ids;
 use crate::domain::update::{ActionUpdate, apply_updates, disallowed_terminal_update};
 use crate::workspace::actions::{Action, ActionList, OutputFormat, format};
 use crate::workspace::resource::{
-    Effect, EffectBatch, ExpectedResource, PreparedMutation, ResourceLocation,
-    ResourcePrecondition, WorkspacePath,
+    Effect, EffectBatch, ExpectedResource, ResourceLocation, ResourcePrecondition, WorkspacePath,
 };
 use crate::workspace::selector::{ActionSelector, unique_selector_match};
 use crate::workspace::sidecar::{CharterMetadata, render_sidecar};
@@ -57,14 +56,6 @@ pub struct PreparedDeleteOutcome {
     pub from_completed: bool,
 }
 
-#[derive(Debug, Clone)]
-pub struct DeletePreparedState {
-    pub active: ActionList,
-    pub completed: ActionList,
-    pub active_sidecar: CharterMetadata,
-    pub completed_sidecar: CharterMetadata,
-}
-
 /// Insert one action into an active list without touching the filesystem.
 pub fn plan_action_insert(
     active: &[Action],
@@ -96,7 +87,7 @@ pub fn prepare_action_insert(
     source: ActionResourceState,
     new_action: Action,
     parent: Option<&ActionSelector>,
-) -> Result<PreparedMutation<ActionList, PreparedInsertOutcome>, ActionPrepareError> {
+) -> Result<(EffectBatch, PreparedInsertOutcome), ActionPrepareError> {
     let parent_id = match parent {
         Some(selector) => Some(
             unique_selector_match(&source.actions, selector)
@@ -113,8 +104,7 @@ pub fn prepare_action_insert(
     let action_id = new_action.id;
     let next = plan_action_insert(&source.actions, new_action, parent_id);
     let effects = write_batch(&source.path, &next, source.expected)?;
-    Ok(PreparedMutation::with_outcome(
-        next,
+    Ok((
         effects,
         PreparedInsertOutcome {
             action_id,
@@ -128,7 +118,7 @@ pub fn prepare_action_update(
     source: ActionResourceState,
     selector: &ActionSelector,
     update: ActionUpdate,
-) -> Result<PreparedMutation<ActionList, PreparedUpdateOutcome>, ActionPrepareError> {
+) -> Result<(EffectBatch, PreparedUpdateOutcome), ActionPrepareError> {
     if let Some(state) = disallowed_terminal_update(&update) {
         return Err(ActionPrepareError::Domain(format!(
             "cannot set state to {state:?} via update; use complete/cancel, which cascade to the subtree and archive it"
@@ -149,8 +139,7 @@ pub fn prepare_action_update(
         .expect("selected action came from active list");
     apply_updates(target, update);
     let effects = write_batch(&source.path, &next, source.expected)?;
-    Ok(PreparedMutation::with_outcome(
-        next,
+    Ok((
         effects,
         PreparedUpdateOutcome {
             action_id,
@@ -165,7 +154,7 @@ pub fn prepare_action_delete(
     active_sidecar: SidecarResourceState,
     completed_sidecar: SidecarResourceState,
     selector: &ActionSelector,
-) -> Result<PreparedMutation<DeletePreparedState, PreparedDeleteOutcome>, ActionPrepareError> {
+) -> Result<(EffectBatch, PreparedDeleteOutcome), ActionPrepareError> {
     let mut active_actions = active.actions;
     let mut completed_actions = completed.actions;
     let (from_completed, action_id) = match unique_selector_match(&active_actions, selector)
@@ -244,13 +233,7 @@ pub fn prepare_action_delete(
     }
     let batch = EffectBatch::new(effects, preconditions)
         .map_err(|error| ActionPrepareError::Domain(error.to_string()))?;
-    Ok(PreparedMutation::with_outcome(
-        DeletePreparedState {
-            active: active_actions,
-            completed: completed_actions,
-            active_sidecar: active_meta,
-            completed_sidecar: completed_meta,
-        },
+    Ok((
         batch,
         PreparedDeleteOutcome {
             action_id,
@@ -336,18 +319,15 @@ mod tests {
     #[test]
     fn insert_preparation_emits_one_logical_write() {
         let inserted = action("inserted", None);
-        let prepared = prepare_action_insert(
+        let (batch, outcome) = prepare_action_insert(
             resource("charters/work.actions", vec![]),
             inserted.clone(),
             None,
         )
         .unwrap();
-        assert_eq!(prepared.effects().effects().len(), 1);
-        assert_eq!(prepared.outcome().action_id, inserted.id);
-        assert_eq!(
-            prepared.outcome().source_path.as_str(),
-            "charters/work.actions"
-        );
+        assert_eq!(batch.effects().len(), 1);
+        assert_eq!(outcome.action_id, inserted.id);
+        assert_eq!(outcome.source_path.as_str(), "charters/work.actions");
     }
 
     #[cfg(feature = "formatting")]
@@ -362,7 +342,7 @@ mod tests {
         metadata
             .actions
             .insert(child.id.to_string(), Default::default());
-        let prepared = prepare_action_delete(
+        let (batch, _outcome) = prepare_action_delete(
             resource("charters/work.actions", vec![parent.clone(), child]),
             resource("charters/work.completed.actions", vec![]),
             SidecarResourceState {
@@ -378,8 +358,22 @@ mod tests {
             &ActionSelector::from(&parent),
         )
         .unwrap();
-        assert_eq!(prepared.effects().effects().len(), 2);
-        assert_eq!(prepared.effects().preconditions().len(), 4);
-        assert!(prepared.next_state().active_sidecar.actions.is_empty());
+        // Two writes: the active file (subtree removed) and its sidecar (pruned).
+        assert_eq!(batch.effects().len(), 2);
+        assert_eq!(batch.preconditions().len(), 4);
+        // The pruned sidecar write carries an empty `actions` map — the same
+        // fact the old next_state exposed, now asserted on the emitted bytes.
+        let sidecar_write = batch
+            .effects()
+            .iter()
+            .find_map(|effect| match effect {
+                Effect::Write { path, bytes } if path.path.as_str() == "charters/.work.json" => {
+                    Some(bytes)
+                }
+                _ => None,
+            })
+            .expect("a write to the active sidecar");
+        let pruned: CharterMetadata = serde_json::from_slice(sidecar_write).unwrap();
+        assert!(pruned.actions.is_empty());
     }
 }

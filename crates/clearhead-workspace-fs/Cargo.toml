@@ -17,7 +17,6 @@ thiserror = "2.0"
 blake3 = "1.8"
 uuid = "1.0"
 serde_json = "1.0"
-fs2 = "0.4"
 tempfile = "3.8"
 
 [dev-dependencies]

@@ -45,7 +45,7 @@
 use std::collections::{BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
 
-use crate::durability::{PendingBatch, WorkspaceLock, recover_pending};
+use crate::durability::atomic_write;
 use clearhead_core::domain::ActionState;
 use clearhead_core::workspace::action_files::completed_actions_path;
 use clearhead_core::workspace::archive_charter::{
@@ -143,7 +143,7 @@ pub fn archive_charter(
     query: &str,
     opts: &ArchiveCharterOptions,
 ) -> Result<ArchiveCharterResult, ArchiveCharterError> {
-    let (_lock, charters) = prepare_archive_read(root, opts)?;
+    let charters = prepare_archive_read(root, opts)?;
 
     let mc = select_archive_charter(&charters, query)?
         .ok_or_else(|| ArchiveCharterError::NotFound(query.to_string()))?
@@ -163,7 +163,7 @@ pub fn archive_terminal_charters(
     root: &Path,
     opts: &ArchiveCharterOptions,
 ) -> Result<Vec<ArchiveCharterResult>, ArchiveCharterError> {
-    let (_lock, charters) = prepare_archive_read(root, opts)?;
+    let charters = prepare_archive_read(root, opts)?;
 
     let terminal_roots: Vec<MarkdownCharter> = charters
         .iter()
@@ -365,7 +365,7 @@ fn archive_many(
     // source and destination revisions immediately before native durable intent.
     // The journal lives in `charters/`, where normal loading recovers it.
     let effects = prepare_move_effects(&layout.data_root, &moves)?;
-    deliver_move_effects(&layout.data_root, &layout.charter_root, &effects)?;
+    deliver_move_effects(&layout.data_root, &effects)?;
 
     // Remove directory-form charter folders deepest-first so a fully archived
     // subtree collapses cleanly once its descendants have moved out.
@@ -432,7 +432,6 @@ fn prepare_move_effects(
 
 fn deliver_move_effects(
     data_root: &Path,
-    journal_dir: &Path,
     effects: &EffectBatch,
 ) -> Result<(), ArchiveCharterError> {
     for precondition in effects.preconditions() {
@@ -446,31 +445,50 @@ fn deliver_move_effects(
             )));
         }
     }
-    let mut batch = PendingBatch::new(journal_dir.to_path_buf());
-    for effect in effects.effects() {
+    apply_move_effects(data_root, effects.effects()).map_err(|error| {
+        ArchiveCharterError::Delivery(DeliveryError::NotApplied(error.to_string()))
+    })
+}
+
+/// Apply charter-archive effects directly, without a write-ahead journal.
+///
+/// Additive ordering (direct-delivery charter §4): content-producing effects
+/// (writes, moves) are applied before removals, so an interrupted archive
+/// leaves a recoverable duplicate for `doctor` to reconcile rather than a hole.
+fn apply_move_effects(data_root: &Path, effects: &[Effect]) -> std::io::Result<()> {
+    let (removals, additions): (Vec<&Effect>, Vec<&Effect>) = effects
+        .iter()
+        .partition(|effect| matches!(effect, Effect::Remove { .. }));
+
+    for effect in additions {
         match effect {
             Effect::Write { path, bytes } => {
-                batch.stage(data_root.join(path.path.as_str()), bytes)?
+                atomic_write(&data_root.join(path.path.as_str()), bytes)?;
             }
             Effect::Move {
                 source,
                 destination,
-            } => batch.stage_move(
-                data_root.join(source.path.as_str()),
-                data_root.join(destination.path.as_str()),
-            )?,
-            Effect::Remove { path } => batch.stage_remove(data_root.join(path.path.as_str()))?,
+            } => {
+                let destination = data_root.join(destination.path.as_str());
+                if let Some(parent) = destination.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
+                std::fs::rename(data_root.join(source.path.as_str()), destination)?;
+            }
+            Effect::Remove { .. } => unreachable!("removals are partitioned out and applied last"),
         }
     }
-    match batch.commit() {
-        Ok(()) => Ok(()),
-        Err(error) if journal_dir.join(".pending").exists() => Err(ArchiveCharterError::Delivery(
-            DeliveryError::RecoveryRequired(error.to_string()),
-        )),
-        Err(error) => Err(ArchiveCharterError::Delivery(DeliveryError::NotApplied(
-            error.to_string(),
-        ))),
+
+    for effect in removals {
+        if let Effect::Remove { path } = effect {
+            match std::fs::remove_file(data_root.join(path.path.as_str())) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error),
+            }
+        }
     }
+    Ok(())
 }
 
 fn required_revision(path: &Path) -> Result<ResourceRevision, ArchiveCharterError> {
@@ -526,21 +544,11 @@ fn archive_layout(root: &Path) -> ArchiveLayout {
 fn prepare_archive_read(
     root: &Path,
     opts: &ArchiveCharterOptions,
-) -> Result<(Option<WorkspaceLock>, Vec<MarkdownCharter>), ArchiveCharterError> {
+) -> Result<Vec<MarkdownCharter>, ArchiveCharterError> {
     if opts.dry_run {
-        return Ok((None, read_workspace(root, None)?.charters));
+        return Ok(read_workspace(root, None)?.charters);
     }
-
-    let layout = archive_layout(root);
-    let lock = acquire_mutation_lock(&layout)?;
-    recover_pending(&layout.charter_root)?;
-    Ok((Some(lock), load_workspace(root, None)?))
-}
-
-fn acquire_mutation_lock(layout: &ArchiveLayout) -> Result<WorkspaceLock, ArchiveCharterError> {
-    WorkspaceLock::try_acquire(&layout.data_root)?.ok_or_else(|| {
-        ArchiveCharterError::Workspace(WorkspaceError::WorkspaceLocked(layout.data_root.clone()))
-    })
+    Ok(load_workspace(root, None)?)
 }
 
 /// Files owned by a directory-form charter, recursively, sorted for
@@ -778,8 +786,7 @@ mod tests {
         .unwrap();
 
         std::fs::write(&source, "[x] changed\n").unwrap();
-        let error =
-            deliver_move_effects(root.path(), &root.path().join("charters"), &batch).unwrap_err();
+        let error = deliver_move_effects(root.path(), &batch).unwrap_err();
         assert!(error.to_string().contains("changed before delivery"));
         assert!(source.exists());
         assert!(!destination.exists());
@@ -807,15 +814,6 @@ mod tests {
             "[x] Older #019f733d-45d2-7dd2-91dc-8631f33c6b77\n",
         )
         .expect("write completed history");
-        let pending_source = charters_dir.join(".pending-source");
-        let pending_dest = charters_dir.join("replayed.actions");
-        let pending_journal = charters_dir.join(".pending");
-        std::fs::write(&pending_source, "[ ] Must not replay\n").unwrap();
-        std::fs::write(
-            &pending_journal,
-            format!("{}\t{}\n", pending_source.display(), pending_dest.display()),
-        )
-        .unwrap();
 
         let result = archive_charter(
             &root,
@@ -832,19 +830,6 @@ mod tests {
         assert!(result.was_dry_run);
         assert!(charters_dir.join("done.actions").exists());
         assert!(charters_dir.join("done.completed.actions").exists());
-        assert!(pending_source.exists(), "dry-run must not replay the batch");
-        assert!(
-            pending_journal.exists(),
-            "dry-run must preserve the journal"
-        );
-        assert!(
-            !pending_dest.exists(),
-            "dry-run must not create destinations"
-        );
-        assert!(
-            !root.join(".clearhead/.clearhead.lock").exists(),
-            "dry-run must not create or rewrite the mutation lock"
-        );
         assert!(!root.join(".clearhead/archive").exists());
     }
 
@@ -918,51 +903,6 @@ mod tests {
             "b"
         );
         assert!(!root.join(".clearhead/charters/.pending").exists());
-    }
-
-    #[test]
-    fn archive_recovers_pending_intent_before_loading_and_preparing_moves() {
-        let temp = tempfile::tempdir().unwrap();
-        let root = temp.path().join("ws");
-        let charters = root.join(".clearhead/charters");
-        std::fs::create_dir_all(&charters).unwrap();
-        std::fs::write(
-            charters.join("done.md"),
-            "---\nalias: done\nstate: Closed\n---\n# Done\n",
-        )
-        .unwrap();
-        std::fs::write(
-            charters.join("done.actions"),
-            "[x] Prior #019f733d-45b2-7f21-bcad-5610887b7230\n",
-        )
-        .unwrap();
-        let charter_id = find_charter(&read_workspace(&root, None).unwrap().charters, "done")
-            .unwrap()
-            .id;
-        let staged = charters.join(".tmp.recovered");
-        std::fs::write(
-            &staged,
-            "[x] Recovered #019f733d-45c2-7dd2-91dc-8631f33c6b77\n",
-        )
-        .unwrap();
-        std::fs::write(
-            charters.join(".pending"),
-            format!(
-                "{}\t{}\n",
-                staged.display(),
-                charters.join("done.actions").display()
-            ),
-        )
-        .unwrap();
-
-        let result = archive_charter(&root, "done", &ArchiveCharterOptions::default()).unwrap();
-        let archived =
-            std::fs::read_to_string(result.archive_dir.join(format!("{charter_id}.actions")))
-                .unwrap();
-        assert_eq!(result.primary_actions_swept, 1);
-        assert!(!charters.join(".pending").exists());
-        assert!(!staged.exists());
-        assert!(archived.contains("Recovered"));
     }
 
     #[test]
@@ -1486,30 +1426,6 @@ mod tests {
             ops_md.contains(&format!("parent: {work_uuid}")),
             "cross-boundary parent must be materialized as a UUID:\n{ops_md}"
         );
-    }
-
-    #[test]
-    fn archive_refuses_lock_contention() {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let root = temp.path().join("ws");
-        let charters = root.join(".clearhead/charters");
-        std::fs::create_dir_all(&charters).unwrap();
-        std::fs::write(
-            charters.join("done.md"),
-            "---\nalias: done\nstate: Closed\n---\n# Done\n",
-        )
-        .unwrap();
-        std::fs::write(charters.join("done.actions"), "").unwrap();
-        let data_root = root.join(".clearhead");
-        let _lock = WorkspaceLock::try_acquire(&data_root).unwrap().unwrap();
-
-        let error = archive_charter(&root, "done", &ArchiveCharterOptions::default()).unwrap_err();
-
-        assert!(matches!(
-            error,
-            ArchiveCharterError::Workspace(WorkspaceError::WorkspaceLocked(_))
-        ));
-        assert!(charters.join("done.md").exists());
     }
 
     #[test]

@@ -3,7 +3,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
-use crate::durability::{WorkspaceLock, recover_pending};
 use chrono::Local;
 use clearhead_core::workspace::resource::{
     MountId, ResourceLocation, ResourceRevision, WorkspacePath,
@@ -114,9 +113,6 @@ pub fn apply_doctor_repairs(
     }
     let mounts = NativeWorkspaceMounts::resolve(workspace_root, external_plans);
     let charter_root = mounts.workspace.join("charters");
-    let _lock = WorkspaceLock::try_acquire(&mounts.workspace)?
-        .ok_or_else(|| WorkspaceError::Actions("workspace is locked by another writer".into()))?;
-    recover_pending(&charter_root)?;
 
     let current = diagnose_workspace(workspace_root, external_plans)?;
     if current.repairs != repairs {

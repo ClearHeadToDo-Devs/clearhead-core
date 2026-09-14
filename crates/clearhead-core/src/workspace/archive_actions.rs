@@ -9,7 +9,7 @@ use crate::domain::{close_subtree, collect_subtree_ids};
 use crate::workspace::actions::{Action, ActionList, ActionState, OutputFormat, format};
 use crate::workspace::mutate_actions::{ActionPrepareError, ActionResourceState};
 use crate::workspace::resource::{
-    Effect, EffectBatch, PreparedMutation, ResourceLocation, ResourcePrecondition, WorkspacePath,
+    Effect, EffectBatch, ResourceLocation, ResourcePrecondition, WorkspacePath,
 };
 use crate::workspace::selector::{ActionSelector, unique_selector_match};
 
@@ -113,12 +113,6 @@ pub struct PreparedCloseOutcome {
 }
 
 #[derive(Debug, Clone)]
-pub struct ClosePreparedState {
-    pub active: ActionList,
-    pub completed: ActionList,
-}
-
-#[derive(Debug, Clone)]
 pub struct PreparedReopenOutcome {
     pub action_id: Uuid,
     pub reopened_count: usize,
@@ -131,12 +125,16 @@ pub fn prepare_action_archive(
     active: ActionResourceState,
     completed: ActionResourceState,
     archived_at: DateTime<Local>,
-) -> Result<PreparedMutation<ClosePreparedState, PreparedArchiveOutcome>, ActionPrepareError> {
+) -> Result<(EffectBatch, PreparedArchiveOutcome), ActionPrepareError> {
     let plan = plan_action_archive_at(&active.actions, &completed.actions, archived_at);
     let mut effects = Vec::new();
     if plan.archived_count > 0 {
-        effects.push(write_effect(&active.path, &plan.active_actions)?);
+        // Additive ordering (direct-delivery charter §4): write the destination
+        // gaining the subtree (completed) before the source losing it (active).
+        // With no write-ahead journal, an interrupted apply then leaves a
+        // recoverable duplicate for `doctor` to reconcile, never a hole.
         effects.push(write_effect(&completed.path, &plan.completed_actions)?);
+        effects.push(write_effect(&active.path, &plan.active_actions)?);
     }
     let batch = EffectBatch::new(
         effects,
@@ -152,11 +150,7 @@ pub fn prepare_action_archive(
         ],
     )
     .map_err(|error| ActionPrepareError::Domain(error.to_string()))?;
-    Ok(PreparedMutation::with_outcome(
-        ClosePreparedState {
-            active: plan.active_actions,
-            completed: plan.completed_actions,
-        },
+    Ok((
         batch,
         PreparedArchiveOutcome {
             archived_count: plan.archived_count,
@@ -172,7 +166,7 @@ pub fn prepare_close_action_subtree(
     selector: &ActionSelector,
     closing_state: ActionState,
     completed_at: DateTime<Local>,
-) -> Result<PreparedMutation<ClosePreparedState, PreparedCloseOutcome>, ActionPrepareError> {
+) -> Result<(EffectBatch, PreparedCloseOutcome), ActionPrepareError> {
     if !matches!(
         closing_state,
         ActionState::Completed | ActionState::Cancelled
@@ -203,11 +197,7 @@ pub fn prepare_close_action_subtree(
                 ],
             )
             .map_err(|error| ActionPrepareError::Domain(error.to_string()))?;
-            return Ok(PreparedMutation::with_outcome(
-                ClosePreparedState {
-                    active: active_actions,
-                    completed: completed_actions,
-                },
+            return Ok((
                 batch,
                 PreparedCloseOutcome {
                     action_id: completed_id,
@@ -249,9 +239,13 @@ pub fn prepare_close_action_subtree(
     let closed_count = closed.len();
     completed_actions.append(&mut closed);
     let batch = EffectBatch::new(
+        // Additive ordering (direct-delivery charter §4): destination
+        // (completed, gaining the closed subtree) before source (active,
+        // losing it), so an interrupted apply leaves a recoverable duplicate
+        // rather than a hole.
         vec![
-            write_effect(&active.path, &active_actions)?,
             write_effect(&completed.path, &completed_actions)?,
+            write_effect(&active.path, &active_actions)?,
         ],
         vec![
             ResourcePrecondition {
@@ -265,11 +259,7 @@ pub fn prepare_close_action_subtree(
         ],
     )
     .map_err(|error| ActionPrepareError::Domain(error.to_string()))?;
-    Ok(PreparedMutation::with_outcome(
-        ClosePreparedState {
-            active: active_actions,
-            completed: completed_actions,
-        },
+    Ok((
         batch,
         PreparedCloseOutcome {
             action_id,
@@ -294,7 +284,7 @@ pub fn prepare_reopen_action_subtree(
     active: ActionResourceState,
     completed: ActionResourceState,
     selector: &ActionSelector,
-) -> Result<PreparedMutation<ClosePreparedState, PreparedReopenOutcome>, ActionPrepareError> {
+) -> Result<(EffectBatch, PreparedReopenOutcome), ActionPrepareError> {
     let mut active_actions = active.actions;
     let mut completed_actions = completed.actions;
     let completed_id = unique_selector_match(&completed_actions, selector)
@@ -312,11 +302,7 @@ pub fn prepare_reopen_action_subtree(
                 &completed.path,
                 completed.expected,
             )?;
-            return Ok(PreparedMutation::with_outcome(
-                ClosePreparedState {
-                    active: active_actions,
-                    completed: completed_actions,
-                },
+            return Ok((
                 batch,
                 PreparedReopenOutcome {
                     action_id: open_id,
@@ -346,6 +332,10 @@ pub fn prepare_reopen_action_subtree(
     let reopened_count = reopened.len();
     active_actions.append(&mut reopened);
     let batch = EffectBatch::new(
+        // Additive ordering (direct-delivery charter §4): here the destination
+        // is `active` (gaining the reopened subtree) and the source is
+        // `completed` (losing it), so destination-first means active-first —
+        // the mirror of archive/close. Do not reorder to match them.
         vec![
             write_effect(&active.path, &active_actions)?,
             write_effect(&completed.path, &completed_actions)?,
@@ -362,11 +352,7 @@ pub fn prepare_reopen_action_subtree(
         ],
     )
     .map_err(|error| ActionPrepareError::Domain(error.to_string()))?;
-    Ok(PreparedMutation::with_outcome(
-        ClosePreparedState {
-            active: active_actions,
-            completed: completed_actions,
-        },
+    Ok((
         batch,
         PreparedReopenOutcome {
             action_id,
@@ -494,7 +480,7 @@ mod tests {
     #[test]
     fn close_preparation_emits_active_and_completed_writes() {
         let target = action("target", ActionState::NotStarted, None);
-        let prepared = prepare_close_action_subtree(
+        let (batch, outcome) = prepare_close_action_subtree(
             resource("charters/work.actions", vec![target.clone()]),
             resource("charters/work.completed.actions", vec![]),
             &ActionSelector::from(&target),
@@ -502,15 +488,92 @@ mod tests {
             Local::now(),
         )
         .unwrap();
-        assert_eq!(prepared.effects().effects().len(), 2);
-        assert_eq!(prepared.effects().preconditions().len(), 2);
-        assert_eq!(prepared.outcome().closed_count, 1);
+        assert_eq!(batch.effects().len(), 2);
+        assert_eq!(batch.preconditions().len(), 2);
+        assert_eq!(outcome.closed_count, 1);
+    }
+
+    #[cfg(feature = "formatting")]
+    fn write_destination(effect: &Effect) -> &str {
+        match effect {
+            Effect::Write { path, .. } => path.path.as_str(),
+            other => panic!("expected a write effect, got {other:?}"),
+        }
+    }
+
+    /// Additive ordering (direct-delivery charter §4): with no write-ahead
+    /// journal, close and archive must emit the destination-gaining write
+    /// (`completed`) BEFORE the source-losing write (`active`), so an
+    /// interrupted apply leaves a recoverable duplicate for `doctor` rather than
+    /// a hole. Reopen is the mirror (active-first) and is asserted separately.
+    #[cfg(feature = "formatting")]
+    #[test]
+    fn close_and_archive_emit_the_completed_write_before_the_active_write() {
+        let target = action("target", ActionState::NotStarted, None);
+        let closed = prepare_close_action_subtree(
+            resource("charters/work.actions", vec![target.clone()]),
+            resource("charters/work.completed.actions", vec![]),
+            &ActionSelector::from(&target),
+            ActionState::Completed,
+            Local::now(),
+        )
+        .unwrap();
+        let effects = closed.0.effects();
+        assert_eq!(
+            write_destination(&effects[0]),
+            "charters/work.completed.actions",
+            "close must add to completed before subtracting from active"
+        );
+        assert_eq!(write_destination(&effects[1]), "charters/work.actions");
+
+        let archived = prepare_action_archive(
+            resource(
+                "charters/work.actions",
+                vec![action("done", ActionState::Completed, None)],
+            ),
+            resource("charters/work.completed.actions", vec![]),
+            Local::now(),
+        )
+        .unwrap();
+        let effects = archived.0.effects();
+        assert_eq!(
+            write_destination(&effects[0]),
+            "charters/work.completed.actions",
+            "archive must add to completed before subtracting from active"
+        );
+        assert_eq!(write_destination(&effects[1]), "charters/work.actions");
+    }
+
+    /// Reopen moves the other way: `active` is the destination (gaining the
+    /// reopened subtree), so it must be written first — the mirror of
+    /// close/archive. This pins the ordering so the identical write pattern is
+    /// never "corrected" to match them.
+    #[cfg(feature = "formatting")]
+    #[test]
+    fn reopen_emits_the_active_write_before_the_completed_write() {
+        let done = action("done", ActionState::Completed, None);
+        let reopened = prepare_reopen_action_subtree(
+            resource("charters/work.actions", vec![]),
+            resource("charters/work.completed.actions", vec![done.clone()]),
+            &ActionSelector::from(&done),
+        )
+        .unwrap();
+        let effects = reopened.0.effects();
+        assert_eq!(
+            write_destination(&effects[0]),
+            "charters/work.actions",
+            "reopen must add to active before subtracting from completed"
+        );
+        assert_eq!(
+            write_destination(&effects[1]),
+            "charters/work.completed.actions"
+        );
     }
 
     #[cfg(feature = "formatting")]
     #[test]
     fn no_op_archive_retains_read_set_preconditions_without_effects() {
-        let prepared = prepare_action_archive(
+        let (batch, _outcome) = prepare_action_archive(
             resource(
                 "charters/work.actions",
                 vec![action("open", ActionState::NotStarted, None)],
@@ -519,8 +582,8 @@ mod tests {
             Local::now(),
         )
         .unwrap();
-        assert!(prepared.effects().is_empty());
-        assert_eq!(prepared.effects().preconditions().len(), 2);
+        assert!(batch.is_empty());
+        assert_eq!(batch.preconditions().len(), 2);
     }
 
     #[test]
@@ -555,30 +618,30 @@ mod tests {
             r.completed_at = Some(Local::now());
             r
         };
-        let prepared = prepare_reopen_action_subtree(
+        let (batch, outcome) = prepare_reopen_action_subtree(
             resource("charters/work.actions", vec![]),
             resource("charters/work.completed.actions", vec![root.clone()]),
             &ActionSelector::from(&root),
         )
         .unwrap();
-        assert_eq!(prepared.effects().effects().len(), 2);
-        assert_eq!(prepared.outcome().reopened_count, 1);
-        assert!(!prepared.outcome().already_open);
-        assert_eq!(prepared.outcome().action_id, root.id);
+        assert_eq!(batch.effects().len(), 2);
+        assert_eq!(outcome.reopened_count, 1);
+        assert!(!outcome.already_open);
+        assert_eq!(outcome.action_id, root.id);
     }
 
     #[cfg(feature = "formatting")]
     #[test]
     fn reopen_of_an_already_open_action_is_a_no_op() {
         let open = action("still open", ActionState::NotStarted, None);
-        let prepared = prepare_reopen_action_subtree(
+        let (batch, outcome) = prepare_reopen_action_subtree(
             resource("charters/work.actions", vec![open.clone()]),
             resource("charters/work.completed.actions", vec![]),
             &ActionSelector::from(&open),
         )
         .unwrap();
-        assert!(prepared.effects().is_empty());
-        assert!(prepared.outcome().already_open);
-        assert_eq!(prepared.outcome().reopened_count, 0);
+        assert!(batch.is_empty());
+        assert!(outcome.already_open);
+        assert_eq!(outcome.reopened_count, 0);
     }
 }

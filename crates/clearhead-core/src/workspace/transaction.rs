@@ -25,8 +25,7 @@ use crate::verb_result::{VerbError, VerbOutcome, canonical_id};
 use crate::workspace::actions::format::require_actions_formatting;
 use crate::workspace::actions::{Action, ActionState};
 use crate::workspace::resource::{
-    Effect, EffectBatch, ExpectedResource, PreparedMutation, ResourceLocation,
-    ResourcePrecondition, WorkspacePath,
+    Effect, EffectBatch, ExpectedResource, ResourceLocation, ResourcePrecondition, WorkspacePath,
 };
 
 // ============================================================================
@@ -409,17 +408,15 @@ pub fn prepare_transaction(
     operations: &[NormalizedOperation],
     now: DateTime<Local>,
     dry_run: bool,
-) -> Result<PreparedMutation<TransactionModel, PreparedTransactionOutcome>, TransactionError> {
+) -> Result<(EffectBatch, PreparedTransactionOutcome), TransactionError> {
     require_actions_formatting().map_err(TransactionError::Request)?;
 
-    let prior_model = model.clone();
     let outcomes = match apply_operations(&mut model, operations, now) {
         Ok(outcomes) => outcomes,
         Err((operation, error)) => {
             let batch =
                 EffectBatch::new(Vec::new(), Vec::new()).expect("an empty effect batch is valid");
-            return Ok(PreparedMutation::with_outcome(
-                prior_model,
+            return Ok((
                 batch,
                 PreparedTransactionOutcome::Rejected { operation, error },
             ));
@@ -444,8 +441,7 @@ pub fn prepare_transaction(
     if dry_run {
         let batch =
             EffectBatch::new(Vec::new(), Vec::new()).expect("an empty effect batch is valid");
-        return Ok(PreparedMutation::with_outcome(
-            model,
+        return Ok((
             batch,
             PreparedTransactionOutcome::DryRun {
                 operations: outcomes,
@@ -483,8 +479,7 @@ pub fn prepare_transaction(
     }
     let batch = EffectBatch::new(effects, preconditions)
         .map_err(|error| TransactionError::Request(error.to_string()))?;
-    Ok(PreparedMutation::with_outcome(
-        model,
+    Ok((
         batch,
         PreparedTransactionOutcome::Committed {
             operations: outcomes,
@@ -662,16 +657,17 @@ mod tests {
         )]);
         let operations = vec![NormalizedOperation::Complete { target: target.id }];
 
-        let prepared = prepare_transaction(model, &operations, Local::now(), false).unwrap();
+        let (batch, outcome) =
+            prepare_transaction(model, &operations, Local::now(), false).unwrap();
 
-        assert_eq!(prepared.effects().effects().len(), 2);
-        assert_eq!(prepared.effects().preconditions().len(), 2);
+        assert_eq!(batch.effects().len(), 2);
+        assert_eq!(batch.preconditions().len(), 2);
         assert_eq!(
-            prepared.effects().preconditions()[0].expected,
+            batch.preconditions()[0].expected,
             ExpectedResource::Revision(active_revision)
         );
         assert!(matches!(
-            prepared.outcome(),
+            outcome,
             PreparedTransactionOutcome::Committed { files, .. } if files.len() == 2
         ));
     }
