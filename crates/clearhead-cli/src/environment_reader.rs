@@ -12,6 +12,11 @@ pub use clearhead_workspace_fs::config::{
     resolve_file_path, resolve_workspace_paths,
 };
 
+/// The user workspace root: the configured `data_dir`, else `$XDG_DATA_HOME/clearhead`.
+pub fn user_data_dir(config: &Config) -> PathBuf {
+    resolve_file_path(&config.data_dir, &get_data_dir())
+}
+
 /// Configuration loaded from file and environment variables
 /// Uses flat structure with cli_ prefix for implementation-specific settings
 #[derive(Debug, Deserialize, Clone)]

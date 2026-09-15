@@ -14,6 +14,7 @@ pub mod archive_charter;
 pub mod archive_facts;
 pub mod calendar;
 pub mod charter;
+pub mod init;
 pub mod manifest;
 pub mod mutate_actions;
 pub mod resource;
@@ -62,7 +63,11 @@ pub use calendar::reconcile::{
 };
 pub use calendar::sync_store::{PlansSyncStore, decode_plans_sync_store, encode_plans_sync_store};
 pub use charter::{
-    MarkdownCharter, append_log_entry, format_charter, implicit_charter, parse_charter,
+    MarkdownCharter, append_log_entry, charter_frontmatter_id, format_charter, implicit_charter,
+    parse_charter,
+};
+pub use init::{
+    InitPlan, InitRequest, InitSnapshot, ReadmeId, RootId, plan_workspace_init, resolve_root_id,
 };
 pub use manifest::{WorkspaceManifest, parse_workspace_manifest, render_workspace_manifest};
 pub use mutate_actions::{

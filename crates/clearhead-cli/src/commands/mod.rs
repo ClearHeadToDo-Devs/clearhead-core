@@ -21,8 +21,8 @@ use tracing::warn;
 use uuid::Uuid;
 
 use crate::environment_reader::{
-    Config, ensure_dir_exists, find_project_data_dir, get_data_dir, load_config,
-    resolve_config_path, resolve_file_path,
+    Config, ensure_dir_exists, find_project_data_dir, load_config, resolve_config_path,
+    resolve_file_path,
 };
 use clearhead_cli::ActionList;
 use clearhead_cli::telemetry::{TelemetryEvent, Tool, emit_event};
@@ -49,11 +49,7 @@ impl CommandContext {
         // context wins — a project detected from the pwd always outranks
         // config. `config.data_dir` only relocates the fallback user
         // workspace used outside any project.
-        let user_data_dir = if config.data_dir.is_empty() {
-            get_data_dir()
-        } else {
-            resolve_file_path(&config.data_dir, &get_data_dir())
-        };
+        let user_data_dir = crate::environment_reader::user_data_dir(&config);
         let data_dir = if config.default_to_user_scope {
             user_data_dir
         } else {

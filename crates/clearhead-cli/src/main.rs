@@ -104,7 +104,7 @@ fn real_main() {
 fn run_command(cli: &argparser::Cli) -> anyhow::Result<()> {
     // Init bootstraps the workspace — runs before CommandContext to avoid
     // creating XDG dirs in a directory that isn't yet initialized.
-    if let Verb::Init = &cli.command {
+    if let Verb::Init { user, name } = &cli.command {
         // `--workspace` is global (it restricts other commands to an existing
         // named workspace), but it is meaningless for `init`, which *creates* a
         // workspace in the current directory. Reject it rather than silently
@@ -115,7 +115,7 @@ fn run_command(cli: &argparser::Cli) -> anyhow::Result<()> {
                  in the current directory and does not accept it"
             );
         }
-        return commands::init::run(cli.config.clone());
+        return commands::init::run(cli.config.clone(), *user, name.clone());
     }
 
     let ctx = CommandContext::new(cli)?;
@@ -456,6 +456,6 @@ fn dispatch(cli: &argparser::Cli, ctx: &CommandContext) -> anyhow::Result<()> {
             } => commands::charter::close_charter(ctx, query.as_deref(), file.as_deref(), *dry_run),
         },
         Verb::CompleteValues { kind } => commands::complete_values(ctx, *kind),
-        Verb::Init => unreachable!("handled before CommandContext construction"),
+        Verb::Init { .. } => unreachable!("handled before CommandContext construction"),
     }
 }

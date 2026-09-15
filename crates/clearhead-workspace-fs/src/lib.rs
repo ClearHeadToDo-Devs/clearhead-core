@@ -6,6 +6,7 @@ pub mod calendar;
 pub mod discovery;
 pub mod doctor;
 pub mod durability;
+pub mod init;
 pub mod manifest;
 pub mod mounts;
 pub mod sidecar;
@@ -26,6 +27,7 @@ pub use discovery::{ManifestSourceType, WorkspaceManifestEntry, collect_workspac
 pub use doctor::{
     apply_doctor_repairs, diagnose_workspace, diagnose_workspace_read, observe_doctor,
 };
+pub use init::init_workspace;
 pub use manifest::{read_workspace_manifest, workspace_manifest_path, write_workspace_manifest};
 pub use mounts::{
     NativeWorkspaceMounts, charter_root, list_action_files, load_domain_model, load_workspace,

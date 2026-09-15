@@ -300,8 +300,16 @@ pub enum Verb {
         dry_run: bool,
     },
 
-    /// Initialize a clearhead workspace in the current directory
-    Init,
+    /// Initialize a project workspace in the current directory, or the user workspace with --user
+    Init {
+        /// Initialize the user workspace at the configured data_dir instead of the current directory
+        #[arg(long)]
+        user: bool,
+
+        /// Workspace name to persist (default: the directory name, or the username with --user)
+        #[arg(long)]
+        name: Option<String>,
+    },
 
     /// Generate shell completion script
     #[command(hide = true)]

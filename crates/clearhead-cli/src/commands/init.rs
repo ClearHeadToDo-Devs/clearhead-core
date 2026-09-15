@@ -2,73 +2,81 @@ use anyhow::Context;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use clearhead_core::workspace::WorkspaceManifest;
+use clearhead_core::workspace::resource::Effect;
+use clearhead_core::workspace::{InitPlan, InitRequest, RootId};
 
-use crate::environment_reader::{get_data_dir, load_config, resolve_file_path};
+use crate::environment_reader::{load_config, user_data_dir};
 
-/// Guard against nesting `.clearhead/` inside a user-layout workspace.
+/// Guard against nesting `.clearhead/` inside the user workspace.
 ///
-/// User-layout workspaces (specifications/workspace.md) keep their charters
-/// directly at the resolved data_dir root, with no `.clearhead/` wrapper.
-/// Running `init` at or under that root would create a shell that
-/// `find_project_data_dir()` then treats as a separate (empty) project
-/// workspace, silently shadowing the real charters. Returns the resolved
-/// user data dir when `cwd` collides with it; `None` means it's safe to
-/// proceed (including when `.clearhead/` already exists at `cwd` — that's
-/// the existing-config idempotent path, not new nesting).
-fn nested_in_user_workspace(
-    cwd: &Path,
-    clearhead_dir: &Path,
-    config_path_override: Option<PathBuf>,
-) -> anyhow::Result<Option<PathBuf>> {
+/// The user workspace keeps its charters directly at the resolved data_dir,
+/// with no `.clearhead/` wrapper. Running a project `init` at or under that
+/// root would create a shell that `find_project_data_dir()` then treats as a
+/// separate (empty) project workspace, silently shadowing the real charters.
+/// An existing `.clearhead/` at `cwd` is the idempotent rerun path, not new
+/// nesting.
+fn nested_in_user_workspace(cwd: &Path, clearhead_dir: &Path, user_data_dir: &Path) -> bool {
     if clearhead_dir.exists() {
-        return Ok(None);
+        return false;
     }
-    let config = load_config(config_path_override).context("Failed to load config")?;
-    let user_data_dir = if config.data_dir.is_empty() {
-        get_data_dir()
-    } else {
-        resolve_file_path(&config.data_dir, &get_data_dir())
-    };
-    let canonical_cwd = cwd.canonicalize().unwrap_or_else(|_| cwd.to_path_buf());
-    let canonical_user_data_dir = user_data_dir
-        .canonicalize()
-        .unwrap_or_else(|_| user_data_dir.clone());
-    if canonical_cwd.starts_with(&canonical_user_data_dir) {
-        Ok(Some(user_data_dir))
-    } else {
-        Ok(None)
-    }
+    let canonical = |path: &Path| path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    canonical(cwd).starts_with(canonical(user_data_dir))
 }
 
-/// Initialize a clearhead workspace in the current directory.
+/// Initialize a project workspace in the current directory, or the user
+/// workspace at the configured data_dir with `--user`.
 ///
-/// Creates `.clearhead/workspace.json` (the identity manifest) with a stable
-/// workspace UUID and a name derived from the current directory. Bootstraps the
-/// project root charter at `.clearhead/charters/next.actions` if absent.
-/// Idempotent — safe to rerun; does not overwrite existing data or identity.
-pub fn run(config_path_override: Option<PathBuf>) -> anyhow::Result<()> {
-    let cwd = std::env::current_dir().context("Cannot determine current directory")?;
+/// Both scopes bootstrap the same data-root shape (specifications/workspace.md,
+/// Initialization): the identity manifest, the root charter README, its
+/// `next.actions` anchor and sidecar. Idempotent — a rerun only fills in what
+/// is missing and never re-mints identity.
+pub fn run(
+    config_path_override: Option<PathBuf>,
+    user: bool,
+    name: Option<String>,
+) -> anyhow::Result<()> {
+    let config = load_config(config_path_override).context("Failed to load config")?;
+    let user_data_dir = user_data_dir(&config);
 
+    let (root, default_name) = if user {
+        (user_data_dir, name.unwrap_or_else(current_username))
+    } else {
+        let cwd = std::env::current_dir().context("Cannot determine current directory")?;
+        prepare_project(&cwd, &user_data_dir)?;
+        let dir_name = cwd
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("workspace")
+            .to_string();
+        (cwd, name.unwrap_or(dir_name))
+    };
+
+    let request = InitRequest {
+        name: default_name,
+        workspace_id: uuid::Uuid::now_v7(),
+        root_id: uuid::Uuid::now_v7(),
+        created_at: chrono::Local::now().format("%Y-%m-%d").to_string(),
+    };
+    let plan = clearhead_workspace_fs::init_workspace(&root, &request)
+        .context("Failed to initialize workspace")?;
+    report(&plan);
+    Ok(())
+}
+
+/// Create `.clearhead/` and its scoped `.gitignore`, refusing to nest inside
+/// the user workspace.
+fn prepare_project(cwd: &Path, user_data_dir: &Path) -> anyhow::Result<()> {
     let clearhead_dir = cwd.join(".clearhead");
-
-    if let Some(user_data_dir) =
-        nested_in_user_workspace(&cwd, &clearhead_dir, config_path_override)?
-    {
+    if nested_in_user_workspace(cwd, &clearhead_dir, user_data_dir) {
         anyhow::bail!(
-            "Refusing to init: {} is at or inside the resolved user workspace root ({}).\n\
-             Nesting .clearhead/ here would shadow the real charters. Run `clearhead init` \
-             from a different directory, or set `data_dir` in your config to relocate the \
-             user workspace first.",
+            "Refusing to init: {} is at or inside the user workspace root ({}).\n\
+             Nesting .clearhead/ here would shadow the real charters. Run `clearhead init --user` \
+             to initialize the user workspace itself, or `clearhead init` from a different directory.",
             cwd.display(),
             user_data_dir.display()
         );
     }
-
-    let charters_dir = clearhead_dir.join("charters");
-
     fs::create_dir_all(&clearhead_dir).context("Failed to create .clearhead/")?;
-    fs::create_dir_all(&charters_dir).context("Failed to create .clearhead/charters/")?;
 
     // Keep config.local.json — the git-ignored personal override — out of version
     // control. A scoped .clearhead/.gitignore owns this rule so we don't touch the
@@ -86,51 +94,39 @@ pub fn run(config_path_override: Option<PathBuf>) -> anyhow::Result<()> {
         }
     }
     fs::write(&gitignore_path, gitignore).context("Failed to write .clearhead/.gitignore")?;
-
-    // A project layout always has a root charter. `next.actions` is the signal
-    // that lets the loader resolve flat named charters as its children. Without
-    // it, a fresh `init -> add charter -> add plan` invents an unresolvable
-    // parent and routes the plan into a charterless vdir slug.
-    let root_actions = charters_dir.join("next.actions");
-    if !root_actions.exists() {
-        clearhead_workspace_fs::durability::atomic_write(&root_actions, "")
-            .context("Failed to create root charter actions file")?;
-    }
-    clearhead_workspace_fs::sidecar::stamp_charter_id(&root_actions, uuid::Uuid::now_v7())
-        .context("Failed to record root charter id")?;
-
-    // Idempotent on an existing identity: init never clobbers or re-mints a
-    // workspace that already has a workspace_id (which would orphan the named
-    // graph). Root-charter repair above is deliberately still performed.
-    if clearhead_workspace_fs::read_workspace_manifest(&cwd)
-        .workspace_id
-        .is_some()
-    {
-        println!("Already initialized — workspace already has an identity.");
-        return Ok(());
-    }
-
-    let workspace_name = cwd
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("workspace")
-        .to_string();
-    let workspace_id = uuid::Uuid::now_v7().to_string();
-    let created_at = chrono::Local::now().format("%Y-%m-%d").to_string();
-
-    let manifest = WorkspaceManifest {
-        workspace_id: Some(workspace_id.clone()),
-        workspace_name: Some(workspace_name.clone()),
-        created_at: Some(created_at),
-    };
-    clearhead_workspace_fs::write_workspace_manifest(&cwd, &manifest)
-        .context("Failed to write workspace.json")?;
-
-    println!(
-        "Initialized workspace '{}' ({})",
-        workspace_name, workspace_id
-    );
     Ok(())
+}
+
+/// The login name that seeds a user workspace's name; persisted once by init.
+fn current_username() -> String {
+    std::env::var("USER")
+        .or_else(|_| std::env::var("USERNAME"))
+        .unwrap_or_else(|_| "user".to_string())
+}
+
+fn report(plan: &InitPlan) {
+    let name = plan.manifest.workspace_name.as_deref().unwrap_or_default();
+    let id = plan.manifest.workspace_id.as_deref().unwrap_or_default();
+    if plan.minted_workspace {
+        println!("Initialized workspace '{}' ({})", name, id);
+    } else {
+        println!("Workspace '{}' already initialized ({})", name, id);
+    }
+    for effect in plan.batch.effects() {
+        if let Effect::Write { path, .. } = effect {
+            println!("  wrote {}", path.path.as_str());
+        }
+    }
+    match plan.root_id {
+        RootId::Resolved(_) => {}
+        RootId::MissingFromReadme => eprintln!(
+            "warning: charters/README.md declares no id; root identity left for `clearhead doctor`"
+        ),
+        RootId::Conflict { readme, sidecar } => eprintln!(
+            "warning: root charter ids disagree (README.md {}, .next.json {}); left for `clearhead doctor`",
+            readme, sidecar
+        ),
+    }
 }
 
 #[cfg(test)]
@@ -138,33 +134,15 @@ mod tests {
     use super::*;
     use tempfile::TempDir;
 
-    /// Writes a config.json pointing `data_dir` at the given path. Returns
-    /// the owning TempDir alongside the config path — caller must keep the
-    /// guard alive for as long as the path is used.
-    fn config_pointing_at(data_dir: &Path) -> (TempDir, PathBuf) {
-        let tmp = TempDir::new().unwrap();
-        let config_path = tmp.path().join("config.json");
-        clearhead_workspace_fs::durability::atomic_write(
-            &config_path,
-            format!(r#"{{"data_dir": "{}"}}"#, data_dir.display()),
-        )
-        .unwrap();
-        (tmp, config_path)
-    }
-
     #[test]
     fn refuses_at_user_workspace_root() {
         let user_ws = TempDir::new().unwrap();
-        let (_guard, config_path) = config_pointing_at(user_ws.path());
-
-        let result = nested_in_user_workspace(
-            user_ws.path(),
-            &user_ws.path().join(".clearhead"),
-            Some(config_path),
-        )
-        .unwrap();
-
-        assert_eq!(result, Some(user_ws.path().to_path_buf()));
+        let root = user_ws.path();
+        assert!(nested_in_user_workspace(
+            root,
+            &root.join(".clearhead"),
+            root
+        ));
     }
 
     #[test]
@@ -172,29 +150,22 @@ mod tests {
         let user_ws = TempDir::new().unwrap();
         let nested = user_ws.path().join("charters").join("sub");
         fs::create_dir_all(&nested).unwrap();
-        let (_guard, config_path) = config_pointing_at(user_ws.path());
-
-        let result =
-            nested_in_user_workspace(&nested, &nested.join(".clearhead"), Some(config_path))
-                .unwrap();
-
-        assert_eq!(result, Some(user_ws.path().to_path_buf()));
+        assert!(nested_in_user_workspace(
+            &nested,
+            &nested.join(".clearhead"),
+            user_ws.path()
+        ));
     }
 
     #[test]
     fn allows_unrelated_project_dir() {
         let user_ws = TempDir::new().unwrap();
         let project = TempDir::new().unwrap();
-        let (_guard, config_path) = config_pointing_at(user_ws.path());
-
-        let result = nested_in_user_workspace(
+        assert!(!nested_in_user_workspace(
             project.path(),
             &project.path().join(".clearhead"),
-            Some(config_path),
-        )
-        .unwrap();
-
-        assert_eq!(result, None);
+            user_ws.path()
+        ));
     }
 
     #[test]
@@ -202,11 +173,10 @@ mod tests {
         let user_ws = TempDir::new().unwrap();
         let clearhead_dir = user_ws.path().join(".clearhead");
         fs::create_dir_all(&clearhead_dir).unwrap();
-        let (_guard, config_path) = config_pointing_at(user_ws.path());
-
-        let result =
-            nested_in_user_workspace(user_ws.path(), &clearhead_dir, Some(config_path)).unwrap();
-
-        assert_eq!(result, None);
+        assert!(!nested_in_user_workspace(
+            user_ws.path(),
+            &clearhead_dir,
+            user_ws.path()
+        ));
     }
 }

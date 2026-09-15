@@ -170,6 +170,20 @@ pub fn parse_charter(content: &str) -> Result<Charter, String> {
     })
 }
 
+/// Read a charter's declared frontmatter `id` without deriving one.
+///
+/// Unlike [`parse_charter`], which falls back to a title-derived v5 id, this
+/// returns `None` when no `id` is declared, so a caller can tell a persisted
+/// identity apart from a derivation.
+pub fn charter_frontmatter_id(content: &str) -> Result<Option<Uuid>, String> {
+    match split_frontmatter(content).0 {
+        Some(yaml) => serde_yaml_ng::from_str::<CharterFrontmatter>(yaml)
+            .map(|fm| fm.id)
+            .map_err(|e| format!("Invalid charter frontmatter: {}", e)),
+        None => Ok(None),
+    }
+}
+
 /// Create a minimal implicit charter from a name.
 ///
 /// Uses a deterministic v5 UUID so the same name always produces the same ID.
