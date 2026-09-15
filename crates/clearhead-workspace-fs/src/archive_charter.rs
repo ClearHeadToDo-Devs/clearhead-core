@@ -208,7 +208,7 @@ fn archive_many(
         .iter()
         .filter_map(|mc| {
             let acts = layout.charter_root.join(mc.actions_file.as_ref()?);
-            if acts.file_name()?.to_str()? == "next.actions" {
+            if acts.file_name()?.to_str()? == clearhead_core::workspace::PRIMARY_ACTIONS_FILE {
                 acts.parent().map(PathBuf::from)
             } else {
                 None
@@ -247,7 +247,7 @@ fn archive_many(
         // Optional charter subdirectory (for directory-form charters like health/next.actions)
         let charter_subdir: Option<PathBuf> = acts_abs.as_ref().and_then(|p| {
             let filename = p.file_name()?.to_str()?;
-            if filename == "next.actions" {
+            if filename == clearhead_core::workspace::PRIMARY_ACTIONS_FILE {
                 p.parent().map(PathBuf::from)
             } else {
                 None

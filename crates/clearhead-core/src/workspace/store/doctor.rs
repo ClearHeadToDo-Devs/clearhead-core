@@ -6,14 +6,15 @@
 
 use super::findings::{Finding, FindingSeverity};
 use super::load::{WorkspaceRead, syntax_error_summary};
+use super::pathing::{PRIMARY_ACTIONS_FILE, PRIMARY_DOCUMENT_FILE};
 use crate::domain::{Action, ActionState, CharterState};
-use crate::workspace::charter::MarkdownCharter;
+use crate::workspace::charter::{MarkdownCharter, charter_frontmatter_id, parse_charter};
 use crate::workspace::manifest::WorkspaceManifest;
 use crate::workspace::resource::{ResourceLocation, ResourceRevision, WorkspacePath};
-use crate::workspace::sidecar::{CharterMetadata, parse_sidecar};
+use crate::workspace::sidecar::{CharterMetadata, parse_sidecar, sidecar_path};
 use chrono::{DateTime, Local};
 use serde::Serialize;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
@@ -59,6 +60,10 @@ pub struct DoctorEvidence {
     pub manifest: WorkspaceManifest,
     pub completed_actions: Vec<DoctorDocument>,
     pub archived_actions: Vec<DoctorDocument>,
+    /// Archived charter documents, searched for references to a replaced id.
+    pub archived_charters: Vec<DoctorDocument>,
+    /// The root charter's `charters/README.md`, when present.
+    pub root_readme: Option<DoctorDocument>,
     pub sidecars: Vec<DoctorSidecarEvidence>,
     pub plan_collections: Vec<DoctorCollectionEvidence>,
     pub durability_residue: Vec<DurabilityResidue>,
@@ -80,6 +85,12 @@ pub enum DoctorRepair {
     },
     RemovePlansCollection {
         location: ResourceLocation,
+        expected: ResourceRevision,
+    },
+    /// Rewrite the root sidecar's charter id to mirror the README's.
+    MirrorRootCharterId {
+        path: WorkspacePath,
+        id: Uuid,
         expected: ResourceRevision,
     },
 }
@@ -132,6 +143,13 @@ pub fn diagnose(read: &WorkspaceRead, evidence: &DoctorEvidence) -> Diagnosis {
     findings.extend(state_coherence_findings(charters));
     let known_action_ids = collect_known_action_ids(charters, &completed);
     let has_quarantined_source = findings.iter().any(|f| f.code == "syntax-errors");
+    check_root_identity(
+        read,
+        evidence,
+        !has_quarantined_source,
+        &mut findings,
+        &mut repairs,
+    );
     if !has_quarantined_source {
         check_sidecar_coherence(
             &evidence.sidecars,
@@ -710,6 +728,163 @@ fn check_durability_residue(residue: &[DurabilityResidue], findings: &mut Vec<Fi
 
 /// Every action with the file it lives in: open actions from loaded charters,
 /// closed ones from their completed archives.
+/// Legacy user-layout root document that now loads as a separate charter.
+const LEGACY_ROOT_DOCUMENT: &str = "next.md";
+
+/// The root charter's identity lives in `charters/README.md` frontmatter and its
+/// sidecar mirrors it (specifications/workspace.md, The Root Charter). Only a
+/// conflict whose replaced id nothing references is repaired; every other gap
+/// is reported, because roots are never merged silently.
+fn check_root_identity(
+    read: &WorkspaceRead,
+    evidence: &DoctorEvidence,
+    can_repair: bool,
+    findings: &mut Vec<Finding>,
+    repairs: &mut Vec<DoctorRepair>,
+) {
+    let readme = evidence
+        .root_readme
+        .as_ref()
+        .and_then(|document| document_text(document).ok());
+    let readme_alias = readme
+        .and_then(|text| parse_charter(text).ok())
+        .and_then(|charter| charter.alias);
+    if readme_alias.is_none() && evidence.manifest.workspace_name.is_none() {
+        findings.push(Finding::warning(
+            "unnamed-root-charter",
+            PRIMARY_DOCUMENT_FILE,
+            "the root charter has no README alias and the workspace has no persisted workspace_name, so it loads under a fallback name; run `clearhead init` to persist one",
+        ));
+    }
+    if read
+        .charters
+        .iter()
+        .any(|charter| charter.md_file.as_deref() == Some(Path::new(LEGACY_ROOT_DOCUMENT)))
+    {
+        findings.push(Finding::warning(
+            "legacy-root-document",
+            LEGACY_ROOT_DOCUMENT,
+            "next.md loads as a separate charter named `next`; the root's prose belongs in README.md, so merge it there by hand and delete next.md",
+        ));
+    }
+
+    let Some(readme) = readme else {
+        return;
+    };
+    let root_sidecar = sidecar_path(Path::new(PRIMARY_ACTIONS_FILE));
+    let sidecar = evidence
+        .sidecars
+        .iter()
+        .find(|sidecar| logical_path_buf(&sidecar.document.path) == root_sidecar);
+    let sidecar_id = sidecar
+        .and_then(parsed_sidecar)
+        .and_then(|metadata| metadata.charter)
+        .and_then(|charter| charter.id);
+
+    match charter_frontmatter_id(readme) {
+        Err(_) => {}
+        Ok(None) => findings.push(Finding::warning(
+            "root-readme-without-id",
+            PRIMARY_DOCUMENT_FILE,
+            match sidecar_id {
+                Some(id) => format!(
+                    "README.md declares no id, so the root's identity is derived on every load; its sidecar records {id}, which belongs in the README frontmatter"
+                ),
+                None => {
+                    "README.md declares no id, so the root's identity is derived on every load"
+                        .to_string()
+                }
+            },
+        )),
+        Ok(Some(readme_id)) => {
+            let (Some(sidecar), Some(sidecar_id)) = (sidecar, sidecar_id) else {
+                return;
+            };
+            if sidecar_id == readme_id {
+                return;
+            }
+            let path = logical_path_buf(&sidecar.document.path);
+            let references = id_references(sidecar_id, read, evidence, &sidecar.document.path);
+            if references.is_empty() && can_repair {
+                findings.push(Finding::warning(
+                    "root-identity-conflict",
+                    &path,
+                    format!(
+                        "root sidecar records {sidecar_id} but README.md declares {readme_id}; nothing references {sidecar_id}, so `doctor --fix` mirrors the README id"
+                    ),
+                ));
+                repairs.push(DoctorRepair::MirrorRootCharterId {
+                    path: sidecar.document.path.clone(),
+                    id: readme_id,
+                    expected: sidecar.document.revision.clone(),
+                });
+            } else {
+                let referenced_by = if references.is_empty() {
+                    "a quarantined source may reference it".to_string()
+                } else {
+                    format!("it is referenced by {}", references.join(", "))
+                };
+                findings.push(Finding::violation(
+                    "root-identity-conflict",
+                    &path,
+                    format!(
+                        "root sidecar records {sidecar_id} but README.md declares {readme_id}; {referenced_by}, so reconcile by hand"
+                    ),
+                ));
+            }
+        }
+    }
+}
+
+/// Workspace files that mention `id`, other than the root sidecar recording it.
+fn id_references(
+    id: Uuid,
+    read: &WorkspaceRead,
+    evidence: &DoctorEvidence,
+    root_sidecar: &WorkspacePath,
+) -> Vec<String> {
+    let needle = id.to_string();
+    let mut places = BTreeSet::new();
+    for charter in &read.charters {
+        let mentions_charter =
+            charter.id == id || charter.parent.as_deref() == Some(needle.as_str());
+        let mentions_action = charter.actions.iter().any(|sourced| {
+            sourced.action.charter.as_deref() == Some(needle.as_str())
+                || sourced
+                    .action
+                    .predecessors
+                    .iter()
+                    .flatten()
+                    .any(|predecessor| predecessor.raw_ref.contains(&needle))
+        });
+        if mentions_charter || mentions_action {
+            places.insert(path_text(&charter_file(charter)));
+        }
+    }
+    let live = evidence.completed_actions.iter().chain(
+        evidence
+            .sidecars
+            .iter()
+            .map(|sidecar| &sidecar.document)
+            .filter(|document| &document.path != root_sidecar),
+    );
+    for document in live {
+        if document_text(document).is_ok_and(|text| text.contains(&needle)) {
+            places.insert(document.path.to_string());
+        }
+    }
+    for document in evidence
+        .archived_actions
+        .iter()
+        .chain(&evidence.archived_charters)
+    {
+        if document_text(document).is_ok_and(|text| text.contains(&needle)) {
+            places.insert(format!("archive/{}", document.path));
+        }
+    }
+    places.into_iter().collect()
+}
+
 fn all_actions<'a>(
     charters: &'a [MarkdownCharter],
     completed: &'a HashMap<PathBuf, Vec<Action>>,

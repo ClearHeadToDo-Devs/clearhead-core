@@ -32,8 +32,10 @@ fn charter_md_path(
         .as_ref()
         .and_then(|p| {
             let dir = p.parent().unwrap_or(Path::new(""));
-            let md_name = if p.file_name().and_then(|n| n.to_str()) == Some("next.actions") {
-                "README.md".to_string()
+            let md_name = if p.file_name().and_then(|n| n.to_str())
+                == Some(clearhead_core::workspace::PRIMARY_ACTIONS_FILE)
+            {
+                clearhead_core::workspace::PRIMARY_DOCUMENT_FILE.to_string()
             } else {
                 format!("{}.md", p.file_stem()?.to_str()?)
             };
@@ -66,7 +68,7 @@ fn sub_charter_dir(
         .to_str()
         .and_then(|s| s.strip_suffix(".actions"))
         .unwrap_or("");
-    if without_ext == "next" {
+    if without_ext == clearhead_core::workspace::ROOT_ANCHOR_STEM {
         Ok(charter_root)
     } else {
         Ok(charter_root.join(without_ext))

@@ -42,7 +42,13 @@ fn read_charters_json_materializes_omitted_state_as_new() {
         panic!("read charters should emit JSON");
     };
 
-    assert_eq!(rows[0]["state"], "New");
+    let Some(charter) = rows
+        .as_array()
+        .and_then(|rows| rows.iter().find(|row| row["alias"] == "my-charter"))
+    else {
+        panic!("my-charter should be listed: {rows}");
+    };
+    assert_eq!(charter["state"], "New");
 }
 
 #[test]

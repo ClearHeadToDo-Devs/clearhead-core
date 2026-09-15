@@ -3,6 +3,8 @@
 //! Diagnosis remains read-only by default. `--fix` removes states doctor can
 //! prove have no workspace owner: stale sidecar metadata and unowned calendar
 //! collections. Removing a vdir collection may propagate through vdirsyncer.
+//! It also mirrors the root README's id into a conflicting root sidecar when
+//! nothing references the replaced id.
 
 use crate::commands::CommandContext;
 use anyhow::Context;
@@ -60,6 +62,7 @@ fn repair_unowned_state(
     let mut entries = 0;
     let mut files = 0;
     let mut collections = 0;
+    let mut identities = 0;
     for repair in &diagnosis.repairs {
         match repair {
             DoctorRepair::PruneSidecarEntry { path, id, .. } => {
@@ -79,6 +82,15 @@ fn repair_unowned_state(
                     path
                 );
             }
+            DoctorRepair::MirrorRootCharterId { path, id, .. } => {
+                identities += 1;
+                println!(
+                    "{} root charter id {} in {}",
+                    if dry_run { "Would mirror" } else { "Mirrored" },
+                    id,
+                    path
+                );
+            }
             DoctorRepair::RemovePlansCollection { location, .. } => {
                 collections += 1;
                 println!(
@@ -91,11 +103,12 @@ fn repair_unowned_state(
     }
     if dry_run {
         println!(
-            "Dry run: {} entr{}, {} file(s), and {} calendar collection(s) would be removed.",
+            "Dry run: {} entr{}, {} file(s), and {} calendar collection(s) would be removed; {} root charter id(s) would be mirrored.",
             entries,
             if entries == 1 { "y" } else { "ies" },
             files,
-            collections
+            collections,
+            identities
         );
         return Ok(());
     }

@@ -70,6 +70,16 @@ pub fn observe_doctor(
         .filter(|path| path.extension().and_then(|extension| extension.to_str()) == Some("actions"))
         .map(|path| observe_document(&archive_root, path))
         .collect::<Result<Vec<_>, _>>()?;
+    let archived_charters = walk_visible_files(&archive_root)
+        .into_iter()
+        .filter(|path| path.extension().and_then(|extension| extension.to_str()) == Some("md"))
+        .map(|path| observe_document(&archive_root, path))
+        .collect::<Result<Vec<_>, _>>()?;
+    let readme = charter_root.join(clearhead_core::workspace::PRIMARY_DOCUMENT_FILE);
+    let root_readme = readme
+        .is_file()
+        .then(|| observe_document(&charter_root, readme))
+        .transpose()?;
     let sidecars = walk_visible_files(&charter_root)
         .into_iter()
         .filter(|path| {
@@ -95,6 +105,8 @@ pub fn observe_doctor(
         manifest: crate::read_workspace_manifest(workspace_root),
         completed_actions,
         archived_actions,
+        archived_charters,
+        root_readme,
         sidecars,
         plan_collections,
         durability_residue,
@@ -131,30 +143,51 @@ pub fn apply_doctor_repairs(
             _ => None,
         })
         .collect::<BTreeMap<_, _>>();
-    let mut pruned_entries: BTreeMap<WorkspacePath, (ResourceRevision, BTreeSet<String>)> =
-        BTreeMap::new();
+    struct SidecarEdit {
+        expected: ResourceRevision,
+        prune: BTreeSet<String>,
+        charter_id: Option<uuid::Uuid>,
+    }
+    let mut sidecar_edits: BTreeMap<WorkspacePath, SidecarEdit> = BTreeMap::new();
     for repair in repairs {
-        if let DoctorRepair::PruneSidecarEntry { path, id, expected } = repair
-            && !removed_sidecars.contains_key(path)
-        {
-            let entry = pruned_entries
-                .entry(path.clone())
-                .or_insert_with(|| (expected.clone(), BTreeSet::new()));
-            if entry.0 != *expected {
-                return Err(WorkspaceError::Actions(format!(
-                    "doctor repair has inconsistent revisions for sidecar '{}'",
-                    path
-                )));
+        let (DoctorRepair::PruneSidecarEntry { path, expected, .. }
+        | DoctorRepair::MirrorRootCharterId { path, expected, .. }) = repair
+        else {
+            continue;
+        };
+        if removed_sidecars.contains_key(path) {
+            continue;
+        }
+        let edit = sidecar_edits
+            .entry(path.clone())
+            .or_insert_with(|| SidecarEdit {
+                expected: expected.clone(),
+                prune: BTreeSet::new(),
+                charter_id: None,
+            });
+        if edit.expected != *expected {
+            return Err(WorkspaceError::Actions(format!(
+                "doctor repair has inconsistent revisions for sidecar '{}'",
+                path
+            )));
+        }
+        match repair {
+            DoctorRepair::PruneSidecarEntry { id, .. } => {
+                edit.prune.insert(id.clone());
             }
-            entry.1.insert(id.clone());
+            DoctorRepair::MirrorRootCharterId { id, .. } => edit.charter_id = Some(*id),
+            _ => {}
         }
     }
-    for (relative, (expected, ids)) in pruned_entries {
+    for (relative, edit) in sidecar_edits {
         let path = charter_root.join(relative.as_str());
-        validate_file_revision(&path, &expected)?;
+        validate_file_revision(&path, &edit.expected)?;
         let mut metadata = crate::sidecar::read_sidecar(&path)?;
-        for id in ids {
+        for id in edit.prune {
             metadata.actions.remove(&id);
+        }
+        if let Some(id) = edit.charter_id {
+            metadata.charter.get_or_insert_with(Default::default).id = Some(id);
         }
         crate::sidecar::write_sidecar(&path, &metadata)?;
     }

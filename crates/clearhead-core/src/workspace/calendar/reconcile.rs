@@ -1658,8 +1658,8 @@ pub fn sync_import_actions_file(charter: &MarkdownCharter, import: &SyncImport) 
             .as_ref()
             .map(|path| path.with_extension("actions"))
             .unwrap_or_else(|| {
-                if import.plans_dir == Path::new("next") {
-                    PathBuf::from("next.actions")
+                if import.plans_dir == Path::new(crate::workspace::ROOT_ANCHOR_STEM) {
+                    PathBuf::from(crate::workspace::PRIMARY_ACTIONS_FILE)
                 } else {
                     PathBuf::from(format!("{}.actions", import.charter_name))
                 }

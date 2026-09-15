@@ -259,7 +259,8 @@ pub fn assemble_workspace(input: &WorkspaceAssemblyInput) -> Result<WorkspaceRea
         .entry(input.root_charter.clone())
         .or_insert_with(|| {
             let mut root = MarkdownCharter::from(implicit_charter(root_charter));
-            root.plans_dir = charter_collection_from_anchor(Path::new("next.actions"));
+            root.plans_dir =
+                charter_collection_from_anchor(Path::new(super::pathing::PRIMARY_ACTIONS_FILE));
             root
         });
     // A root without a README has no document to declare a state; it is

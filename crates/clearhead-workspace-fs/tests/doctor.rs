@@ -552,3 +552,133 @@ fn doctor_rejects_an_external_collection_repair_when_contents_changed() {
     assert!(error.to_string().contains("stale"));
     assert!(collection.join("new.ics").exists());
 }
+
+// --- Doctor: root charter identity reconciliation ---
+
+const README_ID: &str = "019c4f48-6441-75dd-b285-33718b9be996";
+const STALE_SIDECAR_ID: &str = "01a00884-5b88-7f80-b5e1-2c5106dd0842";
+
+fn conflicting_root(extra: &[(&str, &str)]) -> (TempDir, std::path::PathBuf) {
+    let readme = format!("---\nid: {README_ID}\nalias: platform\n---\n# Platform\n");
+    let sidecar = format!(r#"{{"charter":{{"id":"{STALE_SIDECAR_ID}"}}}}"#);
+    let mut files = vec![
+        ("README.md", readme.as_str()),
+        ("next.actions", ""),
+        (".next.json", sidecar.as_str()),
+    ];
+    files.extend_from_slice(extra);
+    let (outer, project) = make_named_project("platform", &files);
+    initialized(&project);
+    (outer, project)
+}
+
+fn has_mirror_repair(diagnosis: &clearhead_core::workspace::Diagnosis) -> bool {
+    diagnosis.repairs.iter().any(|repair| {
+        matches!(
+            repair,
+            clearhead_core::workspace::DoctorRepair::MirrorRootCharterId { .. }
+        )
+    })
+}
+
+#[test]
+fn doctor_mirrors_the_readme_id_into_an_unreferenced_conflicting_root_sidecar() {
+    let (_outer, project) = conflicting_root(&[]);
+
+    let diagnosis = clearhead_workspace_fs::diagnose_workspace(&project, None).unwrap();
+    let finding = diagnosis
+        .findings
+        .iter()
+        .find(|finding| finding.code == "root-identity-conflict")
+        .expect("conflict reported");
+    assert_eq!(
+        finding.severity,
+        clearhead_core::workspace::FindingSeverity::Warning
+    );
+    assert!(has_mirror_repair(&diagnosis));
+
+    clearhead_workspace_fs::apply_doctor_repairs(&project, None, &diagnosis.repairs).unwrap();
+
+    let sidecar = fs::read_to_string(project.join(".clearhead/charters/.next.json")).unwrap();
+    assert!(sidecar.contains(README_ID), "{sidecar}");
+    assert!(!sidecar.contains(STALE_SIDECAR_ID), "{sidecar}");
+    let after = clearhead_workspace_fs::diagnose_workspace(&project, None).unwrap();
+    assert!(
+        !after
+            .findings
+            .iter()
+            .any(|finding| finding.code == "root-identity-conflict"),
+        "{:?}",
+        after.findings
+    );
+}
+
+#[test]
+fn doctor_reports_a_referenced_root_identity_conflict_without_repairing() {
+    let child = format!("---\nalias: work\nparent: {STALE_SIDECAR_ID}\n---\n# Work\n");
+    let (_outer, project) = conflicting_root(&[("work.md", child.as_str())]);
+
+    let diagnosis = clearhead_workspace_fs::diagnose_workspace(&project, None).unwrap();
+    let finding = diagnosis
+        .findings
+        .iter()
+        .find(|finding| finding.code == "root-identity-conflict")
+        .expect("conflict reported");
+    assert_eq!(
+        finding.severity,
+        clearhead_core::workspace::FindingSeverity::Violation
+    );
+    assert!(finding.message.contains("work.md"), "{}", finding.message);
+    assert!(!has_mirror_repair(&diagnosis));
+}
+
+#[test]
+fn doctor_flags_a_root_readme_without_an_id() {
+    let workspace = make_workspace(&[("README.md", "---\nalias: demo\n---\n# Demo\n")]);
+    initialized(workspace.path());
+
+    let diagnosis = clearhead_workspace_fs::diagnose_workspace(workspace.path(), None).unwrap();
+
+    assert!(
+        diagnosis
+            .findings
+            .iter()
+            .any(|finding| finding.code == "root-readme-without-id")
+    );
+    assert!(!has_mirror_repair(&diagnosis));
+}
+
+#[test]
+fn doctor_flags_a_legacy_next_md_root_document() {
+    let workspace = make_workspace(&[
+        ("next.actions", ""),
+        (
+            "next.md",
+            "---\nid: 01951111-0000-7000-0000-0000000000aa\n---\n# next\n",
+        ),
+    ]);
+    initialized(workspace.path());
+
+    let diagnosis = clearhead_workspace_fs::diagnose_workspace(workspace.path(), None).unwrap();
+
+    assert!(
+        diagnosis
+            .findings
+            .iter()
+            .any(|finding| finding.code == "legacy-root-document")
+    );
+}
+
+#[test]
+fn doctor_flags_a_root_without_a_persisted_name() {
+    let workspace = make_workspace(&[("work.actions", "")]);
+
+    let diagnosis = clearhead_workspace_fs::diagnose_workspace(workspace.path(), None).unwrap();
+
+    assert!(
+        diagnosis
+            .findings
+            .iter()
+            .any(|finding| finding.code == "unnamed-root-charter")
+    );
+}

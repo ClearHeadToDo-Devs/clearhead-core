@@ -260,6 +260,24 @@ mod tests {
     }
 
     #[test]
+    fn bootstrap_paths_use_the_reserved_root_anchors() {
+        use crate::workspace::{PRIMARY_ACTIONS_FILE, PRIMARY_DOCUMENT_FILE, sidecar_path};
+        use std::path::Path;
+        assert_eq!(
+            ROOT_ACTIONS_PATH,
+            format!("charters/{PRIMARY_ACTIONS_FILE}")
+        );
+        assert_eq!(
+            ROOT_README_PATH,
+            format!("charters/{PRIMARY_DOCUMENT_FILE}")
+        );
+        assert_eq!(
+            Path::new(ROOT_SIDECAR_PATH),
+            Path::new("charters").join(sidecar_path(Path::new(PRIMARY_ACTIONS_FILE)))
+        );
+    }
+
+    #[test]
     fn fresh_workspace_gets_manifest_and_root_scaffold() {
         let plan = plan_workspace_init(&InitSnapshot::default(), &request()).unwrap();
         let writes = writes(&plan);

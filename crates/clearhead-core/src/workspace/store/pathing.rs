@@ -1,5 +1,13 @@
 use std::path::{Path, PathBuf};
 
+/// Reserved stem of every primary charter's action anchor and of the root's
+/// plan collection (`charters/next.actions`, `plans/next/`).
+pub const ROOT_ANCHOR_STEM: &str = "next";
+/// A primary charter's action anchor; at the charter root it anchors the workspace root.
+pub const PRIMARY_ACTIONS_FILE: &str = "next.actions";
+/// A primary charter's prose and identity anchor.
+pub const PRIMARY_DOCUMENT_FILE: &str = "README.md";
+
 /// Infer a charter name; the workspace root's primary files name the root charter.
 pub fn infer_charter_name_for_workspace(
     relative_path: &Path,
@@ -28,7 +36,7 @@ pub fn charter_collection_from_anchor(relative_path: &Path) -> PathBuf {
     let components: Vec<_> = relative_path.components().collect();
 
     if components.len() == 1 && is_primary_filename(filename) {
-        return PathBuf::from("next");
+        return PathBuf::from(ROOT_ANCHOR_STEM);
     }
 
     let named_owner;
@@ -140,13 +148,18 @@ pub(crate) fn strip_archive_suffix(stem: &str) -> &str {
 /// Both `next.actions` and `README.md` are "primary" files — they represent
 /// the charter itself, not a sub-charter.
 pub(crate) fn is_primary_filename(filename: &str) -> bool {
-    filename == "next.actions" || filename == "README.md"
+    filename == PRIMARY_ACTIONS_FILE || filename == PRIMARY_DOCUMENT_FILE
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::path::Path;
+
+    #[test]
+    fn primary_actions_file_is_the_root_anchor_stem() {
+        assert_eq!(PRIMARY_ACTIONS_FILE, format!("{ROOT_ANCHOR_STEM}.actions"));
+    }
 
     #[test]
     fn infer_charter_names() {

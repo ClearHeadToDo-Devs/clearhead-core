@@ -60,7 +60,7 @@ pub(crate) fn charter_stem(actions_path: &Path) -> String {
     // Primary file (next.actions) inside a subdirectory → use parent dir name,
     // except for the root charter in project layout where the parent directory
     // is the literal workspace container `charters/`.
-    if filename == "next.actions"
+    if filename == crate::workspace::PRIMARY_ACTIONS_FILE
         && let Some(parent) = actions_path.parent()
         && let Some(dir_name) = parent.file_name().and_then(|s| s.to_str())
     {

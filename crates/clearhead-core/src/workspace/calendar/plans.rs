@@ -59,7 +59,7 @@ pub fn infer_plan_charter_name_for_workspace(
     root_charter: &str,
 ) -> Option<String> {
     let slug = plan_charter_slug(relative_path)?;
-    if slug == "next" {
+    if slug == crate::workspace::ROOT_ANCHOR_STEM {
         Some(root_charter.to_string())
     } else {
         Some(slug)
@@ -77,7 +77,7 @@ pub fn infer_plan_charter_name(relative_path: &Path) -> Option<String> {
 /// (e.g. `work-feature`) is resolved at load time via slug matching.
 pub fn infer_plan_parent_for_workspace(relative_path: &Path, root_charter: &str) -> Option<String> {
     let slug = plan_charter_slug(relative_path)?;
-    (slug != "next").then(|| root_charter.to_string())
+    (slug != crate::workspace::ROOT_ANCHOR_STEM).then(|| root_charter.to_string())
 }
 
 /// Infer parent charter for an `.ics` path relative to `plans_root`.
