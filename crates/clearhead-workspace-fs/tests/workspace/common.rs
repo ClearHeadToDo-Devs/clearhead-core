@@ -53,6 +53,11 @@ pub fn make_named_project(name: &str, files: &[(&str, &str)]) -> (TempDir, std::
     let project = outer.path().join(name);
     let data = project.join(".clearhead").join("charters");
     fs::create_dir_all(&data).expect("failed to create project dir");
+    fs::write(
+        project.join(".clearhead/workspace.json"),
+        format!(r#"{{"workspace_name": "{name}"}}"#),
+    )
+    .expect("failed to write workspace manifest");
     for (filename, content) in files {
         let path = data.join(filename);
         if let Some(parent) = path.parent() {
@@ -64,7 +69,7 @@ pub fn make_named_project(name: &str, files: &[(&str, &str)]) -> (TempDir, std::
 }
 
 /// User-level layout: files live directly in root, no `.clearhead/` subdirectory.
-/// `project_root_charter` will be `None` — charter names come purely from filenames.
+/// Without a manifest its root charter takes the unnamed fallback name.
 pub fn make_user_workspace(files: &[(&str, &str)]) -> TempDir {
     let dir = tempfile::tempdir().expect("failed to create temp dir");
     let data = dir.path().join("charters");

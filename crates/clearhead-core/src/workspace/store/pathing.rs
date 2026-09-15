@@ -1,18 +1,15 @@
 use std::path::{Path, PathBuf};
 
-/// Infer charter name with optional project-root behavior.
+/// Infer a charter name; the workspace root's primary files name the root charter.
 pub fn infer_charter_name_for_workspace(
     relative_path: &Path,
-    project_root_charter: Option<&str>,
+    root_charter: &str,
 ) -> Option<String> {
     let filename = relative_path.file_name()?.to_str()?;
     let components: Vec<_> = relative_path.components().collect();
 
-    if components.len() == 1
-        && is_primary_filename(filename)
-        && let Some(project_name) = project_root_charter
-    {
-        return Some(project_name.to_string());
+    if components.len() == 1 && is_primary_filename(filename) {
+        return Some(root_charter.to_string());
     }
 
     infer_charter_name(relative_path)
@@ -83,27 +80,26 @@ pub fn infer_charter_name(relative_path: &Path) -> Option<String> {
     Some(strip_archive_suffix(stem).to_string())
 }
 
-/// Infer parent charter with optional project-root behavior.
+/// Infer a parent charter name; flat charters and top-level directories descend
+/// from the workspace's single root charter.
 pub fn infer_parent_charter_name_for_workspace(
     relative_path: &Path,
-    project_root_charter: Option<&str>,
+    root_charter: &str,
 ) -> Option<String> {
     let filename = relative_path.file_name()?.to_str()?;
     let components: Vec<_> = relative_path.components().collect();
 
-    if let Some(project_name) = project_root_charter {
-        if components.len() == 1 {
-            if is_primary_filename(filename)
-                || infer_charter_name(relative_path).as_deref() == Some(project_name)
-            {
-                return None;
-            }
-            return Some(project_name.to_string());
+    if components.len() == 1 {
+        if is_primary_filename(filename)
+            || infer_charter_name(relative_path).as_deref() == Some(root_charter)
+        {
+            return None;
         }
+        return Some(root_charter.to_string());
+    }
 
-        if components.len() == 2 && is_primary_filename(filename) {
-            return Some(project_name.to_string());
-        }
+    if components.len() == 2 && is_primary_filename(filename) {
+        return Some(root_charter.to_string());
     }
 
     infer_parent_charter_name(relative_path)
@@ -204,30 +200,24 @@ mod tests {
     #[test]
     fn infer_workspace_project_root_rules() {
         assert_eq!(
-            infer_charter_name_for_workspace(Path::new("next.actions"), Some("platform")),
+            infer_charter_name_for_workspace(Path::new("next.actions"), "platform"),
             Some("platform".into())
         );
         assert_eq!(
-            infer_parent_charter_name_for_workspace(Path::new("next.actions"), Some("platform")),
+            infer_parent_charter_name_for_workspace(Path::new("next.actions"), "platform"),
             None
         );
         assert_eq!(
-            infer_parent_charter_name_for_workspace(
-                Path::new("observability.actions"),
-                Some("platform")
-            ),
+            infer_parent_charter_name_for_workspace(Path::new("observability.actions"), "platform"),
             Some("platform".into())
         );
         assert_eq!(
-            infer_parent_charter_name_for_workspace(
-                Path::new("platform.actions"),
-                Some("platform")
-            ),
+            infer_parent_charter_name_for_workspace(Path::new("platform.actions"), "platform"),
             None,
             "a legacy named root anchor must not parent the project to itself"
         );
         assert_eq!(
-            infer_parent_charter_name_for_workspace(Path::new("platform.md"), Some("platform")),
+            infer_parent_charter_name_for_workspace(Path::new("platform.md"), "platform"),
             None,
             "the root Charter document must not infer a self-parent"
         );

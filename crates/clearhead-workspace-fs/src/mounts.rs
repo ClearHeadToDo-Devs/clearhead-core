@@ -7,7 +7,7 @@ use clearhead_core::domain::DomainModel;
 use clearhead_core::workspace::resource::{
     MountId, MountInventory, MountReadEvidence, ReadPlan, ResourceLocation, ResourceReadFailure,
     ResourceRevision, ResourceSnapshot, WorkspaceInventory, WorkspaceMounts, WorkspacePath,
-    WorkspaceScope, WorkspaceSnapshot,
+    WorkspaceSnapshot,
 };
 use clearhead_core::workspace::{
     MarkdownCharter, Workspace, WorkspaceAssemblyInput, WorkspaceError, WorkspaceRead,
@@ -25,32 +25,23 @@ use crate::calendar::read_plans_sync_store;
 pub struct NativeWorkspaceMounts {
     pub workspace: PathBuf,
     pub external_plans: Option<PathBuf>,
-    pub scope: WorkspaceScope,
+    /// Persisted name of the workspace's single root charter.
+    pub root_charter: String,
 }
 
 impl NativeWorkspaceMounts {
     pub fn resolve(workspace_root: &Path, external_plans: Option<&Path>) -> Self {
         let project_data = workspace_root.join(".clearhead");
-        let (workspace, scope) = if project_data.is_dir() {
-            let root_charter_name = std::fs::read_to_string(project_data.join("workspace.json"))
-                .ok()
-                .and_then(|s| clearhead_core::workspace::parse_workspace_manifest(&s).ok())
-                .and_then(|m| m.workspace_name)
-                .or_else(|| {
-                    workspace_root
-                        .file_name()
-                        .and_then(|n| n.to_str())
-                        .map(str::to_owned)
-                })
-                .unwrap_or_else(|| "workspace".to_owned());
-            (project_data, WorkspaceScope::Project { root_charter_name })
+        let workspace = if project_data.is_dir() {
+            project_data
         } else {
-            (workspace_root.to_path_buf(), WorkspaceScope::User)
+            workspace_root.to_path_buf()
         };
+        let root_charter = persisted_root_charter_name(&workspace);
         Self {
             workspace,
             external_plans: external_plans.map(Path::to_path_buf),
-            scope,
+            root_charter,
         }
     }
 
@@ -71,9 +62,9 @@ impl NativeWorkspaceMounts {
             .unwrap_or_else(|| self.workspace.join("plans"))
     }
 
-    /// Project-root charter identity derived while resolving the native layout.
-    pub fn project_root_charter(&self) -> Option<&str> {
-        self.scope.project_root_charter()
+    /// Name of the workspace's single root charter.
+    pub fn root_charter(&self) -> &str {
+        &self.root_charter
     }
 
     /// Resolve a logical resource location to its native physical path.
@@ -146,11 +137,34 @@ pub fn plans_root(root: &Path) -> PathBuf {
     NativeWorkspaceMounts::resolve(root, None).plans_root()
 }
 
-/// Detect the project-root charter identity for a native workspace.
-pub fn project_root_charter(root: &Path) -> Option<String> {
-    NativeWorkspaceMounts::resolve(root, None)
-        .project_root_charter()
-        .map(ToOwned::to_owned)
+/// The persisted root charter name for a native workspace.
+pub fn root_charter_name(root: &Path) -> String {
+    NativeWorkspaceMounts::resolve(root, None).root_charter
+}
+
+/// Root charter name when neither a README alias nor a persisted workspace name
+/// exists; `doctor` reports that gap.
+pub const UNNAMED_ROOT_CHARTER: &str = "workspace";
+
+/// The root charter's persisted name: its README `alias`, else the manifest's
+/// `workspace_name`. Never derived from the directory or the environment.
+///
+/// Reads `workspace.json` directly: `read_workspace_manifest` resolves mounts
+/// and would re-enter this function.
+fn persisted_root_charter_name(data_root: &Path) -> String {
+    use clearhead_core::workspace::init::{MANIFEST_PATH, ROOT_README_PATH};
+    let read = |path: &str| std::fs::read_to_string(data_root.join(path)).ok();
+    read(ROOT_README_PATH)
+        .and_then(|source| clearhead_core::workspace::parse_charter(&source).ok())
+        .and_then(|charter| charter.alias)
+        .or_else(|| {
+            read(MANIFEST_PATH)
+                .and_then(|source| {
+                    clearhead_core::workspace::parse_workspace_manifest(&source).ok()
+                })
+                .and_then(|manifest| manifest.workspace_name)
+        })
+        .unwrap_or_else(|| UNNAMED_ROOT_CHARTER.to_owned())
 }
 
 /// Relaxed native read: inventory and read bytes without replaying pending intent.
@@ -234,7 +248,7 @@ fn assemble_native(
         .map(|store| store.occurrence_links().clone())
         .unwrap_or_default();
     assemble_workspace(&WorkspaceAssemblyInput {
-        scope: mounts.scope,
+        root_charter: mounts.root_charter,
         inventory,
         reads,
         occurrence_links,
@@ -371,19 +385,13 @@ mod tests {
             NativeWorkspaceMounts::resolve(&root.path().join("project"), Some(external.as_path()));
         assert_eq!(mounts.workspace, root.path().join("project/.clearhead"));
         assert_eq!(mounts.external_plans, Some(external.clone()));
-        assert_eq!(
-            mounts.scope,
-            WorkspaceScope::Project {
-                root_charter_name: "project".into()
-            }
-        );
         assert_eq!(mounts.data_root(), root.path().join("project/.clearhead"));
         assert_eq!(
             mounts.charter_root(),
             root.path().join("project/.clearhead/charters")
         );
         assert_eq!(mounts.plans_root(), external);
-        assert_eq!(mounts.project_root_charter(), Some("project"));
+        assert_eq!(mounts.root_charter(), UNNAMED_ROOT_CHARTER);
     }
 
     #[test]
@@ -397,12 +405,32 @@ mod tests {
         assert_eq!(workspace_data_root(&project), project.join(".clearhead"));
         assert_eq!(charter_root(&project), project.join(".clearhead/charters"));
         assert_eq!(plans_root(&project), project.join(".clearhead/plans"));
-        assert_eq!(project_root_charter(&project).as_deref(), Some("project"));
 
         assert_eq!(workspace_data_root(&user), user);
         assert_eq!(charter_root(&user), user.join("charters"));
         assert_eq!(plans_root(&user), user.join("plans"));
-        assert_eq!(project_root_charter(&user), None);
+    }
+
+    #[test]
+    fn root_charter_name_prefers_readme_alias_then_persisted_workspace_name() {
+        let root = tempfile::tempdir().unwrap();
+        let project = root.path().join("checkout-dir");
+        std::fs::create_dir_all(project.join(".clearhead/charters")).unwrap();
+        assert_eq!(root_charter_name(&project), UNNAMED_ROOT_CHARTER);
+
+        std::fs::write(
+            project.join(".clearhead/workspace.json"),
+            r#"{"workspace_name": "platform"}"#,
+        )
+        .unwrap();
+        assert_eq!(root_charter_name(&project), "platform");
+
+        std::fs::write(
+            project.join(".clearhead/charters/README.md"),
+            "---\nalias: renamed\n---\n# Platform\n",
+        )
+        .unwrap();
+        assert_eq!(root_charter_name(&project), "renamed");
     }
 
     #[test]
@@ -422,9 +450,14 @@ mod tests {
         .unwrap();
 
         let mounted = load_domain_model(root.path(), None).unwrap();
-        assert_eq!(mounted.charters.len(), 1);
-        assert_eq!(mounted.charters[0].actions.len(), 1);
-        assert_eq!(mounted.charters[0].actions[0].id.to_string(), action_id);
+        assert_eq!(mounted.charters.len(), 2, "work plus the implicit root");
+        let work = mounted
+            .charters
+            .iter()
+            .find(|charter| charter.alias.as_deref() == Some("work"))
+            .unwrap();
+        assert_eq!(work.actions.len(), 1);
+        assert_eq!(work.actions[0].id.to_string(), action_id);
     }
 
     #[test]

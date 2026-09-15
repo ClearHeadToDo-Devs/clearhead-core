@@ -52,13 +52,20 @@ fn tree_nests_actions_under_their_charter() {
     .expect("tree json");
     let roots = doc.as_array().expect("tree is an array of roots");
 
-    // The charter is the single root; the top-level action nests under it, and
-    // the sub-action under the top-level action — the full upward part_of chain.
-    let charter = roots
+    // The workspace root heads the tree; the charter nests under it, the
+    // top-level action under the charter, and the sub-action under that — the
+    // full upward part_of chain.
+    let root = roots
         .iter()
         .find(|n| n["kind"] == "charter")
-        .expect("charter root present");
-    assert_eq!(charter["name"], "work");
+        .expect("root charter present");
+    assert_eq!(root["name"], "testws");
+    let charter = root["children"]
+        .as_array()
+        .expect("root children")
+        .iter()
+        .find(|n| n["name"] == "work")
+        .expect("work nests under the workspace root");
     assert_eq!(charter["status"], "New", "omitted source state is explicit");
     let container = &charter["children"][0];
     assert_eq!(container["name"], "Container");

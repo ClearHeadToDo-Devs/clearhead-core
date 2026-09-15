@@ -62,9 +62,16 @@ pub fn archive_charter_name(charter: &MarkdownCharter) -> String {
 }
 
 /// Resolve an outbound parent reference to canonical charter identity.
+///
+/// A parent with no files (the implicit root of a workspace without root files)
+/// has only a derived identity, so it resolves to `None` rather than
+/// crystallizing an id that nothing persists.
 pub fn resolve_archive_parent_uuid(parent: &str, all_charters: &[MarkdownCharter]) -> Option<Uuid> {
     match crate::reference::select_reference(all_charters, parent) {
-        crate::reference::ReferenceSelection::Unique { index, .. } => Some(all_charters[index].id),
+        crate::reference::ReferenceSelection::Unique { index, .. } => {
+            let charter = &all_charters[index];
+            (charter.md_file.is_some() || charter.actions_file.is_some()).then_some(charter.id)
+        }
         crate::reference::ReferenceSelection::NotFound
         | crate::reference::ReferenceSelection::Ambiguous { .. } => None,
     }
@@ -207,6 +214,23 @@ mod tests {
             Err(ArchivePolicyError::OpenActions { .. })
         ));
         assert!(validate_archive_candidate(&closed, 1, true).is_ok());
+    }
+
+    #[test]
+    fn fileless_parent_is_not_crystallized() {
+        let root = MarkdownCharter::from(crate::workspace::implicit_charter("workspace"));
+        assert_eq!(
+            resolve_archive_parent_uuid("workspace", std::slice::from_ref(&root)),
+            None
+        );
+
+        let mut backed = root;
+        backed.md_file = Some(std::path::PathBuf::from("README.md"));
+        let id = backed.id;
+        assert_eq!(
+            resolve_archive_parent_uuid("workspace", &[backed]),
+            Some(id)
+        );
     }
 
     #[test]

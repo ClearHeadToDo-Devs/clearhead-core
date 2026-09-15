@@ -52,5 +52,16 @@
                 ),
             ],
         ),
+        (
+            id: "26271b9c-d8d8-5fa8-b187-69cc15a4c594",
+            title: "md-merge",
+            description: None,
+            alias: Some("md-merge"),
+            parent: None,
+            objectives: None,
+            state: Some(Active),
+            plans: [],
+            actions: [],
+        ),
     ],
 )

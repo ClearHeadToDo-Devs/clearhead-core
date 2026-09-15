@@ -1,8 +1,8 @@
 //! Host-neutral workspace assembly.
 //!
 //! Core assembles a [`DomainModel`](crate::domain::DomainModel) only from
-//! snapshots and explicit [`WorkspaceScope`](crate::workspace::WorkspaceScope)
-//! evidence supplied by a host. Native layout detection and physical path
+//! snapshots and the persisted root charter name
+//! supplied by a host. Native layout detection and physical path
 //! construction belong to `clearhead-workspace-fs`.
 
 mod assembly;

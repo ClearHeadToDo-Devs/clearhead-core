@@ -52,18 +52,15 @@ pub fn action_mirror_path(
         .join(format!("{}.ics", slugify(&action.id.to_string())))
 }
 
-/// Infer charter name for an `.ics` path relative to `plans_root`, with project-root support.
-///
-/// The slug `next` maps to `project_root_charter` when in a project workspace.
+/// Infer charter name for an `.ics` path relative to `plans_root`; the `next`
+/// collection belongs to the workspace's root charter.
 pub fn infer_plan_charter_name_for_workspace(
     relative_path: &Path,
-    project_root_charter: Option<&str>,
+    root_charter: &str,
 ) -> Option<String> {
     let slug = plan_charter_slug(relative_path)?;
     if slug == "next" {
-        // In project workspaces "next" maps to the project root charter name.
-        // In user workspaces there is no root charter, so "next" is just "next".
-        Some(project_root_charter.unwrap_or("next").to_string())
+        Some(root_charter.to_string())
     } else {
         Some(slug)
     }
@@ -74,20 +71,13 @@ pub fn infer_plan_charter_name(relative_path: &Path) -> Option<String> {
     plan_charter_slug(relative_path)
 }
 
-/// Infer parent charter for an `.ics` path relative to `plans_root`, with project-root support.
+/// Infer parent charter for an `.ics` path relative to `plans_root`.
 ///
-/// Named charters in a project workspace are children of the root charter.
-/// Sub-charter hierarchy (e.g. `work-feature`) is resolved at load time via slug matching.
-pub fn infer_plan_parent_for_workspace(
-    relative_path: &Path,
-    project_root_charter: Option<&str>,
-) -> Option<String> {
+/// Named collections are children of the root charter. Sub-charter hierarchy
+/// (e.g. `work-feature`) is resolved at load time via slug matching.
+pub fn infer_plan_parent_for_workspace(relative_path: &Path, root_charter: &str) -> Option<String> {
     let slug = plan_charter_slug(relative_path)?;
-    if slug == "next" {
-        None
-    } else {
-        project_root_charter.map(ToString::to_string)
-    }
+    (slug != "next").then(|| root_charter.to_string())
 }
 
 /// Infer parent charter for an `.ics` path relative to `plans_root`.
@@ -202,16 +192,12 @@ mod tests {
     #[test]
     fn infer_plan_charter_name_workspace_maps_next_to_project_root() {
         assert_eq!(
-            infer_plan_charter_name_for_workspace(Path::new("next/root.ics"), Some("platform")),
+            infer_plan_charter_name_for_workspace(Path::new("next/root.ics"), "platform"),
             Some("platform".into())
         );
         assert_eq!(
-            infer_plan_charter_name_for_workspace(Path::new("inbox/weekly.ics"), Some("platform")),
+            infer_plan_charter_name_for_workspace(Path::new("inbox/weekly.ics"), "platform"),
             Some("inbox".into())
-        );
-        assert_eq!(
-            infer_plan_charter_name_for_workspace(Path::new("next/root.ics"), None),
-            Some("next".into())
         );
     }
 
@@ -230,15 +216,11 @@ mod tests {
     #[test]
     fn infer_plan_parent_workspace_uses_project_root() {
         assert_eq!(
-            infer_plan_parent_for_workspace(Path::new("inbox/weekly.ics"), Some("platform")),
+            infer_plan_parent_for_workspace(Path::new("inbox/weekly.ics"), "platform"),
             Some("platform".into())
         );
         assert_eq!(
-            infer_plan_parent_for_workspace(Path::new("next/root.ics"), Some("platform")),
-            None
-        );
-        assert_eq!(
-            infer_plan_parent_for_workspace(Path::new("inbox/weekly.ics"), None),
+            infer_plan_parent_for_workspace(Path::new("next/root.ics"), "platform"),
             None
         );
     }

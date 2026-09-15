@@ -19,7 +19,7 @@ fn fixture_user_flat_charter_names_and_action_counts() {
 
     let mut names: Vec<String> = model.charters.iter().map(|c| c.title.clone()).collect();
     names.sort();
-    assert_eq!(names, vec!["Work", "personal"]);
+    assert_eq!(names, vec!["Work", "personal", "workspace"]);
 
     let work = model.charters.iter().find(|c| c.title == "Work").unwrap();
     assert_eq!(work.actions.len(), 3, "work: 2 top-level + 1 subtask");
@@ -87,8 +87,12 @@ fn fixture_md_merge_title_alias_and_description() {
     let root = fixture_path("md-merge");
     let model = load_domain_model(&root).expect("load failed");
 
-    assert_eq!(model.charters.len(), 1);
-    let charter = &model.charters[0];
+    assert_eq!(model.charters.len(), 2, "health plus the implicit root");
+    let charter = model
+        .charters
+        .iter()
+        .find(|c| c.alias.as_deref() == Some("health"))
+        .unwrap();
     assert_eq!(charter.title, "Health & Fitness");
     assert_eq!(charter.alias.as_deref(), Some("health"));
     assert_eq!(charter.actions.len(), 2);
@@ -124,11 +128,11 @@ fn fixture_user_flat_manifest() {
         .find(|e| e.charter_name == "personal")
         .unwrap();
     assert_eq!(personal.source_type, ManifestSourceType::Actions);
-    assert!(personal.inferred_parent.is_none());
+    assert_eq!(personal.inferred_parent.as_deref(), Some("workspace"));
 
     let work = manifest.iter().find(|e| e.charter_name == "work").unwrap();
     assert_eq!(work.source_type, ManifestSourceType::ActionsPlusMarkdown);
-    assert!(work.inferred_parent.is_none());
+    assert_eq!(work.inferred_parent.as_deref(), Some("workspace"));
 
     let ron = manifest_to_ron(&manifest);
     assert_snapshot(&fixture_path("user-flat-manifest.ron"), &ron);

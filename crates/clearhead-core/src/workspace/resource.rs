@@ -226,22 +226,6 @@ pub struct WorkspaceMounts<T> {
     pub external_plans: Option<T>,
 }
 
-/// Host-neutral workspace layout evidence.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum WorkspaceScope {
-    Project { root_charter_name: String },
-    User,
-}
-
-impl WorkspaceScope {
-    pub fn project_root_charter(&self) -> Option<&str> {
-        match self {
-            Self::Project { root_charter_name } => Some(root_charter_name),
-            Self::User => None,
-        }
-    }
-}
-
 /// Files and collections visible in one mount.
 ///
 /// Collections are explicit because an empty external vdir collection still

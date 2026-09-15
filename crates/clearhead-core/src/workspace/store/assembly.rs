@@ -18,17 +18,19 @@ use crate::workspace::actions::convert::from_actions_with_charter;
 use crate::workspace::actions::repository::SourcedAction;
 use crate::workspace::calendar::ics::parse_ics;
 use crate::workspace::charter::{
-    MarkdownCharter, frontmatter_has_id_key, frontmatter_has_parent_key, parse_charter,
+    MarkdownCharter, frontmatter_has_id_key, frontmatter_has_parent_key, implicit_charter,
+    parse_charter,
 };
 use crate::workspace::resource::{
-    MountId, MountInventory, MountReadEvidence, WorkspaceMounts, WorkspacePath, WorkspaceScope,
+    MountId, MountInventory, MountReadEvidence, WorkspaceMounts, WorkspacePath,
 };
 use crate::workspace::sidecar::{ActionMeta, hydrate_actions_map, parse_sidecar, sidecar_path};
 
 /// Host-neutral evidence required for workspace assembly.
 #[derive(Clone, Debug)]
 pub struct WorkspaceAssemblyInput {
-    pub scope: WorkspaceScope,
+    /// Persisted name of the workspace's single root charter.
+    pub root_charter: String,
     pub inventory: WorkspaceMounts<MountInventory>,
     pub reads: WorkspaceMounts<MountReadEvidence>,
     /// Live occurrence lineage decoded and mount-validated by the native host.
@@ -74,14 +76,14 @@ impl WorkspaceAssemblyInput {
 
 /// Assemble the file-layer workspace without touching a host.
 pub fn assemble_workspace(input: &WorkspaceAssemblyInput) -> Result<WorkspaceRead, WorkspaceError> {
-    let project_root_charter = input.scope.project_root_charter();
+    let root_charter = input.root_charter.as_str();
     let mut findings = read_failure_findings(input);
     let mut charters: HashMap<String, MarkdownCharter> = HashMap::new();
     let mut path_for_name: HashMap<String, PathBuf> = HashMap::new();
     let global_actions = collect_sidecar_actions(input);
 
     for relative in action_files(input) {
-        let Some(name) = infer_charter_name_for_workspace(&relative, project_root_charter) else {
+        let Some(name) = infer_charter_name_for_workspace(&relative, root_charter) else {
             findings.push(Finding::violation(
                 "charter-name-unresolved",
                 &relative,
@@ -179,7 +181,7 @@ pub fn assemble_workspace(input: &WorkspaceAssemblyInput) -> Result<WorkspaceRea
     let mut explicit_parent_charters = HashSet::new();
     let mut explicit_id_charters = HashSet::new();
     for relative in charter_files(input) {
-        let Some(name) = infer_charter_name_for_workspace(&relative, project_root_charter) else {
+        let Some(name) = infer_charter_name_for_workspace(&relative, root_charter) else {
             findings.push(Finding::violation(
                 "charter-name-unresolved",
                 &relative,
@@ -251,6 +253,24 @@ pub fn assemble_workspace(input: &WorkspaceAssemblyInput) -> Result<WorkspaceRea
             });
     }
 
+    // Exactly one root: materialize it when the workspace has no root files
+    // yet, so flat charters always resolve to a parent.
+    charters
+        .entry(input.root_charter.clone())
+        .or_insert_with(|| {
+            let mut root = MarkdownCharter::from(implicit_charter(root_charter));
+            root.plans_dir = charter_collection_from_anchor(Path::new("next.actions"));
+            root
+        });
+    // A root without a README has no document to declare a state; it is
+    // structural and must not gate engagement of the charters beneath it.
+    if let Some(root) = charters.get_mut(root_charter)
+        && root.md_file.is_none()
+        && root.state.is_none()
+    {
+        root.state = Some(crate::domain::CharterState::Active);
+    }
+
     for (name, charter) in charters.iter_mut() {
         if explicit_id_charters.contains(name) {
             continue;
@@ -275,7 +295,7 @@ pub fn assemble_workspace(input: &WorkspaceAssemblyInput) -> Result<WorkspaceRea
                 .map(|alias| (name.clone(), alias.clone()))
         })
         .collect();
-    for (name, parent_name) in parent_hints(&path_for_name, project_root_charter) {
+    for (name, parent_name) in parent_hints(&path_for_name, root_charter) {
         if explicit_parent_charters.contains(&name) {
             continue;
         }
@@ -526,12 +546,12 @@ fn workspace_path(path: &Path) -> Result<WorkspacePath, String> {
 
 fn parent_hints(
     path_for_name: &HashMap<String, PathBuf>,
-    project_root_charter: Option<&str>,
+    root_charter: &str,
 ) -> Vec<(String, String)> {
     path_for_name
         .iter()
         .filter_map(|(name, path)| {
-            infer_parent_charter_name_for_workspace(path, project_root_charter)
+            infer_parent_charter_name_for_workspace(path, root_charter)
                 .map(|parent| (name.clone(), parent))
         })
         .collect()
@@ -584,7 +604,7 @@ mod tests {
     };
 
     fn input(
-        scope: WorkspaceScope,
+        root_charter: &str,
         workspace: &[(&str, &str)],
         external: Option<&[(&str, &str)]>,
         external_collections: &[&str],
@@ -626,7 +646,7 @@ mod tests {
             .map(|files| mount(files, external_collections))
             .unzip();
         WorkspaceAssemblyInput {
-            scope,
+            root_charter: root_charter.into(),
             inventory: WorkspaceMounts {
                 workspace: workspace_inventory,
                 external_plans: external_inventory,
@@ -643,9 +663,7 @@ mod tests {
     fn project_scope_names_the_primary_charter_without_a_host_path() {
         let id = Uuid::now_v7();
         let read = assemble_workspace(&input(
-            WorkspaceScope::Project {
-                root_charter_name: "platform".into(),
-            },
+            "platform",
             &[("charters/next.actions", &format!("[ ] Pure assembly #{id}"))],
             None,
             &[],
@@ -659,9 +677,7 @@ mod tests {
     fn legacy_named_project_root_does_not_parent_itself() {
         let id = Uuid::now_v7();
         let Ok(read) = assemble_workspace(&input(
-            WorkspaceScope::Project {
-                root_charter_name: "platform".into(),
-            },
+            "platform",
             &[(
                 "charters/platform.actions",
                 &format!("[ ] Legacy root #{id}"),
@@ -682,7 +698,7 @@ mod tests {
     #[test]
     fn external_empty_collection_is_not_flattened_into_workspace_plans() {
         let read = assemble_workspace(&input(
-            WorkspaceScope::User,
+            "workspace",
             &[("charters/inbox.actions", "[ ] Inbox")],
             Some(&[]),
             &["orphan"],
@@ -703,7 +719,7 @@ mod tests {
         let uid = "calendar-owned@example.com";
         let sidecar = format!(r#"{{"actions":{{"{id}":{{"plan":{{"uid":"{uid}"}}}}}}}}"#);
         let read = assemble_workspace(&input(
-            WorkspaceScope::User,
+            "workspace",
             &[
                 ("charters/work.actions", &format!("[ ] Linked #{id}")),
                 ("charters/.work.json", &sidecar),
@@ -713,8 +729,13 @@ mod tests {
         ))
         .unwrap();
 
+        let work = read
+            .charters
+            .iter()
+            .find(|charter| charter.alias.as_deref() == Some("work"))
+            .unwrap();
         assert_eq!(
-            read.charters[0].actions[0].action.plan_id,
+            work.actions[0].action.plan_id,
             Some(crate::workspace::calendar::ics::plan_id_from_ics_uid(uid))
         );
     }
@@ -722,17 +743,69 @@ mod tests {
     #[test]
     fn recovered_action_source_is_explicitly_quarantined() {
         let read = assemble_workspace(&input(
-            WorkspaceScope::User,
+            "workspace",
             &[("charters/work.actions", "[ ] Broken [ note")],
             None,
             &[],
         ))
         .unwrap();
-        assert!(read.charters.is_empty());
+        assert!(
+            read.charters
+                .iter()
+                .all(|charter| charter.actions.is_empty())
+        );
         assert!(
             read.findings
                 .iter()
                 .any(|finding| finding.code == "syntax-errors")
         );
+    }
+
+    #[test]
+    fn flat_charters_descend_from_one_root_even_without_root_files() {
+        let read = assemble_workspace(&input(
+            "personal",
+            &[("charters/health.actions", "[ ] Walk")],
+            None,
+            &[],
+        ))
+        .unwrap();
+
+        let roots: Vec<_> = read
+            .charters
+            .iter()
+            .filter(|charter| charter.parent.is_none())
+            .collect();
+        assert_eq!(roots.len(), 1);
+        assert_eq!(roots[0].alias.as_deref(), Some("personal"));
+        assert_eq!(roots[0].plans_dir, PathBuf::from("next"));
+        assert_eq!(roots[0].state, Some(crate::domain::CharterState::Active));
+        let health = read
+            .charters
+            .iter()
+            .find(|charter| charter.alias.as_deref() == Some("health"))
+            .unwrap();
+        assert_eq!(health.parent.as_deref(), Some("personal"));
+    }
+
+    #[test]
+    fn root_readme_without_state_is_not_promoted_to_active() {
+        let read = assemble_workspace(&input(
+            "personal",
+            &[(
+                "charters/README.md",
+                "---\nalias: personal\n---\n# Personal\n",
+            )],
+            None,
+            &[],
+        ))
+        .unwrap();
+
+        let root = read
+            .charters
+            .iter()
+            .find(|charter| charter.parent.is_none())
+            .unwrap();
+        assert_eq!(root.state, None);
     }
 }

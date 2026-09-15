@@ -125,9 +125,9 @@ fn jot_into_project_root_charter_creates_readme_not_phantom() {
 }
 
 #[test]
-fn jot_into_user_root_charter_creates_next_md_not_phantom() {
-    // User/XDG layout (no project root): the root charter is genuinely "next"
-    // and pairs with next.md; README.md would infer to "README" and collide.
+fn jot_into_user_root_charter_creates_readme_not_phantom() {
+    // Both scopes share one root shape: the user root's `next.actions` pairs
+    // with README.md exactly like a project root's.
     let env = TestEnv::new();
     env.write_actions("next.actions", "");
 
@@ -137,12 +137,12 @@ fn jot_into_user_root_charter_creates_next_md_not_phantom() {
         .success();
 
     assert!(
-        env.data_dir.join("charters/next.md").exists(),
-        "user-layout root should materialize next.md"
+        env.data_dir.join("charters/README.md").exists(),
+        "user root should materialize README.md"
     );
     assert!(
-        !env.data_dir.join("charters/README.md").exists(),
-        "must not create a phantom README.md"
+        !env.data_dir.join("charters/next.md").exists(),
+        "must not create a phantom next.md"
     );
 
     let assert = env
@@ -154,7 +154,7 @@ fn jot_into_user_root_charter_creates_next_md_not_phantom() {
     assert_eq!(
         rows.as_array().map(|r| r.len()),
         Some(1),
-        "next.actions + next.md must pair into one charter, not collide: {rows}"
+        "next.actions + README.md must pair into one charter, not collide: {rows}"
     );
 }
 

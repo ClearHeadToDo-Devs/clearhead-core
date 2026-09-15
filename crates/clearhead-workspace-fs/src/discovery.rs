@@ -8,7 +8,7 @@
 //! ([`infer_charter_name_for_workspace`] et al.); only the directory walk and
 //! the manifest assembly are native.
 
-use crate::{charter_root, plans_root, project_root_charter};
+use crate::{charter_root, plans_root, root_charter_name};
 use clearhead_core::workspace::calendar::plans::{
     infer_plan_charter_name_for_workspace, infer_plan_parent_for_workspace,
 };
@@ -47,7 +47,7 @@ pub(crate) fn discover_action_files(dir: &Path) -> Result<Vec<PathBuf>, Workspac
 /// Discover and classify legacy native `.ics` resources.
 pub(crate) fn discover_plan_files(
     plans_root: &Path,
-    project_root_charter: Option<&str>,
+    root_charter: &str,
 ) -> Result<Vec<PlanFileEntry>, WorkspaceError> {
     let mut files = Vec::new();
     discover_recursive(plans_root, "ics", &mut files)?;
@@ -58,13 +58,13 @@ pub(crate) fn discover_plan_files(
             .map_err(|_| WorkspaceError::InvalidPath(path.clone()))?
             .to_path_buf();
         let Some(charter_name) =
-            infer_plan_charter_name_for_workspace(&relative_path, project_root_charter)
+            infer_plan_charter_name_for_workspace(&relative_path, root_charter)
         else {
             continue;
         };
         entries.push(PlanFileEntry {
             path,
-            inferred_parent: infer_plan_parent_for_workspace(&relative_path, project_root_charter),
+            inferred_parent: infer_plan_parent_for_workspace(&relative_path, root_charter),
             relative_path,
             charter_name,
         });
@@ -160,11 +160,11 @@ pub fn collect_workspace_manifest(
 ) -> Result<Vec<WorkspaceManifestEntry>, WorkspaceError> {
     let charter_root = charter_root(root);
     let plans_root = plans_root(root);
-    let project_root_charter = project_root_charter(root);
+    let root_charter = root_charter_name(root);
 
     let action_files = discover_action_files(&charter_root)?;
     let charter_files = discover_charter_files(&charter_root)?;
-    let plan_files = discover_plan_files(&plans_root, project_root_charter.as_deref())?;
+    let plan_files = discover_plan_files(&plans_root, &root_charter)?;
 
     let mut entries_by_charter: HashMap<String, WorkspaceManifestEntry> = HashMap::new();
 
@@ -198,11 +198,9 @@ pub fn collect_workspace_manifest(
 
     for file_path in action_files {
         let relative = file_path.strip_prefix(&charter_root).unwrap_or(&file_path);
-        let charter_name =
-            infer_charter_name_for_workspace(relative, project_root_charter.as_deref())
-                .ok_or_else(|| WorkspaceError::Parse("Failed to infer charter name".to_string()))?;
-        let inferred_parent =
-            infer_parent_charter_name_for_workspace(relative, project_root_charter.as_deref());
+        let charter_name = infer_charter_name_for_workspace(relative, &root_charter)
+            .ok_or_else(|| WorkspaceError::Parse("Failed to infer charter name".to_string()))?;
+        let inferred_parent = infer_parent_charter_name_for_workspace(relative, &root_charter);
 
         entries_by_charter.insert(
             charter_name.clone(),
@@ -217,11 +215,9 @@ pub fn collect_workspace_manifest(
 
     for file_path in charter_files {
         let relative = file_path.strip_prefix(&charter_root).unwrap_or(&file_path);
-        let charter_name =
-            infer_charter_name_for_workspace(relative, project_root_charter.as_deref())
-                .ok_or_else(|| WorkspaceError::Parse("Failed to infer charter name".to_string()))?;
-        let inferred_parent =
-            infer_parent_charter_name_for_workspace(relative, project_root_charter.as_deref());
+        let charter_name = infer_charter_name_for_workspace(relative, &root_charter)
+            .ok_or_else(|| WorkspaceError::Parse("Failed to infer charter name".to_string()))?;
+        let inferred_parent = infer_parent_charter_name_for_workspace(relative, &root_charter);
 
         if let Some(entry) = entries_by_charter.get_mut(&charter_name) {
             entry.source_type = merge_sources(&entry.source_type, ManifestSourceType::Markdown);

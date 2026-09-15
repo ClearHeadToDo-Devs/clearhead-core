@@ -16,16 +16,13 @@ use super::action::resolve_charter_across_workspaces;
 /// An existing `md_file` is used verbatim. Otherwise the path is derived so it
 /// re-infers to the *same* charter as its `.actions` file — mirroring the
 /// loader's pairing rule (`store::pathing`). A named charter pairs by stem
-/// (`foo.actions` ↔ `foo.md`); a primary `next.actions` charter pairs with
-/// `README.md` when it owns a directory (nested, or the project root, where
-/// `README.md` infers to the project name), and with `next.md` for a
-/// user-layout root charter that is genuinely named "next". Choosing the wrong
+/// (`foo.actions` ↔ `foo.md`); a primary `next.actions` charter, including the
+/// workspace root, pairs with the `README.md` in its directory. Choosing the wrong
 /// name materializes a phantom, colliding charter — the bug this guards against.
 fn charter_md_path(
     mc: &clearhead_core::MarkdownCharter,
     charter_root: &Path,
     title: &str,
-    project_root_charter: Option<&str>,
 ) -> (PathBuf, bool) {
     if let Some(md_rel) = &mc.md_file {
         return (charter_root.join(md_rel), false);
@@ -36,15 +33,7 @@ fn charter_md_path(
         .and_then(|p| {
             let dir = p.parent().unwrap_or(Path::new(""));
             let md_name = if p.file_name().and_then(|n| n.to_str()) == Some("next.actions") {
-                // A primary charter owns a directory when it is nested or the
-                // project root; only then does `README.md` infer to its name.
-                let owns_directory = !dir.as_os_str().is_empty() || project_root_charter.is_some();
-                if owns_directory {
-                    "README.md"
-                } else {
-                    "next.md"
-                }
-                .to_string()
+                "README.md".to_string()
             } else {
                 format!("{}.md", p.file_stem()?.to_str()?)
             };
@@ -637,13 +626,7 @@ pub fn close_charter(
     let mc_full = find_target_charter(&mcs, query, file, &charter_root)?;
     let mut updated = Charter::from(mc_full.clone());
 
-    let project_root = clearhead_workspace_fs::project_root_charter(&ws_root);
-    let (md_path, is_new) = charter_md_path(
-        mc_full,
-        &charter_root,
-        &updated.title,
-        project_root.as_deref(),
-    );
+    let (md_path, is_new) = charter_md_path(mc_full, &charter_root, &updated.title);
 
     apply_charter_update(
         &mut updated,
@@ -699,13 +682,7 @@ pub fn jot(
 
     let mc_full = resolve_jot_charter(&mcs, charter)?;
     let charter_model = Charter::from(mc_full.clone());
-    let project_root = clearhead_workspace_fs::project_root_charter(&ws_root);
-    let (md_path, is_new) = charter_md_path(
-        mc_full,
-        &charter_root,
-        &charter_model.title,
-        project_root.as_deref(),
-    );
+    let (md_path, is_new) = charter_md_path(mc_full, &charter_root, &charter_model.title);
 
     // Base content: the existing file, or a freshly materialized *minimal*
     // charter document when none exists yet. Deliberately not `format_charter`:
@@ -794,53 +771,25 @@ mod tests {
     }
 
     #[test]
-    fn project_root_primary_charter_pairs_with_readme() {
-        // Project layout (project_root_charter set): the root next.actions
-        // charter is named for the project and pairs with README.md.
+    fn root_primary_charter_pairs_with_readme() {
+        // The workspace root's next.actions pairs with README.md in every scope.
         let root = Path::new("/repo/.clearhead/charters");
-        let (path, is_new) = charter_md_path(
-            &charter_needing_md("next.actions"),
-            root,
-            "Platform",
-            Some("platform"),
-        );
+        let (path, is_new) = charter_md_path(&charter_needing_md("next.actions"), root, "Platform");
         assert!(is_new);
         assert_eq!(path, root.join("README.md"));
     }
 
     #[test]
-    fn user_root_primary_charter_pairs_with_next_md() {
-        // User/XDG layout (no project root): the root charter is genuinely named
-        // "next"; README.md would infer to "README" and collide, so pair with next.md.
-        let root = Path::new("/home/u/.local/share/clearhead/charters");
-        let (path, _) = charter_md_path(&charter_needing_md("next.actions"), root, "next", None);
-        assert_eq!(path, root.join("next.md"));
-    }
-
-    #[test]
-    fn nested_primary_charter_pairs_with_readme_in_either_layout() {
+    fn nested_primary_charter_pairs_with_readme() {
         let root = Path::new("/repo/.clearhead/charters");
-        // A nested primary charter owns its directory regardless of layout.
-        for project_root in [None, Some("platform")] {
-            let (path, _) = charter_md_path(
-                &charter_needing_md("lsp/next.actions"),
-                root,
-                "Lsp",
-                project_root,
-            );
-            assert_eq!(path, root.join("lsp").join("README.md"));
-        }
+        let (path, _) = charter_md_path(&charter_needing_md("lsp/next.actions"), root, "Lsp");
+        assert_eq!(path, root.join("lsp").join("README.md"));
     }
 
     #[test]
     fn named_charter_pairs_with_stem_md() {
         let root = Path::new("/repo/.clearhead/charters");
-        let (path, _) = charter_md_path(
-            &charter_needing_md("health.actions"),
-            root,
-            "Health",
-            Some("platform"),
-        );
+        let (path, _) = charter_md_path(&charter_needing_md("health.actions"), root, "Health");
         assert_eq!(path, root.join("health.md"));
     }
 
@@ -849,7 +798,7 @@ mod tests {
         let root = Path::new("/repo/.clearhead/charters");
         let mut mc = charter_needing_md("next.actions");
         mc.md_file = Some(PathBuf::from("README.md"));
-        let (path, is_new) = charter_md_path(&mc, root, "Platform", Some("platform"));
+        let (path, is_new) = charter_md_path(&mc, root, "Platform");
         assert!(!is_new);
         assert_eq!(path, root.join("README.md"));
     }

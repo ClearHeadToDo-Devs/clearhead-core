@@ -10,7 +10,7 @@ use std::path::Path;
 
 #[test]
 fn load_discovers_all_action_files() {
-    // Two files → two charters, three direct actions total.
+    // Two files → two charters under the implicit root, three direct actions total.
     let workspace = make_workspace(&[
         (
             "work.actions",
@@ -25,7 +25,7 @@ fn load_discovers_all_action_files() {
 
     let model = load_domain_model(workspace.path()).expect("load failed");
 
-    assert_eq!(model.charters.len(), 2, "expected 2 charters");
+    assert_eq!(model.charters.len(), 3, "expected 2 charters plus the root");
     assert_eq!(model.all_actions().len(), 3, "expected 3 actions total");
 }
 
@@ -117,9 +117,8 @@ fn explicit_markdown_parent_overrides_directory_hierarchy() {
 
 #[test]
 fn project_layout_next_actions_uses_project_name_as_charter() {
-    // In project layout, `next.actions` at the root of `.clearhead/` is the
-    // "primary" file — its charter name becomes the project directory name,
-    // not "next".
+    // `next.actions` at the root of `charters/` is the root charter's action
+    // anchor; the charter takes the persisted workspace name, never "next".
     let (_outer, project) = make_named_project(
         "my-project",
         &[(
@@ -262,18 +261,35 @@ END:VCALENDAR\n",
 }
 
 #[test]
-fn user_layout_uses_filename_as_charter() {
-    // In user layout (no `.clearhead/`), there is no special project root —
-    // every file's stem becomes the charter name directly.
-    let workspace = make_user_workspace(&[(
-        "next.actions",
-        "[ ] User task #01951111-0000-7000-0000-000000000060\n",
-    )]);
+fn user_layout_root_is_the_single_root_charter() {
+    // A user workspace has the same root shape as a project: its `next.actions`
+    // is the root charter, never a charter named "next".
+    let workspace = make_user_workspace(&[
+        (
+            "next.actions",
+            "[ ] User task #01951111-0000-7000-0000-000000000060\n",
+        ),
+        (
+            "health.actions",
+            "[ ] Walk #01951111-0000-7000-0000-000000000061\n",
+        ),
+    ]);
 
     let model = load_domain_model(workspace.path()).expect("load failed");
 
-    assert_eq!(model.charters.len(), 1);
-    assert_eq!(model.charters[0].title, "next");
+    assert_eq!(model.charters.len(), 2);
+    let root = model
+        .charters
+        .iter()
+        .find(|charter| charter.parent.is_none())
+        .expect("exactly one root");
+    assert_eq!(root.alias.as_deref(), Some("workspace"));
+    let health = model
+        .charters
+        .iter()
+        .find(|charter| charter.alias.as_deref() == Some("health"))
+        .expect("health charter");
+    assert_eq!(health.parent.as_deref(), Some("workspace"));
 }
 
 // --- Explicit charter (.md) + implicit (.actions) merge tests ---
@@ -586,6 +602,11 @@ fn flat_project_charter_owns_collection_named_by_its_workspace_anchor() {
     let plans = project.join(".clearhead/plans").join("dogfood");
     fs::create_dir_all(&charters).unwrap();
     fs::create_dir_all(&plans).unwrap();
+    fs::write(
+        project.join(".clearhead/workspace.json"),
+        r#"{"workspace_name": "MixedCaseProject"}"#,
+    )
+    .unwrap();
     fs::write(charters.join("next.actions"), "").unwrap();
     fs::write(charters.join("dogfood.actions"), "").unwrap();
     fs::write(

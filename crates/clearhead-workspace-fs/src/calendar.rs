@@ -142,18 +142,18 @@ pub fn observe_calendar_resources(
         )));
     }
 
-    let project_root = mounts.scope.project_root_charter();
+    let root_charter = mounts.root_charter();
     let mut resources = Vec::new();
     for snapshot in evidence.snapshot.resources() {
         let Some(relative_path) = calendar_relative_path(effective_mount, snapshot.path()) else {
             continue;
         };
         let relative = PathBuf::from(relative_path);
-        let Some(charter_name) = infer_plan_charter_name_for_workspace(&relative, project_root)
+        let Some(charter_name) = infer_plan_charter_name_for_workspace(&relative, root_charter)
         else {
             continue;
         };
-        let inferred_parent = infer_plan_parent_for_workspace(&relative, project_root);
+        let inferred_parent = infer_plan_parent_for_workspace(&relative, root_charter);
         let location = ResourceLocation::new(effective_mount, snapshot.path().clone());
         resources.push(CalendarResource {
             path: mounts.physical_path(&location)?,
@@ -1305,6 +1305,11 @@ mod tests {
         let internal = project.join(".clearhead/plans/next");
         let external = temp.path().join("vdir/next");
         std::fs::create_dir_all(project.join(".clearhead/charters")).unwrap();
+        std::fs::write(
+            project.join(".clearhead/workspace.json"),
+            r#"{"workspace_name": "project"}"#,
+        )
+        .unwrap();
         std::fs::create_dir_all(&internal).unwrap();
         std::fs::create_dir_all(&external).unwrap();
         std::fs::write(internal.join("internal.ics"), PLAN).unwrap();

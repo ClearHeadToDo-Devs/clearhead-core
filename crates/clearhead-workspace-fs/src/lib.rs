@@ -31,7 +31,7 @@ pub use init::init_workspace;
 pub use manifest::{read_workspace_manifest, workspace_manifest_path, write_workspace_manifest};
 pub use mounts::{
     NativeWorkspaceMounts, charter_root, list_action_files, load_domain_model, load_workspace,
-    load_workspace_model, plans_root, project_root_charter, read_workspace, workspace_data_root,
+    load_workspace_model, plans_root, read_workspace, root_charter_name, workspace_data_root,
 };
 
 use std::collections::HashSet;
@@ -580,7 +580,7 @@ pub use detection::check_for_workspace;
 mod mounted_effect_tests {
     use super::*;
     use clearhead_core::workspace::resource::{
-        EffectBatch, MountId, ResourceLocation, ResourcePrecondition, WorkspaceScope,
+        EffectBatch, MountId, ResourceLocation, ResourcePrecondition,
     };
 
     fn location(mount: MountId, path: &str) -> ResourceLocation {
@@ -596,7 +596,7 @@ mod mounted_effect_tests {
         let mounts = NativeWorkspaceMounts {
             workspace: workspace.clone(),
             external_plans: Some(external.clone()),
-            scope: WorkspaceScope::User,
+            root_charter: "workspace".into(),
         };
         let workspace_location = location(MountId::Workspace, "sync/plans.json");
         let external_location = location(MountId::ExternalPlans, "inbox/action.ics");
