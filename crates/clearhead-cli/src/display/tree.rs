@@ -118,7 +118,7 @@ pub fn render_domain_tree(model: &DomainModel) -> String {
 // ---------------------------------------------------------------------------
 
 /// Build a map from action ID → minimum hex prefix that uniquely identifies
-/// it within this model. Floor is 8 hex chars; extends only on collision.
+/// it within this model (see [`super::unique_short_ids`]).
 fn action_id_map(model: &DomainModel) -> HashMap<Uuid, String> {
     let all_ids: Vec<Uuid> = model
         .charters
@@ -126,26 +126,7 @@ fn action_id_map(model: &DomainModel) -> HashMap<Uuid, String> {
         .flat_map(|c| c.actions.iter().map(|a| a.id))
         .collect();
 
-    all_ids
-        .iter()
-        .map(|&id| (id, unique_short_id(id, &all_ids)))
-        .collect()
-}
-
-fn unique_short_id(id: Uuid, all_ids: &[Uuid]) -> String {
-    let hex = id.to_string().replace('-', "");
-    for len in 8..=hex.len() {
-        let prefix = &hex[..len];
-        if all_ids
-            .iter()
-            .filter(|other| other.to_string().replace('-', "").starts_with(prefix))
-            .count()
-            == 1
-        {
-            return prefix.to_string();
-        }
-    }
-    hex
+    super::unique_short_ids(&all_ids)
 }
 
 // ---------------------------------------------------------------------------
@@ -290,10 +271,7 @@ fn action_label(action: &Action, ids: &HashMap<Uuid, String>) -> String {
         .map(|a| format!("  /{}", a))
         .unwrap_or_else(|| {
             let fallback = action.id.to_string();
-            let short = ids
-                .get(&action.id)
-                .map(String::as_str)
-                .unwrap_or(&fallback[..8]);
+            let short = ids.get(&action.id).map(String::as_str).unwrap_or(&fallback);
             format!("  /{}", short)
         });
     format!("{} {}{}{}", icon, action.name, state_tag, ref_tag)

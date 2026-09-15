@@ -128,8 +128,7 @@ pub fn run(config_path_override: Option<PathBuf>) -> anyhow::Result<()> {
 
     println!(
         "Initialized workspace '{}' ({})",
-        workspace_name,
-        &workspace_id[..8]
+        workspace_name, workspace_id
     );
     Ok(())
 }

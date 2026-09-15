@@ -601,9 +601,8 @@ pub fn add_plan(
             },
         );
 
-        let short_uid = &uid[..8];
         info!(name = %name, uid = %uid, id = %new_id, "Plan added successfully");
-        println!("Added plan {} ({})", short_uid, name);
+        println!("Added plan {} ({})", uid, name);
     }
     Ok(())
 }

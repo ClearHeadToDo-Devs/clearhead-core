@@ -100,11 +100,7 @@ pub fn add_action(
     )?;
 
     info!(id = %result.action_id, name = %name, "Action added");
-    println!(
-        "Added action {} ({})",
-        &result.action_id.to_string()[..8],
-        name
-    );
+    println!("Added action {} ({})", result.action_id, name);
     Ok(())
 }
 
@@ -215,7 +211,7 @@ fn close_action_subtree(
         println!(
             "Would {} action {} and {} child(ren)",
             verb_present,
-            &action_id.to_string()[..8],
+            action_id,
             subtree_ids.len() - 1,
         );
         return Ok(());
@@ -318,9 +314,7 @@ fn try_close_occurrence(
         };
         println!(
             "Would {} occurrence {} of plan {}",
-            verb,
-            &occurrence.id.to_string()[..8],
-            &plan_id.to_string()[..8],
+            verb, occurrence.id, plan_id,
         );
         return Ok(true);
     }
@@ -393,7 +387,7 @@ fn try_reschedule_occurrence(
     if dry_run {
         println!(
             "Would reschedule occurrence {} to {}",
-            &occurrence.id.to_string()[..8],
+            occurrence.id,
             scheduled_at.format("%Y-%m-%d %H:%M"),
         );
         return Ok(true);
@@ -503,7 +497,7 @@ pub fn update_action(
     }
 
     if dry_run {
-        println!("Would update action {}", &action_id.to_string()[..8]);
+        println!("Would update action {}", action_id);
         return Ok(());
     }
 
@@ -574,7 +568,7 @@ pub fn delete_action(
         if dry_run {
             println!(
                 "Would delete action {} (+{} children)",
-                &selector.id.to_string()[..8],
+                selector.id,
                 subtree_ids.len().saturating_sub(1),
             );
             return Ok(());
@@ -592,8 +586,7 @@ pub fn delete_action(
         );
         println!(
             "Deleted action {} (+{} children)",
-            &result.action_id.to_string()[..8],
-            children
+            result.action_id, children
         );
         return Ok(());
     }
@@ -650,7 +643,7 @@ pub fn reopen_action(
     if dry_run {
         println!(
             "Would reopen action {} and {} child(ren)",
-            &action_id.to_string()[..8],
+            action_id,
             subtree_ids.len() - 1,
         );
         return Ok(());
@@ -1394,8 +1387,11 @@ fn print_acts_table(ws_actions: &[(Option<&str>, &Action)], multi_ws: bool) {
     }
     table.set_header(headers);
 
+    let ids: Vec<_> = ws_actions.iter().map(|(_, action)| action.id).collect();
+    let short_ids = crate::display::unique_short_ids(&ids);
+
     for (ws, action) in ws_actions {
-        let short_id = &action.id.to_string()[..8];
+        let short_id = &short_ids[&action.id];
         let state = format!("{:?}", action.state);
         let scheduled = action
             .scheduled_at

@@ -223,6 +223,32 @@ fn test_add_action_defaults_to_existing_default_file() {
 }
 
 #[test]
+fn test_add_action_prints_full_distinct_ids_for_back_to_back_adds() {
+    // UUIDv7 ids minted within a minute share their first 8 hex digits, so a
+    // truncated id would print identically for both adds.
+    let env = TestEnv::new();
+    env.write_actions("inbox.actions", "[ ] Existing inbox\n");
+
+    let added_id = |name: &str| {
+        let output = env
+            .command()
+            .args(["add", "action", name])
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        let line = stdout
+            .lines()
+            .find_map(|line| line.strip_prefix("Added action "))
+            .unwrap_or_else(|| panic!("no confirmation in {stdout:?}"));
+        let id = line.split(' ').next().unwrap();
+        uuid::Uuid::parse_str(id).unwrap_or_else(|_| panic!("expected a full UUID in {line:?}"))
+    };
+
+    assert_ne!(added_id("First"), added_id("Second"));
+}
+
+#[test]
 fn test_add_child_inserts_after_parent_descendants_before_next_root() {
     let env = TestEnv::new();
     let path = env.data_dir.join("charters/work.actions");
