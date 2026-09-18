@@ -476,7 +476,7 @@ fn test_complete_command_by_name() {
 }
 
 #[test]
-fn test_complete_command_project_root_next_actions_uses_project_name() {
+fn test_complete_command_project_root_next_actions_uses_the_reserved_stem() {
     let env = TestEnv::new();
     let project_root = env.work_dir.join("sample-project");
     let charters_dir = project_root.join(".clearhead").join("charters");
@@ -496,7 +496,10 @@ fn test_complete_command_project_root_next_actions_uses_project_name() {
         .assert()
         .success();
 
-    let completed_path = charters_dir.join("sample-project.completed.actions");
+    // The root anchor's completed history uses the reserved `next` stem
+    // regardless of the project directory name — not the project name, which
+    // used to leave every install's root history split across two files.
+    let completed_path = charters_dir.join("next.completed.actions");
     assert!(
         completed_path.exists(),
         "expected {} to exist",
@@ -504,11 +507,16 @@ fn test_complete_command_project_root_next_actions_uses_project_name() {
     );
     let content = fs::read_to_string(&completed_path).unwrap();
     assert!(content.contains("[x] Project root task"));
+    assert!(
+        !charters_dir
+            .join("sample-project.completed.actions")
+            .exists()
+    );
     assert!(!charters_dir.join("charters.completed.actions").exists());
 }
 
 #[test]
-fn test_archive_actions_project_root_next_actions_uses_project_name() {
+fn test_archive_actions_project_root_next_actions_uses_the_reserved_stem() {
     let env = TestEnv::new();
     let project_root = env.work_dir.join("sample-project");
     let charters_dir = project_root.join(".clearhead").join("charters");
@@ -526,7 +534,7 @@ fn test_archive_actions_project_root_next_actions_uses_project_name() {
         .assert()
         .success();
 
-    let completed_path = charters_dir.join("sample-project.completed.actions");
+    let completed_path = charters_dir.join("next.completed.actions");
     assert!(
         completed_path.exists(),
         "expected {} to exist",
@@ -537,6 +545,11 @@ fn test_archive_actions_project_root_next_actions_uses_project_name() {
     assert!(
         content.contains(" %"),
         "archival must stamp a missing completion date before moving the action: {content}"
+    );
+    assert!(
+        !charters_dir
+            .join("sample-project.completed.actions")
+            .exists()
     );
     assert!(!charters_dir.join("charters.completed.actions").exists());
 }

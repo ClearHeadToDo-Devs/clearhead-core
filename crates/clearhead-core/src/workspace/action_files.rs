@@ -6,10 +6,11 @@
 //! - `<charter>.completed.actions` — completed/cancelled actions
 //!
 //! Charter stem derivation mostly uses the file stem. Primary files like
-//! `subdir/next.actions` use the directory name, and project-root
-//! `.clearhead/charters/next.actions` uses the project directory name rather
-//! than the literal `charters` container. Unlike charter name inference,
-//! `inbox` is NOT skipped — `inbox.actions` is valid.
+//! `subdir/next.actions` use the directory name, except the root anchor
+//! itself (`charters/next.actions`), which keeps the reserved `next` stem
+//! regardless of project or user scope — every workspace's root shares it.
+//! Unlike charter name inference, `inbox` is NOT skipped — `inbox.actions`
+//! is valid.
 
 use std::path::{Path, PathBuf};
 
@@ -41,14 +42,16 @@ impl ActionsFile {
 /// Derive the charter stem from an actions file path.
 ///
 /// When the filename is a primary file (`next.actions`) inside a subdirectory,
-/// uses the directory name as the stem — matching how charter names are inferred.
-/// For project-root paths like `/repo/.clearhead/charters/next.actions`, the stem
-/// is the project directory name rather than the literal directory `charters`.
+/// uses the directory name as the stem — matching how charter names are
+/// inferred. The root anchor itself (`charters/next.actions`) is the one
+/// exception: its parent is the literal workspace container `charters/`, not
+/// a charter directory, so it keeps the reserved `next` stem regardless of
+/// project or user scope.
 ///
 /// - `health.actions`                                → `health`
 /// - `next.actions`                                  → `next`
 /// - `build_clearhead/next.actions`                  → `build_clearhead`
-/// - `/repo/.clearhead/charters/next.actions`        → `repo`
+/// - `/repo/.clearhead/charters/next.actions`        → `next`
 /// - `/data/clearhead/charters/next.actions`         → `next`
 /// - `build_clearhead/obs.actions`                   → `obs`
 pub(crate) fn charter_stem(actions_path: &Path) -> String {
@@ -58,32 +61,15 @@ pub(crate) fn charter_stem(actions_path: &Path) -> String {
         .unwrap_or("");
 
     // Primary file (next.actions) inside a subdirectory → use parent dir name,
-    // except for the root charter in project layout where the parent directory
-    // is the literal workspace container `charters/`.
+    // except for the root anchor, whose parent is the literal workspace
+    // container `charters/`.
     if filename == crate::workspace::PRIMARY_ACTIONS_FILE
         && let Some(parent) = actions_path.parent()
         && let Some(dir_name) = parent.file_name().and_then(|s| s.to_str())
+        && dir_name != "charters"
+        && !dir_name.is_empty()
     {
-        if dir_name != "charters" && !dir_name.is_empty() {
-            return dir_name.to_string();
-        }
-
-        // Project layout: <project>/.clearhead/charters/next.actions → <project>
-        let is_project_layout = parent
-            .parent()
-            .and_then(|p| p.file_name())
-            .and_then(|s| s.to_str())
-            == Some(".clearhead");
-        if is_project_layout
-            && let Some(project_name) = parent
-                .parent()
-                .and_then(|p| p.parent())
-                .and_then(|p| p.file_name())
-                .and_then(|s| s.to_str())
-            && !project_name.is_empty()
-        {
-            return project_name.to_string();
-        }
+        return dir_name.to_string();
     }
 
     actions_path
@@ -133,7 +119,7 @@ mod tests {
         );
         assert_eq!(
             completed_actions_path(Path::new("/repo/.clearhead/charters/next.actions")),
-            PathBuf::from("/repo/.clearhead/charters/repo.completed.actions")
+            PathBuf::from("/repo/.clearhead/charters/next.completed.actions")
         );
         assert_eq!(
             completed_actions_path(Path::new("/data/clearhead/charters/next.actions")),

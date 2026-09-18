@@ -670,6 +670,36 @@ fn doctor_flags_a_legacy_next_md_root_document() {
 }
 
 #[test]
+fn doctor_flags_a_legacy_root_completed_history_file() {
+    // `charter_stem` used to derive the root's completed-history name from
+    // the persisted workspace name (originally the project directory) rather
+    // than the reserved `next` stem — real history split across two files.
+    let workspace = make_workspace(&[
+        ("next.actions", ""),
+        (
+            "next.completed.actions",
+            "[x] Recent #01951111-0000-7000-0000-0000000000bb\n",
+        ),
+        (
+            "test.completed.actions",
+            "[x] Older #01951111-0000-7000-0000-0000000000bc\n",
+        ),
+    ]);
+    initialized(workspace.path());
+
+    let diagnosis = clearhead_workspace_fs::diagnose_workspace(workspace.path(), None).unwrap();
+
+    assert!(
+        diagnosis
+            .findings
+            .iter()
+            .any(|finding| finding.code == "legacy-root-completed-history"),
+        "findings: {:?}",
+        diagnosis.findings
+    );
+}
+
+#[test]
 fn doctor_flags_a_root_without_a_persisted_name() {
     let workspace = make_workspace(&[("work.actions", "")]);
 

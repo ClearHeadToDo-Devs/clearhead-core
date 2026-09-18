@@ -9,6 +9,7 @@ use super::load::{WorkspaceRead, syntax_error_summary};
 use super::pathing::{PRIMARY_ACTIONS_FILE, PRIMARY_DOCUMENT_FILE};
 use crate::domain::{Action, ActionState, CharterState};
 use crate::workspace::charter::{MarkdownCharter, charter_frontmatter_id, parse_charter};
+use crate::workspace::completed_actions_path;
 use crate::workspace::manifest::WorkspaceManifest;
 use crate::workspace::resource::{ResourceLocation, ResourceRevision, WorkspacePath};
 use crate::workspace::sidecar::{CharterMetadata, parse_sidecar, sidecar_path};
@@ -766,6 +767,42 @@ fn check_root_identity(
             LEGACY_ROOT_DOCUMENT,
             "next.md loads as a separate charter named `next`; the root's prose belongs in README.md, so merge it there by hand and delete next.md",
         ));
+    }
+
+    // A flat completed-history file named after the root's own alias or the
+    // project directory predates the fix to `charter_stem`, which used to
+    // derive the root's completed-history name that way instead of the
+    // reserved `next` stem. No other charter can share the root's alias, so
+    // this can only be root history; like `next.md`, it is real content and
+    // is reported for a human merge, never auto-fixed.
+    let reserved_completed = completed_actions_path(Path::new(PRIMARY_ACTIONS_FILE));
+    let legacy_names: BTreeSet<String> = readme_alias
+        .into_iter()
+        .chain(evidence.manifest.workspace_name.clone())
+        .map(|candidate| format!("{candidate}.completed.actions"))
+        .collect();
+    for document in &evidence.completed_actions {
+        let path = logical_path_buf(&document.path);
+        if path == reserved_completed {
+            continue;
+        }
+        let is_flat = path
+            .parent()
+            .map(|parent| parent.as_os_str().is_empty())
+            .unwrap_or(true);
+        if is_flat
+            && let Some(filename) = path.file_name().and_then(|s| s.to_str())
+            && legacy_names.contains(filename)
+        {
+            findings.push(Finding::warning(
+                "legacy-root-completed-history",
+                &path,
+                format!(
+                    "{} predates the reserved next.completed.actions stem; merge its entries there by hand and delete it",
+                    path.display()
+                ),
+            ));
+        }
     }
 
     let Some(readme) = readme else {
