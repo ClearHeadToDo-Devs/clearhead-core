@@ -407,6 +407,7 @@ fn dispatch(cli: &argparser::Cli, ctx: &CommandContext) -> anyhow::Result<()> {
             }
         },
         Verb::Debug => commands::debug::run(ctx),
+        Verb::Orient => commands::orient::run(ctx),
         Verb::Doctor { json, fix, dry_run } => commands::doctor::run(ctx, *json, *fix, *dry_run),
         Verb::Completion { shell } => {
             use clap::CommandFactory;

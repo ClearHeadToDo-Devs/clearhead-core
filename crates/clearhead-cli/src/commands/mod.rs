@@ -5,6 +5,7 @@ pub mod doctor;
 pub mod export;
 pub mod file;
 pub mod init;
+pub mod orient;
 pub mod plan;
 pub mod query;
 pub mod resolver;

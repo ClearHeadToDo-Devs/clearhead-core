@@ -285,6 +285,9 @@ pub enum Verb {
     /// Show resolved config and workspace diagnostics
     Debug,
 
+    /// Bounded snapshot: active charters, the unscheduled queue, blockers, and recent completions
+    Orient,
+
     /// Check workspace coherence: exits 0 clean, 1 warnings, 2 violations
     Doctor {
         /// Emit the diagnosis as JSON for scripting

@@ -86,6 +86,21 @@ pub fn run(
     }
 }
 
+/// Resolve and execute a named index view, returning its framed `@graph`
+/// nodes directly rather than printing them — the data half of [`run`], for
+/// a caller (such as `orient`) that composes the rows into a larger
+/// document instead of rendering them on their own.
+pub fn nodes_for(ctx: &CommandContext, name: &str) -> anyhow::Result<Vec<Value>> {
+    let sparql =
+        super::registry::resolve_family(ctx, "index", name, super::registry::BUILT_IN_INDEX)
+            .ok_or_else(|| anyhow!("No index query named '{name}'"))?;
+    let store = build_store(ctx)?;
+    let rows = select_rows(&store, &sparql)?;
+    let doc = frame_index(&rows)
+        .map_err(|e| anyhow!("Query result does not satisfy the index contract: {e}"))?;
+    Ok(doc["@graph"].as_array().cloned().unwrap_or_default())
+}
+
 /// Index rows default to NDJSON when piped (one addressable node per line) and
 /// a human table at a terminal.
 fn default_index_format() -> QueryFormat {
