@@ -100,7 +100,9 @@ pub fn add_action(
     )?;
 
     info!(id = %result.action_id, name = %name, "Action added");
-    println!("Added action {} ({})", result.action_id, name);
+    emit(&VerbOutcome::Added {
+        id: canonical_id(result.action_id),
+    });
     Ok(())
 }
 
@@ -584,10 +586,10 @@ pub fn delete_action(
             from_completed = result.from_completed,
             "Action subtree deleted"
         );
-        println!(
-            "Deleted action {} (+{} children)",
-            result.action_id, children
-        );
+        emit(&VerbOutcome::Deleted {
+            id: canonical_id(result.action_id),
+            children,
+        });
         return Ok(());
     }
 

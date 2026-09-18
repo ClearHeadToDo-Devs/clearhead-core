@@ -197,7 +197,7 @@ fn test_add_action_defaults_to_only_charter() {
         .arg("New task")
         .assert()
         .success()
-        .stdout(predicate::str::contains("Added action"));
+        .stdout(predicate::str::contains(r#""kind":"added""#));
 
     let content = fs::read_to_string(env.data_dir.join("charters").join("work.actions")).unwrap();
     assert!(content.contains("[ ] Existing work"));
@@ -215,7 +215,7 @@ fn test_add_action_defaults_to_existing_default_file() {
         .arg("New inbox task")
         .assert()
         .success()
-        .stdout(predicate::str::contains("Added action"));
+        .stdout(predicate::str::contains(r#""kind":"added""#));
 
     let content = fs::read_to_string(env.data_dir.join("charters").join("inbox.actions")).unwrap();
     assert!(content.contains("[ ] Existing inbox"));
@@ -237,12 +237,14 @@ fn test_add_action_prints_full_distinct_ids_for_back_to_back_adds() {
             .unwrap();
         assert!(output.status.success());
         let stdout = String::from_utf8(output.stdout).unwrap();
-        let line = stdout
-            .lines()
-            .find_map(|line| line.strip_prefix("Added action "))
-            .unwrap_or_else(|| panic!("no confirmation in {stdout:?}"));
-        let id = line.split(' ').next().unwrap();
-        uuid::Uuid::parse_str(id).unwrap_or_else(|_| panic!("expected a full UUID in {line:?}"))
+        let value: serde_json::Value = serde_json::from_str(stdout.trim())
+            .unwrap_or_else(|_| panic!("expected JSON confirmation in {stdout:?}"));
+        assert_eq!(value["kind"], "added");
+        let id = value["id"]
+            .as_str()
+            .unwrap_or_else(|| panic!("missing id in {value:?}"))
+            .trim_start_matches("urn:uuid:");
+        uuid::Uuid::parse_str(id).unwrap_or_else(|_| panic!("expected a full UUID in {id:?}"))
     };
 
     assert_ne!(added_id("First"), added_id("Second"));
@@ -401,7 +403,7 @@ fn test_delete_reaches_an_action_in_the_completed_file() {
         .arg(env.data_dir.join("charters/work.actions"))
         .assert()
         .success()
-        .stdout(predicate::str::contains("Deleted action"));
+        .stdout(predicate::str::contains(r#""kind":"deleted""#));
 
     assert!(
         clearhead_workspace_fs::read_actions(&completed)

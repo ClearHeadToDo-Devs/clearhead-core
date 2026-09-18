@@ -35,6 +35,8 @@ pub enum VerbOutcome {
     Cancelled { id: String, children: usize },
     Reopened { id: String, children: usize },
     Updated { id: String },
+    Added { id: String },
+    Deleted { id: String, children: usize },
 }
 
 /// A mutation verb that could not apply.
@@ -110,6 +112,29 @@ mod tests {
         assert_eq!(
             json,
             r#"{"kind":"completed","id":"urn:uuid:01951111-0000-7000-8000-000000000001","children":2}"#
+        );
+    }
+
+    #[test]
+    fn added_and_deleted_serialize_with_kind_tag() {
+        let id = Uuid::parse_str("01951111-0000-7000-8000-000000000001").unwrap();
+        let added = serde_json::to_string(&VerbOutcome::Added {
+            id: canonical_id(id),
+        })
+        .unwrap();
+        assert_eq!(
+            added,
+            r#"{"kind":"added","id":"urn:uuid:01951111-0000-7000-8000-000000000001"}"#
+        );
+
+        let deleted = serde_json::to_string(&VerbOutcome::Deleted {
+            id: canonical_id(id),
+            children: 1,
+        })
+        .unwrap();
+        assert_eq!(
+            deleted,
+            r#"{"kind":"deleted","id":"urn:uuid:01951111-0000-7000-8000-000000000001","children":1}"#
         );
     }
 

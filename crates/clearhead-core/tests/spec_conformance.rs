@@ -308,6 +308,15 @@ fn core_emitted_transaction_result_conforms_to_schema() {
                     id: id.clone(),
                     children: 2,
                 },
+                VerbOutcome::Reopened {
+                    id: id.clone(),
+                    children: 1,
+                },
+                VerbOutcome::Added { id: id.clone() },
+                VerbOutcome::Deleted {
+                    id: id.clone(),
+                    children: 0,
+                },
             ],
             files: vec![
                 "/ws/charters/work.actions".into(),
@@ -324,6 +333,14 @@ fn core_emitted_transaction_result_conforms_to_schema() {
         TransactionOutcome::Rejected {
             operation: 1,
             error: VerbError::NotFound { query: id.clone() },
+        },
+        TransactionOutcome::Rejected {
+            operation: 0,
+            error: VerbError::AlreadyOpen {
+                id: id.clone(),
+                state: "NotStarted".into(),
+                query: id.clone(),
+            },
         },
     ];
 

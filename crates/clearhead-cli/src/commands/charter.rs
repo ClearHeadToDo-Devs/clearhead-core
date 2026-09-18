@@ -10,6 +10,7 @@ use crate::commands::CommandContext;
 use clearhead_core::{ActionState, Charter, CharterState};
 
 use super::action::resolve_charter_across_workspaces;
+use super::verb_result::{VerbOutcome, canonical_id, emit};
 
 /// Resolve the `.md` path for a charter, and whether it must be created.
 ///
@@ -423,7 +424,9 @@ pub fn add_charter(
     }
 
     info!(title = %title, id = %id, path = %file_path.display(), "Charter created");
-    println!("{}", id);
+    emit(&VerbOutcome::Added {
+        id: canonical_id(id),
+    });
 
     if let Some(tpl_name) = template {
         let charter_dir = file_path.parent().unwrap_or(std::path::Path::new(""));
