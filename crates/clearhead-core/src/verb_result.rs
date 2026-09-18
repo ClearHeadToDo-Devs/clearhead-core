@@ -11,11 +11,14 @@
 //! `id` is canonical identity exactly as the query contract exports it
 //! (`urn:uuid:…`), so the read and write halves of the system agree.
 //!
-//! `conflict` joins the taxonomy when the write path gains compare-and-swap;
-//! today no conflicting interleave is observable, so it is not modeled.
+//! `conflict` joined the taxonomy with the delivery precondition seam: every
+//! resource a mutation batch touches carries the revision it was read at, and a
+//! lost compare-and-swap is reported as a branchable kind rather than prose.
 
 use serde::Serialize;
 use uuid::Uuid;
+
+use crate::workspace::WorkspaceError;
 
 /// Canonical identity as the query contract exports it.
 pub fn canonical_id(id: Uuid) -> String {
@@ -68,6 +71,39 @@ pub enum VerbError {
         state: String,
         query: String,
     },
+    /// The write path's compare-and-swap lost: the resource the verb read to
+    /// decide its write changed before the batch was delivered, so nothing was
+    /// applied. A retry-on-fresh-read loop branches on this.
+    Conflict {
+        path: String,
+        expected: String,
+        actual: Option<String>,
+    },
+}
+
+impl VerbError {
+    /// Project a native-adapter failure into the verb taxonomy.
+    ///
+    /// Only a delivery conflict has a structured kind here; every other
+    /// workspace failure stays a workspace error, since the verb layer has no
+    /// finer thing to say about it. The mapping lives in Core so the CLI and
+    /// any future client report a conflict identically.
+    pub fn from_workspace_error(error: &WorkspaceError) -> Option<Self> {
+        match error {
+            WorkspaceError::Conflict(conflict) => Some(Self::Conflict {
+                path: conflict.path.to_string(),
+                expected: conflict.expected.to_string(),
+                actual: conflict
+                    .actual
+                    .as_ref()
+                    .map(|revision| revision.to_string()),
+            }),
+            WorkspaceError::Io(_)
+            | WorkspaceError::Parse(_)
+            | WorkspaceError::Actions(_)
+            | WorkspaceError::InvalidPath(_) => None,
+        }
+    }
 }
 
 impl std::fmt::Display for VerbError {
@@ -91,6 +127,20 @@ impl std::fmt::Display for VerbError {
             VerbError::AlreadyOpen { id, state, .. } => {
                 write!(f, "Action {} is already open ({state})", bare(id))
             }
+            VerbError::Conflict {
+                path,
+                expected,
+                actual,
+            } => match actual {
+                Some(actual) => write!(
+                    f,
+                    "Resource {path} changed underneath the write (expected {expected}, found {actual})"
+                ),
+                None => write!(
+                    f,
+                    "Resource {path} was removed underneath the write (expected {expected})"
+                ),
+            },
         }
     }
 }
@@ -143,6 +193,17 @@ mod tests {
         let not_found = serde_json::to_string(&VerbError::NotFound { query: "x".into() }).unwrap();
         assert_eq!(not_found, r#"{"kind":"not-found","query":"x"}"#);
 
+        let conflict = serde_json::to_string(&VerbError::Conflict {
+            path: "workspace:charters/support.md".into(),
+            expected: "sha256:aaaa".into(),
+            actual: Some("sha256:bbbb".into()),
+        })
+        .unwrap();
+        assert_eq!(
+            conflict,
+            r#"{"kind":"conflict","path":"workspace:charters/support.md","expected":"sha256:aaaa","actual":"sha256:bbbb"}"#
+        );
+
         let ambiguous = serde_json::to_string(&VerbError::Ambiguous {
             query: "dead".into(),
             candidates: vec![
@@ -163,5 +224,47 @@ mod tests {
             closed.starts_with(r#"{"kind":"already-closed""#),
             "got: {closed}"
         );
+    }
+
+    #[test]
+    fn a_conflict_is_projected_from_the_workspace_error_that_carries_it() {
+        use crate::workspace::WorkspaceError;
+        use crate::workspace::resource::{
+            ExpectedResource, ResourceConflict, ResourceLocation, ResourceRevision, WorkspacePath,
+        };
+
+        let conflict = ResourceConflict {
+            path: ResourceLocation::workspace(WorkspacePath::new("charters/support.md").unwrap()),
+            expected: ExpectedResource::Revision(ResourceRevision::new("sha256:aaaa")),
+            actual: Some(ResourceRevision::new("sha256:bbbb")),
+        };
+        let projected = VerbError::from_workspace_error(&WorkspaceError::Conflict(conflict))
+            .expect("a conflict maps to a verb error");
+        assert_eq!(
+            projected,
+            VerbError::Conflict {
+                path: "workspace:charters/support.md".into(),
+                expected: "sha256:aaaa".into(),
+                actual: Some("sha256:bbbb".into()),
+            }
+        );
+
+        // A deletion underneath the write is the same kind, with no actual revision.
+        let deleted = ResourceConflict {
+            path: ResourceLocation::workspace(WorkspacePath::new("charters/support.md").unwrap()),
+            expected: ExpectedResource::Revision(ResourceRevision::new("sha256:aaaa")),
+            actual: None,
+        };
+        assert_eq!(
+            VerbError::from_workspace_error(&WorkspaceError::Conflict(deleted)),
+            Some(VerbError::Conflict {
+                path: "workspace:charters/support.md".into(),
+                expected: "sha256:aaaa".into(),
+                actual: None,
+            })
+        );
+
+        // Everything else keeps its own error type.
+        assert!(VerbError::from_workspace_error(&WorkspaceError::Parse("x".into())).is_none());
     }
 }

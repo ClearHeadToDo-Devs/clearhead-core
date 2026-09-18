@@ -120,6 +120,12 @@ impl ResourceRevision {
     }
 }
 
+impl fmt::Display for ResourceRevision {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
 /// One immutable resource already read by a host.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ResourceSnapshot {
@@ -390,6 +396,15 @@ pub enum ExpectedResource {
     Revision(ResourceRevision),
 }
 
+impl fmt::Display for ExpectedResource {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Missing => f.write_str("missing"),
+            Self::Revision(revision) => write!(f, "{revision}"),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ResourcePrecondition {
     pub path: ResourceLocation,
@@ -465,6 +480,23 @@ pub struct ResourceConflict {
     pub path: ResourceLocation,
     pub expected: ExpectedResource,
     pub actual: Option<ResourceRevision>,
+}
+
+impl fmt::Display for ResourceConflict {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match &self.actual {
+            Some(actual) => write!(
+                f,
+                "{}: expected {}, found {}",
+                self.path, self.expected, actual
+            ),
+            None => write!(
+                f,
+                "{}: expected {}, found nothing",
+                self.path, self.expected
+            ),
+        }
+    }
 }
 
 /// Host execution failed; Core's speculative state must not be adopted.

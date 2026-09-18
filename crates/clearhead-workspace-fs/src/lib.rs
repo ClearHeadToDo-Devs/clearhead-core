@@ -42,7 +42,7 @@ use chrono::Local;
 pub use clearhead_core::TransactionOutcome;
 use clearhead_core::domain::update::ActionUpdate;
 use clearhead_core::workspace::resource::{
-    DeliveryError, Effect, EffectBatch, ExpectedResource, ResourceConflict, ResourceLocation,
+    Effect, EffectBatch, ExpectedResource, ResourceConflict, ResourceLocation,
     ResourcePrecondition, ResourceRevision, ResourceSnapshot, WorkspacePath,
 };
 use clearhead_core::workspace::sidecar::CharterMetadata;
@@ -599,8 +599,7 @@ fn validate_preconditions(
                 expected: precondition.expected.clone(),
                 actual,
             };
-            let error: DeliveryError<String> = DeliveryError::Conflict { conflict };
-            return Err(WorkspaceError::Actions(error.to_string()));
+            return Err(WorkspaceError::Conflict(conflict));
         }
     }
     Ok(())
@@ -807,8 +806,8 @@ mod charter_document_tests {
 
         let error = write_charter_document(root, &document, "clobber\n").unwrap_err();
         assert!(
-            error.to_string().contains("conflict"),
-            "expected a conflict, got: {error}"
+            matches!(&error, WorkspaceError::Conflict(_)),
+            "expected a typed conflict, got: {error:?}"
         );
         assert_eq!(
             std::fs::read_to_string(&path).unwrap(),

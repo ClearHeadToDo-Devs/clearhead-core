@@ -81,12 +81,12 @@ fn real_main() {
         // Verb failures are data (query_output.md, "Errors as data"): when a
         // machine is reading stdout, emit the typed result there so a loop can
         // branch on `kind` instead of parsing stderr prose.
-        if let Some(verb_err) = e.downcast_ref::<commands::verb_result::VerbError>()
+        if let Some(verb_err) = verb_error(&e)
             && !std::io::IsTerminal::is_terminal(&io::stdout())
         {
             println!(
                 "{}",
-                serde_json::to_string(verb_err).expect("verb error serializes")
+                serde_json::to_string(&verb_err).expect("verb error serializes")
             );
             process::exit(1);
         }
@@ -99,6 +99,24 @@ fn real_main() {
         }
         process::exit(1);
     }
+}
+
+/// The verb-error view of a failed command, if the failure has one.
+///
+/// A verb failure travels as itself. A delivery conflict travels as the
+/// [`WorkspaceError`](clearhead_core::workspace::WorkspaceError) the native
+/// adapter raised — sometimes behind `anyhow` context a command added — so the
+/// cause chain is searched for one before falling back to stderr prose.
+/// Everything else keeps its own error type and is printed, not re-typed.
+fn verb_error(error: &anyhow::Error) -> Option<commands::verb_result::VerbError> {
+    if let Some(verb_err) = error.downcast_ref::<commands::verb_result::VerbError>() {
+        return Some(verb_err.clone());
+    }
+    error.chain().find_map(|cause| {
+        cause
+            .downcast_ref::<clearhead_core::workspace::WorkspaceError>()
+            .and_then(commands::verb_result::VerbError::from_workspace_error)
+    })
 }
 
 fn run_command(cli: &argparser::Cli) -> anyhow::Result<()> {
@@ -458,5 +476,56 @@ fn dispatch(cli: &argparser::Cli, ctx: &CommandContext) -> anyhow::Result<()> {
         },
         Verb::CompleteValues { kind } => commands::complete_values(ctx, *kind),
         Verb::Init { .. } => unreachable!("handled before CommandContext construction"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use anyhow::Context as _;
+    use clearhead_core::workspace::WorkspaceError;
+    use clearhead_core::workspace::resource::{
+        ExpectedResource, ResourceConflict, ResourceLocation, ResourceRevision, WorkspacePath,
+    };
+
+    fn conflict() -> WorkspaceError {
+        WorkspaceError::Conflict(ResourceConflict {
+            path: ResourceLocation::workspace(WorkspacePath::new("charters/support.md").unwrap()),
+            expected: ExpectedResource::Revision(ResourceRevision::new("sha256:aaaa")),
+            actual: Some(ResourceRevision::new("sha256:bbbb")),
+        })
+    }
+
+    #[test]
+    fn a_conflict_behind_command_context_still_projects() {
+        // Commands add context ("Failed to write 'x.md'"), so the conflict is
+        // never the outermost error — the chain walk is what finds it.
+        let error = Err::<(), _>(conflict())
+            .context("Failed to write 'x.md'")
+            .unwrap_err();
+        assert_eq!(
+            verb_error(&error),
+            Some(commands::verb_result::VerbError::Conflict {
+                path: "workspace:charters/support.md".into(),
+                expected: "sha256:aaaa".into(),
+                actual: Some("sha256:bbbb".into()),
+            })
+        );
+    }
+
+    #[test]
+    fn a_bare_verb_error_travels_as_itself() {
+        let error =
+            anyhow::Error::new(commands::verb_result::VerbError::NotFound { query: "x".into() });
+        assert_eq!(
+            verb_error(&error),
+            Some(commands::verb_result::VerbError::NotFound { query: "x".into() })
+        );
+    }
+
+    #[test]
+    fn an_ordinary_failure_has_no_verb_view() {
+        assert!(verb_error(&anyhow::anyhow!("boom")).is_none());
+        assert!(verb_error(&anyhow::Error::new(WorkspaceError::Parse("x".into()))).is_none());
     }
 }

@@ -13,6 +13,8 @@ mod pathing;
 
 use std::path::PathBuf;
 
+use crate::workspace::resource::ResourceConflict;
+
 pub use assembly::{WorkspaceAssemblyInput, assemble_workspace, assembled_domain_model};
 pub use doctor::{
     Diagnosis, DoctorCollectionEvidence, DoctorDocument, DoctorEvidence, DoctorRepair,
@@ -42,4 +44,10 @@ pub enum WorkspaceError {
     /// A path provided was not within the workspace or was otherwise invalid.
     #[error("Invalid path: {0}")]
     InvalidPath(PathBuf),
+    /// A precondition compare-and-swap failed: the resource observed while the
+    /// mutation was prepared is no longer the resource on disk, so the batch
+    /// was not applied. Carries the conflict as data rather than prose so
+    /// clients can report a branchable kind.
+    #[error("resource conflict: {0}")]
+    Conflict(ResourceConflict),
 }
