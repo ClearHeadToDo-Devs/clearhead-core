@@ -3,8 +3,8 @@
 //! An index query is a portable SELECT whose rows carry the identity, display,
 //! and locator terms a client needs to navigate to and act on each action. This
 //! module validates those rows against the index contract, frames them into the
-//! single `@context` + `@graph` JSON-LD document every consumer reads
-//! (`specifications/query_output.md`), and renders the destination-aware output
+//! single `@context` + `@graph` JSON-LD document every consumer reads (see
+//! `clearhead-cli/docs/UI.md`), and renders the destination-aware output
 //! formats. It is the CLI-side owner of what graphd used to serve — client
 //! presentation, so it lives in the delivery shell, not Core.
 //!
