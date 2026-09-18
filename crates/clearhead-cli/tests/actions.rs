@@ -743,3 +743,57 @@ fn test_read_actions_context_filter_multiple_flags() {
         .stdout(predicate::str::contains("Personal task"))
         .stdout(predicate::str::contains("Other task").not());
 }
+
+#[test]
+fn test_add_action_creates_a_missing_charter_anchor() {
+    // A charter can exist as prose before it has an actions anchor — a fresh
+    // charter, or one promoted out of `someday/`. `add action --charter`
+    // derives the anchor the loader pairs with that document instead of
+    // refusing, and delivery materializes it.
+    let env = TestEnv::new();
+    env.write_text(
+        "charters/notes.md",
+        "---\nid: 01a0b456-0000-7000-8000-000000000abc\nalias: notes\n---\n# Notes\n",
+    );
+
+    env.command()
+        .args([
+            "add",
+            "action",
+            "First captured action",
+            "--charter",
+            "notes",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""kind":"added""#));
+
+    let content = fs::read_to_string(env.data_dir.join("charters").join("notes.actions")).unwrap();
+    assert!(content.contains("First captured action"), "got: {content}");
+}
+
+#[test]
+fn test_add_action_creates_the_primary_anchor_of_a_readme_charter() {
+    // The primary pairing: `README.md` anchors its collection's
+    // `next.actions`, not `README.actions`.
+    let env = TestEnv::new();
+    env.write_text(
+        "charters/probe/README.md",
+        "---\nid: 01a0b456-0000-7000-8000-000000000def\nalias: probe\n---\n# Probe\n",
+    );
+
+    env.command()
+        .args(["add", "action", "Collection action", "--charter", "probe"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""kind":"added""#));
+
+    let content = fs::read_to_string(
+        env.data_dir
+            .join("charters")
+            .join("probe")
+            .join("next.actions"),
+    )
+    .unwrap();
+    assert!(content.contains("Collection action"), "got: {content}");
+}

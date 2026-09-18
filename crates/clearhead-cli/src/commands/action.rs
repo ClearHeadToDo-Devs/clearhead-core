@@ -127,10 +127,25 @@ fn resolve_acts_file(
     }
     if let Some(query) = charter {
         let (mc, ws_root) = resolve_charter_across_workspaces(ctx, query)?;
-        let rel = mc.actions_file.as_ref().ok_or_else(|| {
-            anyhow::anyhow!("Charter '{}' has no associated actions file", mc.title)
-        })?;
         let root = clearhead_workspace_fs::charter_root(&ws_root);
+        // A charter may exist as prose with no actions anchor yet (a fresh
+        // charter, or one promoted out of `someday/`). Its identity lives in
+        // that document, so derive the anchor the loader would pair with it
+        // instead of refusing and making the caller create the file by hand;
+        // delivery then materializes it as part of the insert.
+        let rel = match mc.actions_file.as_ref() {
+            Some(rel) => rel.clone(),
+            None => mc
+                .md_file
+                .as_deref()
+                .and_then(clearhead_core::workspace::actions_anchor_for_document)
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "Charter '{}' has no actions file and no document to derive one from",
+                        mc.title
+                    )
+                })?,
+        };
         return Ok(root.join(rel));
     }
 

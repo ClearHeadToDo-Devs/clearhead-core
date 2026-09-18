@@ -273,11 +273,22 @@ fn begin_mutation(
 }
 
 fn validate_source_path(source_path: &Path, charter_root: &Path) -> Result<(), WorkspaceError> {
-    let valid_location = source_path
+    // A charter gaining its first action has no anchor on disk yet, so the
+    // path cannot always be canonicalized. An existing target keeps the exact
+    // previous check (resolve the file itself); a not-yet-created one is
+    // contained iff its deepest existing ancestor is.
+    let contained_in = |root: &Path| match source_path.canonicalize() {
+        Ok(canonical) => canonical.starts_with(root),
+        Err(_) => source_path
+            .parent()
+            .and_then(|parent| parent.ancestors().find(|ancestor| ancestor.exists()))
+            .and_then(|existing| existing.canonicalize().ok())
+            .is_some_and(|canonical| canonical.starts_with(root)),
+    };
+    let valid_location = charter_root
         .canonicalize()
-        .ok()
-        .zip(charter_root.canonicalize().ok())
-        .is_some_and(|(source, root)| source.starts_with(root));
+        .map(|root| contained_in(&root))
+        .unwrap_or(false);
     let valid_name = source_path
         .file_name()
         .and_then(|name| name.to_str())
@@ -745,6 +756,24 @@ mod mounted_effect_tests {
             std::fs::read(external.join("inbox/action.ics")).unwrap(),
             b"calendar"
         );
+    }
+
+    #[test]
+    fn a_source_anchor_that_does_not_exist_yet_still_validates() {
+        let temp = tempfile::tempdir().unwrap();
+        let charter_root = temp.path().join(".clearhead/charters");
+        std::fs::create_dir_all(&charter_root).unwrap();
+
+        // A charter gaining its first action has no anchor on disk.
+        validate_source_path(&charter_root.join("notes.actions"), &charter_root).unwrap();
+        // ...including one in a directory that does not exist yet (the deepest
+        // existing ancestor is the charter root).
+        validate_source_path(&charter_root.join("someday/probe.actions"), &charter_root).unwrap();
+
+        // A missing path outside the charter tree is still rejected, as is a
+        // missing file that is not an actions anchor.
+        assert!(validate_source_path(&temp.path().join("outside.actions"), &charter_root).is_err());
+        assert!(validate_source_path(&charter_root.join("notes.md"), &charter_root).is_err());
     }
 }
 

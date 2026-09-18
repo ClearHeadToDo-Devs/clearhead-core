@@ -64,6 +64,31 @@ pub fn charter_collection_from_anchor(relative_path: &Path) -> PathBuf {
     PathBuf::from(slug)
 }
 
+/// The actions anchor that pairs with a charter document in the same directory.
+///
+/// The inverse of the loader's pairing rule: a primary document (`README.md`)
+/// anchors its collection's `next.actions`, and any other document pairs by
+/// stem (`work.md` ↔ `work.actions`). A charter's identity already lives in its
+/// document, so an anchor for a charter that has prose but no actions file yet
+/// is *derived* from that document, never guessed from its title.
+///
+/// Returns `None` for a path that is not a charter document.
+pub fn actions_anchor_for_document(relative_path: &Path) -> Option<PathBuf> {
+    let filename = relative_path.file_name()?.to_str()?;
+    if !filename.ends_with(".md") {
+        return None;
+    }
+    let directory = relative_path.parent().unwrap_or_else(|| Path::new(""));
+    if filename == PRIMARY_DOCUMENT_FILE {
+        return Some(directory.join(PRIMARY_ACTIONS_FILE));
+    }
+    let stem = relative_path.file_stem()?.to_str()?;
+    if stem.is_empty() {
+        return None;
+    }
+    Some(directory.join(format!("{stem}.actions")))
+}
+
 /// Infer the charter name from a relative file path.
 pub fn infer_charter_name(relative_path: &Path) -> Option<String> {
     let components: Vec<_> = relative_path.components().collect();
@@ -159,6 +184,28 @@ mod tests {
     #[test]
     fn primary_actions_file_is_the_root_anchor_stem() {
         assert_eq!(PRIMARY_ACTIONS_FILE, format!("{ROOT_ANCHOR_STEM}.actions"));
+    }
+
+    #[test]
+    fn actions_anchors_invert_the_document_pairing_rule() {
+        assert_eq!(
+            actions_anchor_for_document(Path::new("work.md")),
+            Some(PathBuf::from("work.actions"))
+        );
+        assert_eq!(
+            actions_anchor_for_document(Path::new("myproject/README.md")),
+            Some(PathBuf::from("myproject/next.actions"))
+        );
+        assert_eq!(
+            actions_anchor_for_document(Path::new("myproject/subcharter.md")),
+            Some(PathBuf::from("myproject/subcharter.actions"))
+        );
+        assert_eq!(
+            actions_anchor_for_document(Path::new("README.md")),
+            Some(PathBuf::from("next.actions"))
+        );
+        assert_eq!(actions_anchor_for_document(Path::new("work.actions")), None);
+        assert_eq!(actions_anchor_for_document(Path::new("notes.txt")), None);
     }
 
     #[test]
