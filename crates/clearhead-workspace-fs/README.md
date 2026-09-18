@@ -46,15 +46,19 @@ The round trip is: **inventory → read bytes into snapshots → Core prepares a
   `load_domain_model` — inventory the workspace mount (and any external plans
   mount), read the bytes, and assemble a `DomainModel` via Core.
 - **Mutation execution** (`lib.rs`): `insert`/`update`/`delete`/`close`/
-  `archive` action helpers, each threading Core's prepared outcome through the
-  locked, journaled write seam.
-- **Durability** (`durability.rs`): three layers of protection —
-  - `atomic_write` — temp + fsync + rename + directory fsync for single files.
-  - `PendingBatch` — a `.pending` journal that stages a multi-file batch and
-    converges it in order; an interrupted batch is replayed forward by
-    `recover_pending` on the next load.
-  - `WorkspaceLock` — an OS-backed exclusive lock that serializes writers and
-    is released by the kernel after a crash.
+  `archive` action helpers, each validating Core's `EffectBatch` preconditions
+  against live workspace state before delivering it.
+- **Durability** (`durability.rs`): `atomic_write` — temp + fsync + rename +
+  directory fsync — is the only primitive; every effect, single- or
+  multi-file, is one or more of these. Multi-file consistency is deliberately
+  *not* journaled: `deliver` validates every precondition up front (a stale
+  one is rejected as a conflict, so nothing partial ever applies), then
+  applies effects in additive order — writes and moves before removals — so
+  an interrupted batch leaves a recoverable duplicate for `doctor` to
+  reconcile, never a hole. There is no cross-process lock; concurrent writers
+  are resolved by precondition conflict, not exclusion. See the
+  direct-delivery charter, which retired the journal and the lock this
+  replaced.
 - **Calendar sync** (`calendar.rs`): reading/writing `.ics` plan files and
   reconciling occurrences against Core's sync plan.
 - **Doctor** (`doctor.rs`), **manifest** (`manifest.rs`), **discovery**
