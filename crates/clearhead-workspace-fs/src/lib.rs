@@ -17,11 +17,12 @@ pub use archive_charter::{
     archive_terminal_charters, find_charter as find_markdown_charter,
 };
 pub use calendar::{
-    CalendarObservation, CalendarResource, CalendarSyncPreview, CalendarSyncResult,
-    apply_occurrence_op, delete_plan_file, observe_calendar_resources, plans_sync_store_path,
-    preview_calendar_sync_with_component, read_calendar_resources, read_ics_file,
-    read_plans_sync_store, resolve_materialized_occurrence, sync_calendar,
-    sync_calendar_with_component, sync_master_rollforwards, write_plan_file,
+    COLLECTION_DISPLAYNAME_FILE, CalendarObservation, CalendarResource, CalendarSyncPreview,
+    CalendarSyncResult, apply_occurrence_op, delete_plan_file, observe_calendar_resources,
+    plans_sync_store_path, preview_calendar_sync_with_component, read_calendar_resources,
+    read_ics_file, read_plans_sync_store, resolve_materialized_occurrence, sync_calendar,
+    sync_calendar_with_component, sync_master_rollforwards, write_collection_displaynames,
+    write_plan_file,
 };
 pub use discovery::{ManifestSourceType, WorkspaceManifestEntry, collect_workspace_manifest};
 pub use doctor::{

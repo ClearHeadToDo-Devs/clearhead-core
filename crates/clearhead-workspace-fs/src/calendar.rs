@@ -1199,6 +1199,45 @@ fn mutation_target(
     Ok((mounts, location, target))
 }
 
+/// The vdir metadata file that names a collection for calendar clients.
+pub const COLLECTION_DISPLAYNAME_FILE: &str = "displayname";
+
+/// (Re)write the vdir `displayname` metadata for every materialized charter
+/// collection, returning how many files were written or refreshed.
+///
+/// A collection directory is a stable path key (`plans/next`,
+/// `plans/work-feature`), so the human-readable name belongs in the vdir
+/// metadata file that calendar clients and `vdirsyncer metasync` read rather
+/// than in the folder name. The name is the charter's alias; a charter without
+/// one is skipped, since the folder name is then the only name available.
+///
+/// Only collections that already exist are named: writing metadata must never
+/// bring an empty collection into being.
+pub fn write_collection_displaynames(
+    workspace_root: &Path,
+    external_plans: Option<&Path>,
+) -> Result<usize, WorkspaceError> {
+    let mounts = NativeWorkspaceMounts::resolve(workspace_root, external_plans);
+    let plans_root = mounts.plans_root();
+    let mut refreshed = 0;
+    for charter in crate::mounts::read_workspace(workspace_root, external_plans)?.charters {
+        let Some(alias) = charter.alias.as_deref() else {
+            continue;
+        };
+        let directory = plans_root.join(&charter.plans_dir);
+        if !directory.is_dir() {
+            continue;
+        }
+        let path = directory.join(COLLECTION_DISPLAYNAME_FILE);
+        if std::fs::read_to_string(&path).ok().as_deref() == Some(alias) {
+            continue;
+        }
+        crate::durability::atomic_write(&path, alias)?;
+        refreshed += 1;
+    }
+    Ok(refreshed)
+}
+
 /// Write one Plan through the mounted, stale-guarded native effect boundary.
 pub fn write_plan_file(
     workspace_root: &Path,
@@ -1326,6 +1365,83 @@ mod tests {
         );
         assert_eq!(resources[0].charter_name, "project");
         assert_eq!(resources[0].path, external.join("external.ics"));
+    }
+
+    #[test]
+    fn collection_displaynames_come_from_the_charter_alias() {
+        let temp = tempfile::tempdir().unwrap();
+        let project = temp.path().join("project");
+        let charters = project.join(".clearhead/charters");
+        std::fs::create_dir_all(&charters).unwrap();
+        std::fs::write(
+            charters.join("work.md"),
+            "---\nid: 01951111-0000-7000-8000-0000000000c1\nalias: work\n---\n# Work\n",
+        )
+        .unwrap();
+        std::fs::write(charters.join("work.actions"), "").unwrap();
+        // No alias, and a collection that was never materialized.
+        std::fs::write(
+            charters.join("anon.md"),
+            "---\nid: 01951111-0000-7000-8000-0000000000c2\n---\n# Anonymous\n",
+        )
+        .unwrap();
+        std::fs::write(charters.join("anon.actions"), "").unwrap();
+
+        let plans = project.join(".clearhead/plans");
+        std::fs::create_dir_all(plans.join("work")).unwrap();
+
+        assert_eq!(write_collection_displaynames(&project, None).unwrap(), 1);
+        assert_eq!(
+            std::fs::read_to_string(plans.join("work/displayname")).unwrap(),
+            "work"
+        );
+        // A charter without an alias is not named, and metadata never brings a
+        // collection into being.
+        assert!(!plans.join("anon").exists());
+
+        // Idempotent once it matches.
+        assert_eq!(write_collection_displaynames(&project, None).unwrap(), 0);
+
+        // A rename refreshes the display name, not the collection path.
+        std::fs::write(
+            charters.join("work.md"),
+            "---\nid: 01951111-0000-7000-8000-0000000000c1\nalias: labor\n---\n# Work\n",
+        )
+        .unwrap();
+        assert_eq!(write_collection_displaynames(&project, None).unwrap(), 1);
+        assert_eq!(
+            std::fs::read_to_string(plans.join("work/displayname")).unwrap(),
+            "labor"
+        );
+    }
+
+    #[test]
+    fn collection_displaynames_follow_the_configured_plans_root() {
+        let temp = tempfile::tempdir().unwrap();
+        let project = temp.path().join("project");
+        let charters = project.join(".clearhead/charters");
+        std::fs::create_dir_all(&charters).unwrap();
+        std::fs::write(
+            charters.join("work.md"),
+            "---\nid: 01951111-0000-7000-8000-0000000000c3\nalias: work\n---\n# Work\n",
+        )
+        .unwrap();
+        std::fs::write(charters.join("work.actions"), "").unwrap();
+
+        let external = temp.path().join("vdir");
+        std::fs::create_dir_all(external.join("work")).unwrap();
+
+        assert_eq!(
+            write_collection_displaynames(&project, Some(&external)).unwrap(),
+            1
+        );
+        assert_eq!(
+            std::fs::read_to_string(external.join("work/displayname")).unwrap(),
+            "work"
+        );
+        // The vdir the calendar client reads is the mounted one, not the internal
+        // plans root shadowed by it.
+        assert!(!project.join(".clearhead/plans/work").exists());
     }
 
     #[test]

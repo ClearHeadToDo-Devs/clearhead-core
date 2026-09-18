@@ -121,6 +121,23 @@ pub fn sync_calendar(
         conflict_resolution(conflict),
         ctx.config.plan_component,
     )?;
+
+    // Name the collections this sync materialized. A collection directory is a
+    // stable path key, so the readable name lives in the vdir metadata file
+    // that calendar clients and `vdirsyncer metasync` read. Done before the
+    // "already in sync" early return, which is exactly the case where the vdir
+    // exists but has never been named.
+    let named = clearhead_workspace_fs::write_collection_displaynames(
+        &ctx.data_dir,
+        ctx.plan_override().as_deref(),
+    )?;
+    if named > 0 {
+        debug!(
+            collections = named,
+            "Refreshed vdir collection display names"
+        );
+    }
+
     render_sync_report(&result.report);
     let rolled_forward = result.rolled_forward;
 
