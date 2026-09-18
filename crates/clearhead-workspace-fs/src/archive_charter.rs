@@ -841,7 +841,7 @@ mod tests {
         std::fs::create_dir_all(&charters).unwrap();
         std::fs::write(
             charters.join("done.md"),
-            "---\nalias: done\nstate: Closed\n---\n# Done\n",
+            "---\nid: 01951111-0000-7000-8000-0000000000b1\nalias: done\nstate: Closed\n---\n# Done\n",
         )
         .unwrap();
         std::fs::write(
@@ -958,7 +958,7 @@ mod tests {
 
         std::fs::write(
             charters_dir.join("done.md"),
-            "---\nalias: done\nstate: Closed\n---\n# Done\n",
+            "---\nid: 01951111-0000-7000-8000-0000000000a9\nalias: done\nstate: Closed\n---\n# Done\n",
         )
         .expect("write charter md");
         // Empty primary actions file: no open actions, so no --force needed.
@@ -1033,7 +1033,7 @@ mod tests {
 
         std::fs::write(
             charters_dir.join("done.md"),
-            "---\nalias: done\nstate: Closed\n---\n# Done\n",
+            "---\nid: 01951111-0000-7000-8000-0000000000a8\nalias: done\nstate: Closed\n---\n# Done\n",
         )
         .expect("write charter md");
         let acts_path = charters_dir.join("done.actions");
@@ -1134,7 +1134,7 @@ mod tests {
 
         std::fs::write(
             work_dir.join("README.md"),
-            "---\nalias: work\nstate: Closed\n---\n# Work\n",
+            "---\nid: 01951111-0000-7000-8000-0000000000a7\nalias: work\nstate: Closed\n---\n# Work\n",
         )
         .expect("write parent charter md");
         std::fs::write(work_dir.join("next.actions"), "[x] Parent done\n")
@@ -1144,7 +1144,7 @@ mod tests {
 
         std::fs::write(
             ops_dir.join("README.md"),
-            "---\nalias: ops\nstate: Closed\n---\n# Ops\n",
+            "---\nid: 01951111-0000-7000-8000-0000000000a6\nalias: ops\nstate: Closed\n---\n# Ops\n",
         )
         .expect("write child charter md");
         std::fs::write(ops_dir.join("next.actions"), "[x] Child done\n")
@@ -1250,7 +1250,7 @@ mod tests {
 
         std::fs::write(
             charter_dir.join("README.md"),
-            "---\nalias: graph-views\nstate: Closed\n---\n# Graph Views\n",
+            "---\nid: 01951111-0000-7000-8000-0000000000a5\nalias: graph-views\nstate: Closed\n---\n# Graph Views\n",
         )
         .expect("write charter md");
         std::fs::write(charter_dir.join("next.actions"), "").expect("write actions");
@@ -1345,13 +1345,13 @@ mod tests {
 
         std::fs::write(
             charters_dir.join("goals.md"),
-            "---\nalias: goals\nstate: Active\n---\n# Goals\n",
+            "---\nid: 01951111-0000-7000-8000-0000000000a3\nalias: goals\nstate: Active\n---\n# Goals\n",
         )
         .unwrap();
         std::fs::write(charters_dir.join("goals.actions"), "").unwrap();
         std::fs::write(
             charters_dir.join("q3.md"),
-            "---\nalias: q3\nparent: goals\nstate: Closed\n---\n# Q3\n",
+            "---\nid: 01951111-0000-7000-8000-0000000000a4\nalias: q3\nparent: goals\nstate: Closed\n---\n# Q3\n",
         )
         .unwrap();
         std::fs::write(charters_dir.join("q3.actions"), "").unwrap();
@@ -1392,7 +1392,7 @@ mod tests {
         // Parent stays Active — only the closed child is archived.
         std::fs::write(
             work_dir.join("README.md"),
-            "---\nalias: work\nstate: Active\n---\n# Work\n",
+            "---\nid: 01951111-0000-7000-8000-0000000000a1\nalias: work\nstate: Active\n---\n# Work\n",
         )
         .unwrap();
         std::fs::write(work_dir.join("next.actions"), "").unwrap();
@@ -1400,7 +1400,7 @@ mod tests {
         // Child is Closed, directory-nested, with NO explicit parent: line.
         std::fs::write(
             ops_dir.join("README.md"),
-            "---\nalias: ops\nstate: Closed\n---\n# Ops\n",
+            "---\nid: 01951111-0000-7000-8000-0000000000a2\nalias: ops\nstate: Closed\n---\n# Ops\n",
         )
         .unwrap();
         std::fs::write(ops_dir.join("next.actions"), "").unwrap();

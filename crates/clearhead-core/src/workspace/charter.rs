@@ -136,8 +136,15 @@ struct CharterFrontmatter {
 /// 3. Error
 ///
 /// ID resolution:
-/// 1. `id` field in frontmatter
-/// 2. Deterministic v5 UUID from title
+/// 1. `id` field in frontmatter — the concept's persisted anchor
+/// 2. Otherwise a fresh *ephemeral* id
+///
+/// Identity is never recomputed from mutable content
+/// (specifications/workspace.md, Concept Identity): a title-derived id would
+/// silently change on every retitle and orphan the references to it. A
+/// document that declares no `id` therefore loads with an identity nothing may
+/// persist or reference, and `doctor` reports the gap. The loader may still
+/// adopt a `charter.id` recorded in the sidecar, which is persisted truth.
 pub fn parse_charter(content: &str) -> Result<Charter, String> {
     let (frontmatter, body) = split_frontmatter(content);
 
@@ -153,9 +160,7 @@ pub fn parse_charter(content: &str) -> Result<Charter, String> {
         "Charter must have a title (frontmatter `title` or H1 header)".to_string()
     })?;
 
-    let id = fm
-        .id
-        .unwrap_or_else(|| Uuid::new_v5(&CHARTER_NS, title.as_bytes()));
+    let id = fm.id.unwrap_or_else(Uuid::now_v7);
 
     Ok(Charter {
         id,
@@ -444,8 +449,20 @@ Stay healthy and fit through regular exercise and diet.
             charter.description,
             Some("This is a project charter.".to_string())
         );
-        // ID should be deterministic from title
-        assert_eq!(charter.id, Uuid::new_v5(&CHARTER_NS, b"My Project"));
+        // No declared id: the identity is ephemeral, never recomputed from the
+        // title (a retitle must not silently change identity).
+        assert_ne!(charter.id, Uuid::new_v5(&CHARTER_NS, b"My Project"));
+        assert_ne!(charter.id, parse_charter(content).unwrap().id);
+    }
+
+    #[test]
+    fn test_declared_id_survives_a_retitle() {
+        let declared = "---\nid: 01234567-89ab-cdef-0123-456789abcdef\n---\n# Original\n";
+        let retitled = "---\nid: 01234567-89ab-cdef-0123-456789abcdef\n---\n# Renamed\n";
+        assert_eq!(
+            parse_charter(declared).unwrap().id,
+            parse_charter(retitled).unwrap().id
+        );
     }
 
     #[test]

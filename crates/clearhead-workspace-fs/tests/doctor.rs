@@ -712,3 +712,57 @@ fn doctor_flags_a_root_without_a_persisted_name() {
             .any(|finding| finding.code == "unnamed-root-charter")
     );
 }
+
+#[test]
+fn doctor_reports_a_charter_document_without_a_declared_id() {
+    // Concept Identity: the document is the identity anchor, so a document
+    // that declares no `id` has no authoritative identity — loading mints an
+    // ephemeral one and the gap is reported, never papered over with a
+    // title-derived id that a retitle would silently change.
+    let workspace = make_workspace(&[
+        ("work.md", "---\nalias: work\n---\n# Work\n"),
+        ("work.actions", ""),
+    ]);
+
+    let diagnosis =
+        clearhead_workspace_fs::diagnose_workspace(initialized(workspace.path()), None).unwrap();
+
+    let finding = diagnosis
+        .findings
+        .iter()
+        .find(|finding| finding.code == "charter-document-without-id")
+        .expect("a document with no declared id should be reported");
+    assert!(
+        finding.message.contains("ephemeral identity"),
+        "got: {}",
+        finding.message
+    );
+}
+
+#[test]
+fn doctor_points_a_sidecar_identity_at_the_document() {
+    // A recorded sidecar id is persisted truth the loader adopts, but the
+    // document is still the specified anchor, so the gap is named precisely.
+    let sidecar = r#"{"charter":{"id":"01951111-0000-7000-0000-0000000000aa"}}"#;
+    let workspace = make_workspace(&[
+        ("work.md", "---\nalias: work\n---\n# Work\n"),
+        ("work.actions", ""),
+        (".work.json", sidecar),
+    ]);
+
+    let diagnosis =
+        clearhead_workspace_fs::diagnose_workspace(initialized(workspace.path()), None).unwrap();
+
+    let finding = diagnosis
+        .findings
+        .iter()
+        .find(|finding| finding.code == "charter-document-without-id")
+        .expect("the gap should still be reported when a sidecar carries the id");
+    assert!(
+        finding
+            .message
+            .contains("01951111-0000-7000-0000-0000000000aa"),
+        "got: {}",
+        finding.message
+    );
+}

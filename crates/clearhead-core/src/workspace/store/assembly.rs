@@ -180,6 +180,7 @@ pub fn assemble_workspace(input: &WorkspaceAssemblyInput) -> Result<WorkspaceRea
 
     let mut explicit_parent_charters = HashSet::new();
     let mut explicit_id_charters = HashSet::new();
+    let mut documents_without_declared_id = HashSet::new();
     for relative in charter_files(input) {
         let Some(name) = infer_charter_name_for_workspace(&relative, root_charter) else {
             findings.push(Finding::violation(
@@ -206,6 +207,8 @@ pub fn assemble_workspace(input: &WorkspaceAssemblyInput) -> Result<WorkspaceRea
         }
         if frontmatter_has_id_key(content) {
             explicit_id_charters.insert(name.clone());
+        } else {
+            documents_without_declared_id.insert(name.clone());
         }
         let explicit = match parse_charter(content) {
             Ok(charter) => charter,
@@ -272,6 +275,7 @@ pub fn assemble_workspace(input: &WorkspaceAssemblyInput) -> Result<WorkspaceRea
         root.state = Some(crate::domain::CharterState::Active);
     }
 
+    let mut sidecar_identities: HashMap<String, Uuid> = HashMap::new();
     for (name, charter) in charters.iter_mut() {
         if explicit_id_charters.contains(name) {
             continue;
@@ -284,7 +288,39 @@ pub fn assemble_workspace(input: &WorkspaceAssemblyInput) -> Result<WorkspaceRea
             && let Ok(Some(id)) = parse_sidecar(source).map(|meta| meta.charter.and_then(|c| c.id))
         {
             charter.id = id;
+            sidecar_identities.insert(name.clone(), id);
         }
+    }
+
+    // A document that declares no `id` has no authoritative identity: loading
+    // minted an ephemeral one (Concept Identity — an id is never recomputed
+    // from mutable content), or adopted a persisted sidecar id if there was
+    // one. Either way the document is the specified anchor, so the gap is
+    // reported. The root README is excluded here because `doctor`'s
+    // root-identity check already owns that case, with repair-aware wording.
+    for (name, charter) in &charters {
+        if !documents_without_declared_id.contains(name) || name == root_charter {
+            continue;
+        }
+        let path = charter
+            .md_file
+            .clone()
+            .or_else(|| path_for_name.get(name).cloned())
+            .unwrap_or_else(|| PathBuf::from("<unknown>"));
+        let subject = charter.alias.as_deref().unwrap_or(&charter.title);
+        let detail = match sidecar_identities.get(name) {
+            Some(id) => format!(
+                "charter '{subject}' declares no id, so its document is not the identity anchor; its sidecar records {id}, which belongs in the document frontmatter"
+            ),
+            None => format!(
+                "charter '{subject}' declares no id, so it loads with an ephemeral identity that changes on every load; a minting write (`clearhead update charter` on it) or `clearhead init` persists a durable one"
+            ),
+        };
+        findings.push(Finding::warning(
+            "charter-document-without-id",
+            &path,
+            detail,
+        ));
     }
 
     let name_to_alias: HashMap<String, String> = charters
