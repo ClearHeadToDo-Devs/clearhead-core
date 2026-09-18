@@ -590,7 +590,8 @@ pub fn update_charter(
         return Ok(());
     }
 
-    clearhead_workspace_fs::durability::atomic_write(&md_path, &formatted)
+    let document = clearhead_workspace_fs::read_charter_document(&ctx.data_dir, &md_path)?;
+    clearhead_workspace_fs::write_charter_document(&ctx.data_dir, &document, &formatted)
         .with_context(|| format!("Failed to write '{}'", md_path.display()))?;
 
     info!(charter = %updated.title, path = %md_path.display(), state = ?updated.state, "Charter updated");
@@ -653,7 +654,8 @@ pub fn close_charter(
         return Ok(());
     }
 
-    clearhead_workspace_fs::durability::atomic_write(&md_path, &formatted)
+    let document = clearhead_workspace_fs::read_charter_document(&ws_root, &md_path)?;
+    clearhead_workspace_fs::write_charter_document(&ws_root, &document, &formatted)
         .with_context(|| format!("Failed to write '{}'", md_path.display()))?;
 
     info!(charter = %updated.title, path = %md_path.display(), created = is_new, "Charter closed");
@@ -687,7 +689,7 @@ pub fn jot(
 
     let mc_full = resolve_jot_charter(&mcs, charter)?;
     let charter_model = Charter::from(mc_full.clone());
-    let (md_path, is_new) = charter_md_path(mc_full, &charter_root, &charter_model.title);
+    let (md_path, _) = charter_md_path(mc_full, &charter_root, &charter_model.title);
 
     // Base content: the existing file, or a freshly materialized *minimal*
     // charter document when none exists yet. Deliberately not `format_charter`:
@@ -695,14 +697,18 @@ pub fn jot(
     // that reads as a second, colliding charter (doctor `alias-collision`). The
     // `id` alone pairs the new `.md` with its `.actions`; everything else stays
     // in the sidecar/derived model where it already lives.
-    let base = if is_new {
-        format!(
+    //
+    // The read goes through the delivery seam so the revision it saw is
+    // re-checked before the write; a concurrent editor becomes a conflict
+    // rather than a lost log entry.
+    let document = clearhead_workspace_fs::read_charter_document(&ws_root, &md_path)?;
+    let is_new = document.is_missing();
+    let base = match document.content() {
+        Some(existing) => existing.to_string(),
+        None => format!(
             "---\nid: {}\n---\n# {}\n",
             charter_model.id, charter_model.title
-        )
-    } else {
-        std::fs::read_to_string(&md_path)
-            .with_context(|| format!("Failed to read '{}'", md_path.display()))?
+        ),
     };
 
     let stamp = Local::now().format("%Y-%m-%dT%H:%M");
@@ -719,7 +725,7 @@ pub fn jot(
         return Ok(());
     }
 
-    clearhead_workspace_fs::durability::atomic_write(&md_path, &updated)
+    clearhead_workspace_fs::write_charter_document(&ws_root, &document, &updated)
         .with_context(|| format!("Failed to write '{}'", md_path.display()))?;
     info!(charter = %charter_model.title, path = %md_path.display(), created = is_new, "Jotted log entry");
     println!(

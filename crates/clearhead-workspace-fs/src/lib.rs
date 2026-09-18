@@ -42,8 +42,8 @@ use chrono::Local;
 pub use clearhead_core::TransactionOutcome;
 use clearhead_core::domain::update::ActionUpdate;
 use clearhead_core::workspace::resource::{
-    DeliveryError, Effect, EffectBatch, ExpectedResource, ResourceConflict, ResourceRevision,
-    ResourceSnapshot, WorkspacePath,
+    DeliveryError, Effect, EffectBatch, ExpectedResource, ResourceConflict, ResourceLocation,
+    ResourcePrecondition, ResourceRevision, ResourceSnapshot, WorkspacePath,
 };
 use clearhead_core::workspace::sidecar::CharterMetadata;
 use clearhead_core::workspace::{
@@ -287,6 +287,117 @@ fn validate_source_path(source_path: &Path, charter_root: &Path) -> Result<(), W
     } else {
         Err(WorkspaceError::InvalidPath(source_path.to_path_buf()))
     }
+}
+
+// ============================================================================
+// Charter document delivery
+// ============================================================================
+
+/// A charter `.md` read under the same revision discipline action files use.
+///
+/// `jot`, `close` and `update` used to write charter markdown with a bare
+/// [`atomic_write`], skipping the precondition check every action mutation
+/// gets. Reading through this seam captures the revision at read time and
+/// [`write_charter_document`] re-checks it immediately before the write, so a
+/// concurrent writer becomes a reported conflict instead of a silent lost
+/// update.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CharterDocument {
+    path: PathBuf,
+    content: Option<String>,
+    expected: ExpectedResource,
+}
+
+impl CharterDocument {
+    /// The document's text, or `None` when it does not exist yet.
+    pub fn content(&self) -> Option<&str> {
+        self.content.as_deref()
+    }
+
+    /// Whether the document was missing when it was read.
+    pub fn is_missing(&self) -> bool {
+        self.content.is_none()
+    }
+
+    /// The physical path the document was read from.
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+/// Read a charter `.md` and capture the revision a later write must still see.
+pub fn read_charter_document(
+    workspace_root: &Path,
+    md_path: &Path,
+) -> Result<CharterDocument, WorkspaceError> {
+    let mounts = NativeWorkspaceMounts::resolve(workspace_root, None);
+    let data_root = &mounts.workspace;
+    charter_document_location(data_root, md_path)?;
+    let (snapshot, expected) = snapshot(data_root, md_path)?;
+    // An existing *empty* file is a revision, not an absence: only the
+    // expected state distinguishes the two.
+    let content = match &expected {
+        ExpectedResource::Missing => None,
+        ExpectedResource::Revision(_) => Some(
+            std::str::from_utf8(snapshot.bytes())
+                .map_err(|error| {
+                    WorkspaceError::Parse(format!("charter markdown is not UTF-8: {error}"))
+                })?
+                .to_string(),
+        ),
+    };
+    Ok(CharterDocument {
+        path: md_path.to_path_buf(),
+        content,
+        expected,
+    })
+}
+
+/// Write `content` to the document iff it still matches the revision captured
+/// by [`read_charter_document`].
+///
+pub fn write_charter_document(
+    workspace_root: &Path,
+    document: &CharterDocument,
+    content: &str,
+) -> Result<(), WorkspaceError> {
+    let mounts = NativeWorkspaceMounts::resolve(workspace_root, None);
+    let location = charter_document_location(&mounts.workspace, &document.path)?;
+    let batch = EffectBatch::new(
+        vec![Effect::Write {
+            path: location.clone(),
+            bytes: content.as_bytes().to_vec(),
+        }],
+        vec![ResourcePrecondition {
+            path: location,
+            expected: document.expected.clone(),
+        }],
+    )
+    .map_err(|error| WorkspaceError::Actions(error.to_string()))?;
+    deliver(&mounts, &batch)
+}
+
+/// The workspace-relative location of a charter document, rejecting paths that
+/// are outside the charter tree or are not markdown — a guard mirroring
+/// [`validate_source_path`] so the public seam cannot be pointed at arbitrary
+/// workspace files.
+fn charter_document_location(
+    data_root: &Path,
+    md_path: &Path,
+) -> Result<ResourceLocation, WorkspaceError> {
+    let charter_root = data_root.join("charters");
+    let valid_location = md_path.starts_with(&charter_root);
+    let valid_name = md_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.ends_with(".md"));
+    if !(valid_location && valid_name) {
+        return Err(WorkspaceError::InvalidPath(md_path.to_path_buf()));
+    }
+    let relative = md_path
+        .strip_prefix(data_root)
+        .map_err(|_| WorkspaceError::InvalidPath(md_path.to_path_buf()))?;
+    Ok(ResourceLocation::workspace(logical_path(relative)?))
 }
 
 fn parse_sidecar_snapshot(snapshot: &ResourceSnapshot) -> Result<CharterMetadata, WorkspaceError> {
@@ -635,5 +746,86 @@ mod mounted_effect_tests {
             std::fs::read(external.join("inbox/action.ics")).unwrap(),
             b"calendar"
         );
+    }
+}
+
+#[cfg(test)]
+mod charter_document_tests {
+    use super::*;
+
+    fn workspace() -> tempfile::TempDir {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(temp.path().join(".clearhead/charters")).unwrap();
+        temp
+    }
+
+    fn charter_path(root: &Path, name: &str) -> PathBuf {
+        root.join(".clearhead/charters").join(name)
+    }
+
+    #[test]
+    fn writes_an_existing_document_and_reports_its_content() {
+        let temp = workspace();
+        let root = temp.path();
+        let path = charter_path(root, "support.md");
+        std::fs::write(&path, "---\nid: a\n---\n").unwrap();
+
+        let document = read_charter_document(root, &path).unwrap();
+        assert_eq!(document.content(), Some("---\nid: a\n---\n"));
+        assert!(!document.is_missing());
+
+        write_charter_document(root, &document, "---\nid: a\n---\n\nnew\n").unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "---\nid: a\n---\n\nnew\n"
+        );
+    }
+
+    #[test]
+    fn creates_a_document_that_was_missing() {
+        let temp = workspace();
+        let root = temp.path();
+        let path = charter_path(root, "support.md");
+
+        let document = read_charter_document(root, &path).unwrap();
+        assert!(document.is_missing());
+        assert_eq!(document.content(), None);
+
+        write_charter_document(root, &document, "---\nid: a\n---\n# Support\n").unwrap();
+        assert!(path.exists());
+    }
+
+    #[test]
+    fn rejects_a_write_when_the_document_changed_since_the_read() {
+        let temp = workspace();
+        let root = temp.path();
+        let path = charter_path(root, "support.md");
+        std::fs::write(&path, "original\n").unwrap();
+
+        let document = read_charter_document(root, &path).unwrap();
+        std::fs::write(&path, "written by someone else\n").unwrap();
+
+        let error = write_charter_document(root, &document, "clobber\n").unwrap_err();
+        assert!(
+            error.to_string().contains("conflict"),
+            "expected a conflict, got: {error}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "written by someone else\n",
+            "a stale write must not clobber the newer content"
+        );
+    }
+
+    #[test]
+    fn rejects_a_path_outside_the_charter_tree() {
+        let temp = workspace();
+        let root = temp.path();
+        let outside = root.join(".clearhead/notes.md");
+        std::fs::write(&outside, "notes\n").unwrap();
+        assert!(matches!(
+            read_charter_document(root, &outside),
+            Err(WorkspaceError::InvalidPath(_))
+        ));
     }
 }
