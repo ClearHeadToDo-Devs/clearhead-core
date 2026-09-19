@@ -14,7 +14,7 @@ use serde_json::Value;
 
 use super::{Row, build_store, select_rows};
 use crate::argparser::QueryFormat;
-use crate::commands::CommandContext;
+use crate::cli::CommandContext;
 use crate::stdout::{write_stdout, write_stdout_line};
 
 /// Identity and display terms every tree node carries. `parent` is optional

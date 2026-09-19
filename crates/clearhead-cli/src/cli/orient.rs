@@ -148,7 +148,7 @@ pub fn build(ctx: &CommandContext) -> anyhow::Result<Orient> {
 
 #[cfg(feature = "sparql")]
 fn unscheduled_rows(ctx: &CommandContext) -> anyhow::Result<Bounded<Value>> {
-    let nodes = crate::sparql::index::nodes_for(ctx, "unscheduled")?;
+    let nodes = crate::query::sparql::index::nodes_for(ctx, "unscheduled")?;
     Ok(Bounded::take(nodes, SECTION_LIMIT))
 }
 

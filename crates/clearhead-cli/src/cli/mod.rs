@@ -18,9 +18,11 @@ use anyhow::Context;
 use std::fs;
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
-use tracing::warn;
+use tracing::{Level, debug, error, warn};
+use tracing_subscriber::{EnvFilter, FmtSubscriber};
 use uuid::Uuid;
 
+use crate::argparser::{self, Verb, parse_cli};
 use crate::environment_reader::{
     Config, ensure_dir_exists, find_project_data_dir, load_config, resolve_config_path,
     resolve_file_path,
@@ -517,7 +519,7 @@ pub fn charter_to_file_path(data_dir: &Path, charter_query: &str) -> anyhow::Res
 
     // Fall back to model-level resolution (matches alias, UUID, partial title)
     let model = clearhead_cli::filesystem::load_domain_model(data_dir, None)?;
-    let found = crate::commands::charter::resolve_charter(&model.charters, charter_query)?
+    let found = crate::cli::charter::resolve_charter(&model.charters, charter_query)?
         .ok_or_else(|| anyhow::anyhow!("No charter found matching '{}'", charter_query))?;
 
     let key = found.alias.as_deref().unwrap_or(&found.title);
@@ -623,5 +625,476 @@ fn print_syntax_diagnostics(syntax_errors: &[clearhead_cli::LintDiagnostic]) {
     let remaining = syntax_errors.len().saturating_sub(5);
     if remaining > 0 {
         eprintln!("  - ... and {} more issue(s)", remaining);
+    }
+}
+
+/// The CLI entry point: parse, initialize tracing, dispatch. The
+/// `clearhead` binary installs the broken-pipe panic hook and calls this;
+/// everything else lives here so a library host can drive the same commands.
+pub fn run() {
+    let cli = parse_cli();
+
+    // Initialize tracing
+    let log_level = match cli.debug {
+        0 => Level::INFO,
+        1 => Level::DEBUG,
+        _ => Level::TRACE,
+    };
+
+    let subscriber = FmtSubscriber::builder()
+        .with_max_level(log_level)
+        .with_env_filter(EnvFilter::from_default_env())
+        .with_writer(io::stderr)
+        .finish();
+
+    tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
+
+    debug!(debug_level = cli.debug, "Debug mode enabled");
+    if let Some(ref config_path) = cli.config {
+        debug!(config = ?config_path, "Custom config file specified");
+    }
+
+    if let Err(e) = run_command(&cli) {
+        // Verb failures are data (query_output.md, "Errors as data"): when a
+        // machine is reading stdout, emit the typed result there so a loop can
+        // branch on `kind` instead of parsing stderr prose.
+        if let Some(verb_err) = verb_error(&e)
+            && !std::io::IsTerminal::is_terminal(&io::stdout())
+        {
+            println!(
+                "{}",
+                serde_json::to_string(&verb_err).expect("verb error serializes")
+            );
+            std::process::exit(1);
+        }
+        if cli.debug > 0 {
+            error!(error = ?e, "Command failed");
+        } else {
+            // anyhow's Debug format prints the full "Caused by:" chain, not just
+            // the top-level message — the whole point of adopting it here.
+            eprintln!("Error: {:?}", e);
+        }
+        std::process::exit(1);
+    }
+}
+
+/// The verb-error view of a failed command, if the failure has one.
+///
+/// A verb failure travels as itself. A delivery conflict travels as the
+/// [`WorkspaceError`](clearhead_core::workspace::WorkspaceError) the native
+/// adapter raised — sometimes behind `anyhow` context a command added — so the
+/// cause chain is searched for one before falling back to stderr prose.
+/// Everything else keeps its own error type and is printed, not re-typed.
+fn verb_error(error: &anyhow::Error) -> Option<verb_result::VerbError> {
+    if let Some(verb_err) = error.downcast_ref::<verb_result::VerbError>() {
+        return Some(verb_err.clone());
+    }
+    error.chain().find_map(|cause| {
+        cause
+            .downcast_ref::<clearhead_core::workspace::WorkspaceError>()
+            .and_then(verb_result::VerbError::from_workspace_error)
+    })
+}
+
+fn run_command(cli: &argparser::Cli) -> anyhow::Result<()> {
+    // Init bootstraps the workspace — runs before CommandContext to avoid
+    // creating XDG dirs in a directory that isn't yet initialized.
+    if let Verb::Init { user, name } = &cli.command {
+        // `--workspace` is global (it restricts other commands to an existing
+        // named workspace), but it is meaningless for `init`, which *creates* a
+        // workspace in the current directory. Reject it rather than silently
+        // ignore, so the misuse surfaces instead of confusing.
+        if cli.workspace.is_some() {
+            anyhow::bail!(
+                "`--workspace` selects an existing workspace by name; `init` creates a new one \
+                 in the current directory and does not accept it"
+            );
+        }
+        return init::run(cli.config.clone(), *user, name.clone());
+    }
+
+    let ctx = CommandContext::new(cli)?;
+
+    debug!(data_dir = %ctx.data_dir.display(), "Data directory resolved");
+
+    dispatch(cli, &ctx)
+}
+
+fn dispatch(cli: &argparser::Cli, ctx: &CommandContext) -> anyhow::Result<()> {
+    match &cli.command {
+        Verb::Read { target } => match target {
+            argparser::ReadTarget::Plans {
+                format,
+                charter,
+                recursive,
+                file,
+                stdio,
+                table_options,
+            } => plan::read_plans(
+                ctx,
+                format,
+                charter,
+                *recursive,
+                file,
+                *stdio,
+                table_options,
+            ),
+            argparser::ReadTarget::Charters {
+                format,
+                explicit_only,
+            } => charter::read_charters(ctx, format, *explicit_only),
+            argparser::ReadTarget::Actions {
+                format,
+                plan,
+                charter,
+                context,
+                open_only,
+                states,
+                file,
+            } => action::read_actions_cmd(
+                ctx,
+                *format,
+                plan.as_deref(),
+                charter.as_deref(),
+                context,
+                *open_only,
+                states,
+                file,
+            ),
+        },
+        Verb::Show { target } => match target {
+            argparser::ShowTarget::Plan {
+                query,
+                file,
+                format,
+                table_options,
+            } => plan::show_plan(ctx, query, file, format, table_options),
+            argparser::ShowTarget::Action { query, file } => action::show_action(ctx, query, file),
+            argparser::ShowTarget::Charter { query } => charter::show_charter(ctx, query),
+        },
+        Verb::Add { target } => match target {
+            argparser::AddTarget::Plan {
+                name,
+                file,
+                charter,
+                parent,
+                fields,
+                schedule,
+                dry_run,
+            } => plan::add_plan(ctx, name, file, charter, parent, fields, schedule, *dry_run),
+            argparser::AddTarget::Action {
+                name,
+                charter,
+                file,
+                parent,
+                priority,
+                state,
+                alias,
+                description,
+                context,
+                predecessor,
+                sequential,
+                scheduled_at,
+                duration,
+                dry_run,
+            } => action::add_action(
+                ctx,
+                name,
+                charter,
+                file,
+                parent,
+                *priority,
+                *state,
+                alias,
+                description,
+                context,
+                predecessor,
+                *sequential,
+                scheduled_at,
+                *duration,
+                *dry_run,
+            ),
+            argparser::AddTarget::Charter {
+                title,
+                alias,
+                parent,
+                template,
+                dry_run,
+            } => charter::add_charter(ctx, title, alias, parent, template, *dry_run),
+        },
+        Verb::Update { target } => match target {
+            argparser::UpdateTarget::Plan {
+                query,
+                file,
+                name,
+                fields,
+                schedule,
+                dry_run,
+            } => plan::update_plan(ctx, query, file, name, fields, schedule, *dry_run),
+            argparser::UpdateTarget::Action {
+                query,
+                name,
+                priority,
+                state,
+                scheduled_at,
+                duration,
+                description,
+                context,
+                predecessor,
+                sequential,
+                charter,
+                file,
+                dry_run,
+            } => action::update_action(
+                ctx,
+                query,
+                name,
+                *priority,
+                *state,
+                scheduled_at,
+                duration,
+                description,
+                context,
+                predecessor,
+                *sequential,
+                charter,
+                file,
+                *dry_run,
+            ),
+            argparser::UpdateTarget::Charter {
+                query,
+                state,
+                title,
+                alias,
+                dry_run,
+            } => charter::update_charter(ctx, query, state, title, alias, *dry_run),
+        },
+        Verb::Complete { target } => match target {
+            argparser::CompleteTarget::Plan {
+                query,
+                file,
+                dry_run,
+            } => plan::complete_plan(ctx, query, file, *dry_run),
+            argparser::CompleteTarget::Action {
+                query,
+                charter,
+                file,
+                dry_run,
+            } => action::complete_action(ctx, query, charter, file, *dry_run),
+        },
+        Verb::Delete { target } => match target {
+            argparser::DeleteTarget::Plan {
+                query,
+                file,
+                dry_run,
+            } => plan::delete_plan(ctx, query, file, *dry_run),
+            argparser::DeleteTarget::Action {
+                query,
+                charter,
+                file,
+                dry_run,
+            } => action::delete_action(ctx, query, charter, file, *dry_run),
+        },
+        Verb::Transact { file, dry_run } => transact::run(ctx, file, *dry_run),
+        Verb::Query { target } => match target {
+            argparser::QueryTarget::Raw {
+                sparql,
+                where_clause,
+                format,
+            } => query::raw(ctx, sparql.as_deref(), where_clause.as_deref(), *format),
+            argparser::QueryTarget::Named {
+                name,
+                status,
+                format,
+            } => query::named(ctx, name, status.as_deref(), *format),
+            argparser::QueryTarget::Index { name, format } => {
+                query::index(ctx, name.as_deref(), *format)
+            }
+            argparser::QueryTarget::Tree { name, format } => {
+                query::tree(ctx, name.as_deref(), *format)
+            }
+            argparser::QueryTarget::Graph { name, format } => {
+                query::graph(ctx, name.as_deref(), *format)
+            }
+            argparser::QueryTarget::Chain { query, format } => query::chain(ctx, query, *format),
+            argparser::QueryTarget::Show { name } => query::show(ctx, name),
+            argparser::QueryTarget::List => query::list(ctx),
+        },
+        Verb::Format { target } => match target {
+            argparser::FormatTarget::File {
+                path,
+                write,
+                style,
+                indent_style,
+                indent_width,
+            } => file::format_file(ctx, path, *write, style, indent_style, indent_width),
+        },
+        Verb::Lint { target } => match target {
+            argparser::LintTarget::File { path } => file::lint_file(path),
+        },
+        Verb::Normalize { target } => match target {
+            argparser::NormalizeTarget::File {
+                path,
+                write,
+                no_format,
+            } => file::normalize_file(ctx, path, *write, *no_format),
+        },
+        Verb::Patch { target } => match target {
+            argparser::PatchTarget::File {
+                primary,
+                secondary,
+                write,
+            } => file::patch_file(primary, secondary, *write),
+        },
+        Verb::Archive { target } => match target {
+            argparser::ArchiveTarget::Plans {
+                scope,
+                file,
+                dry_run,
+            } => plan::archive_plans(ctx, scope, file, *dry_run),
+            argparser::ArchiveTarget::Actions {
+                scope,
+                file,
+                dry_run,
+            } => action::archive_actions(ctx, scope, file, *dry_run),
+            argparser::ArchiveTarget::Charter {
+                query,
+                file,
+                closed,
+                force,
+                dry_run,
+            } => charter::archive_charter(ctx, query, file, *closed, *force, *dry_run),
+        },
+        Verb::Export { target } => match target {
+            argparser::ExportTarget::Plans {
+                reference,
+                output,
+                open_only,
+                recursive,
+            } => plan::export_plans(ctx, reference, output, *open_only, *recursive),
+            argparser::ExportTarget::Workspace { format, output } => {
+                export::workspace(ctx, *format, output.as_deref())
+            }
+        },
+        Verb::Import { target } => match target {
+            argparser::ImportTarget::Plans {
+                source,
+                charter,
+                overwrite,
+                dry_run,
+            } => plan::import_plans(ctx, source, charter, *overwrite, *dry_run),
+        },
+        Verb::Start { target } => match target {
+            argparser::StartTarget::Lsp => service::start_lsp(),
+        },
+        Verb::Sync { target } => match target {
+            argparser::SyncTarget::Events { file, dry_run } => {
+                service::sync_events(ctx, file, *dry_run)
+            }
+            argparser::SyncTarget::Calendar { dry_run, conflict } => {
+                service::sync_calendar(ctx, *dry_run, *conflict)
+            }
+        },
+        Verb::Debug => debug::run(ctx),
+        Verb::Orient => orient::run(ctx),
+        Verb::Doctor { json, fix, dry_run } => doctor::run(ctx, *json, *fix, *dry_run),
+        Verb::Completion { shell } => {
+            use clap::CommandFactory;
+            use clap_complete::generate;
+            generate(
+                *shell,
+                &mut argparser::Cli::command(),
+                "clearhead",
+                &mut io::stdout(),
+            );
+            Ok(())
+        }
+        Verb::Cancel { target } => match target {
+            argparser::CancelTarget::Action {
+                query,
+                charter,
+                file,
+                dry_run,
+            } => action::cancel_action(ctx, query, charter, file, *dry_run),
+        },
+        Verb::Reopen { target } => match target {
+            argparser::ReopenTarget::Action {
+                query,
+                charter,
+                file,
+                dry_run,
+            } => action::reopen_action(ctx, query, charter, file, *dry_run),
+        },
+        Verb::Jot {
+            text,
+            charter,
+            dry_run,
+        } => charter::jot(ctx, text, charter.as_deref(), *dry_run),
+        Verb::Apply { target } => match target {
+            argparser::ApplyTarget::Template {
+                name,
+                charter,
+                file,
+                dry_run,
+            } => template::apply_template(ctx, name, charter, file, *dry_run),
+        },
+        Verb::Close { target } => match target {
+            argparser::CloseTarget::Charter {
+                query,
+                file,
+                dry_run,
+            } => charter::close_charter(ctx, query.as_deref(), file.as_deref(), *dry_run),
+        },
+        Verb::CompleteValues { kind } => complete_values(ctx, *kind),
+        Verb::Init { .. } => unreachable!("handled before CommandContext construction"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clearhead_core::workspace::WorkspaceError;
+    use clearhead_core::workspace::resource::{
+        ExpectedResource, ResourceConflict, ResourceLocation, ResourceRevision, WorkspacePath,
+    };
+
+    fn conflict() -> WorkspaceError {
+        WorkspaceError::Conflict(ResourceConflict {
+            path: ResourceLocation::workspace(WorkspacePath::new("charters/support.md").unwrap()),
+            expected: ExpectedResource::Revision(ResourceRevision::new("sha256:aaaa")),
+            actual: Some(ResourceRevision::new("sha256:bbbb")),
+        })
+    }
+
+    #[test]
+    fn a_conflict_behind_command_context_still_projects() {
+        // Commands add context ("Failed to write 'x.md'"), so the conflict is
+        // never the outermost error — the chain walk is what finds it.
+        let error = Err::<(), _>(conflict())
+            .context("Failed to write 'x.md'")
+            .unwrap_err();
+        assert_eq!(
+            verb_error(&error),
+            Some(verb_result::VerbError::Conflict {
+                path: "workspace:charters/support.md".into(),
+                expected: "sha256:aaaa".into(),
+                actual: Some("sha256:bbbb".into()),
+            })
+        );
+    }
+
+    #[test]
+    fn a_bare_verb_error_travels_as_itself() {
+        let error = anyhow::Error::new(verb_result::VerbError::NotFound { query: "x".into() });
+        assert_eq!(
+            verb_error(&error),
+            Some(verb_result::VerbError::NotFound { query: "x".into() })
+        );
+    }
+
+    #[test]
+    fn an_ordinary_failure_has_no_verb_view() {
+        assert!(verb_error(&anyhow::anyhow!("boom")).is_none());
+        assert!(verb_error(&anyhow::Error::new(WorkspaceError::Parse("x".into()))).is_none());
     }
 }

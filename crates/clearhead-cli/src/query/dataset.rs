@@ -12,7 +12,7 @@ use clearhead_core::rdf::{self, WorkspaceSnapshot};
 use clearhead_core::workspace::store::Workspace;
 use oxrdf::Quad;
 
-use crate::commands::CommandContext;
+use crate::cli::CommandContext;
 
 /// Load every selected workspace and return the merged canonical dataset: one
 /// `urn:clearhead:workspace:<uuid>` named graph per workspace, canonicalized

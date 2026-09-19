@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use tracing::info;
 
 use crate::argparser;
-use crate::commands::CommandContext;
+use crate::cli::CommandContext;
 use clearhead_core::{ActionState, Charter, CharterState};
 
 use super::action::resolve_charter_across_workspaces;

@@ -19,7 +19,7 @@ use serde_json::{Value, json};
 
 use super::{Row, build_store, select_rows};
 use crate::argparser::QueryFormat;
-use crate::commands::CommandContext;
+use crate::cli::CommandContext;
 use crate::stdout::{write_stdout, write_stdout_line};
 
 // The index `@context` IRIs. These are a client-facing wire contract, not Core

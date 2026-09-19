@@ -1046,7 +1046,7 @@ pub fn archive_actions(
     let charter_paths: Vec<PathBuf> = if let Some(f) = file {
         vec![f.clone()]
     } else if let Some(s) = scope {
-        use crate::commands::resolver::{ResolvedScope, resolve_domain_ref};
+        use crate::cli::resolver::{ResolvedScope, resolve_domain_ref};
         match resolve_domain_ref(ctx, s)? {
             ResolvedScope::Charter { file_path }
             | ResolvedScope::Plan { file_path }

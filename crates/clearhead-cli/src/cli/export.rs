@@ -1,7 +1,7 @@
 //! Whole-workspace RDF export: `clearhead export workspace`.
 //!
 //! The exported bytes are Core's canonical projection of the validated
-//! plaintext workspace (assembled by [`crate::dataset`]) — a deterministic,
+//! plaintext workspace (assembled by [`crate::query::dataset`]) — a deterministic,
 //! replaceable publication snapshot. This module owns only invocation
 //! concerns: format selection, stdout-vs-file output, and failure context.
 //! No semantic mapping lives here.
@@ -12,7 +12,7 @@ use anyhow::{Context as _, anyhow};
 use clearhead_core::rdf::{self, RdfFormat};
 
 use crate::argparser::RdfExportFormat;
-use crate::commands::CommandContext;
+use crate::cli::CommandContext;
 
 /// Export the workspace's canonical RDF dataset. TriG is the default: a
 /// dataset syntax that preserves each workspace's stable named graph, so the
@@ -28,7 +28,7 @@ pub fn workspace(
         RdfExportFormat::Jsonld => RdfFormat::JsonLd,
         RdfExportFormat::Turtle => RdfFormat::Turtle,
     };
-    let quads = crate::dataset::assemble_dataset(ctx)?;
+    let quads = crate::query::dataset::assemble_dataset(ctx)?;
     let text = rdf::serialize(&quads, rdf_format)
         .map_err(|e| anyhow!("Failed to serialize the workspace dataset: {e}"))?;
     match output {

@@ -49,19 +49,19 @@ use oxigraph::sparql::{QueryResults, QuerySolutionIter, QueryTripleIter, SparqlE
 use oxigraph::store::Store;
 
 use crate::argparser::QueryFormat;
-use crate::commands::CommandContext;
+use crate::cli::CommandContext;
 use crate::stdout::{write_stdout, write_stdout_line};
 
 // ============================================================================
 // Dataset assembly
 // ============================================================================
 
-/// Load the canonical workspace dataset (see [`crate::dataset`]) into a fresh
+/// Load the canonical workspace dataset (see [`crate::query::dataset`]) into a fresh
 /// in-memory store. The store holds exactly the published quad set — nothing
 /// else is ever loaded into it — and is dropped with the command.
 pub fn build_store(ctx: &CommandContext) -> anyhow::Result<Store> {
     let store = Store::new().context("create in-memory SPARQL store")?;
-    for quad in &crate::dataset::assemble_dataset(ctx)? {
+    for quad in &crate::query::dataset::assemble_dataset(ctx)? {
         store
             .insert(quad)
             .context("insert quad into ephemeral store")?;

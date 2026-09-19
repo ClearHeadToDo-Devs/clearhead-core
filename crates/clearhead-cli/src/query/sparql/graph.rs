@@ -16,7 +16,7 @@ use petgraph::dot::{Config, Dot};
 
 use super::{build_store, construct_triples, emit_rdf};
 use crate::argparser::QueryFormat;
-use crate::commands::CommandContext;
+use crate::cli::CommandContext;
 use crate::stdout::{write_stdout, write_stdout_line};
 
 const RDF_NS: &str = "http://www.w3.org/1999/02/22-rdf-syntax-ns#";

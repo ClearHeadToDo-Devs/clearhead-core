@@ -3,7 +3,7 @@ use uuid::Uuid;
 
 use clearhead_core::ReferenceTarget;
 
-use crate::commands::CommandContext;
+use crate::cli::CommandContext;
 
 pub enum ResolvedScope {
     Charter { file_path: PathBuf },
@@ -83,5 +83,5 @@ fn charter_actions_path(
         .find(|c| c.id == charter_id)
         .ok_or_else(|| anyhow::anyhow!("Charter {} not found in model", charter_id))?;
     let key = charter.alias.as_deref().unwrap_or(&charter.title);
-    crate::commands::charter_to_file_path(ws_dir, key)
+    crate::cli::charter_to_file_path(ws_dir, key)
 }

@@ -1,7 +1,7 @@
 use anyhow::Context;
 use tracing::{debug, info, warn};
 
-use crate::commands::{CommandContext, load_file_for_read};
+use crate::cli::{CommandContext, load_file_for_read};
 use clearhead_cli::telemetry::{TelemetryEvent, TelemetryRecord, Tool, emit};
 use clearhead_core::{Reconcile, SyncEntry};
 

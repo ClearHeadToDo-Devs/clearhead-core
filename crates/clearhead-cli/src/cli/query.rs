@@ -1,7 +1,7 @@
 //! Query commands: in-process SPARQL evaluation over Core's canonical dataset.
 //!
 //! With the default `sparql` feature every family evaluates in an ephemeral
-//! in-memory store (see [`crate::sparql`]): `raw` and `named` run directly,
+//! in-memory store (see [`crate::query::sparql`]): `raw` and `named` run directly,
 //! `index`/`tree`/`graph` add their client-presentation framing, and
 //! `list`/`show` read the in-process registry. The built-in views' view
 //! variables (`?NOW`, `?STATUS_FILTER`, `?TARGET_ACTION`, …) are bound at run
@@ -16,7 +16,7 @@
 //! `?TARGET_ACTION`.
 
 use crate::argparser::QueryFormat;
-use crate::commands::CommandContext;
+use crate::cli::CommandContext;
 
 /// The error a query command returns when this build has no evaluator.
 #[cfg(not(feature = "sparql"))]
@@ -36,7 +36,7 @@ pub fn raw(
 ) -> anyhow::Result<()> {
     #[cfg(feature = "sparql")]
     {
-        crate::sparql::run_raw(ctx, sparql, where_clause, format)
+        crate::query::sparql::run_raw(ctx, sparql, where_clause, format)
     }
     #[cfg(not(feature = "sparql"))]
     {
@@ -53,7 +53,7 @@ pub fn named(
 ) -> anyhow::Result<()> {
     #[cfg(feature = "sparql")]
     {
-        if crate::sparql::run_saved(ctx, name, status, format)? {
+        if crate::query::sparql::run_saved(ctx, name, status, format)? {
             return Ok(());
         }
         anyhow::bail!("No query named '{name}'. Use `clearhead query list` to see available.")
@@ -72,7 +72,7 @@ pub fn index(
 ) -> anyhow::Result<()> {
     #[cfg(feature = "sparql")]
     {
-        crate::sparql::index::run(ctx, name, None, format)
+        crate::query::sparql::index::run(ctx, name, None, format)
     }
     #[cfg(not(feature = "sparql"))]
     {
@@ -88,7 +88,7 @@ pub fn tree(
 ) -> anyhow::Result<()> {
     #[cfg(feature = "sparql")]
     {
-        crate::sparql::tree::run(ctx, name, format)
+        crate::query::sparql::tree::run(ctx, name, format)
     }
     #[cfg(not(feature = "sparql"))]
     {
@@ -104,7 +104,7 @@ pub fn graph(
 ) -> anyhow::Result<()> {
     #[cfg(feature = "sparql")]
     {
-        crate::sparql::graph::run(ctx, name, format)
+        crate::query::sparql::graph::run(ctx, name, format)
     }
     #[cfg(not(feature = "sparql"))]
     {
@@ -116,10 +116,10 @@ pub fn graph(
 pub fn chain(ctx: &CommandContext, query: &str, format: Option<QueryFormat>) -> anyhow::Result<()> {
     #[cfg(feature = "sparql")]
     {
-        use crate::commands::verb_result::canonical_id;
+        use crate::cli::verb_result::canonical_id;
         let id = super::action::resolve_action_id(ctx, query)?;
         let target = format!("<{}>", canonical_id(id));
-        crate::sparql::index::run(ctx, Some("chain"), Some(&target), format)
+        crate::query::sparql::index::run(ctx, Some("chain"), Some(&target), format)
     }
     #[cfg(not(feature = "sparql"))]
     {
@@ -131,7 +131,7 @@ pub fn chain(ctx: &CommandContext, query: &str, format: Option<QueryFormat>) -> 
 pub fn show(ctx: &CommandContext, name: &str) -> anyhow::Result<()> {
     #[cfg(feature = "sparql")]
     {
-        crate::sparql::registry::show(ctx, name)
+        crate::query::sparql::registry::show(ctx, name)
     }
     #[cfg(not(feature = "sparql"))]
     {
@@ -143,7 +143,7 @@ pub fn show(ctx: &CommandContext, name: &str) -> anyhow::Result<()> {
 pub fn list(ctx: &CommandContext) -> anyhow::Result<()> {
     #[cfg(feature = "sparql")]
     {
-        crate::sparql::registry::list(ctx)
+        crate::query::sparql::registry::list(ctx)
     }
     #[cfg(not(feature = "sparql"))]
     {

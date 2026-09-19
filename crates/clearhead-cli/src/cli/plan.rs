@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use tracing::{debug, info};
 
 use crate::argparser;
-use crate::commands::{
+use crate::cli::{
     CommandContext, load_file_for_read, parse_content_for_read, read_input, try_emit,
 };
 use clearhead_cli::telemetry::TelemetryEvent;
@@ -141,7 +141,7 @@ pub fn read_plans(
 
         let allowed: Option<std::collections::HashSet<String>> = if let Some(query) = charter {
             let model = ctx.load_model()?;
-            let found = crate::commands::charter::resolve_charter(&model.charters, query)?
+            let found = crate::cli::charter::resolve_charter(&model.charters, query)?
                 .ok_or_else(|| anyhow::anyhow!("No charter found matching '{}'", query))?;
             let key = charter_graph_name(found);
             let names = if recursive {

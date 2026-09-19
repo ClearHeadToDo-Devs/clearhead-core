@@ -1,5 +1,5 @@
 //! Guards the write-durability seam (pure-core-split charter): every write in
-//! `src/commands/` should route through the native adapter's atomic write
+//! `src/cli/` should route through the native adapter's atomic write
 //! primitives (`clearhead_cli::filesystem::durability::atomic_write` and the
 //! mutation batch), not raw `std::fs::write` — a crash mid-write can truncate a
 //! source-of-truth file. New call sites must either route through those
@@ -21,7 +21,7 @@ const EXEMPT: &[(&str, &str)] = &[
 
 #[test]
 fn no_naive_fs_write_outside_exemptions() {
-    let commands_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/commands");
+    let commands_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/cli");
     let mut violations = Vec::new();
     visit(&commands_dir, &mut violations);
     assert!(

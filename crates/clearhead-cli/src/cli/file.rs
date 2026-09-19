@@ -1,7 +1,7 @@
 use anyhow::Context;
 use tracing::debug;
 
-use crate::commands::{
+use crate::cli::{
     CommandContext, parse_content_for_mutation, parse_content_for_read, parse_content_for_rewrite,
     read_input, write_or_print,
 };

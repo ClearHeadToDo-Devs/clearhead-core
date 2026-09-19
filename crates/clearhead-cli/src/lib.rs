@@ -12,8 +12,11 @@
 // from inside the lib.
 extern crate self as clearhead_cli;
 
+pub mod cli;
 pub mod filesystem;
 pub mod lsp;
+pub(crate) mod query;
+pub(crate) mod stdout;
 
 use clearhead_core::WorkspaceConfig;
 use tree_sitter::Tree;

@@ -17,7 +17,7 @@
 
 use std::path::PathBuf;
 
-use crate::commands::CommandContext;
+use crate::cli::CommandContext;
 
 /// Where a resolved query came from — surfaced by `query list`.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -41,63 +41,68 @@ impl std::fmt::Display for Source {
 pub const BUILT_IN: &[(&str, &str)] = &[
     (
         "actions-by-phase",
-        include_str!("../queries/actions-by-phase.sparql"),
+        include_str!("../../queries/actions-by-phase.sparql"),
     ),
-    ("all-plans", include_str!("../queries/all-plans.sparql")),
+    ("all-plans", include_str!("../../queries/all-plans.sparql")),
     (
         "all-plans-simple",
-        include_str!("../queries/all-plans-simple.sparql"),
+        include_str!("../../queries/all-plans-simple.sparql"),
     ),
     (
         "completion-velocity",
-        include_str!("../queries/completion-velocity.sparql"),
+        include_str!("../../queries/completion-velocity.sparql"),
     ),
     (
         "dependency-chain",
-        include_str!("../queries/dependency-chain.sparql"),
+        include_str!("../../queries/dependency-chain.sparql"),
     ),
     (
         "high-priority",
-        include_str!("../queries/high-priority.sparql"),
+        include_str!("../../queries/high-priority.sparql"),
     ),
     (
         "orphaned-actions",
-        include_str!("../queries/orphaned-actions.sparql"),
+        include_str!("../../queries/orphaned-actions.sparql"),
     ),
     (
         "overdue-tasks",
-        include_str!("../queries/overdue-tasks.sparql"),
+        include_str!("../../queries/overdue-tasks.sparql"),
     ),
     (
         "open-actions",
-        include_str!("../queries/open-actions.sparql"),
+        include_str!("../../queries/open-actions.sparql"),
     ),
     (
         "plans-with-contexts",
-        include_str!("../queries/plans-with-contexts.sparql"),
+        include_str!("../../queries/plans-with-contexts.sparql"),
     ),
 ];
 
 /// Built-in `index` views (client-presentation families; migrated in slice 2).
 pub const BUILT_IN_INDEX: &[(&str, &str)] = &[
-    ("agenda", include_str!("../queries/index/agenda.sparql")),
-    ("chain", include_str!("../queries/index/chain.sparql")),
-    ("default", include_str!("../queries/index/default.sparql")),
+    ("agenda", include_str!("../../queries/index/agenda.sparql")),
+    ("chain", include_str!("../../queries/index/chain.sparql")),
+    (
+        "default",
+        include_str!("../../queries/index/default.sparql"),
+    ),
     (
         "unscheduled",
-        include_str!("../queries/index/unscheduled.sparql"),
+        include_str!("../../queries/index/unscheduled.sparql"),
     ),
-    ("weekly", include_str!("../queries/index/weekly.sparql")),
+    ("weekly", include_str!("../../queries/index/weekly.sparql")),
 ];
 
 /// Built-in `tree` views.
-pub const BUILT_IN_TREE: &[(&str, &str)] =
-    &[("work-map", include_str!("../queries/tree/work-map.sparql"))];
+pub const BUILT_IN_TREE: &[(&str, &str)] = &[(
+    "work-map",
+    include_str!("../../queries/tree/work-map.sparql"),
+)];
 
 /// Built-in `graph` views.
 pub const BUILT_IN_GRAPH: &[(&str, &str)] = &[(
     "dependencies",
-    include_str!("../queries/graph/dependencies.sparql"),
+    include_str!("../../queries/graph/dependencies.sparql"),
 )];
 
 /// A saved-query name is a plain file stem: reject anything path-shaped so a

@@ -6,7 +6,7 @@
 //! It also mirrors the root README's id into a conflicting root sidecar when
 //! nothing references the replaced id.
 
-use crate::commands::CommandContext;
+use crate::cli::CommandContext;
 use anyhow::Context;
 use clearhead_core::workspace::{Diagnosis, DoctorRepair, FindingSeverity};
 
