@@ -958,7 +958,9 @@ pub enum ArchiveTarget {
     ///
     /// The charter must have `state: Closed` or `state: Cancelled` in its frontmatter. If the
     /// primary `.actions` file still contains open actions the command refuses unless --force
-    /// is given.
+    /// is given. It also refuses a charter whose document declares no `id`: archival re-stems
+    /// files on the charter's UUID, so an undeclared (per-load ephemeral) id must never be
+    /// persisted — run `clearhead normalize` to stamp a durable id first.
     Charter {
         /// Charter to archive (name, alias, or UUID prefix). Omit with --closed to sweep all closed/cancelled charters.
         #[arg(conflicts_with_all = ["closed", "file"])]

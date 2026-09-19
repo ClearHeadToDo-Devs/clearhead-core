@@ -118,6 +118,13 @@ pub enum ArchiveCharterError {
     #[error("Charter '{0}' has {1} open action(s); resolve them or pass --force to archive anyway")]
     OpenActions(String, usize),
 
+    /// The charter's document declares no id, so archiving would persist the
+    /// per-load ephemeral id into archive names and the crystallized sidecar.
+    #[error(
+        "Charter '{0}' declares no id in its document; run `clearhead normalize` to stamp a durable id before archiving"
+    )]
+    UndeclaredId(String),
+
     /// Underlying workspace I/O or parse error.
     #[error("Workspace error: {0}")]
     Workspace(#[from] WorkspaceError),
@@ -228,6 +235,19 @@ fn archive_many(
 
     for mc in charters {
         validate_archive_candidate(mc, 0, true).map_err(map_policy_error)?;
+
+        // I12: a charter whose document declares no id loads with an ephemeral,
+        // per-load id; archiving would bake that ephemeral id into permanent
+        // archive names and the crystallized sidecar. Refuse and point at the
+        // deliberate stamping pass instead. An action-only charter (no `.md`)
+        // keeps its deterministic name-derived id and is not affected.
+        if let Some(md_rel) = &mc.md_file {
+            let md_abs = layout.charter_root.join(md_rel);
+            let content = std::fs::read_to_string(&md_abs)?;
+            if let Ok(None) = clearhead_core::workspace::charter_frontmatter_id(&content) {
+                return Err(ArchiveCharterError::UndeclaredId(charter_display_name(mc)));
+            }
+        }
 
         // Primary .actions path (absolute)
         let acts_abs: Option<PathBuf> = mc
@@ -800,7 +820,7 @@ mod tests {
         std::fs::create_dir_all(&charters_dir).expect("create charters dir");
         std::fs::write(
             charters_dir.join("done.md"),
-            "---\nalias: done\nstate: Closed\n---\n# Done\n",
+            "---\nid: 01951111-0000-7000-8000-0000000000c1\nalias: done\nstate: Closed\n---\n# Done\n",
         )
         .expect("write charter");
         std::fs::write(
@@ -877,7 +897,7 @@ mod tests {
         std::fs::create_dir_all(work.join("b")).unwrap();
         std::fs::write(
             work.join("README.md"),
-            "---\nalias: work\nstate: Closed\n---\n# Work\n",
+            "---\nid: 01951111-0000-7000-8000-0000000000c2\nalias: work\nstate: Closed\n---\n# Work\n",
         )
         .unwrap();
         std::fs::write(
@@ -913,7 +933,7 @@ mod tests {
         std::fs::create_dir_all(&charters_dir).expect("create charters dir");
         std::fs::write(
             charters_dir.join("done.md"),
-            "---\nalias: done\nstate: Closed\n---\n# Done\n",
+            "---\nid: 01951111-0000-7000-8000-0000000000c3\nalias: done\nstate: Closed\n---\n# Done\n",
         )
         .expect("write charter");
         std::fs::write(charters_dir.join("done.actions"), "[ ] Still open\n")
@@ -1093,7 +1113,7 @@ mod tests {
 
         std::fs::write(
             charters_dir.join("abandoned.md"),
-            "---\nalias: abandoned\nstate: Cancelled\n---\n# Abandoned\n",
+            "---\nid: 01951111-0000-7000-8000-0000000000c4\nalias: abandoned\nstate: Cancelled\n---\n# Abandoned\n",
         )
         .expect("write charter md");
         std::fs::write(charters_dir.join("abandoned.actions"), "").expect("write actions");
@@ -1439,21 +1459,21 @@ mod tests {
 
         std::fs::write(
             charters_dir.join("done.md"),
-            "---\nalias: done\nstate: Closed\n---\n# done\n",
+            "---\nid: 01951111-0000-7000-8000-0000000000c5\nalias: done\nstate: Closed\n---\n# done\n",
         )
         .expect("write root charter md");
         std::fs::write(charters_dir.join("done.actions"), "").expect("write root actions");
 
         std::fs::write(
             work_dir.join("README.md"),
-            "---\nalias: work\nstate: Closed\n---\n# Work\n",
+            "---\nid: 01951111-0000-7000-8000-0000000000c6\nalias: work\nstate: Closed\n---\n# Work\n",
         )
         .expect("write parent charter md");
         std::fs::write(work_dir.join("next.actions"), "").expect("write parent actions");
 
         std::fs::write(
             ops_dir.join("README.md"),
-            "---\nalias: ops\nstate: Closed\n---\n# Ops\n",
+            "---\nid: 01951111-0000-7000-8000-0000000000c7\nalias: ops\nstate: Closed\n---\n# Ops\n",
         )
         .expect("write child charter md");
         std::fs::write(ops_dir.join("next.actions"), "").expect("write child actions");

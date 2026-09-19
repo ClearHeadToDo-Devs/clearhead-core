@@ -251,6 +251,30 @@ fn archive_charter_uses_the_native_adapter_end_to_end() {
 }
 
 #[test]
+fn archive_refuses_a_charter_whose_document_declares_no_id() {
+    let env = TestEnv::new();
+    // A document with no `id:` in frontmatter loads with an ephemeral,
+    // per-load id; archiving must refuse rather than bake it into names.
+    env.write_text(
+        "charters/note.md",
+        "---\nalias: note\nstate: Closed\n---\n# Note\n",
+    );
+    env.write_actions("note.actions", "");
+
+    env.command()
+        .args(["archive", "charter", "note"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("declares no id"));
+
+    // Nothing was written: the charter files stay in place and no archive dir
+    // appears.
+    assert!(env.data_dir.join("charters/note.md").exists());
+    assert!(env.data_dir.join("charters/note.actions").exists());
+    assert!(!env.data_dir.join("archive").exists());
+}
+
+#[test]
 fn archive_closed_sweeps_terminal_charters_but_leaves_active_ones() {
     let env = TestEnv::new();
     env.write_text(
