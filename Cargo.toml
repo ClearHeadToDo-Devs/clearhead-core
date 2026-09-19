@@ -10,7 +10,7 @@
 # here in metadata and in the README rather than enforced by Cargo.
 [workspace]
 resolver = "3"
-members = ["crates/*"]
+members = ["crates/clearhead-core", "crates/clearhead-cli"]
 
 [workspace.metadata]
 name = "clearhead-rs"
