@@ -1,7 +1,9 @@
 //! Native resolution, inventory, and byte reads for Core workspace mounts.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
+
+use uuid::Uuid;
 
 use clearhead_core::domain::DomainModel;
 use clearhead_core::workspace::resource::{
@@ -219,6 +221,7 @@ pub fn load_workspace_envelope(workspace_root: &Path, charters: Vec<MarkdownChar
         workspace_root.to_path_buf(),
         manifest.workspace_id,
         manifest.workspace_name,
+        Uuid::now_v7().to_string(),
         charters,
     )
 }
@@ -247,11 +250,22 @@ fn assemble_native(
     let occurrence_links = read_plans_sync_store(workspace_root, &effective_plans_root)
         .map(|store| store.occurrence_links().clone())
         .unwrap_or_default();
+    // The shell mints one ephemeral id per charter document so Core stays free
+    // of the clock/RNG (I1, I3). Only an id-less document consumes its entry.
+    let charter_ids: HashMap<PathBuf, Uuid> = inventory
+        .workspace
+        .files
+        .paths()
+        .filter_map(|path| path.as_str().strip_prefix("charters/"))
+        .filter(|path| path.ends_with(".md") && !path.split('/').any(|c| c.starts_with('.')))
+        .map(|path| (PathBuf::from(path), Uuid::now_v7()))
+        .collect();
     assemble_workspace(&WorkspaceAssemblyInput {
         root_charter: mounts.root_charter,
         inventory,
         reads,
         occurrence_links,
+        charter_ids,
     })
 }
 

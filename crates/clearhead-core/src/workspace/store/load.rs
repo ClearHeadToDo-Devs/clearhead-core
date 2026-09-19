@@ -11,7 +11,6 @@ use super::findings::Finding;
 use crate::domain::{Charter, DomainModel};
 use crate::workspace::charter::MarkdownCharter;
 use std::path::PathBuf;
-use uuid::Uuid;
 
 /// The complete filesystem representation of a workspace.
 ///
@@ -29,10 +28,11 @@ pub struct Workspace {
     pub id: Option<String>,
     /// Display name — used to scope output in multi-workspace contexts.
     pub name: Option<String>,
-    /// A random UUID minted once per load, used as the graph identity only when
+    /// A UUID the shell mints once per load, used as the graph identity only when
     /// `id` is absent. Ephemeral by design: distinct per load, never persisted,
     /// and never derived from the root path — a workspace without a durable id
-    /// stays queryable, but its graph URI is not stable across sessions.
+    /// stays queryable, but its graph URI is not stable across sessions. Core
+    /// takes it as an argument so it stays free of the clock and RNG (I1).
     ephemeral_id: String,
     pub charters: Vec<MarkdownCharter>,
 }
@@ -44,13 +44,14 @@ impl Workspace {
         root: PathBuf,
         id: Option<String>,
         name: Option<String>,
+        ephemeral_id: String,
         charters: Vec<MarkdownCharter>,
     ) -> Self {
         Self {
             root,
             id,
             name,
-            ephemeral_id: Uuid::now_v7().to_string(),
+            ephemeral_id,
             charters,
         }
     }

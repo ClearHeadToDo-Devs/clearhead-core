@@ -35,6 +35,11 @@ pub struct WorkspaceAssemblyInput {
     pub reads: WorkspaceMounts<MountReadEvidence>,
     /// Live occurrence lineage decoded and mount-validated by the native host.
     pub occurrence_links: HashMap<Uuid, (Uuid, String)>,
+    /// Shell-minted ephemeral ids, keyed by charter document path relative to
+    /// the charter root (e.g. `README.md`, `someday/README.md`). One per charter
+    /// document the host inventoried; a declared id never reads it. Supplying
+    /// these keeps Core free of the clock and RNG (I1, I3).
+    pub charter_ids: HashMap<PathBuf, Uuid>,
 }
 
 impl WorkspaceAssemblyInput {
@@ -210,8 +215,8 @@ pub fn assemble_workspace(input: &WorkspaceAssemblyInput) -> Result<WorkspaceRea
         } else {
             documents_without_declared_id.insert(name.clone());
         }
-        let explicit = match parse_charter(content) {
-            Ok(charter) => charter,
+        let document = match parse_charter(content) {
+            Ok(document) => document,
             Err(error) => {
                 findings.push(Finding::violation(
                     "unparseable-file",
@@ -221,6 +226,21 @@ pub fn assemble_workspace(input: &WorkspaceAssemblyInput) -> Result<WorkspaceRea
                 continue;
             }
         };
+        // Resolution order (I3): the declared frontmatter id, else the
+        // shell-supplied ephemeral id. Sidecar adoption happens later, for
+        // documents that declared none. A missing entry is a host bug.
+        let resolved_id = document
+            .id
+            .or_else(|| input.charter_ids.get(&relative).copied());
+        let Some(resolved_id) = resolved_id else {
+            findings.push(Finding::violation(
+                "charter-id-missing",
+                &relative,
+                "charter declares no id and the host supplied no ephemeral id; file skipped",
+            ));
+            continue;
+        };
+        let explicit = document.into_charter(resolved_id);
         let is_readme = relative.file_name().and_then(|name| name.to_str()) == Some("README.md");
         if is_readme || relative.components().count() == 1 {
             path_for_name
@@ -682,6 +702,12 @@ mod tests {
         let (external_inventory, external_reads) = external
             .map(|files| mount(files, external_collections))
             .unzip();
+        let charter_ids: HashMap<PathBuf, Uuid> = workspace
+            .iter()
+            .filter_map(|(path, _)| path.strip_prefix("charters/"))
+            .filter(|path| path.ends_with(".md") && !path.split('/').any(|c| c.starts_with('.')))
+            .map(|path| (PathBuf::from(path), Uuid::now_v7()))
+            .collect();
         WorkspaceAssemblyInput {
             root_charter: root_charter.into(),
             inventory: WorkspaceMounts {
@@ -693,6 +719,7 @@ mod tests {
                 external_plans: external_reads,
             },
             occurrence_links: HashMap::new(),
+            charter_ids,
         }
     }
 

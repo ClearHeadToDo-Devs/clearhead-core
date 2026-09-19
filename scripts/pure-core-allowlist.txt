@@ -1,12 +1,7 @@
 # Sites where clearhead_core still reads a clock or mints an id in production
 # source (invariant I1). Format: <path relative to src> <token> <count>. The gate
 # requires this list to match the source exactly, so it can only shrink.
-# Audited 2026-09-18: 9 sites; none touch the filesystem or environment.
-#
-# Charter identity: removed by the identity split (support charter, parent
-# 01a0b5b0-17a8, child 1), which makes the shell supply the id.
-workspace/charter.rs now_v7 1
-workspace/store/load.rs now_v7 1
+# Audited 2026-09-18: 7 sites; none touch the filesystem or environment.
 #
 # Actions parser mints an id for an id-less action on every read
 # (parse_action_recursive). Same fix as charters: the shell supplies it.

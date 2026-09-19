@@ -128,24 +128,62 @@ struct CharterFrontmatter {
     state: Option<CharterState>,
 }
 
-/// Parse a [`Charter`] from markdown content with optional YAML frontmatter.
+/// A charter document as it is written on disk: the frontmatter plus the
+/// resolved title and body description, with an OPTIONAL id (I2).
+///
+/// A person may not have written an `id` yet, so the document view must not
+/// mint one. Strictness increases only at the conversion into the domain
+/// [`Charter`], which takes the id as an argument supplied by the shell —
+/// Core never reads a clock or RNG here.
+#[derive(Debug, Clone)]
+pub struct CharterDocument {
+    pub id: Option<Uuid>,
+    pub title: String,
+    pub description: Option<String>,
+    pub alias: Option<String>,
+    pub parent: Option<String>,
+    pub objectives: Option<Vec<String>>,
+    pub state: Option<CharterState>,
+}
+
+impl CharterDocument {
+    /// Convert into a domain [`Charter`], using `fallback_id` when the document
+    /// declares none (I2, I3).
+    ///
+    /// A declared frontmatter id always wins; otherwise the fallback is the
+    /// *ephemeral* id the shell minted for this load. It is never persisted by
+    /// a read, and never derived from a title or path.
+    pub fn into_charter(self, fallback_id: Uuid) -> Charter {
+        Charter {
+            id: self.id.unwrap_or(fallback_id),
+            title: self.title,
+            description: self.description,
+            alias: self.alias,
+            parent: self.parent,
+            objectives: self.objectives,
+            state: self.state,
+            plans: vec![],
+            actions: vec![],
+        }
+    }
+}
+
+/// Parse a [`CharterDocument`] from markdown content with optional YAML frontmatter.
 ///
 /// Title resolution order:
 /// 1. `title` field in frontmatter
 /// 2. First H1 header (`# ...`)
 /// 3. Error
 ///
-/// ID resolution:
-/// 1. `id` field in frontmatter — the concept's persisted anchor
-/// 2. Otherwise a fresh *ephemeral* id
-///
-/// Identity is never recomputed from mutable content
-/// (specifications/workspace.md, Concept Identity): a title-derived id would
-/// silently change on every retitle and orphan the references to it. A
-/// document that declares no `id` therefore loads with an identity nothing may
-/// persist or reference, and `doctor` reports the gap. The loader may still
-/// adopt a `charter.id` recorded in the sidecar, which is persisted truth.
-pub fn parse_charter(content: &str) -> Result<Charter, String> {
+/// The document's `id` is whatever the frontmatter declares — `None` when a
+/// person has not written one. Identity is never minted here and never
+/// recomputed from mutable content (specifications/workspace.md, Concept
+/// Identity): a title-derived id would silently change on every retitle and
+/// orphan the references to it. Callers convert with
+/// [`CharterDocument::into_charter`], supplying an id for the missing case; the
+/// workspace loader then adopts a `charter.id` recorded in the sidecar when the
+/// document declares none.
+pub fn parse_charter(content: &str) -> Result<CharterDocument, String> {
     let (frontmatter, body) = split_frontmatter(content);
 
     let fm: CharterFrontmatter = match frontmatter {
@@ -160,26 +198,23 @@ pub fn parse_charter(content: &str) -> Result<Charter, String> {
         "Charter must have a title (frontmatter `title` or H1 header)".to_string()
     })?;
 
-    let id = fm.id.unwrap_or_else(Uuid::now_v7);
-
-    Ok(Charter {
-        id,
+    Ok(CharterDocument {
+        id: fm.id,
         title,
         description,
         alias: fm.alias,
         parent: fm.parent,
         objectives: fm.objectives,
         state: fm.state,
-        plans: vec![],
-        actions: vec![],
     })
 }
 
-/// Read a charter's declared frontmatter `id` without deriving one.
+/// Read a charter's declared frontmatter `id` without minting one.
 ///
-/// Unlike [`parse_charter`], which falls back to a title-derived v5 id, this
-/// returns `None` when no `id` is declared, so a caller can tell a persisted
-/// identity apart from a derivation.
+/// Returns `None` when no `id` is declared, so a caller can tell a persisted
+/// identity apart from the shell-supplied ephemeral fallback. [`parse_charter`]
+/// exposes the same declared id as part of its [`CharterDocument`]; this helper
+/// exists for callers that only need the id and never the rest of the document.
 pub fn charter_frontmatter_id(content: &str) -> Result<Option<Uuid>, String> {
     match split_frontmatter(content).0 {
         Some(yaml) => serde_yaml_ng::from_str::<CharterFrontmatter>(yaml)
@@ -422,20 +457,20 @@ objectives:
 
 Stay healthy and fit through regular exercise and diet.
 "#;
-        let charter = parse_charter(content).unwrap();
-        assert_eq!(charter.title, "Health & Fitness");
+        let document = parse_charter(content).unwrap();
+        assert_eq!(document.title, "Health & Fitness");
         assert_eq!(
-            charter.id,
-            Uuid::parse_str("01234567-89ab-cdef-0123-456789abcdef").unwrap()
+            document.id,
+            Some(Uuid::parse_str("01234567-89ab-cdef-0123-456789abcdef").unwrap())
         );
-        assert_eq!(charter.alias, Some("health".to_string()));
-        assert_eq!(charter.parent, Some("lifestyle".to_string()));
+        assert_eq!(document.alias, Some("health".to_string()));
+        assert_eq!(document.parent, Some("lifestyle".to_string()));
         assert_eq!(
-            charter.objectives,
+            document.objectives,
             Some(vec!["lose-weight".to_string(), "run-marathon".to_string()])
         );
         assert_eq!(
-            charter.description,
+            document.description,
             Some("Stay healthy and fit through regular exercise and diet.".to_string())
         );
     }
@@ -443,16 +478,16 @@ Stay healthy and fit through regular exercise and diet.
     #[test]
     fn test_parse_no_frontmatter() {
         let content = "# My Project\n\nThis is a project charter.\n";
-        let charter = parse_charter(content).unwrap();
-        assert_eq!(charter.title, "My Project");
+        let document = parse_charter(content).unwrap();
+        assert_eq!(document.title, "My Project");
         assert_eq!(
-            charter.description,
+            document.description,
             Some("This is a project charter.".to_string())
         );
-        // No declared id: the identity is ephemeral, never recomputed from the
-        // title (a retitle must not silently change identity).
-        assert_ne!(charter.id, Uuid::new_v5(&CHARTER_NS, b"My Project"));
-        assert_ne!(charter.id, parse_charter(content).unwrap().id);
+        // No declared id: parse never mints one (deterministic), so the id is
+        // simply absent until the shell supplies one at conversion time.
+        assert_eq!(document.id, None);
+        assert_eq!(parse_charter(content).unwrap().id, None);
     }
 
     #[test]
@@ -515,7 +550,7 @@ Stay healthy and fit through regular exercise and diet.
         let formatted = format_charter(&charter);
         let parsed = parse_charter(&formatted).unwrap();
 
-        assert_eq!(parsed.id, charter.id);
+        assert_eq!(parsed.id, Some(charter.id));
         assert_eq!(parsed.title, charter.title);
         assert_eq!(parsed.description, charter.description);
         assert_eq!(parsed.alias, charter.alias);
@@ -528,6 +563,34 @@ Stay healthy and fit through regular exercise and diet.
         let charter = parse_charter(content).unwrap();
         assert_eq!(charter.title, "Just a Title");
         assert!(charter.description.is_none());
+    }
+
+    #[test]
+    fn test_parse_never_mints_an_id() {
+        // An id-less document parses to `None` every time — deterministic, no
+        // clock or RNG in core. The shell supplies the ephemeral id at
+        // conversion time instead.
+        let content = "# My Project\n\nBody.\n";
+        assert_eq!(parse_charter(content).unwrap().id, None);
+        assert_eq!(parse_charter(content).unwrap().id, None);
+    }
+
+    #[test]
+    fn test_undeclared_id_gets_the_supplied_id() {
+        let content = "# My Project\n";
+        let supplied = Uuid::now_v7();
+        let document = parse_charter(content).unwrap();
+        assert_eq!(document.id, None);
+        assert_eq!(document.into_charter(supplied).id, supplied);
+    }
+
+    #[test]
+    fn test_declared_id_wins_over_supplied() {
+        let declared = Uuid::parse_str("01234567-89ab-cdef-0123-456789abcdef").unwrap();
+        let content = "---\nid: 01234567-89ab-cdef-0123-456789abcdef\n---\n# T\n";
+        let document = parse_charter(content).unwrap();
+        assert_eq!(document.id, Some(declared));
+        assert_eq!(document.into_charter(Uuid::now_v7()).id, declared);
     }
 
     #[test]
