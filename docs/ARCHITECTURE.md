@@ -30,8 +30,8 @@ per-resource revision compare-and-swap) and delivers the effects; a precondition
 conflict or delivery failure means the caller reloads and recomputes. Core keeps
 no speculative next-state: files remain the truth, so a driver simply re-reads.
 
-The native implementation of observation and delivery is the sibling
-`clearhead-workspace-fs` crate. CLI, LSP, Neovim, operating-system paths,
+The native implementation of observation and delivery is the sibling (clearhead_cli) 
+`filesystem` module of `clearhead_cli`. Neovim, operating-system paths,
 calendar networking, and query-engine hosting are outside this crate.
 
 ## Internal organization
@@ -98,9 +98,8 @@ filesystem APIs on those values is an adapter responsibility.
 The intended dependency direction is:
 
 ```text
-clearhead-cli ───────────────┐
-clearhead-lsp ───────────────┼─> clearhead-workspace-fs ─> clearhead_core
-other host adapter ──────────┘                           └> clearhead_core
+clearhead_cli ── (cli / lsp / mcp frontends ─> filesystem + query) ─> clearhead_core
+other host adapter ───────────────────────────────────────────────────┘
 ```
 
 Hosts may also invoke Core directly for pure calculations. Core must never name
@@ -111,7 +110,7 @@ or invoke those downstream hosts.
 The boundary is protected by repository gates:
 
 - the crate boundary keeps Core filesystem-free by construction: it does not
-  depend on `clearhead-workspace-fs`, so the compiler enforces the purity a
+  depend on the effectful crate, so the compiler enforces the purity a
   source-gate script once policed by hand;
 - `scripts/wasm-dependency-gate.sh` rejects native-only dependencies from
   Core's portable dependency graph;

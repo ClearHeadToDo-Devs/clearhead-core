@@ -883,7 +883,7 @@ fn test_sync_calendar_conflict_can_be_resolved_toward_action() {
         .join("plans")
         .join("inbox")
         .join(format!("{}.ics", uuid));
-    let plans = clearhead_workspace_fs::read_ics_file(&ics_path).unwrap();
+    let plans = clearhead_cli::filesystem::read_ics_file(&ics_path).unwrap();
     assert_eq!(plans.len(), 1);
     assert_eq!(plans[0].plan.external_id.as_deref(), Some(uuid));
     let dt = plans[0].plan.dtstart.unwrap();

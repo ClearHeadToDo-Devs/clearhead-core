@@ -14,4 +14,4 @@ members = ["crates/*"]
 
 [workspace.metadata]
 name = "clearhead-rs"
-description = "Rust workspace for the ClearHead platform (pure domain core, native filesystem delivery adapter, CLI, and LSP)."
+description = "Rust workspace for the ClearHead platform: a pure domain core (clearhead_core) and one effectful crate (clearhead_cli) holding the filesystem adapter, CLI, and LSP."

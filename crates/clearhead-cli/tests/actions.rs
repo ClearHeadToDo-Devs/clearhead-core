@@ -270,7 +270,7 @@ fn test_add_child_inserts_after_parent_descendants_before_next_root() {
         .assert()
         .success();
 
-    let actions = clearhead_workspace_fs::read_actions(&path).unwrap();
+    let actions = clearhead_cli::filesystem::read_actions(&path).unwrap();
     let names: Vec<_> = actions.iter().map(|action| action.name.as_str()).collect();
     assert_eq!(
         names,
@@ -302,7 +302,7 @@ fn test_add_and_update_action_predecessors() {
         .assert()
         .success();
 
-    let actions = clearhead_workspace_fs::read_actions(&path).unwrap();
+    let actions = clearhead_cli::filesystem::read_actions(&path).unwrap();
     let dependent = actions
         .iter()
         .find(|action| action.name == "Dependent")
@@ -327,7 +327,7 @@ fn test_add_and_update_action_predecessors() {
         .assert()
         .success();
 
-    let actions = clearhead_workspace_fs::read_actions(&path).unwrap();
+    let actions = clearhead_cli::filesystem::read_actions(&path).unwrap();
     let dependent = actions
         .iter()
         .find(|action| action.name == "Dependent")
@@ -361,7 +361,7 @@ fn test_update_rejects_terminal_state_but_allows_non_terminal() {
             .failure()
             .stderr(predicate::str::contains("use complete/cancel"));
 
-        let actions = clearhead_workspace_fs::read_actions(&path).unwrap();
+        let actions = clearhead_cli::filesystem::read_actions(&path).unwrap();
         let task = actions.iter().find(|a| a.name == "Task").unwrap();
         assert_eq!(task.state, clearhead_core::ActionState::NotStarted);
     }
@@ -378,7 +378,7 @@ fn test_update_rejects_terminal_state_but_allows_non_terminal() {
         .assert()
         .success();
 
-    let actions = clearhead_workspace_fs::read_actions(&path).unwrap();
+    let actions = clearhead_cli::filesystem::read_actions(&path).unwrap();
     let task = actions.iter().find(|a| a.name == "Task").unwrap();
     assert_eq!(task.state, clearhead_core::ActionState::InProgress);
 }
@@ -406,13 +406,13 @@ fn test_delete_reaches_an_action_in_the_completed_file() {
         .stdout(predicate::str::contains(r#""kind":"deleted""#));
 
     assert!(
-        clearhead_workspace_fs::read_actions(&completed)
+        clearhead_cli::filesystem::read_actions(&completed)
             .unwrap()
             .is_empty(),
         "the completed action should be gone"
     );
     assert_eq!(
-        clearhead_workspace_fs::read_actions(&env.data_dir.join("charters/work.actions"))
+        clearhead_cli::filesystem::read_actions(&env.data_dir.join("charters/work.actions"))
             .unwrap()
             .len(),
         1,

@@ -21,7 +21,7 @@ pub fn run(ctx: &CommandContext, file: &Option<PathBuf>, dry_run: bool) -> anyho
     let request: clearhead_core::TransactionRequest =
         serde_json::from_str(&raw).context("parsing transaction request JSON")?;
 
-    let outcome = clearhead_workspace_fs::transact(&ctx.data_dir, request, dry_run)?;
+    let outcome = clearhead_cli::filesystem::transact(&ctx.data_dir, request, dry_run)?;
 
     println!(
         "{}",
@@ -30,7 +30,7 @@ pub fn run(ctx: &CommandContext, file: &Option<PathBuf>, dry_run: bool) -> anyho
 
     if matches!(
         outcome,
-        clearhead_workspace_fs::TransactionOutcome::Rejected { .. }
+        clearhead_cli::filesystem::TransactionOutcome::Rejected { .. }
     ) {
         // A well-formed request whose operations could not apply: the result is
         // on stdout for the caller to branch on; the exit code marks the failure.

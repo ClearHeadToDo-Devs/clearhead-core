@@ -24,14 +24,14 @@ pub fn apply_template(
     };
 
     let charter_dir = actions_path.parent().unwrap_or(std::path::Path::new(""));
-    let data_root = clearhead_workspace_fs::workspace_data_root(&ctx.data_dir);
+    let data_root = clearhead_cli::filesystem::workspace_data_root(&ctx.data_dir);
 
     let tpl_path =
-        clearhead_workspace_fs::templates::resolve_template(charter_dir, &data_root, name)
+        clearhead_cli::filesystem::templates::resolve_template(charter_dir, &data_root, name)
             .context("Failed to resolve template")?
             .ok_or_else(|| anyhow::anyhow!("Template '{}' not found", name))?;
 
-    let tpl_acts = clearhead_workspace_fs::read_actions(&tpl_path).with_context(|| {
+    let tpl_acts = clearhead_cli::filesystem::read_actions(&tpl_path).with_context(|| {
         format!(
             "Failed to read template '{}' at {}",
             name,

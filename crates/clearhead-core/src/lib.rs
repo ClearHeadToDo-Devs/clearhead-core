@@ -4,7 +4,7 @@
 //! Vocabulary v4 ontology. Core holds the in-memory model and the algorithms and
 //! *decides* what a workspace mutation should do, but it performs no I/O: reading
 //! bytes off disk and durably writing them is the job of a delivery adapter (the
-//! native one is `clearhead-workspace-fs`). The [`domain`] module contains the
+//! native one is `clearhead_cli's `filesystem` module`). The [`domain`] module contains the
 //! model and pure algorithms; [`workspace`] defines the DSL projection and the
 //! host-neutral delivery protocol; [`config`] defines the shared semantic config
 //! schema (a delivery adapter resolves the actual files and environment). This

@@ -58,7 +58,7 @@ fn sub_charter_dir(
     ws_root: &Path,
     parent: &clearhead_core::MarkdownCharter,
 ) -> anyhow::Result<PathBuf> {
-    let charter_root = clearhead_workspace_fs::charter_root(ws_root);
+    let charter_root = clearhead_cli::filesystem::charter_root(ws_root);
     let acts_rel = parent.actions_file.as_ref().ok_or_else(|| {
         anyhow::anyhow!(
             "Parent charter '{}' has no associated actions file; cannot determine placement",
@@ -391,11 +391,14 @@ pub fn add_charter(
         let dir = sub_charter_dir(&ws_root, &parent_mc)?;
         std::fs::create_dir_all(&dir)
             .with_context(|| format!("Failed to create directory '{}'", dir.display()))?;
-        (dir, clearhead_workspace_fs::workspace_data_root(&ws_root))
+        (
+            dir,
+            clearhead_cli::filesystem::workspace_data_root(&ws_root),
+        )
     } else {
         (
-            clearhead_workspace_fs::charter_root(&ctx.data_dir),
-            clearhead_workspace_fs::workspace_data_root(&ctx.data_dir),
+            clearhead_cli::filesystem::charter_root(&ctx.data_dir),
+            clearhead_cli::filesystem::workspace_data_root(&ctx.data_dir),
         )
     };
 
@@ -406,20 +409,20 @@ pub fn add_charter(
     }
 
     let content = clearhead_core::format_charter(&charter);
-    clearhead_workspace_fs::durability::atomic_write(&file_path, content)
+    clearhead_cli::filesystem::durability::atomic_write(&file_path, content)
         .context("Failed to write charter")?;
 
     // Always create the companion .actions file so the charter is immediately usable.
     let actions_path = target_dir.join(format!("{}.actions", filename));
     if !actions_path.exists() {
-        clearhead_workspace_fs::durability::atomic_write(&actions_path, "")
+        clearhead_cli::filesystem::durability::atomic_write(&actions_path, "")
             .context("Failed to create actions file")?;
     }
 
     // Record the charter's identity in the sidecar so it self-identifies in the
     // data, independent of the filename (best-effort — a sidecar failure must
     // never fail charter creation).
-    if let Err(e) = clearhead_workspace_fs::sidecar::stamp_charter_id(&actions_path, id) {
+    if let Err(e) = clearhead_cli::filesystem::sidecar::stamp_charter_id(&actions_path, id) {
         tracing::warn!(path = %actions_path.display(), error = %e, "Failed to record charter id in sidecar");
     }
 
@@ -431,13 +434,16 @@ pub fn add_charter(
     if let Some(tpl_name) = template {
         let charter_dir = file_path.parent().unwrap_or(std::path::Path::new(""));
 
-        let tpl_path =
-            clearhead_workspace_fs::templates::resolve_template(charter_dir, &data_root, tpl_name)
-                .context("Failed to resolve template")?
-                .ok_or_else(|| anyhow::anyhow!("Template '{}' not found", tpl_name))?;
+        let tpl_path = clearhead_cli::filesystem::templates::resolve_template(
+            charter_dir,
+            &data_root,
+            tpl_name,
+        )
+        .context("Failed to resolve template")?
+        .ok_or_else(|| anyhow::anyhow!("Template '{}' not found", tpl_name))?;
 
-        let tpl_acts =
-            clearhead_workspace_fs::read_actions(&tpl_path).context("Failed to read template")?;
+        let tpl_acts = clearhead_cli::filesystem::read_actions(&tpl_path)
+            .context("Failed to read template")?;
 
         let instantiated =
             templates::instantiate_template(&tpl_acts, |_| uuid::Uuid::now_v7(), None);
@@ -472,7 +478,7 @@ pub fn archive_charter(
     force: bool,
     dry_run: bool,
 ) -> anyhow::Result<()> {
-    use clearhead_workspace_fs::{
+    use clearhead_cli::filesystem::{
         ArchiveCharterOptions, archive_charter as do_archive, archive_terminal_charters,
     };
 
@@ -499,8 +505,8 @@ pub fn archive_charter(
         let plan_override = (ws_dir == ctx.data_dir)
             .then(|| ctx.plan_override())
             .flatten();
-        let mcs = clearhead_workspace_fs::load_workspace(&ws_dir, plan_override.as_deref())?;
-        let charter_root = clearhead_workspace_fs::charter_root(&ws_dir);
+        let mcs = clearhead_cli::filesystem::load_workspace(&ws_dir, plan_override.as_deref())?;
+        let charter_root = clearhead_cli::filesystem::charter_root(&ws_dir);
         let mc_full = resolve_charter_by_file(&mcs, file_path, &charter_root)
             .ok_or_else(|| anyhow::anyhow!("No charter found for file: {}", file_path.display()))?;
         mc_full
@@ -520,14 +526,14 @@ pub fn archive_charter(
                 print_archive_result(&result);
                 return Ok(());
             }
-            Err(clearhead_workspace_fs::ArchiveCharterError::NotFound(_)) => continue,
+            Err(clearhead_cli::filesystem::ArchiveCharterError::NotFound(_)) => continue,
             Err(e) => return Err(e.into()),
         }
     }
     anyhow::bail!("Charter '{}' not found in any workspace", q)
 }
 
-fn print_archive_result(r: &clearhead_workspace_fs::ArchiveCharterResult) {
+fn print_archive_result(r: &clearhead_cli::filesystem::ArchiveCharterResult) {
     let prefix = if r.was_dry_run {
         "[dry-run] Would archive"
     } else {
@@ -562,7 +568,7 @@ pub fn update_charter(
     use clearhead_cli::mutations::{CharterUpdate, apply_charter_update};
 
     let mcs = ctx.load_charters()?;
-    let charter_root = clearhead_workspace_fs::charter_root(&ctx.data_dir);
+    let charter_root = clearhead_cli::filesystem::charter_root(&ctx.data_dir);
     let mc_full = find_target_charter(&mcs, Some(query), None, &charter_root)?;
     let mut updated = Charter::from(mc_full.clone());
 
@@ -590,15 +596,15 @@ pub fn update_charter(
         return Ok(());
     }
 
-    let document = clearhead_workspace_fs::read_charter_document(&ctx.data_dir, &md_path)?;
-    clearhead_workspace_fs::write_charter_document(&ctx.data_dir, &document, &formatted)
+    let document = clearhead_cli::filesystem::read_charter_document(&ctx.data_dir, &md_path)?;
+    clearhead_cli::filesystem::write_charter_document(&ctx.data_dir, &document, &formatted)
         .with_context(|| format!("Failed to write '{}'", md_path.display()))?;
 
     // Renaming a charter renames its calendar collection's *display name*, not
     // the collection path: the vdir metadata file is what calendar clients and
     // `vdirsyncer metasync` read.
     if alias.is_some() {
-        clearhead_workspace_fs::write_collection_displaynames(
+        clearhead_cli::filesystem::write_collection_displaynames(
             &ctx.data_dir,
             ctx.plan_override().as_deref(),
         )?;
@@ -637,8 +643,8 @@ pub fn close_charter(
     let plan_override = (ws_root == ctx.data_dir)
         .then(|| ctx.plan_override())
         .flatten();
-    let mcs = clearhead_workspace_fs::load_workspace(&ws_root, plan_override.as_deref())?;
-    let charter_root = clearhead_workspace_fs::charter_root(&ws_root);
+    let mcs = clearhead_cli::filesystem::load_workspace(&ws_root, plan_override.as_deref())?;
+    let charter_root = clearhead_cli::filesystem::charter_root(&ws_root);
     let mc_full = find_target_charter(&mcs, query, file, &charter_root)?;
     let mut updated = Charter::from(mc_full.clone());
 
@@ -664,8 +670,8 @@ pub fn close_charter(
         return Ok(());
     }
 
-    let document = clearhead_workspace_fs::read_charter_document(&ws_root, &md_path)?;
-    clearhead_workspace_fs::write_charter_document(&ws_root, &document, &formatted)
+    let document = clearhead_cli::filesystem::read_charter_document(&ws_root, &md_path)?;
+    clearhead_cli::filesystem::write_charter_document(&ws_root, &document, &formatted)
         .with_context(|| format!("Failed to write '{}'", md_path.display()))?;
 
     info!(charter = %updated.title, path = %md_path.display(), created = is_new, "Charter closed");
@@ -694,8 +700,8 @@ pub fn jot(
 ) -> anyhow::Result<()> {
     let ws_root = ctx.data_dir.clone();
     let plan_override = ctx.plan_override();
-    let mcs = clearhead_workspace_fs::load_workspace(&ws_root, plan_override.as_deref())?;
-    let charter_root = clearhead_workspace_fs::charter_root(&ws_root);
+    let mcs = clearhead_cli::filesystem::load_workspace(&ws_root, plan_override.as_deref())?;
+    let charter_root = clearhead_cli::filesystem::charter_root(&ws_root);
 
     let mc_full = resolve_jot_charter(&mcs, charter)?;
     let charter_model = Charter::from(mc_full.clone());
@@ -711,7 +717,7 @@ pub fn jot(
     // The read goes through the delivery seam so the revision it saw is
     // re-checked before the write; a concurrent editor becomes a conflict
     // rather than a lost log entry.
-    let document = clearhead_workspace_fs::read_charter_document(&ws_root, &md_path)?;
+    let document = clearhead_cli::filesystem::read_charter_document(&ws_root, &md_path)?;
     let is_new = document.is_missing();
     let base = match document.content() {
         Some(existing) => existing.to_string(),
@@ -735,7 +741,7 @@ pub fn jot(
         return Ok(());
     }
 
-    clearhead_workspace_fs::write_charter_document(&ws_root, &document, &updated)
+    clearhead_cli::filesystem::write_charter_document(&ws_root, &document, &updated)
         .with_context(|| format!("Failed to write '{}'", md_path.display()))?;
     info!(charter = %charter_model.title, path = %md_path.display(), created = is_new, "Jotted log entry");
     println!(

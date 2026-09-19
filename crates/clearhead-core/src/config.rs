@@ -4,7 +4,7 @@
 //! affect the data model and graph behaviour, not presentation or UI.
 //!
 //! Core owns only the host-neutral semantic configuration values. Native source
-//! discovery and precedence live in `clearhead-workspace-fs`.
+//! discovery and precedence live in `clearhead_cli's `filesystem` module`.
 
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};

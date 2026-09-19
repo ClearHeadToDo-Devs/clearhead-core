@@ -3,7 +3,17 @@
 //! This library provides the command-line implementation for the ClearHead framework.
 //! It builds on `clearhead_core`'s shared domain, workspace, and configuration services,
 //! adding command orchestration, terminal presentation, CLI-specific settings, and process
-//! concerns. The editor protocol runtime lives in the separate `clearhead-lsp` crate.
+//! concerns. The native filesystem adapter (formerly `clearhead-workspace-fs`) lives in the
+//! [`filesystem`] module and the editor protocol runtime (formerly `clearhead-lsp`) in [`lsp`].
+
+// The lib and the `clearhead` binary share module files that were once
+// compiled twice (bin-private `mod` alongside the lib). The `clearhead` bin
+// reaches this crate by name; the alias lets those shared files do the same
+// from inside the lib.
+extern crate self as clearhead_cli;
+
+pub mod filesystem;
+pub mod lsp;
 
 use clearhead_core::WorkspaceConfig;
 use tree_sitter::Tree;

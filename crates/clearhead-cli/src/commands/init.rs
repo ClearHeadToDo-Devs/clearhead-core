@@ -57,7 +57,7 @@ pub fn run(
         root_id: uuid::Uuid::now_v7(),
         created_at: chrono::Local::now().format("%Y-%m-%d").to_string(),
     };
-    let plan = clearhead_workspace_fs::init_workspace(&root, &request)
+    let plan = clearhead_cli::filesystem::init_workspace(&root, &request)
         .context("Failed to initialize workspace")?;
     report(&plan);
     Ok(())

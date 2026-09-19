@@ -15,9 +15,9 @@ The organising principle is a single seam: **a pure domain core that decides,
 and host adapters that deliver.** `clearhead_core` owns the model and the
 algorithms and *decides* what a mutation should change, but performs no I/O; it
 runs natively and on `wasm32`. A *delivery adapter* turns those decisions into
-real reads and durable writes. `clearhead-workspace-fs` is the native
-filesystem adapter; the CLI and LSP compose the two. The full account —
-including the resource/effect boundary — is in
+real reads and durable writes. The native filesystem adapter and both hosts —
+the CLI and the LSP — live in `clearhead_cli` (its `filesystem`, `cli`, and
+`lsp` modules). The full account — including the resource/effect boundary — is in
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
 ## Workspace members
@@ -25,11 +25,9 @@ including the resource/effect boundary — is in
 | Crate | Role |
 |---|---|
 | [`crates/clearhead-core`](crates/clearhead-core) | pure domain library — model, algorithms, and the host-neutral effect protocol (no I/O) |
-| [`crates/clearhead-workspace-fs`](crates/clearhead-workspace-fs) | native filesystem delivery adapter — loading, durable writes, calendar sync |
-| [`crates/clearhead-cli`](crates/clearhead-cli) | the `clearhead` command-line client |
-| [`crates/clearhead-lsp`](crates/clearhead-lsp) | the standalone editor protocol server |
+| [`crates/clearhead-cli`](crates/clearhead-cli) | the `clearhead` client and the effectful runtime — `filesystem` adapter, `cli` and `lsp` frontends, `query` engine |
 
-The dependency arrows all point *into* core: the adapter and hosts depend on
+The dependency arrows all point *into* core: the effectful crate depends on
 `clearhead_core`, never the reverse. That is why core is a plain member under
 `crates/` rather than the workspace root — it must not name or "parent" its own
 downstream.

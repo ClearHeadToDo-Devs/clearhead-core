@@ -75,7 +75,7 @@ impl CommandContext {
 
     /// Resolve an optional file arg against the default file from config.
     pub fn resolve_action_file(&self, file: Option<&PathBuf>) -> PathBuf {
-        let charter_root = clearhead_workspace_fs::charter_root(&self.data_dir);
+        let charter_root = clearhead_cli::filesystem::charter_root(&self.data_dir);
         file.cloned()
             .unwrap_or_else(|| resolve_file_path(&self.config.default_file, &charter_root))
     }
@@ -96,7 +96,7 @@ impl CommandContext {
     pub fn workspace_for_file(&self, file: &Path) -> PathBuf {
         let abs = std::fs::canonicalize(file).unwrap_or_else(|_| file.to_path_buf());
         for (_, dir) in self.workspace_dirs() {
-            let charter_root = clearhead_workspace_fs::charter_root(&dir);
+            let charter_root = clearhead_cli::filesystem::charter_root(&dir);
             let abs_root = std::fs::canonicalize(&charter_root).unwrap_or(charter_root);
             if abs.starts_with(&abs_root) {
                 return dir;
@@ -141,9 +141,9 @@ impl CommandContext {
             let is_primary = path == self.data_dir;
             // The primary honors plan_path; additional workspaces use their own default.
             let loaded = if is_primary {
-                clearhead_workspace_fs::load_domain_model(&path, self.plan_override().as_deref())
+                clearhead_cli::filesystem::load_domain_model(&path, self.plan_override().as_deref())
             } else {
-                clearhead_workspace_fs::load_domain_model(&path, None)
+                clearhead_cli::filesystem::load_domain_model(&path, None)
             };
             match loaded {
                 Ok(m) => models.push((name, m)),
@@ -215,7 +215,7 @@ impl CommandContext {
     /// parser recovery. Diagnostic reads remain relaxed, but a partial model is
     /// not a safe basis for reconciliation or identity-bearing writes.
     pub fn require_source_integrity(&self, command: &str) -> anyhow::Result<()> {
-        let read = clearhead_workspace_fs::read_workspace(
+        let read = clearhead_cli::filesystem::read_workspace(
             &self.data_dir,
             self.plan_override().as_deref(),
         )?;
@@ -254,7 +254,7 @@ impl CommandContext {
     /// line (stamped on the write path); future occurrences are a read-only
     /// calendar concern rendered from the recurrence engine, not part of this model.
     pub fn load_model(&self) -> anyhow::Result<clearhead_core::DomainModel> {
-        Ok(clearhead_workspace_fs::load_domain_model(
+        Ok(clearhead_cli::filesystem::load_domain_model(
             &self.data_dir,
             self.plan_override().as_deref(),
         )?)
@@ -262,7 +262,7 @@ impl CommandContext {
 
     /// Load the primary workspace's charters, honoring `plan_path`.
     pub fn load_charters(&self) -> anyhow::Result<Vec<clearhead_core::MarkdownCharter>> {
-        Ok(clearhead_workspace_fs::load_workspace(
+        Ok(clearhead_cli::filesystem::load_workspace(
             &self.data_dir,
             self.plan_override().as_deref(),
         )?)
@@ -271,8 +271,8 @@ impl CommandContext {
     /// Discover the primary workspace's plan `.ics` entries, honoring `plan_path`.
     pub fn collect_plan_files(
         &self,
-    ) -> anyhow::Result<Vec<clearhead_workspace_fs::CalendarResource>> {
-        Ok(clearhead_workspace_fs::read_calendar_resources(
+    ) -> anyhow::Result<Vec<clearhead_cli::filesystem::CalendarResource>> {
+        Ok(clearhead_cli::filesystem::read_calendar_resources(
             &self.data_dir,
             self.plan_override().as_deref(),
         )?)
@@ -280,7 +280,7 @@ impl CommandContext {
 
     /// The primary workspace's `plans_root`, honoring `plan_path`.
     pub fn plans_root(&self) -> PathBuf {
-        let mounts = clearhead_workspace_fs::NativeWorkspaceMounts::resolve(
+        let mounts = clearhead_cli::filesystem::NativeWorkspaceMounts::resolve(
             &self.data_dir,
             self.plan_override().as_deref(),
         );
@@ -318,7 +318,7 @@ pub fn workspace_name_from_path(path: &Path) -> String {
 pub fn workspace_name_for_root(path: &Path) -> String {
     // The manifest (workspace.json) carries the workspace's declared name; fall
     // back to the directory name.
-    clearhead_workspace_fs::read_workspace_manifest(path)
+    clearhead_cli::filesystem::read_workspace_manifest(path)
         .workspace_name
         .map(|n| n.trim().to_string())
         .filter(|n| !n.is_empty())
@@ -413,7 +413,7 @@ pub fn load_file_for_mutation(path: &Path, command: &str) -> anyhow::Result<Acti
 /// Also updates the charter sidecar (best-effort — sidecar failures
 /// are logged but do not prevent the actions file from being saved).
 pub fn save_file(path: &Path, actions: &ActionList) -> anyhow::Result<()> {
-    clearhead_workspace_fs::write_actions(actions, path)?;
+    clearhead_cli::filesystem::write_actions(actions, path)?;
     if let Err(e) = update_sidecar(path, actions) {
         warn!(path = %path.display(), error = %e, "Failed to update sidecar");
     }
@@ -422,7 +422,7 @@ pub fn save_file(path: &Path, actions: &ActionList) -> anyhow::Result<()> {
 
 /// Ensure every action in the list has an entry in the charter sidecar.
 pub fn update_sidecar(actions_path: &Path, actions: &ActionList) -> anyhow::Result<()> {
-    Ok(clearhead_workspace_fs::sidecar::stamp_sidecar_entries(
+    Ok(clearhead_cli::filesystem::sidecar::stamp_sidecar_entries(
         actions_path,
         actions,
     )?)
@@ -453,7 +453,7 @@ pub fn complete_values(
     match kind {
         CompleteKind::Charters => {
             for (_, ws_root) in ctx.workspace_dirs() {
-                let mcs = match clearhead_workspace_fs::load_workspace(&ws_root, None) {
+                let mcs = match clearhead_cli::filesystem::load_workspace(&ws_root, None) {
                     Ok(m) => m,
                     Err(_) => continue,
                 };
@@ -499,9 +499,9 @@ pub fn read_input(file: Option<&PathBuf>) -> anyhow::Result<String> {
 /// Scans all workspace action files and matches the inferred charter name against
 /// the query (by UUID prefix, alias, or inferred file stem / directory name).
 pub fn charter_to_file_path(data_dir: &Path, charter_query: &str) -> anyhow::Result<PathBuf> {
-    let data_root = clearhead_workspace_fs::charter_root(data_dir);
-    let action_files =
-        clearhead_workspace_fs::list_action_files(data_dir).context("Failed to list workspace")?;
+    let data_root = clearhead_cli::filesystem::charter_root(data_dir);
+    let action_files = clearhead_cli::filesystem::list_action_files(data_dir)
+        .context("Failed to list workspace")?;
 
     let query_lower = charter_query.to_lowercase();
 
@@ -516,7 +516,7 @@ pub fn charter_to_file_path(data_dir: &Path, charter_query: &str) -> anyhow::Res
     }
 
     // Fall back to model-level resolution (matches alias, UUID, partial title)
-    let model = clearhead_workspace_fs::load_domain_model(data_dir, None)?;
+    let model = clearhead_cli::filesystem::load_domain_model(data_dir, None)?;
     let found = crate::commands::charter::resolve_charter(&model.charters, charter_query)?
         .ok_or_else(|| anyhow::anyhow!("No charter found matching '{}'", charter_query))?;
 

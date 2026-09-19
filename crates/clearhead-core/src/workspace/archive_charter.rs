@@ -2,7 +2,7 @@
 //!
 //! Archive discovery, naming, supporting-file ownership, locking, recovery,
 //! moves, cleanup, and result paths are native workspace conventions owned by
-//! `clearhead-workspace-fs`. Core retains only lifecycle, hierarchy, reference,
+//! `clearhead_cli's `filesystem` module`. Core retains only lifecycle, hierarchy, reference,
 //! and surgical frontmatter decisions that any host can reuse.
 
 use std::collections::{HashMap, HashSet};

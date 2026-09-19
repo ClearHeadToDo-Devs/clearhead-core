@@ -1,7 +1,7 @@
 //! The pure workspace envelope and read result.
 //!
 //! Loading — walking the filesystem, reading bytes, replaying pending journals —
-//! is host I/O and lives in the native adapter (`clearhead-workspace-fs`). What
+//! is host I/O and lives in the native adapter (`clearhead_cli's `filesystem` module`). What
 //! remains here is pure: the [`Workspace`] envelope a host fills from assembled
 //! charters plus host-supplied identity, the [`WorkspaceRead`] result of a pure
 //! assembly, and the shared syntax-error summary. Assembly itself is

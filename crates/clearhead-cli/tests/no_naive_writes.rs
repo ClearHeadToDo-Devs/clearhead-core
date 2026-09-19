@@ -1,6 +1,6 @@
 //! Guards the write-durability seam (pure-core-split charter): every write in
 //! `src/commands/` should route through the native adapter's atomic write
-//! primitives (`clearhead_workspace_fs::durability::atomic_write` and the
+//! primitives (`clearhead_cli::filesystem::durability::atomic_write` and the
 //! mutation batch), not raw `std::fs::write` — a crash mid-write can truncate a
 //! source-of-truth file. New call sites must either route through those
 //! primitives or be added to `EXEMPT` below with a one-line reason, never silently.
@@ -27,7 +27,7 @@ fn no_naive_fs_write_outside_exemptions() {
     assert!(
         violations.is_empty(),
         "found fs::write outside the durability seam's exemption list — route through \
-         clearhead_workspace_fs::durability::atomic_write, or add a reviewed \
+         clearhead_cli::filesystem::durability::atomic_write, or add a reviewed \
          exemption to EXEMPT in tests/no_naive_writes.rs with a reason:\n{}",
         violations.join("\n")
     );

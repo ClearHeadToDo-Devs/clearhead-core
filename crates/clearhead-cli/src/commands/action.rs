@@ -7,8 +7,8 @@ use anyhow::Context;
 use chrono::Local;
 use tracing::{info, warn};
 
+use clearhead_cli::filesystem::action_files;
 use clearhead_core::{Action, ActionList, ActionState, PredecessorRef};
-use clearhead_workspace_fs::action_files;
 
 use super::CommandContext;
 use super::verb_result::{VerbError, VerbOutcome, canonical_id, emit};
@@ -92,7 +92,7 @@ pub fn add_action(
     }
 
     let workspace_root = ctx.workspace_for_file(&actions_path);
-    let result = clearhead_workspace_fs::insert_action(
+    let result = clearhead_cli::filesystem::insert_action(
         &workspace_root,
         &actions_path,
         action,
@@ -127,7 +127,7 @@ fn resolve_acts_file(
     }
     if let Some(query) = charter {
         let (mc, ws_root) = resolve_charter_across_workspaces(ctx, query)?;
-        let root = clearhead_workspace_fs::charter_root(&ws_root);
+        let root = clearhead_cli::filesystem::charter_root(&ws_root);
         // A charter may exist as prose with no actions anchor yet (a fresh
         // charter, or one promoted out of `someday/`). Its identity lives in
         // that document, so derive the anchor the loader would pair with it
@@ -157,7 +157,7 @@ fn resolve_acts_file(
 
     if actionable.len() == 1 {
         let (_mc, rel) = actionable[0];
-        let root = clearhead_workspace_fs::charter_root(&ctx.data_dir);
+        let root = clearhead_cli::filesystem::charter_root(&ctx.data_dir);
         return Ok(root.join(rel));
     }
 
@@ -235,7 +235,7 @@ fn close_action_subtree(
     }
 
     let workspace_root = ctx.workspace_for_file(&actions_path);
-    let result = clearhead_workspace_fs::close_action_subtree(
+    let result = clearhead_cli::filesystem::close_action_subtree(
         &workspace_root,
         &actions_path,
         &selector,
@@ -253,7 +253,7 @@ fn close_action_subtree(
         _ => None,
     };
     if let Some(op) = occurrence_op
-        && clearhead_workspace_fs::resolve_materialized_occurrence(
+        && clearhead_cli::filesystem::resolve_materialized_occurrence(
             &workspace_root,
             ctx.plan_override().as_deref(),
             action_id,
@@ -336,7 +336,7 @@ fn try_close_occurrence(
         return Ok(true);
     }
 
-    clearhead_workspace_fs::apply_occurrence_op(
+    clearhead_cli::filesystem::apply_occurrence_op(
         &ctx.data_dir,
         ctx.plan_override().as_deref(),
         plan_id,
@@ -410,7 +410,7 @@ fn try_reschedule_occurrence(
         return Ok(true);
     }
 
-    clearhead_workspace_fs::apply_occurrence_op(
+    clearhead_cli::filesystem::apply_occurrence_op(
         &ctx.data_dir,
         ctx.plan_override().as_deref(),
         plan_id,
@@ -519,8 +519,12 @@ pub fn update_action(
     }
 
     let workspace_root = ctx.workspace_for_file(&actions_path);
-    let result =
-        clearhead_workspace_fs::update_action(&workspace_root, &actions_path, &selector, update)?;
+    let result = clearhead_cli::filesystem::update_action(
+        &workspace_root,
+        &actions_path,
+        &selector,
+        update,
+    )?;
     info!(action_id = %result.action_id, "Action updated");
     emit(&VerbOutcome::Updated {
         id: canonical_id(result.action_id),
@@ -544,11 +548,11 @@ pub fn delete_action(
         let rel = mc.actions_file.as_ref().ok_or_else(|| {
             anyhow::anyhow!("Charter '{}' has no associated actions file", mc.title)
         })?;
-        vec![clearhead_workspace_fs::charter_root(&ws_root).join(rel)]
+        vec![clearhead_cli::filesystem::charter_root(&ws_root).join(rel)]
     } else {
         let mut all = Vec::new();
         for (_, ws_dir) in ctx.workspace_dirs() {
-            let files = clearhead_workspace_fs::list_action_files(&ws_dir)
+            let files = clearhead_cli::filesystem::list_action_files(&ws_dir)
                 .with_context(|| format!("Failed to list workspace '{}'", ws_dir.display()))?;
             all.extend(files);
         }
@@ -593,7 +597,7 @@ pub fn delete_action(
 
         let workspace_root = ctx.workspace_for_file(actions_path);
         let result =
-            clearhead_workspace_fs::delete_action(&workspace_root, actions_path, &selector)?;
+            clearhead_cli::filesystem::delete_action(&workspace_root, actions_path, &selector)?;
         let children = result.deleted_count.saturating_sub(1);
         info!(
             action_id = %result.action_id,
@@ -633,7 +637,7 @@ pub fn cancel_action(
 /// Reopen a completed action and its subtree — the inverse of `complete`/
 /// `cancel`. Resolves the target in the `.completed.actions` history, then hands
 /// the locked read-plan-apply move back to the active file to core via
-/// `clearhead-workspace-fs`.
+/// clearhead_cli's `filesystem` module.
 ///
 /// The whole subtree returns `NotStarted` (child states were collapsed at
 /// completion) and the root returns detached from its old parent (that link was
@@ -667,8 +671,11 @@ pub fn reopen_action(
     }
 
     let workspace_root = ctx.workspace_for_file(&actions_path);
-    let result =
-        clearhead_workspace_fs::reopen_action_subtree(&workspace_root, &actions_path, &selector)?;
+    let result = clearhead_cli::filesystem::reopen_action_subtree(
+        &workspace_root,
+        &actions_path,
+        &selector,
+    )?;
     let children = result.reopened_count.saturating_sub(1);
     let outcome = VerbOutcome::Reopened {
         id: canonical_id(result.action_id),
@@ -699,7 +706,7 @@ fn find_and_load_completed_actions(
         let rel = mc.actions_file.as_ref().ok_or_else(|| {
             anyhow::anyhow!("Charter '{}' has no associated actions file", mc.title)
         })?;
-        let path = clearhead_workspace_fs::charter_root(&ws_root).join(rel);
+        let path = clearhead_cli::filesystem::charter_root(&ws_root).join(rel);
         let completed = read_completed_sibling(&path)?;
         return Ok(Some((path, completed)));
     }
@@ -720,7 +727,7 @@ fn find_and_load_completed_actions(
 /// an idempotent loop); no match anywhere is `NotFound`.
 fn reopen_target_error(ctx: &CommandContext, query: &str) -> anyhow::Result<VerbError> {
     for (_, ws_dir) in ctx.workspace_dirs() {
-        let open_files = clearhead_workspace_fs::list_action_files(&ws_dir).unwrap_or_default();
+        let open_files = clearhead_cli::filesystem::list_action_files(&ws_dir).unwrap_or_default();
         for path in &open_files {
             let Ok(actions) = action_files::read_actions(path) else {
                 continue;
@@ -757,8 +764,8 @@ fn find_act_in_completed_files(
     data_dir: &Path,
     query: &str,
 ) -> anyhow::Result<Option<(PathBuf, ActionList)>> {
-    let paths =
-        clearhead_workspace_fs::list_action_files(data_dir).context("Failed to list workspace")?;
+    let paths = clearhead_cli::filesystem::list_action_files(data_dir)
+        .context("Failed to list workspace")?;
     let mut loaded = Vec::with_capacity(paths.len());
     for path in paths {
         let completed = read_completed_sibling(&path)?;
@@ -803,7 +810,7 @@ pub fn read_actions_cmd(
         let rel = mc.actions_file.as_ref().ok_or_else(|| {
             anyhow::anyhow!("Charter '{}' has no associated actions file", mc.title)
         })?;
-        let root = clearhead_workspace_fs::charter_root(&ws_root);
+        let root = clearhead_cli::filesystem::charter_root(&ws_root);
         Some(root.join(rel))
     } else {
         None
@@ -892,7 +899,7 @@ pub fn read_actions_cmd(
                         let mut ws_model = if is_primary {
                             model.clone()
                         } else {
-                            match clearhead_workspace_fs::load_domain_model(&ws_path, None) {
+                            match clearhead_cli::filesystem::load_domain_model(&ws_path, None) {
                                 Ok(m) => m,
                                 Err(e) => {
                                     tracing::warn!(
@@ -962,7 +969,7 @@ fn collect_workspace_actions(
 
         let plan_override = is_primary.then(|| ctx.plan_override()).flatten();
         let charters =
-            match clearhead_workspace_fs::load_workspace(&ws_path, plan_override.as_deref()) {
+            match clearhead_cli::filesystem::load_workspace(&ws_path, plan_override.as_deref()) {
                 Ok(c) => c,
                 Err(e) if is_primary => return Err(e.into()),
                 Err(e) => {
@@ -970,7 +977,7 @@ fn collect_workspace_actions(
                     continue;
                 }
             };
-        let charter_root = clearhead_workspace_fs::charter_root(&ws_path);
+        let charter_root = clearhead_cli::filesystem::charter_root(&ws_path);
 
         for mc in &charters {
             let mut open: Vec<Action> = mc
@@ -1046,7 +1053,7 @@ pub fn archive_actions(
             | ResolvedScope::Action { file_path } => vec![file_path],
         }
     } else {
-        clearhead_workspace_fs::list_action_files(&ctx.data_dir)
+        clearhead_cli::filesystem::list_action_files(&ctx.data_dir)
             .context("Failed to list workspace")?
     };
 
@@ -1061,7 +1068,8 @@ pub fn archive_actions(
             clearhead_core::plan_action_archive(&active, &completed).archived_count
         } else {
             let workspace_root = ctx.workspace_for_file(actions_path);
-            clearhead_workspace_fs::archive_actions(&workspace_root, actions_path)?.archived_count
+            clearhead_cli::filesystem::archive_actions(&workspace_root, actions_path)?
+                .archived_count
         };
 
         if archived_count == 0 {
@@ -1125,7 +1133,7 @@ fn find_and_load_open_actions(
         let rel = mc.actions_file.as_ref().ok_or_else(|| {
             anyhow::anyhow!("Charter '{}' has no associated actions file", mc.title)
         })?;
-        let path = clearhead_workspace_fs::charter_root(&ws_root).join(rel);
+        let path = clearhead_cli::filesystem::charter_root(&ws_root).join(rel);
         let actions = super::load_file_for_mutation(&path, "action lifecycle")?;
         return Ok(Some((path, actions)));
     }
@@ -1148,8 +1156,8 @@ fn find_act_in_open_files(
     data_dir: &Path,
     query: &str,
 ) -> anyhow::Result<Option<(PathBuf, ActionList)>> {
-    let paths =
-        clearhead_workspace_fs::list_action_files(data_dir).context("Failed to list workspace")?;
+    let paths = clearhead_cli::filesystem::list_action_files(data_dir)
+        .context("Failed to list workspace")?;
     let mut loaded = Vec::with_capacity(paths.len());
     for path in paths {
         loaded.push((path.clone(), action_files::read_actions(&path)?));
@@ -1176,7 +1184,7 @@ fn find_act_in_open_files(
 /// action is already closed; with no match anywhere it is not found.
 fn verb_target_error(ctx: &CommandContext, query: &str) -> anyhow::Result<VerbError> {
     for (_, ws_dir) in ctx.workspace_dirs() {
-        let open_files = clearhead_workspace_fs::list_action_files(&ws_dir).unwrap_or_default();
+        let open_files = clearhead_cli::filesystem::list_action_files(&ws_dir).unwrap_or_default();
         let archives: Vec<PathBuf> = open_files
             .iter()
             .map(|p| action_files::completed_actions_path(p))
@@ -1307,14 +1315,15 @@ pub(super) fn resolve_charter_across_workspaces(
         let plan_override = (ws_root == ctx.data_dir)
             .then(|| ctx.plan_override())
             .flatten();
-        let mcs = match clearhead_workspace_fs::load_workspace(&ws_root, plan_override.as_deref()) {
-            Ok(m) => m,
-            Err(e) if is_primary => return Err(e.into()),
-            Err(e) => {
-                warn!("Skipping workspace '{}': {}", ws_root.display(), e);
-                continue;
-            }
-        };
+        let mcs =
+            match clearhead_cli::filesystem::load_workspace(&ws_root, plan_override.as_deref()) {
+                Ok(m) => m,
+                Err(e) if is_primary => return Err(e.into()),
+                Err(e) => {
+                    warn!("Skipping workspace '{}': {}", ws_root.display(), e);
+                    continue;
+                }
+            };
         if let Some(mc) = resolve_markdown_charter(&mcs, query)? {
             return Ok((mc.clone(), ws_root));
         }
@@ -1342,9 +1351,9 @@ fn collect_all_actions(
     file: &Option<PathBuf>,
     open_only: bool,
 ) -> anyhow::Result<Vec<Action>> {
-    let charter_root = clearhead_workspace_fs::charter_root(&ctx.data_dir);
+    let charter_root = clearhead_cli::filesystem::charter_root(&ctx.data_dir);
     let charters =
-        clearhead_workspace_fs::load_workspace(&ctx.data_dir, ctx.plan_override().as_deref())?;
+        clearhead_cli::filesystem::load_workspace(&ctx.data_dir, ctx.plan_override().as_deref())?;
 
     let matches = |mc: &clearhead_core::MarkdownCharter| match (file, &mc.actions_file) {
         (Some(target), Some(actions_file)) => {

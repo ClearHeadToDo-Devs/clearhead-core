@@ -2,7 +2,7 @@
 
 **Command-line client for the ClearHead action management framework.**
 
-Work items live in plain-text `.actions` files that any editor can read and write. Recurring schedules live in `.ics` vdir files, and archived charter files remain plaintext under the workspace `archive/` directory. `clearhead` provides synchronous command and mutation workflows over `clearhead-core`, and — with its default `sparql` feature — evaluates ad-hoc and saved SPARQL queries in-process over the workspace's published RDF dataset (standard SPARQL, no query server). The saved presentation query families (`index`, `tree`, `graph`, `chain`) run in-process too; editor intelligence belongs to [`clearhead-lsp`](https://github.com/ClearHeadToDo-Devs/clearhead-lsp).
+Work items live in plain-text `.actions` files that any editor can read and write. Recurring schedules live in `.ics` vdir files, and archived charter files remain plaintext under the workspace `archive/` directory. `clearhead` provides synchronous command and mutation workflows over `clearhead-core`, and — with its default `sparql` feature — evaluates ad-hoc and saved SPARQL queries in-process over the workspace's published RDF dataset (standard SPARQL, no query server). The saved presentation query families (`index`, `tree`, `graph`, `chain`) run in-process too; editor intelligence belongs to the `lsp` module, shipped as the standalone `clearhead-lsp` binary.
 
 ## Installation
 

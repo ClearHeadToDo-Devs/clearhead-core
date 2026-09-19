@@ -77,9 +77,9 @@ pub struct CompletionEntry {
 
 pub fn build(ctx: &CommandContext) -> anyhow::Result<Orient> {
     let charters =
-        clearhead_workspace_fs::load_workspace(&ctx.data_dir, ctx.plan_override().as_deref())
+        clearhead_cli::filesystem::load_workspace(&ctx.data_dir, ctx.plan_override().as_deref())
             .context("orient")?;
-    let charter_root = clearhead_workspace_fs::charter_root(&ctx.data_dir);
+    let charter_root = clearhead_cli::filesystem::charter_root(&ctx.data_dir);
 
     let active_charters = Bounded::take(
         charters
@@ -116,10 +116,10 @@ pub fn build(ctx: &CommandContext) -> anyhow::Result<Orient> {
         let Some(actions_file) = &charter.actions_file else {
             continue;
         };
-        let completed_path = clearhead_workspace_fs::action_files::completed_actions_path(
+        let completed_path = clearhead_cli::filesystem::action_files::completed_actions_path(
             &charter_root.join(actions_file),
         );
-        for action in clearhead_workspace_fs::action_files::read_actions(&completed_path)? {
+        for action in clearhead_cli::filesystem::action_files::read_actions(&completed_path)? {
             completions.push(action);
         }
     }

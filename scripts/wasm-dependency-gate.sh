@@ -35,7 +35,7 @@ hits=$(printf '%s\n' "$tree" | grep -iE "$FORBIDDEN" || true)
 if [ -n "$hits" ]; then
   echo "wasm-gate > FAIL: native-only crate(s) in Core's portable graph:" >&2
   printf '%s\n' "$hits" >&2
-  echo "wasm-gate > move the host capability behind the native adapter (clearhead-workspace-fs)." >&2
+  echo "wasm-gate > move the host capability behind the native adapter (clearhead_cli's `filesystem` module)." >&2
   exit 1
 fi
 

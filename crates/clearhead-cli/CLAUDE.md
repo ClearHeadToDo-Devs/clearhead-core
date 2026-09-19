@@ -6,5 +6,5 @@ See the crate [README](README.md) for user-facing behavior and the workspace
 `clearhead-cli` is the synchronous command host. It owns command parsing,
 presentation, invocation-scoped orchestration, and the optional in-process
 SPARQL evaluator. Durable native loading and delivery belong to
-`clearhead-workspace-fs`; semantic models, codecs, and mutation decisions belong
+the `filesystem` module of this crate; semantic models, codecs, and mutation decisions belong
 to `clearhead_core`. The standalone LSP is a sibling crate, not a CLI module.

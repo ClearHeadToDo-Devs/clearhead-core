@@ -370,67 +370,36 @@ dependencies = [
 ]
 
 [[package]]
-name = "clearhead-lsp"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "clearhead-workspace-fs",
- "clearhead_core",
- "dashmap",
- "serde_json",
- "tempfile",
- "tokio",
- "tower-lsp-server",
- "tracing",
- "tracing-subscriber",
- "tree-sitter",
- "tree-sitter-actions",
- "uuid",
-]
-
-[[package]]
-name = "clearhead-workspace-fs"
-version = "0.1.0"
-dependencies = [
- "blake3",
- "chrono",
- "clearhead_core",
- "config",
- "dirs",
- "ron 0.8.1",
- "serde",
- "serde_json",
- "shellexpand",
- "tempfile",
- "thiserror",
- "tracing",
- "uuid",
-]
-
-[[package]]
 name = "clearhead_cli"
 version = "0.2.1"
 dependencies = [
  "anyhow",
  "assert_cmd",
+ "blake3",
  "chrono",
  "clap",
  "clap_complete",
  "clap_mangen",
- "clearhead-workspace-fs",
  "clearhead_core",
  "comfy-table",
  "config",
+ "dashmap",
+ "dirs",
  "insta",
  "jsonschema",
  "oxigraph",
  "oxrdf",
  "petgraph",
  "predicates",
+ "ron 0.8.1",
  "serde",
  "serde_json",
+ "shellexpand",
  "tempfile",
  "termtree 1.0.0",
+ "thiserror",
+ "tokio",
+ "tower-lsp-server",
  "tracing",
  "tracing-subscriber",
  "tree-sitter",

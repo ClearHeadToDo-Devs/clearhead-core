@@ -11,7 +11,7 @@ and objectives.
 Core is a **pure domain library**: it holds the in-memory model and the
 algorithms, and it *decides* what a workspace mutation should do — but it
 performs no I/O. Reading and durably writing files is the job of a *delivery
-adapter*. The native adapter, `clearhead-workspace-fs`, implements that boundary
+adapter*. The native adapter, clearhead_cli's `filesystem` module, implements that boundary
 against a POSIX filesystem; a different host (for example a WASM runtime) can
 supply its own adapter without Core changing. See
 [`docs/ARCHITECTURE.md`](../../docs/ARCHITECTURE.md) for the full seam.
@@ -32,8 +32,8 @@ and the native hosts are its siblings under `crates/`. See the
   - logical resource paths, snapshots, and the `EffectBatch` a host executes —
     the contract every delivery adapter implements
 - the shared semantic config schema (`WorkspaceConfig`)
-  - Core defines the settings and precedence; a delivery adapter (e.g.
-    `clearhead-workspace-fs`) reads the actual files and environment
+  - Core defines the settings and precedence; a delivery adapter (clearhead_cli's
+    `filesystem` module) reads the actual files and environment
 
 Loading the workspace from disk and durably persisting mutations are **not**
 Core's responsibility — they belong to a delivery adapter. This makes Core
@@ -71,8 +71,7 @@ MIT License - see [LICENSE](../../LICENSE) file for details.
 
 ## Related Projects
 
-- [clearhead-cli](https://github.com/ClearHeadToDo-Devs/clearhead-cli) — CLI client
-- [clearhead-lsp](https://github.com/ClearHeadToDo-Devs/clearhead-lsp) — LSP server
+- [clearhead-cli](https://github.com/ClearHeadToDo-Devs/clearhead-cli) — CLI client and LSP server
 - [tree-sitter-actions](https://github.com/ClearHeadToDo-Devs/tree-sitter-actions) — `.actions` parser
 - [ontology](https://github.com/ClearHeadToDo-Devs/ontology) — BFO/CCO-aligned ontology
 - [specifications](https://github.com/ClearHeadToDo-Devs/specifications) — file format specifications

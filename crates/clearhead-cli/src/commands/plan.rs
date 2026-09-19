@@ -103,7 +103,7 @@ fn collect_charter_tree(
 }
 
 fn parse_calendar_resource(
-    resource: &clearhead_workspace_fs::CalendarResource,
+    resource: &clearhead_cli::filesystem::CalendarResource,
 ) -> anyhow::Result<Vec<clearhead_core::ICSPlan>> {
     let source = std::str::from_utf8(&resource.bytes).with_context(|| {
         format!(
@@ -132,7 +132,7 @@ pub fn read_plans(
             .and_then(|s| s.to_str())
             .unwrap_or("unknown")
             .to_string();
-        clearhead_workspace_fs::read_ics_file(path)?
+        clearhead_cli::filesystem::read_ics_file(path)?
             .into_iter()
             .map(|plan| (charter_name.clone(), plan.plan))
             .collect()
@@ -305,7 +305,7 @@ pub fn show_plan(
             .and_then(|s| s.to_str())
             .unwrap_or("unknown")
             .to_string();
-        clearhead_workspace_fs::read_ics_file(path)?
+        clearhead_cli::filesystem::read_ics_file(path)?
             .into_iter()
             .map(|plan| (charter_name.clone(), plan.plan))
             .collect()
@@ -352,7 +352,7 @@ fn resolve_plans_dir(
     }
 
     let plans_root = ctx.plans_root();
-    let charter_root = clearhead_workspace_fs::charter_root(&ctx.data_dir);
+    let charter_root = clearhead_cli::filesystem::charter_root(&ctx.data_dir);
 
     let charters = ctx.load_charters()?;
     if let Some(query) = charter {
@@ -410,7 +410,7 @@ fn resolve_add_plan_output_path(
 
 fn load_plan_file(path: &Path) -> anyhow::Result<Vec<clearhead_core::Plan>> {
     if path.exists() {
-        Ok(clearhead_workspace_fs::read_ics_file(path)
+        Ok(clearhead_cli::filesystem::read_ics_file(path)
             .map(|plans| plans.into_iter().map(|plan| plan.plan).collect())?)
     } else {
         Ok(Vec::new())
@@ -430,7 +430,7 @@ fn save_plan_file(
     path: &Path,
     plan: &clearhead_core::Plan,
 ) -> anyhow::Result<()> {
-    clearhead_workspace_fs::write_plan_file(
+    clearhead_cli::filesystem::write_plan_file(
         &ctx.data_dir,
         ctx.plan_override().as_deref(),
         path,
@@ -681,7 +681,7 @@ pub fn delete_plan(
             clearhead_core::plans_to_icalendar_with_component(&[plan], ctx.config.plan_component,)
         );
     } else {
-        clearhead_workspace_fs::delete_plan_file(
+        clearhead_cli::filesystem::delete_plan_file(
             &ctx.data_dir,
             ctx.plan_override().as_deref(),
             &input_file,

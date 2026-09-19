@@ -67,7 +67,7 @@ fn print_config_section(ctx: &CommandContext) {
 
     // Workspace identity — a property of the workspace, read from its manifest
     // (workspace.json) rather than the layered config.
-    let manifest = clearhead_workspace_fs::read_workspace_manifest(&ctx.data_dir);
+    let manifest = clearhead_cli::filesystem::read_workspace_manifest(&ctx.data_dir);
     match &manifest.workspace_id {
         Some(id) => println!(
             "  workspace_id: {}  (name: {})",
@@ -107,19 +107,19 @@ fn print_workspace_section(ctx: &CommandContext) -> anyhow::Result<()> {
     println!("workspace");
 
     let workspace_source = resolve_workspace_source(ctx);
-    let data_root = clearhead_workspace_fs::workspace_data_root(&ctx.data_dir);
+    let data_root = clearhead_cli::filesystem::workspace_data_root(&ctx.data_dir);
     println!(
         "  resolved_data_root: {} ({})",
         data_root.display(),
         workspace_source
     );
 
-    let manifest = clearhead_workspace_fs::collect_workspace_manifest(&ctx.data_dir)
+    let manifest = clearhead_cli::filesystem::collect_workspace_manifest(&ctx.data_dir)
         .context("Failed to collect workspace manifest")?;
     // Diagnostics must observe, not alter: the pure reader (no journal replay,
     // per-file failures become findings) instead of the healing load path.
     let read =
-        clearhead_workspace_fs::read_workspace(&ctx.data_dir, ctx.plan_override().as_deref())
+        clearhead_cli::filesystem::read_workspace(&ctx.data_dir, ctx.plan_override().as_deref())
             .context("Failed to read workspace")?;
 
     let root_alias = find_root_charter_alias(&read.charters).unwrap_or("-".to_string());
@@ -144,7 +144,7 @@ fn print_workspace_section(ctx: &CommandContext) -> anyhow::Result<()> {
     let plan_count: usize = read.charters.iter().map(|c| c.plans.len()).sum();
     let action_count: usize = read.charters.iter().map(|c| c.actions.len()).sum();
 
-    let diagnosis = clearhead_workspace_fs::diagnose_workspace_read(
+    let diagnosis = clearhead_cli::filesystem::diagnose_workspace_read(
         &ctx.data_dir,
         ctx.plan_override().as_deref(),
         &read,
@@ -200,15 +200,15 @@ fn find_root_charter_alias(charters: &[MarkdownCharter]) -> Option<String> {
         })
 }
 
-fn format_source_type(source_type: &clearhead_workspace_fs::ManifestSourceType) -> &'static str {
+fn format_source_type(source_type: &clearhead_cli::filesystem::ManifestSourceType) -> &'static str {
     match source_type {
-        clearhead_workspace_fs::ManifestSourceType::Actions => "actions",
-        clearhead_workspace_fs::ManifestSourceType::Markdown => "markdown",
-        clearhead_workspace_fs::ManifestSourceType::Ics => "ics",
-        clearhead_workspace_fs::ManifestSourceType::ActionsPlusMarkdown => "actions+markdown",
-        clearhead_workspace_fs::ManifestSourceType::ActionsPlusIcs => "actions+ics",
-        clearhead_workspace_fs::ManifestSourceType::MarkdownPlusIcs => "markdown+ics",
-        clearhead_workspace_fs::ManifestSourceType::ActionsPlusMarkdownPlusIcs => {
+        clearhead_cli::filesystem::ManifestSourceType::Actions => "actions",
+        clearhead_cli::filesystem::ManifestSourceType::Markdown => "markdown",
+        clearhead_cli::filesystem::ManifestSourceType::Ics => "ics",
+        clearhead_cli::filesystem::ManifestSourceType::ActionsPlusMarkdown => "actions+markdown",
+        clearhead_cli::filesystem::ManifestSourceType::ActionsPlusIcs => "actions+ics",
+        clearhead_cli::filesystem::ManifestSourceType::MarkdownPlusIcs => "markdown+ics",
+        clearhead_cli::filesystem::ManifestSourceType::ActionsPlusMarkdownPlusIcs => {
             "actions+markdown+ics"
         }
     }

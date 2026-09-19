@@ -3,7 +3,7 @@
 //! Core assembles a [`DomainModel`](crate::domain::DomainModel) only from
 //! snapshots and the persisted root charter name
 //! supplied by a host. Native layout detection and physical path
-//! construction belong to `clearhead-workspace-fs`.
+//! construction belong to `clearhead_cli's `filesystem` module`.
 
 mod assembly;
 mod doctor;

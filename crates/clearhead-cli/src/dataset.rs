@@ -30,9 +30,9 @@ pub fn assemble_dataset(ctx: &CommandContext) -> anyhow::Result<Vec<Quad>> {
     for (_name, path) in ctx.workspace_dirs() {
         let is_primary = path == ctx.data_dir;
         let loaded = if is_primary {
-            clearhead_workspace_fs::load_workspace_model(&path, ctx.plan_override().as_deref())
+            clearhead_cli::filesystem::load_workspace_model(&path, ctx.plan_override().as_deref())
         } else {
-            clearhead_workspace_fs::load_workspace_model(&path, None)
+            clearhead_cli::filesystem::load_workspace_model(&path, None)
         };
         let workspace = match loaded {
             Ok(workspace) => workspace,
@@ -74,7 +74,7 @@ fn workspace_snapshot(workspace: &Workspace) -> WorkspaceSnapshot {
         workspace_id: workspace.effective_id(),
         workspace_name: workspace.effective_name(),
         root: root.to_string_lossy().into_owned(),
-        charter_root: clearhead_workspace_fs::charter_root(&root)
+        charter_root: clearhead_cli::filesystem::charter_root(&root)
             .to_string_lossy()
             .into_owned(),
         charter_files: workspace
