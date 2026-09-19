@@ -1,0 +1,29 @@
+# Sites where clearhead_core still reads a clock or mints an id in production
+# source (invariant I1). Format: <path relative to src> <token> <count>. The gate
+# requires this list to match the source exactly, so it can only shrink.
+# Audited 2026-09-18: 9 sites; none touch the filesystem or environment.
+#
+# Charter identity: removed by the identity split (support charter, parent
+# 01a0b5b0-17a8, child 1), which makes the shell supply the id.
+workspace/charter.rs now_v7 1
+workspace/store/load.rs now_v7 1
+#
+# Actions parser mints an id for an id-less action on every read
+# (parse_action_recursive). Same fix as charters: the shell supplies it.
+workspace/actions/parser.rs now_v7 1
+#
+# Domain constructors that mint ids: Charter::new, charter_from_plans_and_name,
+# and a Default impl. Callers should pass the id in.
+domain/mod.rs now_v7 2
+domain/mod.rs new_v4 1
+#
+# Wall-clock reads that already have, or need, an injectable time argument.
+# archive_actions: plan_action_archive is a thin wrapper over the pure
+# plan_action_archive_at, so only the wrapper needs to move to the shell.
+workspace/archive_actions.rs Local::now 1
+domain/update.rs Local::now 1
+workspace/actions/lint.rs Local::now 1
+#
+# Telemetry stamps its own event times. Arguably a host concern; decide whether
+# telemetry belongs in Core at all before making it take a clock.
+telemetry.rs Utc::now 2
