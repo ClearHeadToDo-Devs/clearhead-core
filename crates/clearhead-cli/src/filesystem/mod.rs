@@ -846,37 +846,61 @@ mod charter_document_tests {
         );
     }
 
+    /// I6 — one read, one revision.
+    ///
+    /// Each case is one write verb's own text derivation, i.e. exactly the
+    /// sequence the verb runs between the read that supplies its revision and
+    /// the write that checks it. The list must grow with every new charter
+    /// write verb: a mechanism test on one verb does not guard the invariant.
     #[test]
-    fn update_and_close_reject_changes_landing_between_their_read_and_write() {
+    fn every_charter_write_verb_rejects_a_change_landing_between_its_read_and_write() {
+        type Derivation = Box<dyn Fn(&str) -> String>;
+
         let temp = workspace();
         let root = temp.path();
+        let original = "---\nalias: work\n---\n# Work\n";
 
-        for (name, update) in [
+        let derivations: Vec<(&str, Derivation)> = vec![
             (
                 "update.md",
-                clearhead_core::CharterUpdate {
-                    title: Some("Renamed".to_string()),
-                    ..Default::default()
-                },
+                Box::new(|base| {
+                    clearhead_core::edit_charter_document(
+                        base,
+                        &clearhead_core::CharterUpdate {
+                            title: Some("Renamed".to_string()),
+                            ..Default::default()
+                        },
+                    )
+                    .unwrap()
+                }),
             ),
             (
                 "close.md",
-                clearhead_core::CharterUpdate {
-                    state: Some(clearhead_core::CharterState::Closed),
-                    ..Default::default()
-                },
+                Box::new(|base| {
+                    clearhead_core::edit_charter_document(
+                        base,
+                        &clearhead_core::CharterUpdate {
+                            state: Some(clearhead_core::CharterState::Closed),
+                            ..Default::default()
+                        },
+                    )
+                    .unwrap()
+                }),
             ),
-        ] {
-            let path = charter_path(root, name);
-            std::fs::write(&path, "---\nalias: work\n---\n# Work\n").unwrap();
+            (
+                "jot.md",
+                Box::new(|base| {
+                    clearhead_core::append_log_entry(base, "2026-09-22T12:00 — a finding")
+                }),
+            ),
+        ];
 
-            // This is the exact production sequence used by update and close:
-            // derive text from the same document read that supplied the write
-            // precondition, then reject a revision that changes before delivery.
+        for (name, derive) in derivations {
+            let path = charter_path(root, name);
+            std::fs::write(&path, original).unwrap();
+
             let document = read_charter_document(root, &path).unwrap();
-            let edited =
-                clearhead_core::edit_charter_document(document.content().unwrap(), &update)
-                    .unwrap();
+            let edited = derive(document.content().unwrap());
             std::fs::write(&path, "written by someone else\n").unwrap();
 
             let error = write_charter_document(root, &document, &edited).unwrap_err();
