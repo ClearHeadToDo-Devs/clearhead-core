@@ -725,6 +725,20 @@ mod tests {
 
     #[cfg(feature = "formatting")]
     #[test]
+    fn multiline_description_round_trips_verbatim() {
+        let source = "[ ] Record outcome $first paragraph.\n\nsecond paragraph.$";
+        let parsed = parse_actions(source);
+        assert_eq!(
+            parsed[0].description.as_deref(),
+            Some("first paragraph.\n\nsecond paragraph.")
+        );
+
+        let rendered = parsed[0].to_string();
+        let reparsed = parse_actions(&rendered);
+        assert_eq!(reparsed[0].description, parsed[0].description);
+    }
+
+    #[test]
     fn test_reserved_chars_survive_in_description_and_refs() {
         // Description bodies and predecessor refs are freeform too — a literal
         // `$` in a description must not close the block, and a name-ref

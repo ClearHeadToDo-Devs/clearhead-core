@@ -368,6 +368,32 @@ fn test_append_description_preserves_the_existing_note_verbatim() {
 }
 
 #[test]
+fn test_update_description_preserves_paragraph_breaks() {
+    let env = TestEnv::new();
+    let path = env.data_dir.join("charters/work.actions");
+    env.write_actions("work.actions", "[ ] Record resolution\n");
+
+    env.command()
+        .arg("update")
+        .arg("action")
+        .arg("Record resolution")
+        .arg("--description")
+        .arg("first paragraph.\n\nsecond paragraph.")
+        .arg("--file")
+        .arg(&path)
+        .assert()
+        .success();
+
+    let actions = clearhead_cli::filesystem::read_actions(&path).unwrap();
+    assert_eq!(
+        actions[0].description.as_deref(),
+        Some("first paragraph.\n\nsecond paragraph.")
+    );
+    let source = fs::read_to_string(path).unwrap();
+    assert!(source.contains("$first paragraph.\n\nsecond paragraph.$"));
+}
+
+#[test]
 fn test_update_rejects_terminal_state_but_allows_non_terminal() {
     let env = TestEnv::new();
     let path = env.data_dir.join("charters/work.actions");
