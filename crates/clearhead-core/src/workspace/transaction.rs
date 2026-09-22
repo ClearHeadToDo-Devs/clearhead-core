@@ -117,8 +117,8 @@ impl ActionUpdateSet {
 // ============================================================================
 
 /// A request that could not be turned into a valid batch — independent of any
-/// trusted workspace state. Surfaced as a hard error before the lock is taken,
-/// never as a per-operation `rejected` result.
+/// trusted workspace state. Surfaced as a hard error before any resource is
+/// read or validated, never as a per-operation `rejected` result.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TransactionError {
     Request(String),
@@ -246,8 +246,8 @@ impl FileState {
     }
 }
 
-/// The set of files a transaction touches, loaded under the lock and folded
-/// through in operation order.
+/// The set of files a transaction touches, loaded ahead of delivery and
+/// folded through in operation order.
 #[derive(Debug, Clone, Default)]
 pub struct TransactionModel {
     pub files: Vec<FileState>,

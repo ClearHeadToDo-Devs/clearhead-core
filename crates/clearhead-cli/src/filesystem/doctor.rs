@@ -114,7 +114,7 @@ pub fn observe_doctor(
     })
 }
 
-/// Execute repairs selected by Core while holding the native workspace lock.
+/// Execute repairs selected by Core against freshly-read workspace state.
 pub fn apply_doctor_repairs(
     workspace_root: &Path,
     external_plans: Option<&Path>,

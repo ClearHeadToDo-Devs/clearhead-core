@@ -1,8 +1,8 @@
-//! A verb-neutral handoff from client-side resolution to core's locked read.
+//! A verb-neutral handoff from client-side resolution to core's trusted read.
 //!
-//! Every durable action verb resolves *which* action it acts on outside the
-//! workspace lock (fuzzy prefix/alias/name matching is a client UX concern),
-//! then re-resolves it under the lock against freshly-read, trusted state. The
+//! Every durable action verb resolves *which* action it acts on ahead of any
+//! durable read (fuzzy prefix/alias/name matching is a client UX concern),
+//! then re-resolves it against freshly-read, trusted state. The
 //! [`ActionSelector`] carries just enough to make that second resolution stable:
 //! the inline UUID when there is one, plus alias/name fallbacks so an id-less
 //! plaintext line — whose in-memory UUID is regenerated on each parse — still

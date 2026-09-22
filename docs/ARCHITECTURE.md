@@ -30,8 +30,8 @@ per-resource revision compare-and-swap) and delivers the effects; a precondition
 conflict or delivery failure means the caller reloads and recomputes. Core keeps
 no speculative next-state: files remain the truth, so a driver simply re-reads.
 
-The native implementation of observation and delivery is the sibling (clearhead_cli) 
-`filesystem` module of `clearhead_cli`. Neovim, operating-system paths,
+The native implementation of observation and delivery is the `filesystem`
+module of the sibling `clearhead_cli` crate. Neovim, operating-system paths,
 calendar networking, and query-engine hosting are outside this crate.
 
 ## Internal organization

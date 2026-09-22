@@ -1,8 +1,8 @@
 //! Pure semantic helpers used by native charter archival.
 //!
-//! Archive discovery, naming, supporting-file ownership, locking, recovery,
-//! moves, cleanup, and result paths are native workspace conventions owned by
-//! `clearhead_cli's `filesystem` module`. Core retains only lifecycle, hierarchy, reference,
+//! Archive discovery, naming, supporting-file ownership, moves, cleanup, and
+//! result paths are native workspace conventions owned by `clearhead_cli`'s
+//! `filesystem` module. Core retains only lifecycle, hierarchy, reference,
 //! and surgical frontmatter decisions that any host can reuse.
 
 use std::collections::{HashMap, HashSet};

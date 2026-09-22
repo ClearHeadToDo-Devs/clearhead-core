@@ -41,7 +41,7 @@ pub fn add_action(
 ) -> anyhow::Result<()> {
     let actions_path = resolve_acts_file(ctx, charter, file)?;
     // Client-side read: resolve the fuzzy parent query to a stable selector and
-    // support the dry-run preview. Core re-reads under the lock and re-resolves
+    // support the dry-run preview. Core re-reads before delivery and re-resolves
     // the parent there, so this read is never the one that's written against.
     let list = action_files::read_actions(&actions_path)?;
 
@@ -477,7 +477,7 @@ pub fn update_action(
     };
 
     // Client-side read resolves the fuzzy query to a stable selector; core
-    // re-reads under the lock and applies the update there.
+    // re-reads before delivery and applies the update there.
     let (action_id, selector) = match find_action_mut(&mut open_actions, query)? {
         Some(action) => (action.id, clearhead_core::ActionSelector::from(&*action)),
         None => return Err(verb_target_error(ctx, query)?.into()),
@@ -562,7 +562,7 @@ pub fn delete_action(
     for actions_path in &action_files {
         // Resolve the target in the active file first, then the completed file —
         // delete reaches an action wherever it lives. Either way the mutation is
-        // handed to core, which re-resolves under the lock, cascades the subtree
+        // handed to core, which re-resolves before delivery, cascades the subtree
         // in the owning file, and prunes the matching sidecar entries.
         let open = action_files::read_actions(actions_path)?;
         let resolved = match find_best_match(&open, query, |_| true)? {

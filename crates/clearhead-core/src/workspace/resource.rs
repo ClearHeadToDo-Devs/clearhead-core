@@ -6,10 +6,12 @@
 //! API. A prepared mutation remains speculative until its complete effect batch
 //! has been executed successfully.
 //!
-//! The native adapter must still hold its workspace lock across recovery,
-//! inventory, reads, preparation, precondition validation, and durable commit.
-//! Per-resource revisions protect stale resources but cannot by themselves
-//! detect inventory phantoms (a concurrently added resource Core never saw).
+//! The native adapter takes no lock and replays no journal: it reads current
+//! resource state, prepares an effect batch, validates each resource's
+//! precondition as a compare-and-swap against that state, and delivers
+//! effects in additive order (writes and moves before removals). Per-resource
+//! revisions protect stale resources but cannot by themselves detect
+//! inventory phantoms (a concurrently added resource Core never saw).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;

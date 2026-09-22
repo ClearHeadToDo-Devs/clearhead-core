@@ -479,8 +479,8 @@ fn map_delete(data_root: &Path, outcome: PreparedDeleteOutcome) -> DeleteActionR
     }
 }
 
-/// Execute one ordered transaction while holding the native workspace lock
-/// across recovery, snapshot reads, pure preparation, validation, and commit.
+/// Execute one ordered transaction: snapshot reads, pure preparation,
+/// precondition validation, and delivery, with no lock held across the steps.
 pub fn transact(
     workspace_root: &Path,
     request: TransactionRequest,

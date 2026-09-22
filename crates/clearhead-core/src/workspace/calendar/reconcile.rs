@@ -851,8 +851,8 @@ pub struct MaterializedOccurrencePreparationInput {
 
 /// Apply a resolved sync report to immutable host evidence and prepare one effect batch.
 ///
-/// The host owns locking, recovery, inventory, reads, stale validation, and delivery.
-/// Core owns field reconciliation, Action/calendar rendering, and merge-base updates.
+/// The host owns inventory, reads, stale validation, and delivery. Core owns
+/// field reconciliation, Action/calendar rendering, and merge-base updates.
 pub fn prepare_sync(
     input: CalendarSyncPreparationInput,
     report: &SyncReport,
