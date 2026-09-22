@@ -63,8 +63,8 @@ pub use calendar::reconcile::{
 };
 pub use calendar::sync_store::{PlansSyncStore, decode_plans_sync_store, encode_plans_sync_store};
 pub use charter::{
-    CharterDocument, MarkdownCharter, append_log_entry, charter_frontmatter_id, format_charter,
-    implicit_charter, parse_charter,
+    CharterDocument, MarkdownCharter, append_log_entry, charter_frontmatter_id,
+    edit_charter_document, format_charter, implicit_charter, parse_charter,
 };
 pub use init::{
     InitPlan, InitRequest, InitSnapshot, ReadmeId, RootId, plan_workspace_init, resolve_root_id,

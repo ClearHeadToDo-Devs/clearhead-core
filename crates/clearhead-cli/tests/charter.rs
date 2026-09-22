@@ -52,6 +52,38 @@ fn read_charters_json_materializes_omitted_state_as_new() {
 }
 
 #[test]
+fn update_charter_edits_source_text_without_stamping_an_id() {
+    let env = TestEnv::new();
+    env.write_text(
+        "charters/my-charter.md",
+        "---\nalias: my-charter\ndefaults:\n  context: work\n---\n# My Charter\n\nBody.\n",
+    );
+    env.write_actions("my-charter.actions", "");
+
+    env.command()
+        .args([
+            "update",
+            "charter",
+            "my-charter",
+            "--title",
+            "Renamed Charter",
+            "--alias",
+            "renamed",
+        ])
+        .assert()
+        .success();
+
+    let content = fs::read_to_string(env.data_dir.join("charters/my-charter.md")).unwrap();
+    assert!(content.contains("defaults:\n  context: work\n"));
+    assert!(content.contains("alias: renamed\n"));
+    assert!(content.contains("# Renamed Charter\n\nBody.\n"));
+    assert!(
+        !content.contains("id:"),
+        "update must not mint an id: {content}"
+    );
+}
+
+#[test]
 fn close_charter_by_query_updates_state() {
     let env = TestEnv::new();
     env.write_text("charters/my-charter.md", CHARTER_MD);
@@ -66,6 +98,30 @@ fn close_charter_by_query_updates_state() {
     assert!(
         content.contains("state: Closed"),
         "Expected state: Closed in:\n{content}"
+    );
+}
+
+#[test]
+fn close_charter_preserves_source_text_without_stamping_an_id() {
+    let env = TestEnv::new();
+    env.write_text(
+        "charters/my-charter.md",
+        "---\nalias: my-charter\ndefaults:\n  context: work\n---\n# My Charter\n\nBody.\n",
+    );
+    env.write_actions("my-charter.actions", "");
+
+    env.command()
+        .args(["close", "charter", "my-charter"])
+        .assert()
+        .success();
+
+    let content = fs::read_to_string(env.data_dir.join("charters/my-charter.md")).unwrap();
+    assert!(content.contains("defaults:\n  context: work\n"));
+    assert!(content.contains("state: Closed\n"));
+    assert!(content.contains("# My Charter\n\nBody.\n"));
+    assert!(
+        !content.contains("id:"),
+        "close must not mint an id: {content}"
     );
 }
 

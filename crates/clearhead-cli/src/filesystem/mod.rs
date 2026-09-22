@@ -847,6 +847,51 @@ mod charter_document_tests {
     }
 
     #[test]
+    fn update_and_close_reject_changes_landing_between_their_read_and_write() {
+        let temp = workspace();
+        let root = temp.path();
+
+        for (name, update) in [
+            (
+                "update.md",
+                clearhead_core::CharterUpdate {
+                    title: Some("Renamed".to_string()),
+                    ..Default::default()
+                },
+            ),
+            (
+                "close.md",
+                clearhead_core::CharterUpdate {
+                    state: Some(clearhead_core::CharterState::Closed),
+                    ..Default::default()
+                },
+            ),
+        ] {
+            let path = charter_path(root, name);
+            std::fs::write(&path, "---\nalias: work\n---\n# Work\n").unwrap();
+
+            // This is the exact production sequence used by update and close:
+            // derive text from the same document read that supplied the write
+            // precondition, then reject a revision that changes before delivery.
+            let document = read_charter_document(root, &path).unwrap();
+            let edited =
+                clearhead_core::edit_charter_document(document.content().unwrap(), &update)
+                    .unwrap();
+            std::fs::write(&path, "written by someone else\n").unwrap();
+
+            let error = write_charter_document(root, &document, &edited).unwrap_err();
+            assert!(
+                matches!(&error, WorkspaceError::Conflict(_)),
+                "expected a typed conflict for {name}, got: {error:?}"
+            );
+            assert_eq!(
+                std::fs::read_to_string(&path).unwrap(),
+                "written by someone else\n"
+            );
+        }
+    }
+
+    #[test]
     fn rejects_a_path_outside_the_charter_tree() {
         let temp = workspace();
         let root = temp.path();

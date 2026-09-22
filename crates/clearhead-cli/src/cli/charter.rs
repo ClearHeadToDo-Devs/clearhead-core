@@ -565,38 +565,46 @@ pub fn update_charter(
     alias: &Option<String>,
     dry_run: bool,
 ) -> anyhow::Result<()> {
-    use clearhead_cli::mutations::{CharterUpdate, apply_charter_update};
+    use clearhead_cli::mutations::CharterUpdate;
 
     let mcs = ctx.load_charters()?;
     let charter_root = clearhead_cli::filesystem::charter_root(&ctx.data_dir);
     let mc_full = find_target_charter(&mcs, Some(query), None, &charter_root)?;
-    let mut updated = Charter::from(mc_full.clone());
+    let current = Charter::from(mc_full.clone());
 
     let md_path_rel = mc_full.md_file.as_ref().ok_or_else(|| {
         anyhow::anyhow!(
             "Charter '{}' has no .md file; use 'close charter' to create one",
-            updated.title
+            current.title
         )
     })?;
     let md_path = charter_root.join(md_path_rel);
 
-    apply_charter_update(
-        &mut updated,
-        CharterUpdate {
+    // The text and its revision come from this one read. Core edits only the
+    // requested source fields, preserving unknown frontmatter and omitting no
+    // defaults; delivery rejects a concurrent change to this exact revision.
+    let document = clearhead_cli::filesystem::read_charter_document(&ctx.data_dir, &md_path)?;
+    let existing = document
+        .content()
+        .ok_or_else(|| anyhow::anyhow!("Charter document '{}' is missing", md_path.display()))?;
+    let formatted = clearhead_core::edit_charter_document(
+        existing,
+        &CharterUpdate {
             state: state.map(|s| s.into()),
             title: title.clone(),
             alias: alias.clone(),
         },
-    );
-
-    let formatted = clearhead_core::format_charter(&updated);
+    )
+    .map_err(anyhow::Error::msg)?;
+    let updated = clearhead_core::parse_charter(&formatted)
+        .map_err(anyhow::Error::msg)?
+        .into_charter(current.id);
 
     if dry_run {
         println!("Would write to {}:\n{}", md_path.display(), formatted);
         return Ok(());
     }
 
-    let document = clearhead_cli::filesystem::read_charter_document(&ctx.data_dir, &md_path)?;
     clearhead_cli::filesystem::write_charter_document(&ctx.data_dir, &document, &formatted)
         .with_context(|| format!("Failed to write '{}'", md_path.display()))?;
 
@@ -636,7 +644,7 @@ pub fn close_charter(
     file: Option<&std::path::Path>,
     dry_run: bool,
 ) -> anyhow::Result<()> {
-    use clearhead_cli::mutations::{CharterUpdate, apply_charter_update};
+    use clearhead_cli::mutations::CharterUpdate;
     let ws_root = file
         .map(|f| ctx.workspace_for_file(f))
         .unwrap_or_else(|| ctx.data_dir.clone());
@@ -646,19 +654,31 @@ pub fn close_charter(
     let mcs = clearhead_cli::filesystem::load_workspace(&ws_root, plan_override.as_deref())?;
     let charter_root = clearhead_cli::filesystem::charter_root(&ws_root);
     let mc_full = find_target_charter(&mcs, query, file, &charter_root)?;
-    let mut updated = Charter::from(mc_full.clone());
+    let current = Charter::from(mc_full.clone());
 
-    let (md_path, is_new) = charter_md_path(mc_full, &charter_root, &updated.title);
-
-    apply_charter_update(
-        &mut updated,
-        CharterUpdate {
-            state: Some(CharterState::Closed),
-            ..Default::default()
-        },
-    );
-
-    let formatted = clearhead_core::format_charter(&updated);
+    let (md_path, _) = charter_md_path(mc_full, &charter_root, &current.title);
+    let document = clearhead_cli::filesystem::read_charter_document(&ws_root, &md_path)?;
+    let is_new = document.is_missing();
+    let formatted = match document.content() {
+        Some(existing) => clearhead_core::edit_charter_document(
+            existing,
+            &CharterUpdate {
+                state: Some(CharterState::Closed),
+                ..Default::default()
+            },
+        )
+        .map_err(anyhow::Error::msg)?,
+        // Creating a whole document is the one write path that persists an id.
+        // Keep it minimal so derived alias/parent defaults do not become a
+        // second, colliding explicit charter.
+        None => format!(
+            "---\nid: {}\nstate: Closed\n---\n# {}\n",
+            current.id, current.title
+        ),
+    };
+    let updated = clearhead_core::parse_charter(&formatted)
+        .map_err(anyhow::Error::msg)?
+        .into_charter(current.id);
 
     if dry_run {
         let verb = if is_new {
@@ -670,7 +690,6 @@ pub fn close_charter(
         return Ok(());
     }
 
-    let document = clearhead_cli::filesystem::read_charter_document(&ws_root, &md_path)?;
     clearhead_cli::filesystem::write_charter_document(&ws_root, &document, &formatted)
         .with_context(|| format!("Failed to write '{}'", md_path.display()))?;
 

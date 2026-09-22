@@ -21,6 +21,7 @@ use serde::Deserialize;
 use std::path::PathBuf;
 use uuid::Uuid;
 
+use crate::domain::update::CharterUpdate;
 use crate::domain::{Charter, CharterState};
 use crate::workspace::actions::repository::SourcedAction;
 use crate::workspace::calendar::ics::ICSPlan;
@@ -278,6 +279,149 @@ pub fn format_charter(charter: &Charter) -> String {
     }
 
     out
+}
+
+/// Apply charter metadata edits directly to the source document.
+///
+/// This preserves every byte outside the touched frontmatter field or title
+/// line, including unmodeled frontmatter. Missing fields are inserted without
+/// inventing an `id`; document creation is the caller's responsibility.
+pub fn edit_charter_document(content: &str, update: &CharterUpdate) -> Result<String, String> {
+    // Validate the source before attempting surgical edits.
+    parse_charter(content)?;
+
+    let mut edited = content.to_string();
+    if let Some(alias) = &update.alias {
+        edited = set_frontmatter_field(&edited, "alias", &yaml_string(alias));
+    }
+    if let Some(state) = update.state {
+        edited = set_frontmatter_field(&edited, "state", &state.to_string());
+    }
+    if let Some(title) = &update.title {
+        if frontmatter_has_key(&edited, "title") {
+            edited = set_frontmatter_field(&edited, "title", &yaml_string(title));
+            // Keep a present display heading aligned with the authoritative
+            // frontmatter title; a title-only document need not grow an H1.
+            if let Some(with_heading) = replace_h1_title_if_present(&edited, title) {
+                edited = with_heading;
+            }
+        } else {
+            edited = replace_h1_title(&edited, title)?;
+        }
+    }
+
+    // Ensure the edited document still satisfies the charter codec.
+    parse_charter(&edited)?;
+    Ok(edited)
+}
+
+fn yaml_string(value: &str) -> String {
+    serde_yaml_ng::to_string(value)
+        .expect("serializing a string as YAML cannot fail")
+        .trim_end()
+        .to_string()
+}
+
+fn line_spans(content: &str) -> Vec<(usize, usize, usize)> {
+    let mut offset = 0;
+    content
+        .split_inclusive('\n')
+        .map(|line| {
+            let start = offset;
+            offset += line.len();
+            let text_end = offset - usize::from(line.ends_with('\n'));
+            let text_end = text_end
+                - usize::from(content.as_bytes().get(text_end.wrapping_sub(1)) == Some(&b'\r'));
+            (start, text_end, offset)
+        })
+        .collect()
+}
+
+fn frontmatter_span(content: &str) -> Option<(usize, usize)> {
+    let spans = line_spans(content);
+    let first = spans.first()?;
+    if &content[first.0..first.1] != "---" {
+        return None;
+    }
+    spans
+        .iter()
+        .skip(1)
+        .find(|span| &content[span.0..span.1] == "---")
+        .map(|closing| (first.2, closing.0))
+}
+
+fn frontmatter_has_key(content: &str, key: &str) -> bool {
+    let Some((start, end)) = frontmatter_span(content) else {
+        return false;
+    };
+    line_spans(content).into_iter().any(|span| {
+        span.0 >= start
+            && span.0 < end
+            && content[span.0..span.1]
+                .strip_prefix(key)
+                .is_some_and(|rest| rest.starts_with(':'))
+    })
+}
+
+fn set_frontmatter_field(content: &str, key: &str, value: &str) -> String {
+    let newline = if content.contains("\r\n") {
+        "\r\n"
+    } else {
+        "\n"
+    };
+    let replacement = format!("{key}: {value}");
+
+    let Some((start, end)) = frontmatter_span(content) else {
+        return format!("---{newline}{replacement}{newline}---{newline}{content}");
+    };
+    if let Some(span) = line_spans(content).into_iter().find(|span| {
+        span.0 >= start
+            && span.0 < end
+            && content[span.0..span.1]
+                .strip_prefix(key)
+                .is_some_and(|rest| rest.starts_with(':'))
+    }) {
+        return format!(
+            "{}{}{}",
+            &content[..span.0],
+            replacement,
+            &content[span.1..]
+        );
+    }
+
+    format!(
+        "{}{}{newline}{}",
+        &content[..end],
+        replacement,
+        &content[end..]
+    )
+}
+
+fn h1_span(content: &str) -> Option<(usize, usize, usize)> {
+    let body_start = frontmatter_span(content).map_or(0, |(_, end)| {
+        line_spans(content)
+            .into_iter()
+            .find(|span| span.0 == end)
+            .map_or(end, |span| span.2)
+    });
+    line_spans(content)
+        .into_iter()
+        .find(|span| span.0 >= body_start && content[span.0..span.1].starts_with("# "))
+}
+
+fn replace_h1_title_if_present(content: &str, title: &str) -> Option<String> {
+    let span = h1_span(content)?;
+    Some(format!(
+        "{}# {}{}",
+        &content[..span.0],
+        title,
+        &content[span.1..]
+    ))
+}
+
+fn replace_h1_title(content: &str, title: &str) -> Result<String, String> {
+    replace_h1_title_if_present(content, title)
+        .ok_or_else(|| "Charter must have an H1 title to update".to_string())
 }
 
 /// Append a single log entry as a bullet under the charter's `## Log` section,
@@ -591,6 +735,43 @@ Stay healthy and fit through regular exercise and diet.
         let document = parse_charter(content).unwrap();
         assert_eq!(document.id, Some(declared));
         assert_eq!(document.into_charter(Uuid::now_v7()).id, declared);
+    }
+
+    #[test]
+    fn surgical_edit_preserves_unknown_frontmatter_and_does_not_mint_id() {
+        let source = "---\ndefaults:\n  context: work\nalias: old\n---\n# Old title\n\nBody.\n";
+        let edited = edit_charter_document(
+            source,
+            &CharterUpdate {
+                title: Some("New title".to_string()),
+                alias: Some("new".to_string()),
+                state: Some(CharterState::Closed),
+            },
+        )
+        .unwrap();
+
+        assert!(edited.contains("defaults:\n  context: work\n"));
+        assert!(edited.contains("alias: new\n"));
+        assert!(edited.contains("state: Closed\n"));
+        assert!(edited.contains("# New title\n\nBody.\n"));
+        assert!(!edited.contains("id:"));
+    }
+
+    #[test]
+    fn surgical_edit_updates_a_frontmatter_title_in_place() {
+        let source = "---\ntitle: Old title\ncustom: keep\n---\n# Display heading\n";
+        let edited = edit_charter_document(
+            source,
+            &CharterUpdate {
+                title: Some("New: title".to_string()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+        assert!(edited.contains("title: 'New: title'\n"));
+        assert!(edited.contains("custom: keep\n"));
+        assert!(edited.contains("# New: title\n"));
     }
 
     #[test]
