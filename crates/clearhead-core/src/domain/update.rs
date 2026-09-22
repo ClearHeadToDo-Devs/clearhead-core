@@ -36,13 +36,22 @@ pub fn apply_charter_update(charter: &mut Charter, update: CharterUpdate) {
     }
 }
 
+/// How an action description changes during an update.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DescriptionUpdate {
+    /// Replace the existing description.
+    Replace(String),
+    /// Append text to the existing description, separated by one space.
+    Append(String),
+}
+
 /// Updates to apply to an action.
 ///
 /// All fields are optional — only `Some` values are applied.
 #[derive(Debug, Clone, Default)]
 pub struct ActionUpdate {
     pub name: Option<String>,
-    pub description: Option<String>,
+    pub description: Option<DescriptionUpdate>,
     pub priority: Option<u32>,
     pub context: Option<Vec<String>>,
     pub predecessors: Option<Vec<PredecessorRef>>,
@@ -81,7 +90,18 @@ pub fn apply_updates(action: &mut Action, updates: ActionUpdate) {
         action.name = name;
     }
     if let Some(description) = updates.description {
-        action.description = Some(description);
+        match description {
+            DescriptionUpdate::Replace(description) => action.description = Some(description),
+            DescriptionUpdate::Append(addition) => {
+                action.description = Some(match action.description.take() {
+                    Some(existing) if !existing.is_empty() && !addition.is_empty() => {
+                        format!("{existing} {addition}")
+                    }
+                    Some(existing) if addition.is_empty() => existing,
+                    _ => addition,
+                });
+            }
+        }
     }
     if let Some(priority) = updates.priority {
         action.priority = Some(priority);
@@ -180,5 +200,26 @@ mod tests {
 
         assert_eq!(action.name, "Original name"); // unchanged
         assert_eq!(action.priority, Some(1)); // updated
+    }
+
+    #[test]
+    fn append_description_preserves_existing_text() {
+        let mut action = make_action("Record resolution", None);
+        action.description = Some("Original note with $500 budget.".to_string());
+
+        apply_updates(
+            &mut action,
+            ActionUpdate {
+                description: Some(DescriptionUpdate::Append(
+                    "RESOLVED: stayed under $600.".to_string(),
+                )),
+                ..Default::default()
+            },
+        );
+
+        assert_eq!(
+            action.description.as_deref(),
+            Some("Original note with $500 budget. RESOLVED: stayed under $600.")
+        );
     }
 }

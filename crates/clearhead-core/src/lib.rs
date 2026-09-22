@@ -86,7 +86,8 @@ pub use domain::diff::{
 pub use domain::filter::{ActionFilter, apply_filter};
 #[doc(inline)]
 pub use domain::update::{
-    ActionUpdate, CharterUpdate, apply_charter_update, apply_updates, disallowed_terminal_update,
+    ActionUpdate, CharterUpdate, DescriptionUpdate, apply_charter_update, apply_updates,
+    disallowed_terminal_update,
 };
 #[doc(inline)]
 pub use domain::{

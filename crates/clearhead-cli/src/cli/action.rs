@@ -441,6 +441,7 @@ pub fn update_action(
     scheduled_at: &Option<String>,
     duration: &Option<u32>,
     description: &Option<String>,
+    append_description: &Option<String>,
     context: &[String],
     predecessor: &[String],
     sequential: bool,
@@ -467,6 +468,7 @@ pub fn update_action(
             || state.is_some()
             || duration.is_some()
             || description.is_some()
+            || append_description.is_some()
             || !context.is_empty()
             || !predecessor.is_empty()
             || sequential;
@@ -485,7 +487,14 @@ pub fn update_action(
 
     let update = clearhead_core::ActionUpdate {
         name: name.clone(),
-        description: description.clone(),
+        description: description
+            .clone()
+            .map(clearhead_core::DescriptionUpdate::Replace)
+            .or_else(|| {
+                append_description
+                    .clone()
+                    .map(clearhead_core::DescriptionUpdate::Append)
+            }),
         priority,
         state: state.map(Into::into),
         context: if context.is_empty() {

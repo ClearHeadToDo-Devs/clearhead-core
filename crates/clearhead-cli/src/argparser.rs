@@ -630,8 +630,12 @@ pub enum UpdateTarget {
         duration: Option<u32>,
 
         /// New description / note (replaces the existing `$ ... $` inline note)
-        #[arg(long)]
+        #[arg(long, conflicts_with = "append_description")]
         description: Option<String>,
+
+        /// Text to append to the existing description, separated by one space
+        #[arg(long, conflicts_with = "description")]
+        append_description: Option<String>,
 
         /// Context tags (`+tag` in DSL, can be specified multiple times). Replaces the existing set.
         #[arg(short, long)]

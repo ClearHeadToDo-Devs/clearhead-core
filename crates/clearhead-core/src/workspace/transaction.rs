@@ -19,7 +19,9 @@ use chrono::{DateTime, Local};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::domain::update::{ActionUpdate, apply_updates, disallowed_terminal_update};
+use crate::domain::update::{
+    ActionUpdate, DescriptionUpdate, apply_updates, disallowed_terminal_update,
+};
 use crate::domain::{close_subtree, collect_subtree_ids};
 use crate::verb_result::{VerbError, VerbOutcome, canonical_id};
 use crate::workspace::actions::format::require_actions_formatting;
@@ -99,7 +101,7 @@ impl ActionUpdateSet {
 
         Ok(ActionUpdate {
             name: self.name,
-            description: self.description,
+            description: self.description.map(DescriptionUpdate::Replace),
             priority: self.priority,
             context: self.context,
             predecessors: None,

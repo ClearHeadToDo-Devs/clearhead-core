@@ -341,6 +341,33 @@ fn test_add_and_update_action_predecessors() {
 }
 
 #[test]
+fn test_append_description_preserves_the_existing_note_verbatim() {
+    let env = TestEnv::new();
+    let path = env.data_dir.join("charters/work.actions");
+    env.write_actions(
+        "work.actions",
+        r"[ ] Record resolution $Original note with \$500 budget.$",
+    );
+
+    env.command()
+        .arg("update")
+        .arg("action")
+        .arg("Record resolution")
+        .arg("--append-description")
+        .arg("RESOLVED: stayed under $600.")
+        .arg("--file")
+        .arg(&path)
+        .assert()
+        .success();
+
+    let actions = clearhead_cli::filesystem::read_actions(&path).unwrap();
+    assert_eq!(
+        actions[0].description.as_deref(),
+        Some("Original note with $500 budget. RESOLVED: stayed under $600.")
+    );
+}
+
+#[test]
 fn test_update_rejects_terminal_state_but_allows_non_terminal() {
     let env = TestEnv::new();
     let path = env.data_dir.join("charters/work.actions");
