@@ -187,6 +187,38 @@ fn jot_into_project_root_charter_creates_readme_not_phantom() {
 }
 
 #[test]
+fn jot_stamps_a_parseable_utc_offset() {
+    let env = TestEnv::new();
+    env.write_actions("next.actions", "");
+    env.command()
+        .args(["jot", "offset proof"])
+        .assert()
+        .success();
+    let content = fs::read_to_string(env.data_dir.join("charters/README.md")).unwrap();
+    let log_line = content
+        .lines()
+        .find(|line| line.contains("offset proof"))
+        .unwrap();
+    let stamp = log_line
+        .strip_prefix("- ")
+        .unwrap()
+        .split(" — ")
+        .next()
+        .unwrap();
+    chrono::DateTime::parse_from_str(stamp, "%Y-%m-%dT%H:%M%:z")
+        .expect("jot must store an ISO timestamp with UTC offset");
+    assert!(
+        stamp.ends_with("+00:00")
+            || stamp.ends_with("-00:00")
+            || stamp
+                .as_bytes()
+                .get(stamp.len() - 6)
+                .is_some_and(|byte| matches!(byte, b'+' | b'-')),
+        "missing UTC offset: {stamp}"
+    );
+}
+
+#[test]
 fn jot_into_user_root_charter_creates_readme_not_phantom() {
     // Both scopes share one root shape: the user root's `next.actions` pairs
     // with README.md exactly like a project root's.

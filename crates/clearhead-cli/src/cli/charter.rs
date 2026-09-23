@@ -746,7 +746,7 @@ pub fn jot(
         ),
     };
 
-    let stamp = Local::now().format("%Y-%m-%dT%H:%M");
+    let stamp = Local::now().format("%Y-%m-%dT%H:%M%:z");
     let entry = format!("{stamp} — {}", text.trim());
     let updated = clearhead_core::append_log_entry(&base, &entry);
 
