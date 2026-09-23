@@ -43,6 +43,15 @@ clearhead archive actions
 clearhead debug
 ```
 
+## Charter identity normalization
+
+`clearhead normalize file path/to/charter.md --write` stamps a missing
+frontmatter `id` without rewriting the charter body or other metadata. It reuses
+an existing sidecar charter id when present; repeated runs preserve the id.
+`clearhead doctor` reports documents still missing one. Existing charter
+`update`, `close`, and `jot` do **not** stamp an id; `close` and `jot` stamp one
+only when creating a new document.
+
 ## Documentation
 
 Full reference documentation is in the man page:

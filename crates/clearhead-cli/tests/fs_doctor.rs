@@ -655,6 +655,16 @@ fn doctor_flags_a_root_readme_without_an_id() {
             .iter()
             .any(|finding| finding.code == "root-readme-without-id")
     );
+    let finding = diagnosis
+        .findings
+        .iter()
+        .find(|finding| finding.code == "root-readme-without-id")
+        .unwrap();
+    assert!(
+        finding
+            .message
+            .contains("normalize file <path-to-README.md> --write")
+    );
     assert!(!has_mirror_repair(&diagnosis));
 }
 

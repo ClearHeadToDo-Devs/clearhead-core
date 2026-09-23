@@ -68,6 +68,16 @@ clearhead read actions --charter inbox | clearhead update action --state in-prog
 
 The terminal renders above are **static** — format a result, print it, exit; `display/tree.rs` is a pure `DomainModel → String` with no event loop. A live, navigable, keybound view is a genuinely separate client consuming this output, not a mode of the CLI. It is deferred, not designed here; nothing in this contract assumes it.
 
+## Charter document normalization
+
+`clearhead normalize file charter.md --write` is the deliberate identity-minting
+pass for an existing charter without a frontmatter `id`. It preserves the
+remaining Markdown and adopts a persisted sidecar id if one exists. Without
+`--write`, it previews the result. Repeating normalization does not change the
+id. `doctor` names this command when reporting missing document ids. `update`,
+`close`, and `jot` never stamp an id onto an existing charter document; `close`
+and `jot` stamp one only when they create a document.
+
 ## Flags
 
 Common flags shared across subcommands:

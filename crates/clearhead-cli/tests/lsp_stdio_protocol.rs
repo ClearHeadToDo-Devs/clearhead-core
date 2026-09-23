@@ -155,6 +155,11 @@ fn stdio_lifecycle_diagnostics_formatting_and_save() {
         "method": "textDocument/didSave",
         "params": {"textDocument": {"uri": source_uri}}
     }));
+    // didSave republishes diagnostics. Consume that notification before a
+    // later didChange so it cannot be mistaken for the change's diagnostics.
+    lsp.receive_until(|message| {
+        message.get("method") == Some(&json!("textDocument/publishDiagnostics"))
+    });
 
     lsp.send(json!({
         "jsonrpc": "2.0",

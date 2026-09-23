@@ -330,10 +330,10 @@ pub fn assemble_workspace(input: &WorkspaceAssemblyInput) -> Result<WorkspaceRea
         let subject = charter.alias.as_deref().unwrap_or(&charter.title);
         let detail = match sidecar_identities.get(name) {
             Some(id) => format!(
-                "charter '{subject}' declares no id, so its document is not the identity anchor; its sidecar records {id}, which belongs in the document frontmatter"
+                "charter '{subject}' declares no id, so its document is not the identity anchor; its sidecar records {id}, which belongs in the document frontmatter; run `clearhead normalize file <charter.md> --write` to stamp it"
             ),
             None => format!(
-                "charter '{subject}' declares no id, so it loads with an ephemeral identity that changes on every load; a minting write (`clearhead update charter` on it) or `clearhead init` persists a durable one"
+                "charter '{subject}' declares no id, so it loads with an ephemeral identity that changes on every load; run `clearhead normalize file <charter.md> --write` to stamp a durable id"
             ),
         };
         findings.push(Finding::warning(

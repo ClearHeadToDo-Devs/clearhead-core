@@ -825,10 +825,10 @@ fn check_root_identity(
             PRIMARY_DOCUMENT_FILE,
             match sidecar_id {
                 Some(id) => format!(
-                    "README.md declares no id, so the root's identity is derived on every load; its sidecar records {id}, which belongs in the README frontmatter"
+                    "README.md declares no id, so the root's identity is derived on every load; its sidecar records {id}, which belongs in the README frontmatter; run `clearhead normalize file <path-to-README.md> --write`"
                 ),
                 None => {
-                    "README.md declares no id, so the root's identity is derived on every load"
+                    "README.md declares no id, so the root's identity is derived on every load; run `clearhead normalize file <path-to-README.md> --write`"
                         .to_string()
                 }
             },

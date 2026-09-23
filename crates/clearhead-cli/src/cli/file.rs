@@ -100,6 +100,29 @@ pub fn normalize_file(
     debug!(input_file = ?input_file, write = write, "Executing Normalize File");
     let content = read_input(input_file)?;
     let source = source_label(input_file);
+    // Charter documents are Markdown, not actions DSL. Normalize their
+    // identity surgically so unmodelled frontmatter and log text survive.
+    if input_file.is_some_and(|path| path.extension().is_some_and(|ext| ext == "md")) {
+        let document = clearhead_core::workspace::parse_charter(&content)
+            .map_err(|error| anyhow::anyhow!("Cannot normalize charter {source}: {error}"))?;
+        let output = if document.id.is_some() {
+            content
+        } else {
+            let id = charter_sidecar_id(input_file.unwrap())?.unwrap_or_else(uuid::Uuid::now_v7);
+            // Insert only the missing field; do not round-trip the document.
+            stamp_charter_id(&content, id)?
+        };
+        // Never persist a stamped document that the charter codec cannot read
+        // back with the intended identity (e.g. unusual YAML key syntax).
+        let stamped = clearhead_core::workspace::parse_charter(&output).map_err(|error| {
+            anyhow::anyhow!("Cannot normalize charter {source}: {error}; file not modified")
+        })?;
+        anyhow::ensure!(
+            stamped.id.is_some(),
+            "Cannot normalize charter {source}: id was not stamped; file not modified"
+        );
+        return write_or_print(&output, write, input_file);
+    }
     let document = parse_content_for_rewrite(&content, &source, "normalize file")?;
 
     let output = if no_format {
@@ -125,6 +148,90 @@ pub fn normalize_file(
         tracing::warn!(path = %file_path.display(), error = %e, "Failed to update sidecar");
     }
     Ok(())
+}
+
+fn charter_sidecar_id(path: &std::path::Path) -> anyhow::Result<Option<uuid::Uuid>> {
+    let actions = if path.file_name().is_some_and(|name| name == "README.md") {
+        path.with_file_name("next.actions")
+    } else {
+        path.with_extension("actions")
+    };
+    let sidecar = clearhead_core::workspace::sidecar_path(&actions);
+    Ok(clearhead_cli::filesystem::sidecar::read_sidecar(&sidecar)?
+        .charter
+        .and_then(|charter| charter.id))
+}
+
+fn stamp_charter_id(content: &str, id: uuid::Uuid) -> anyhow::Result<String> {
+    let leading = content.len() - content.trim_start().len();
+    let start = &content[leading..];
+    let opening = start.find('\n').and_then(|end| {
+        (start[..end].trim_end() == "---").then_some((
+            end + 1,
+            if start.as_bytes()[end - 1] == b'\r' {
+                "\r\n"
+            } else {
+                "\n"
+            },
+        ))
+    });
+    if let Some((opening_len, newline)) = opening {
+        let split = leading + opening_len;
+        let mut offset = split;
+        for line in content[split..].split_inclusive('\n') {
+            if line.trim_end() == "---" {
+                break;
+            }
+            if line.starts_with("id:") {
+                // A present but null identity is still missing; replace its
+                // value rather than introducing a duplicate YAML key.
+                let end = offset + line.trim_end_matches(['\r', '\n']).len();
+                let value_start = offset + 3;
+                let scalar_start = value_start + content[value_start..end].len()
+                    - content[value_start..end].trim_start().len();
+                let value = &content[scalar_start..end];
+                let scalar_len = if value.is_empty() || value.starts_with('#') {
+                    0
+                } else if value.starts_with("null") {
+                    4
+                } else if value.starts_with('~') {
+                    1
+                } else {
+                    anyhow::bail!(
+                        "Cannot normalize charter: unsupported null id syntax; file not modified"
+                    );
+                };
+                let suffix = &content[scalar_start + scalar_len..end];
+                anyhow::ensure!(
+                    suffix.is_empty()
+                        || suffix.starts_with(char::is_whitespace)
+                        || suffix.starts_with('#'),
+                    "Cannot normalize charter: ambiguous id value; file not modified"
+                );
+                return Ok(format!(
+                    "{}{}{}",
+                    &content[..scalar_start],
+                    id,
+                    &content[scalar_start + scalar_len..]
+                ));
+            }
+            offset += line.len();
+        }
+        Ok(format!(
+            "{}id: {id}{newline}{}",
+            &content[..split],
+            &content[split..]
+        ))
+    } else {
+        let newline = if content.contains("\r\n") {
+            "\r\n"
+        } else {
+            "\n"
+        };
+        Ok(format!(
+            "---{newline}id: {id}{newline}---{newline}{content}"
+        ))
+    }
 }
 
 pub fn patch_file(
