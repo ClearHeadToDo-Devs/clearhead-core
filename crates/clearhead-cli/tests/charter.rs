@@ -145,6 +145,116 @@ fn close_charter_creates_md_for_implicit_charter() {
 }
 
 #[test]
+fn read_charters_hides_undeclared_ids_in_ids_and_jsonld() {
+    let env = TestEnv::new();
+    let declared = "01951111-0000-7000-8000-0000000000aa";
+    env.write_text(
+        "charters/one.md",
+        &format!("---\nid: {declared}\nalias: one\n---\n# One\n"),
+    );
+    env.write_actions("one.actions", "");
+    env.write_text(
+        "charters/two.md",
+        "---\nalias: two\nparent: one\n---\n# Two\n",
+    );
+    let action_id = "01951111-0000-7000-8000-0000000000cc";
+    env.write_actions("two.actions", &format!("[ ] Child work #{action_id}\n"));
+    let sidecar_id = "01951111-0000-7000-8000-0000000000bb";
+    env.write_text(
+        "charters/.two.json",
+        &format!(r#"{{"charter":{{"id":"{sidecar_id}"}}}}"#),
+    );
+
+    let ids = env
+        .command()
+        .args(["read", "charters", "--format", "ids"])
+        .assert()
+        .success();
+    assert_eq!(
+        String::from_utf8_lossy(&ids.get_output().stdout).trim(),
+        declared
+    );
+
+    let result = env
+        .command()
+        .args(["read", "charters", "--format", "json-ld"])
+        .assert()
+        .success();
+    let json: serde_json::Value = serde_json::from_slice(&result.get_output().stdout).unwrap();
+    let serialized = serde_json::to_string(&json).unwrap();
+    assert!(serialized.contains(&format!("urn:uuid:{declared}")));
+    assert!(
+        !serialized.contains(sidecar_id),
+        "sidecar id is not declared in document"
+    );
+    let graph = json["@graph"][0]["@graph"].as_array().unwrap();
+    let two = graph
+        .iter()
+        .find(|node| {
+            node["http://www.w3.org/2000/01/rdf-schema#label"]
+                .as_array()
+                .is_some_and(|values| values.iter().any(|value| value["@value"] == "Two"))
+        })
+        .expect("id-less charter node");
+    assert!(two["@id"].as_str().unwrap().starts_with("_:"), "{two}");
+    assert!(
+        two.get("https://clearhead.us/vocab/actions/v4#hasUUID")
+            .is_none(),
+        "{two}"
+    );
+    let one = graph
+        .iter()
+        .find(|node| node["@id"] == format!("urn:uuid:{declared}"))
+        .unwrap();
+    assert_eq!(
+        one["https://clearhead.us/vocab/actions/v4#hasSubCharter"][0]["@id"],
+        two["@id"]
+    );
+    let action = graph
+        .iter()
+        .find(|node| node["@id"] == format!("urn:uuid:{action_id}"))
+        .expect("child action projected");
+    assert_eq!(
+        action["http://purl.obolibrary.org/obo/BFO_0000050"][0]["@id"],
+        two["@id"]
+    );
+
+    // Without a sidecar the shell mints a different id on each load. Neither
+    // the ids view nor JSON-LD may expose that transient join key.
+    fs::remove_file(env.data_dir.join("charters/.two.json")).unwrap();
+    let minted_ids = env
+        .command()
+        .args(["read", "charters", "--format", "ids"])
+        .assert()
+        .success();
+    assert_eq!(
+        String::from_utf8_lossy(&minted_ids.get_output().stdout).trim(),
+        declared
+    );
+    let minted = env
+        .command()
+        .args(["read", "charters", "--format", "json-ld"])
+        .assert()
+        .success();
+    let minted: serde_json::Value = serde_json::from_slice(&minted.get_output().stdout).unwrap();
+    let minted_graph = minted["@graph"][0]["@graph"].as_array().unwrap();
+    let minted_two = minted_graph
+        .iter()
+        .find(|node| {
+            node["http://www.w3.org/2000/01/rdf-schema#label"]
+                .as_array()
+                .is_some_and(|values| values.iter().any(|value| value["@value"] == "Two"))
+        })
+        .unwrap();
+    assert!(minted_two["@id"].as_str().unwrap().starts_with("_:"));
+    assert!(
+        minted_two
+            .get("https://clearhead.us/vocab/actions/v4#hasUUID")
+            .is_none()
+    );
+}
+
+#[test]
 fn jot_into_project_root_charter_creates_readme_not_phantom() {
     // Project layout: a `.clearhead/` under the working dir. The root
     // `next.actions` charter is named for the project and pairs with README.md;

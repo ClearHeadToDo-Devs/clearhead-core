@@ -1,5 +1,6 @@
 use anyhow::Context;
 use chrono::Local;
+use std::collections::HashSet;
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 
@@ -122,20 +123,70 @@ pub fn read_charters(
 ) -> anyhow::Result<()> {
     let multi_ws = ctx.workspace_dirs().len() > 1;
 
-    // Load full models — tree view needs plans and actions, not just charters.
-    let models = ctx.all_domain_models()?;
+    // Keep the shell-minted ids from the domain model load: a second model
+    // load would mint different ids. Re-read each document conservatively;
+    // missing, changed, or unreadable frontmatter is treated as undeclared.
+    let mut models = Vec::new();
+    if !matches!(
+        format,
+        Some(argparser::OutputMode::Ids | argparser::OutputMode::JsonLd)
+    ) {
+        models.extend(
+            ctx.all_domain_models()?
+                .into_iter()
+                .map(|(name, model)| (name, model, HashSet::new())),
+        );
+    } else {
+        for (name, root) in ctx.workspace_dirs() {
+            let is_primary = root == ctx.data_dir;
+            let plan_override = if is_primary {
+                ctx.plan_override()
+            } else {
+                None
+            };
+            let charters =
+                match clearhead_cli::filesystem::load_workspace(&root, plan_override.as_deref()) {
+                    Ok(charters) => charters,
+                    Err(error) if is_primary => return Err(error.into()),
+                    Err(error) => {
+                        tracing::warn!(workspace = %root.display(), %error, "Skipping workspace");
+                        continue;
+                    }
+                };
+            let charter_root = clearhead_cli::filesystem::charter_root(&root);
+            let without_declared_id = charters
+                .iter()
+                .filter(|charter| {
+                    charter
+                        .md_file
+                        .as_ref()
+                        .and_then(|path| std::fs::read_to_string(charter_root.join(path)).ok())
+                        .and_then(|content| {
+                            clearhead_core::workspace::charter_frontmatter_id(&content)
+                                .ok()
+                                .flatten()
+                        })
+                        != Some(charter.id)
+                })
+                .map(|charter| charter.id)
+                .collect::<HashSet<_>>();
+            let model: clearhead_core::DomainModel =
+                clearhead_cli::filesystem::load_workspace_envelope(&root, charters).into();
+            models.push((name, model, without_declared_id));
+        }
+    }
 
     // Apply explicit_only filter.
-    let models: Vec<(String, clearhead_core::DomainModel)> = models
+    let models: Vec<(String, clearhead_core::DomainModel, HashSet<uuid::Uuid>)> = models
         .into_iter()
-        .map(|(name, mut m)| {
+        .map(|(name, mut m, without_declared_id)| {
             if explicit_only {
                 m.charters
                     .retain(|c| c.alias.is_some() || c.description.is_some());
             }
-            (name, m)
+            (name, m, without_declared_id)
         })
-        .filter(|(_, m)| !m.charters.is_empty())
+        .filter(|(_, m, _)| !m.charters.is_empty())
         .collect();
 
     if models.is_empty() {
@@ -145,9 +196,12 @@ pub fn read_charters(
 
     match format {
         Some(argparser::OutputMode::JsonLd) => {
-            for (_, model) in &models {
-                let jsonld = clearhead_cli::serialize_domain_to_jsonld(model)
-                    .map_err(|e| anyhow::anyhow!("Failed to serialize JSON-LD: {e}"))?;
+            for (_, model, without_declared_id) in &models {
+                let jsonld = clearhead_cli::serialize_domain_to_jsonld_with_anonymous_charters(
+                    model,
+                    without_declared_id,
+                )
+                .map_err(|e| anyhow::anyhow!("Failed to serialize JSON-LD: {e}"))?;
                 println!("{}", jsonld);
             }
         }
@@ -155,27 +209,31 @@ pub fn read_charters(
             // Charters have no canonical actions-schema shape yet; emit plain
             // structured JSON while materializing semantic defaults that source
             // round-tripping deliberately keeps implicit.
-            for (_, model) in &models {
+            for (_, model, _) in &models {
                 let semantic = semantic_charters_json(&model.charters)?;
                 println!("{}", serde_json::to_string_pretty(&semantic)?);
             }
         }
         Some(argparser::OutputMode::Ids) => {
-            for (_, model) in &models {
+            for (_, model, without_declared_id) in &models {
                 for charter in &model.charters {
-                    println!("{}", charter.id);
+                    if !without_declared_id.contains(&charter.id) {
+                        println!("{}", charter.id);
+                    }
                 }
             }
         }
         Some(argparser::OutputMode::Table) => {
-            let workspaces: Vec<(String, Vec<Charter>)> =
-                models.into_iter().map(|(n, m)| (n, m.charters)).collect();
+            let workspaces: Vec<(String, Vec<Charter>)> = models
+                .into_iter()
+                .map(|(n, m, _)| (n, m.charters))
+                .collect();
             print_charter_table(&workspaces, multi_ws);
         }
         None => {
             if std::io::stdout().is_terminal() {
                 // TTY: charter hierarchy tree with open action counts.
-                for (ws_name, model) in &models {
+                for (ws_name, model, _) in &models {
                     if multi_ws {
                         println!("▸ {}", ws_name);
                     }
@@ -183,7 +241,7 @@ pub fn read_charters(
                 }
             } else {
                 // Pipe/redirect: markdown — native file format for charters.
-                for (_, model) in &models {
+                for (_, model, _) in &models {
                     for charter in &model.charters {
                         println!("{}", clearhead_core::format_charter(charter));
                     }

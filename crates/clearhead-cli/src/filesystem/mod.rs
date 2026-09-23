@@ -32,7 +32,8 @@ pub use init::init_workspace;
 pub use manifest::{read_workspace_manifest, workspace_manifest_path, write_workspace_manifest};
 pub use mounts::{
     NativeWorkspaceMounts, charter_root, list_action_files, load_domain_model, load_workspace,
-    load_workspace_model, plans_root, read_workspace, root_charter_name, workspace_data_root,
+    load_workspace_envelope, load_workspace_model, plans_root, read_workspace, root_charter_name,
+    workspace_data_root,
 };
 
 use std::collections::HashSet;

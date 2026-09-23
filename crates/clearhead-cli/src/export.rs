@@ -1,5 +1,8 @@
 use clearhead_core::rdf::{self, RdfFormat};
 use clearhead_core::{Action, ActionState, DomainModel};
+use oxrdf::{BlankNode, NamedOrBlankNode, Quad, Term};
+use std::collections::{HashMap, HashSet};
+use uuid::Uuid;
 
 /// Serialize a domain model to flat JSON-LD through Core's canonical RDF
 /// projection — the same one dataset that backs every RDF serialization.
@@ -11,6 +14,62 @@ use clearhead_core::{Action, ActionState, DomainModel};
 pub fn serialize_domain_to_jsonld(model: &DomainModel) -> Result<String, String> {
     rdf::serialize_domain(model, None, rdf::transient_graph_name(), RdfFormat::JsonLd)
         .map_err(|e| e.to_string())
+}
+
+/// Serialize a charter read without publishing shell-minted identity.
+///
+/// The domain model needs UUIDs as in-process join keys, but JSON-LD must
+/// represent charters without a declared document id as blank nodes. Rewrite
+/// both the subjects and any edges pointing to them, and omit hasUUID rather
+/// than leaking a synthetic id as a literal. Blank labels are local to this
+/// serialization and never contain the ephemeral UUID.
+pub fn serialize_domain_to_jsonld_with_anonymous_charters(
+    model: &DomainModel,
+    anonymous_ids: &HashSet<Uuid>,
+) -> Result<String, String> {
+    let quads = rdf::project_domain(model, None, rdf::transient_graph_name())
+        .map_err(|error| error.to_string())?;
+    let mut ids = anonymous_ids.iter().copied().collect::<Vec<_>>();
+    ids.sort();
+    let blanks: HashMap<String, BlankNode> = ids
+        .into_iter()
+        .enumerate()
+        .map(|(index, id)| {
+            (
+                format!("urn:uuid:{id}"),
+                BlankNode::new(format!("charter{index}"))
+                    .expect("sequential blank-node label is valid"),
+            )
+        })
+        .collect();
+    let quads = quads
+        .into_iter()
+        .filter_map(|quad| {
+            let subject_iri = match &quad.subject {
+                NamedOrBlankNode::NamedNode(node) => Some(node.as_str()),
+                NamedOrBlankNode::BlankNode(_) => None,
+            };
+            if subject_iri.is_some_and(|iri| blanks.contains_key(iri))
+                && quad.predicate.as_str() == "https://clearhead.us/vocab/actions/v4#hasUUID"
+            {
+                return None;
+            }
+            let subject = match quad.subject {
+                NamedOrBlankNode::NamedNode(node) if blanks.contains_key(node.as_str()) => {
+                    NamedOrBlankNode::BlankNode(blanks[node.as_str()].clone())
+                }
+                other => other,
+            };
+            let object = match quad.object {
+                Term::NamedNode(node) if blanks.contains_key(node.as_str()) => {
+                    Term::BlankNode(blanks[node.as_str()].clone())
+                }
+                other => other,
+            };
+            Some(Quad::new(subject, quad.predicate, object, quad.graph_name))
+        })
+        .collect::<Vec<_>>();
+    rdf::serialize(&quads, RdfFormat::JsonLd).map_err(|error| error.to_string())
 }
 
 /// Check if an Action should be included in calendar export.

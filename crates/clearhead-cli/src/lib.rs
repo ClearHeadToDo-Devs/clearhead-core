@@ -45,7 +45,10 @@ pub mod display;
 pub use display::{render_charter_tree, render_domain_tree};
 
 pub mod export;
-pub use export::{format_as_icalendar, serialize_domain_to_jsonld};
+pub use export::{
+    format_as_icalendar, serialize_domain_to_jsonld,
+    serialize_domain_to_jsonld_with_anonymous_charters,
+};
 
 pub mod mutations;
 pub use mutations::{ActionUpdate, apply_updates};
