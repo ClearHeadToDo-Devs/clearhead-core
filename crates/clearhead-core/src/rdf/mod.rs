@@ -22,10 +22,12 @@
 //! names — no derivable inverses, no un-modelled predicates. See
 //! `specifications/ontology.md` and the `ontology/v4` artifacts.
 
+pub mod anonymize;
 pub mod project;
 pub mod serialize;
 pub mod snapshot;
 
+pub use anonymize::anonymize_charters;
 pub use project::project_domain;
 pub use serialize::{RdfFormat, serialize, serialize_domain};
 pub use snapshot::{WorkspaceSnapshot, project_workspace_snapshot};

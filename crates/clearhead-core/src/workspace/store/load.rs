@@ -63,6 +63,15 @@ impl Workspace {
         self.id.clone().unwrap_or_else(|| self.ephemeral_id.clone())
     }
 
+    /// Charters whose id is only an in-process join key: any id not declared
+    /// by the charter's own document. Output surfaces must not publish these.
+    pub fn unpublished_charter_ids(&self) -> impl Iterator<Item = uuid::Uuid> + '_ {
+        self.charters
+            .iter()
+            .filter(|charter| charter.id_source != crate::workspace::CharterIdSource::Document)
+            .map(|charter| charter.id)
+    }
+
     /// The workspace's display name, falling back to its directory name.
     ///
     /// Pure: derives the basename from the supplied root without touching the

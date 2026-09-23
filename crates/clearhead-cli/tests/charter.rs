@@ -335,6 +335,56 @@ fn read_charters_hides_undeclared_ids_in_ids_and_jsonld() {
 }
 
 #[test]
+fn no_output_surface_publishes_an_undeclared_charter_id() {
+    // A sidecar id is stable, so "it never appears" is checkable. Decision 1:
+    // only an id declared by the charter's own document is published.
+    let env = TestEnv::new();
+    let declared = "01951111-0000-7000-8000-0000000000aa";
+    env.write_text(
+        "charters/one.md",
+        &format!("---\nid: {declared}\nalias: one\nstate: Active\n---\n# One\n"),
+    );
+    env.write_actions("one.actions", "");
+    env.write_text(
+        "charters/two.md",
+        "---\nalias: two\nparent: one\nstate: Active\n---\n# Two\n",
+    );
+    env.write_actions(
+        "two.actions",
+        "[ ] Child work #01951111-0000-7000-8000-0000000000cc\n",
+    );
+    let hidden = "01951111-0000-7000-8000-0000000000bb";
+    env.write_text(
+        "charters/.two.json",
+        &format!(r#"{{"charter":{{"id":"{hidden}"}}}}"#),
+    );
+
+    let mut surfaces: Vec<Vec<&str>> = vec![
+        vec!["read", "charters"],
+        vec!["read", "charters", "--format", "table"],
+        vec!["read", "actions", "--format", "json-ld"],
+        vec!["show", "charter", "two"],
+        vec!["orient"],
+        vec!["export", "workspace", "--format", "nquads"],
+    ];
+    #[cfg(feature = "sparql")]
+    surfaces.extend([
+        vec!["query", "tree", "--format", "json"],
+        vec!["query", "graph", "--format", "dot"],
+    ]);
+
+    for args in surfaces {
+        let output = env.command().args(&args).assert().success();
+        let stdout = String::from_utf8_lossy(&output.get_output().stdout);
+        assert!(
+            stdout.contains("Two"),
+            "{args:?} lost the charter: {stdout}"
+        );
+        assert!(!stdout.contains(hidden), "{args:?} leaked: {stdout}");
+    }
+}
+
+#[test]
 fn jot_into_project_root_charter_creates_readme_not_phantom() {
     // Project layout: a `.clearhead/` under the working dir. The root
     // `next.actions` charter is named for the project and pairs with README.md;

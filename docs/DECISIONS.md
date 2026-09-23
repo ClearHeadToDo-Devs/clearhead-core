@@ -17,8 +17,13 @@ sees it will take it for the real one:
 - canonical JSON omits `id` (the specification's `charters.schema.json` makes it
   optional for this reason);
 - `--format ids` skips the charter;
-- JSON-LD represents the charter as a blank node, RDF's own term for a thing
-  with no stable identity.
+- RDF output (JSON-LD reads, `export`, `query`) represents the charter as a
+  blank node, RDF's own term for a thing with no stable identity;
+- human and markdown views (`show`, piped `read charters`, `orient`) omit the
+  id or say it is not declared.
+
+The rule is applied from `CharterIdSource`, recorded once at load; no surface
+re-derives it from the document.
 
 **Alternatives rejected:** stamping the id on read (reads become writes: a
 `read` produces a git diff, the LSP rewrites a buffer being edited, and two

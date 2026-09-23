@@ -264,11 +264,23 @@ pub fn implicit_charter(name: &str) -> Charter {
 
 /// Render a charter back to markdown with YAML frontmatter.
 pub fn format_charter(charter: &Charter) -> String {
+    render_charter(charter, Some(charter.id))
+}
+
+/// Render a charter whose id must not be published (see
+/// [`CharterIdSource`]): same markdown, with no `id:` line.
+pub fn format_charter_without_id(charter: &Charter) -> String {
+    render_charter(charter, None)
+}
+
+fn render_charter(charter: &Charter, id: Option<Uuid>) -> String {
     let mut out = String::new();
 
     // Frontmatter
     out.push_str("---\n");
-    out.push_str(&format!("id: {}\n", charter.id));
+    if let Some(id) = id {
+        out.push_str(&format!("id: {id}\n"));
+    }
     if let Some(ref alias) = charter.alias {
         out.push_str(&format!("alias: {}\n", alias));
     }

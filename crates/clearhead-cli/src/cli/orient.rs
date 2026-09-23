@@ -48,7 +48,9 @@ impl<T> Bounded<T> {
 
 #[derive(Serialize)]
 pub struct CharterSummary {
-    pub id: String,
+    /// Absent when the charter's document declares no id.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
     pub title: String,
     pub alias: Option<String>,
 }
@@ -57,7 +59,8 @@ pub struct CharterSummary {
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum BlockerEntry {
     Charter {
-        id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
         title: String,
     },
     Action {
@@ -75,6 +78,12 @@ pub struct CompletionEntry {
     pub completed_at: Option<String>,
 }
 
+/// A charter's canonical id, unless it is only an in-process join key.
+fn published_id(charter: &clearhead_core::MarkdownCharter) -> Option<String> {
+    (charter.id_source == clearhead_core::workspace::CharterIdSource::Document)
+        .then(|| canonical_id(charter.id))
+}
+
 pub fn build(ctx: &CommandContext) -> anyhow::Result<Orient> {
     let charters =
         clearhead_cli::filesystem::load_workspace(&ctx.data_dir, ctx.plan_override().as_deref())
@@ -86,7 +95,7 @@ pub fn build(ctx: &CommandContext) -> anyhow::Result<Orient> {
             .iter()
             .filter(|charter| charter.state == Some(CharterState::Active))
             .map(|charter| CharterSummary {
-                id: canonical_id(charter.id),
+                id: published_id(charter),
                 title: charter.title.clone(),
                 alias: charter.alias.clone(),
             })
@@ -99,7 +108,7 @@ pub fn build(ctx: &CommandContext) -> anyhow::Result<Orient> {
     for charter in &charters {
         if charter.state == Some(CharterState::Blocked) {
             blockers.push(BlockerEntry::Charter {
-                id: canonical_id(charter.id),
+                id: published_id(charter),
                 title: charter.title.clone(),
             });
         }

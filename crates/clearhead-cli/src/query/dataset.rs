@@ -11,11 +11,13 @@ use anyhow::{Context as _, anyhow};
 use clearhead_core::rdf::{self, WorkspaceSnapshot};
 use clearhead_core::workspace::store::Workspace;
 use oxrdf::Quad;
+use std::collections::HashSet;
 
 use crate::cli::CommandContext;
 
 /// Load every selected workspace and return the merged canonical dataset: one
-/// `urn:clearhead:workspace:<uuid>` named graph per workspace, canonicalized
+/// `urn:clearhead:workspace:<uuid>` named graph per workspace, with charters
+/// that declare no document id as blank nodes, canonicalized
 /// so downstream serialization is byte-deterministic (for workspaces with
 /// durable manifest identity — an identity-less workspace's ephemeral graph
 /// name is intentionally unstable, see `Workspace::ephemeral_id`).
@@ -26,6 +28,7 @@ use crate::cli::CommandContext;
 pub fn assemble_dataset(ctx: &CommandContext) -> anyhow::Result<Vec<Quad>> {
     let config = ctx.workspace_config();
     let mut quads = Vec::new();
+    let mut unpublished = HashSet::new();
 
     for (_name, path) in ctx.workspace_dirs() {
         let is_primary = path == ctx.data_dir;
@@ -47,6 +50,7 @@ pub fn assemble_dataset(ctx: &CommandContext) -> anyhow::Result<Vec<Quad>> {
 
         let graph = rdf::workspace_graph_name(&workspace.effective_id());
         let snapshot = workspace_snapshot(&workspace);
+        unpublished.extend(workspace.unpublished_charter_ids());
         let model = clearhead_core::DomainModel::from(workspace);
         quads.extend(
             rdf::project_domain(&model, is_primary.then_some(&config), graph.clone())
@@ -59,7 +63,7 @@ pub fn assemble_dataset(ctx: &CommandContext) -> anyhow::Result<Vec<Quad>> {
     }
 
     rdf::canonicalize(&mut quads);
-    Ok(quads)
+    Ok(rdf::anonymize_charters(quads, &unpublished))
 }
 
 /// Assemble the host evidence for Core's pure workspace-snapshot projection:

@@ -162,11 +162,8 @@ pub fn read_charters(
         Some(argparser::OutputMode::Json) => unreachable!("JSON is printed from source charters"),
         Some(argparser::OutputMode::JsonLd) => {
             for (_, model, without_declared_id) in &models {
-                let jsonld = clearhead_cli::serialize_domain_to_jsonld_with_anonymous_charters(
-                    model,
-                    without_declared_id,
-                )
-                .map_err(|e| anyhow::anyhow!("Failed to serialize JSON-LD: {e}"))?;
+                let jsonld = clearhead_cli::serialize_domain_to_jsonld(model, without_declared_id)
+                    .map_err(|e| anyhow::anyhow!("Failed to serialize JSON-LD: {e}"))?;
                 println!("{}", jsonld);
             }
         }
@@ -197,9 +194,14 @@ pub fn read_charters(
                 }
             } else {
                 // Pipe/redirect: markdown — native file format for charters.
-                for (_, model, _) in &models {
+                for (_, model, unpublished) in &models {
                     for charter in &model.charters {
-                        println!("{}", clearhead_core::format_charter(charter));
+                        let markdown = if unpublished.contains(&charter.id) {
+                            clearhead_core::workspace::format_charter_without_id(charter)
+                        } else {
+                            clearhead_core::format_charter(charter)
+                        };
+                        println!("{markdown}");
                     }
                 }
             }
@@ -351,16 +353,23 @@ fn open_act_count(charter: &Charter) -> usize {
 }
 
 pub fn show_charter(ctx: &CommandContext, query: &str) -> anyhow::Result<()> {
-    let models = ctx.all_domain_models()?;
-
-    let candidates: Vec<&Charter> = models
-        .iter()
-        .flat_map(|(_, model)| &model.charters)
+    let charters: Vec<(Charter, bool)> = load_source_charters(ctx)?
+        .into_iter()
+        .flat_map(|(_, _, charters)| charters)
+        .map(|charter| {
+            let declared = charter.id_source == CharterIdSource::Document;
+            (Charter::from(charter), declared)
+        })
         .collect();
+
+    let candidates: Vec<&Charter> = charters.iter().map(|(charter, _)| charter).collect();
     let found = resolve_charter(&candidates, query)?
         .ok_or_else(|| anyhow::anyhow!("No charter found matching '{}'", query))?;
+    let declared = charters
+        .iter()
+        .any(|(charter, declared)| charter.id == found.id && *declared);
 
-    println!("{}", crate::display::render_charter_detail(found));
+    println!("{}", crate::display::render_charter_detail(found, declared));
     Ok(())
 }
 

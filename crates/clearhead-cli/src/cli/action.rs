@@ -1,5 +1,6 @@
 //! Handlers for action commands (expand, complete, cancel, update, read, archive).
 
+use std::collections::HashSet;
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 
@@ -866,8 +867,8 @@ pub fn read_actions_cmd(
         Some(crate::argparser::OutputMode::JsonLd) => {
             // Serialize the *filtered* model — --charter/--context/--open-only/--state
             // must narrow JSON-LD output just as they narrow the table and tree.
-            let model = filtered_primary_model(ctx, charter_filter, &action_filter)?;
-            let jsonld = clearhead_cli::serialize_domain_to_jsonld(&model)
+            let (model, unpublished) = filtered_primary_model(ctx, charter_filter, &action_filter)?;
+            let jsonld = clearhead_cli::serialize_domain_to_jsonld(&model, &unpublished)
                 .map_err(|e| anyhow::anyhow!("Failed to serialize JSON-LD: {e}"))?;
             println!("{}", jsonld);
         }
@@ -900,7 +901,7 @@ pub fn read_actions_cmd(
                 print!("{}", text);
             } else {
                 // TTY: always render the domain hierarchy tree, filtered if needed.
-                let model = filtered_primary_model(ctx, charter_filter, &action_filter)?;
+                let (model, _) = filtered_primary_model(ctx, charter_filter, &action_filter)?;
 
                 if multi_ws {
                     for (ws_name, ws_path) in ctx.workspace_dirs() {
@@ -942,8 +943,10 @@ fn filtered_primary_model(
     ctx: &CommandContext,
     charter_filter: Option<&str>,
     action_filter: &clearhead_core::ActionFilter,
-) -> anyhow::Result<clearhead_core::DomainModel> {
-    let primary = ctx.load_model()?;
+) -> anyhow::Result<(clearhead_core::DomainModel, HashSet<uuid::Uuid>)> {
+    let workspace = ctx.load_workspace_model()?;
+    let unpublished = workspace.unpublished_charter_ids().collect();
+    let primary = clearhead_core::DomainModel::from(workspace);
     let mut model = if let Some(query) = charter_filter {
         let charter = super::charter::resolve_charter(&primary.charters, query)?
             .ok_or_else(|| anyhow::anyhow!("No charter found matching '{}'", query))?
@@ -956,7 +959,7 @@ fn filtered_primary_model(
         primary
     };
     clearhead_core::apply_filter(&mut model, action_filter);
-    Ok(model)
+    Ok((model, unpublished))
 }
 
 /// Collect actions from the primary workspace and all configured additional workspaces.

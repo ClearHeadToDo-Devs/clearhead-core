@@ -1,5 +1,6 @@
 use anyhow::Context;
 use chrono::{DateTime, Local};
+use std::collections::HashSet;
 use std::fs;
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
@@ -189,8 +190,8 @@ pub fn read_plans(
 
     match format {
         Some(argparser::OutputMode::JsonLd) => {
-            let model = model_containing_plans(ctx, &plans)?;
-            let jsonld = clearhead_cli::serialize_domain_to_jsonld(&model)
+            let (model, unpublished) = model_containing_plans(ctx, &plans)?;
+            let jsonld = clearhead_cli::serialize_domain_to_jsonld(&model, &unpublished)
                 .map_err(|e| anyhow::anyhow!("Failed to serialize JSON-LD: {e}"))?;
             println!("{}", jsonld);
         }
@@ -252,11 +253,13 @@ fn print_plans_table(plans: &[(String, clearhead_core::Plan)]) {
 fn model_containing_plans(
     ctx: &CommandContext,
     plans: &[(String, clearhead_core::Plan)],
-) -> anyhow::Result<clearhead_core::DomainModel> {
-    use std::collections::{BTreeMap, HashSet};
+) -> anyhow::Result<(clearhead_core::DomainModel, HashSet<uuid::Uuid>)> {
+    use std::collections::BTreeMap;
 
     let selected: HashSet<_> = plans.iter().map(|(_, plan)| plan.id).collect();
-    let mut model = ctx.load_model()?;
+    let workspace = ctx.load_workspace_model()?;
+    let mut unpublished: HashSet<_> = workspace.unpublished_charter_ids().collect();
+    let mut model = clearhead_core::DomainModel::from(workspace);
     model.objectives.clear();
     for charter in &mut model.charters {
         charter.actions.clear();
@@ -278,16 +281,20 @@ fn model_containing_plans(
                 .push(plan.clone());
         }
     }
+    // Plans outside any loaded charter get a stand-in charter whose name-hashed
+    // id is a join key only, so it is unpublished too.
     for (charter_name, plans) in unmatched {
+        let id = uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_URL, charter_name.as_bytes());
+        unpublished.insert(id);
         model.charters.push(clearhead_core::Charter {
-            id: uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_URL, charter_name.as_bytes()),
+            id,
             title: charter_name.clone(),
             alias: Some(charter_name),
             plans,
             ..Default::default()
         });
     }
-    Ok(model)
+    Ok((model, unpublished))
 }
 
 pub fn show_plan(

@@ -65,7 +65,8 @@ pub use calendar::reconcile::{
 pub use calendar::sync_store::{PlansSyncStore, decode_plans_sync_store, encode_plans_sync_store};
 pub use charter::{
     CharterDocument, CharterIdSource, MarkdownCharter, append_log_entry, charter_frontmatter_id,
-    edit_charter_document, format_charter, implicit_charter, parse_charter,
+    edit_charter_document, format_charter, format_charter_without_id, implicit_charter,
+    parse_charter,
 };
 pub use charter_schema::{project_charter_schema, project_charters_schema};
 pub use init::{

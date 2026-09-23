@@ -78,8 +78,15 @@ pub fn render_plan_detail(plan: &Plan, charter_name: &str) -> String {
     out
 }
 
-pub fn render_charter_detail(charter: &Charter) -> String {
-    let mut rows: Vec<(&str, String)> = vec![("id", charter.id.to_string())];
+/// `id_declared` is false when the charter's id is only an in-process join
+/// key; the row then says so instead of printing it.
+pub fn render_charter_detail(charter: &Charter, id_declared: bool) -> String {
+    let id = if id_declared {
+        charter.id.to_string()
+    } else {
+        "(not declared)".to_string()
+    };
+    let mut rows: Vec<(&str, String)> = vec![("id", id)];
 
     opt(&mut rows, "alias", charter.alias.as_deref());
     opt(&mut rows, "parent", charter.parent.as_deref());

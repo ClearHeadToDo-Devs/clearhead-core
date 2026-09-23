@@ -117,9 +117,7 @@ fn frame_dot(triples: &[Triple]) -> String {
 
     let mut entities: BTreeMap<String, Entity> = BTreeMap::new();
     for triple in triples {
-        let Some(subject) = named_subject(&triple.subject) else {
-            continue;
-        };
+        let subject = node_key(&triple.subject);
         if triple.predicate.as_str() == rdf_type
             && let Term::NamedNode(kind) = &triple.object
         {
@@ -130,9 +128,7 @@ fn frame_dot(triples: &[Triple]) -> String {
     }
 
     for triple in triples {
-        let Some(subject) = named_subject(&triple.subject) else {
-            continue;
-        };
+        let subject = node_key(&triple.subject);
         let Some(entity) = entities.get_mut(&subject) else {
             continue;
         };
@@ -160,13 +156,12 @@ fn frame_dot(triples: &[Triple]) -> String {
 
     let mut edges = BTreeSet::new();
     for triple in triples {
-        let Some(subject) = named_subject(&triple.subject) else {
-            continue;
+        let subject = node_key(&triple.subject);
+        let object = match &triple.object {
+            Term::NamedNode(node) => node.as_str().to_string(),
+            Term::BlankNode(node) => format!("_:{}", node.as_str()),
+            _ => continue,
         };
-        let Term::NamedNode(object) = &triple.object else {
-            continue;
-        };
-        let object = object.as_str().to_string();
         if !entities.contains_key(&subject) || !entities.contains_key(&object) {
             continue;
         }
@@ -205,10 +200,12 @@ fn frame_dot(triples: &[Triple]) -> String {
     format!("{dot:?}\n")
 }
 
-fn named_subject(subject: &NamedOrBlankNode) -> Option<String> {
+/// Node key for a subject. Blank nodes are real entities here: a charter with
+/// no declared document id is published as one.
+fn node_key(subject: &NamedOrBlankNode) -> String {
     match subject {
-        NamedOrBlankNode::NamedNode(node) => Some(node.as_str().to_string()),
-        NamedOrBlankNode::BlankNode(_) => None,
+        NamedOrBlankNode::NamedNode(node) => node.as_str().to_string(),
+        NamedOrBlankNode::BlankNode(node) => format!("_:{}", node.as_str()),
     }
 }
 

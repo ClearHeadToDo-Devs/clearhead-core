@@ -262,6 +262,16 @@ impl CommandContext {
         )?)
     }
 
+    /// Load the primary workspace with charter provenance, honoring `plan_path`.
+    pub fn load_workspace_model(
+        &self,
+    ) -> anyhow::Result<clearhead_core::workspace::store::Workspace> {
+        Ok(clearhead_cli::filesystem::load_workspace_model(
+            &self.data_dir,
+            self.plan_override().as_deref(),
+        )?)
+    }
+
     /// Load the primary workspace's charters, honoring `plan_path`.
     pub fn load_charters(&self) -> anyhow::Result<Vec<clearhead_core::MarkdownCharter>> {
         Ok(clearhead_cli::filesystem::load_workspace(
