@@ -786,3 +786,31 @@ fn doctor_points_a_sidecar_identity_at_the_document() {
         finding.message
     );
 }
+
+#[test]
+fn doctor_treats_a_null_id_as_undeclared() {
+    // `id: null` declares nothing, exactly as normalize reads it: the loader
+    // adopts the sidecar id and the gap is still reported.
+    let sidecar = r#"{"charter":{"id":"01951111-0000-7000-0000-0000000000aa"}}"#;
+    let workspace = make_workspace(&[
+        ("work.md", "---\nid: null\nalias: work\n---\n# Work\n"),
+        ("work.actions", ""),
+        (".work.json", sidecar),
+    ]);
+
+    let diagnosis =
+        clearhead_cli::filesystem::diagnose_workspace(initialized(workspace.path()), None).unwrap();
+
+    let finding = diagnosis
+        .findings
+        .iter()
+        .find(|finding| finding.code == "charter-document-without-id")
+        .expect("a null id should be reported like a missing one");
+    assert!(
+        finding
+            .message
+            .contains("01951111-0000-7000-0000-0000000000aa"),
+        "got: {}",
+        finding.message
+    );
+}

@@ -2781,6 +2781,7 @@ mod tests {
         };
         let charter = MarkdownCharter {
             id: Uuid::now_v7(),
+            id_source: crate::workspace::CharterIdSource::Ephemeral,
             title: "health".into(),
             description: None,
             alias: None,

@@ -2,13 +2,11 @@
 //! Actions and plans deliberately remain in their own projections.
 
 use serde_json::{Map, Value, json};
-use uuid::Uuid;
 
-use super::charter::{MarkdownCharter, split_frontmatter};
+use super::charter::{CharterIdSource, MarkdownCharter, split_frontmatter};
 
 /// Project a charter from its loaded model and its document text (if any).
-/// Only an id matching the document declaration is published. A sidecar or
-/// shell identity is an in-process join key, not a serialized charter fact.
+/// Only a document-declared id is published; see [`CharterIdSource`].
 pub fn project_charter_schema(
     charter: &MarkdownCharter,
     source: Option<&str>,
@@ -19,12 +17,7 @@ pub fn project_charter_schema(
         .transpose()?
         .unwrap_or_default();
     let mut row = Map::new();
-    if frontmatter
-        .get("id")
-        .and_then(Value::as_str)
-        .and_then(|id| Uuid::parse_str(id).ok())
-        == Some(charter.id)
-    {
+    if charter.id_source == CharterIdSource::Document {
         row.insert("id".into(), json!(charter.id));
     }
     let state = charter.state.unwrap_or_default();
@@ -258,7 +251,8 @@ mod tests {
     fn projects_declared_identity_defaults_sections_and_log_without_embedded_work() {
         let source = "---\nid: 01951111-0000-7000-8000-0000000000aa\nalias: reno\ndefaults:\n  contexts: [home]\n---\n# Renovation\n\nCore paragraph.\n\n### Details\n\nKeep this.\n\n## Budget\n\nUnder $20k.\n\n## Log\n\n- 2026-09-17 — quote arrived\n- undated note\n\n## Notes\n\nLast section.\n";
         let doc = parse_charter(source).unwrap();
-        let charter = MarkdownCharter::from(doc.into_charter(Uuid::nil()));
+        let mut charter = MarkdownCharter::from(doc.into_charter(Uuid::nil()));
+        charter.id_source = CharterIdSource::Document;
         let row = project_charter_schema(&charter, Some(source)).unwrap();
         assert_eq!(row["id"], "01951111-0000-7000-8000-0000000000aa");
         assert_eq!(row["state"], "new");
@@ -287,8 +281,9 @@ mod tests {
     #[test]
     fn uppercase_declared_uuid_and_fenced_headings_survive_projection() {
         let source = "---\nid: 01951111-0000-7000-8000-0000000000AA\n---\n# Work\n\n```md\n## Not a section\n```\n\n## Notes\n\nReal section.\n";
-        let charter =
+        let mut charter =
             MarkdownCharter::from(parse_charter(source).unwrap().into_charter(Uuid::nil()));
+        charter.id_source = CharterIdSource::Document;
         let row = project_charter_schema(&charter, Some(source)).unwrap();
         assert_eq!(row["id"], "01951111-0000-7000-8000-0000000000aa");
         assert_eq!(row["description"], "```md\n## Not a section\n```");
@@ -385,7 +380,8 @@ mod tests {
     fn sidecar_identity_not_emitted_without_document_declaration() {
         let source = "---\nalias: reno\n---\n# Renovation\n";
         let doc = parse_charter(source).unwrap();
-        let charter = MarkdownCharter::from(doc.into_charter(Uuid::now_v7()));
+        let mut charter = MarkdownCharter::from(doc.into_charter(Uuid::now_v7()));
+        charter.id_source = CharterIdSource::Sidecar;
         assert!(
             project_charter_schema(&charter, Some(source))
                 .unwrap()

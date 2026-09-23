@@ -8,6 +8,7 @@ use tracing::info;
 
 use crate::argparser;
 use crate::cli::CommandContext;
+use clearhead_core::workspace::CharterIdSource;
 use clearhead_core::{ActionState, Charter, CharterState};
 
 use super::action::resolve_charter_across_workspaces;
@@ -122,90 +123,34 @@ pub fn read_charters(
     explicit_only: bool,
 ) -> anyhow::Result<()> {
     let multi_ws = ctx.workspace_dirs().len() > 1;
+    let keep = |alias: &Option<String>, description: &Option<String>| {
+        !explicit_only || alias.is_some() || description.is_some()
+    };
+    // Load once: identity provenance lives on the source charters, and a
+    // second load would mint different ephemeral ids.
+    let workspaces = load_source_charters(ctx)?;
+
     if matches!(format, Some(argparser::OutputMode::Json)) {
-        let mut rows = Vec::new();
-        for (_, root, charters) in load_source_charters(ctx)? {
-            let charter_root = clearhead_cli::filesystem::charter_root(&root);
-            for charter in charters {
-                if explicit_only && charter.alias.is_none() && charter.description.is_none() {
-                    continue;
-                }
-                let content = charter
-                    .md_file
-                    .as_ref()
-                    .map(|path| {
-                        let path = charter_root.join(path);
-                        std::fs::read_to_string(&path).with_context(|| {
-                            format!("Cannot reread charter document {}", path.display())
-                        })
-                    })
-                    .transpose()?;
-                rows.push(
-                    clearhead_core::workspace::project_charter_schema(&charter, content.as_deref())
-                        .map_err(|error| {
-                            anyhow::anyhow!("Cannot project charter {}: {error}", charter.title)
-                        })?,
-                );
-            }
-        }
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&clearhead_core::workspace::project_charters_schema(
-                rows
-            ))?
-        );
-        return Ok(());
+        return print_charters_json(&workspaces, keep);
     }
 
-    // Keep the shell-minted ids from the domain model load: a second model
-    // load would mint different ids. Re-read each document conservatively;
-    // missing, changed, or unreadable frontmatter is treated as undeclared.
-    let mut models = Vec::new();
-    if !matches!(
-        format,
-        Some(argparser::OutputMode::Ids | argparser::OutputMode::JsonLd)
-    ) {
-        models.extend(
-            ctx.all_domain_models()?
-                .into_iter()
-                .map(|(name, model)| (name, model, HashSet::new())),
-        );
-    } else {
-        for (name, root, charters) in load_source_charters(ctx)? {
-            let charter_root = clearhead_cli::filesystem::charter_root(&root);
-            let without_declared_id = charters
-                .iter()
-                .filter(|charter| {
-                    charter
-                        .md_file
-                        .as_ref()
-                        .and_then(|path| std::fs::read_to_string(charter_root.join(path)).ok())
-                        .and_then(|content| {
-                            clearhead_core::workspace::charter_frontmatter_id(&content)
-                                .ok()
-                                .flatten()
-                        })
-                        != Some(charter.id)
-                })
-                .map(|charter| charter.id)
-                .collect::<HashSet<_>>();
-            let model: clearhead_core::DomainModel =
-                clearhead_cli::filesystem::load_workspace_envelope(&root, charters).into();
-            models.push((name, model, without_declared_id));
-        }
-    }
-
-    // Apply explicit_only filter.
-    let models: Vec<(String, clearhead_core::DomainModel, HashSet<uuid::Uuid>)> = models
+    // Charters without a document-declared id must not publish their id.
+    let models: Vec<(String, clearhead_core::DomainModel, HashSet<uuid::Uuid>)> = workspaces
         .into_iter()
-        .map(|(name, mut m, without_declared_id)| {
-            if explicit_only {
-                m.charters
-                    .retain(|c| c.alias.is_some() || c.description.is_some());
-            }
-            (name, m, without_declared_id)
+        .map(|(name, root, charters)| {
+            let anonymous = charters
+                .iter()
+                .filter(|charter| charter.id_source != CharterIdSource::Document)
+                .map(|charter| charter.id)
+                .collect();
+            let mut model: clearhead_core::DomainModel =
+                clearhead_cli::filesystem::load_workspace_envelope(&root, charters).into();
+            model
+                .charters
+                .retain(|charter| keep(&charter.alias, &charter.description));
+            (name, model, anonymous)
         })
-        .filter(|(_, m, _)| !m.charters.is_empty())
+        .filter(|(_, model, _)| !model.charters.is_empty())
         .collect();
 
     if models.is_empty() {
@@ -214,6 +159,7 @@ pub fn read_charters(
     }
 
     match format {
+        Some(argparser::OutputMode::Json) => unreachable!("JSON is printed from source charters"),
         Some(argparser::OutputMode::JsonLd) => {
             for (_, model, without_declared_id) in &models {
                 let jsonld = clearhead_cli::serialize_domain_to_jsonld_with_anonymous_charters(
@@ -224,7 +170,6 @@ pub fn read_charters(
                 println!("{}", jsonld);
             }
         }
-        Some(argparser::OutputMode::Json) => unreachable!("JSON returned before model assembly"),
         Some(argparser::OutputMode::Ids) => {
             for (_, model, without_declared_id) in &models {
                 for charter in &model.charters {
@@ -260,6 +205,43 @@ pub fn read_charters(
             }
         }
     }
+    Ok(())
+}
+
+/// Canonical charters.schema.json output, projected from source charters so
+/// document sections, log and defaults survive (the domain Charter drops them).
+fn print_charters_json(
+    workspaces: &[(String, PathBuf, Vec<clearhead_core::MarkdownCharter>)],
+    keep: impl Fn(&Option<String>, &Option<String>) -> bool,
+) -> anyhow::Result<()> {
+    let mut rows = Vec::new();
+    for (_, root, charters) in workspaces {
+        let charter_root = clearhead_cli::filesystem::charter_root(root);
+        for charter in charters
+            .iter()
+            .filter(|charter| keep(&charter.alias, &charter.description))
+        {
+            let content = charter
+                .md_file
+                .as_ref()
+                .map(|path| {
+                    let path = charter_root.join(path);
+                    std::fs::read_to_string(&path)
+                        .with_context(|| format!("Cannot read charter document {}", path.display()))
+                })
+                .transpose()?;
+            rows.push(
+                clearhead_core::workspace::project_charter_schema(charter, content.as_deref())
+                    .map_err(|error| {
+                        anyhow::anyhow!("Cannot project charter {}: {error}", charter.title)
+                    })?,
+            );
+        }
+    }
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&clearhead_core::workspace::project_charters_schema(rows))?
+    );
     Ok(())
 }
 

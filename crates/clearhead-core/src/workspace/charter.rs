@@ -26,12 +26,31 @@ use crate::domain::{Charter, CharterState};
 use crate::workspace::actions::repository::SourcedAction;
 use crate::workspace::calendar::ics::ICSPlan;
 
+/// Where a loaded charter's `id` came from.
+///
+/// Only a [`Document`](Self::Document) id is a published charter fact; every
+/// other source is an in-process join key that serializers must not leak
+/// (clearhead-core docs/DECISIONS.md Decision 1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CharterIdSource {
+    /// Declared in the charter document's frontmatter.
+    Document,
+    /// Adopted from the actions sidecar because the document declares none.
+    Sidecar,
+    /// Minted by the shell for this load only; differs on every load.
+    Ephemeral,
+    /// Not read from any document: the name-hashed id of an implicit
+    /// charter, or an id carried in by converting a domain [`Charter`].
+    Derived,
+}
+
 /// A charter as it exists in the workspace — carries file paths alongside domain data.
 ///
 /// Use `From<MarkdownCharter> for Charter` to obtain a pure domain object.
 #[derive(Debug, Clone)]
 pub struct MarkdownCharter {
     pub id: Uuid,
+    pub id_source: CharterIdSource,
     pub title: String,
     pub description: Option<String>,
     pub alias: Option<String>,
@@ -79,6 +98,7 @@ impl From<Charter> for MarkdownCharter {
         };
         MarkdownCharter {
             id: c.id,
+            id_source: CharterIdSource::Derived,
             title: c.title,
             description: c.description,
             alias: c.alias,
@@ -520,22 +540,6 @@ pub(crate) fn frontmatter_has_parent_key(content: &str) -> bool {
                 .ok()
         })
         .map(|map| map.contains_key("parent"))
-        .unwrap_or(false)
-}
-
-/// Return true if the markdown frontmatter contains an explicit `id:` key.
-///
-/// Lets the loader tell a *declared* charter identity from a `v5(title)` seed:
-/// only a declared id is authoritative, so a charter without this key may have
-/// its id superseded by a recorded sidecar `charter.id`.
-pub(crate) fn frontmatter_has_id_key(content: &str) -> bool {
-    let (frontmatter, _) = split_frontmatter(content);
-    frontmatter
-        .and_then(|yaml| {
-            serde_yaml_ng::from_str::<std::collections::HashMap<String, serde_yaml_ng::Value>>(yaml)
-                .ok()
-        })
-        .map(|map| map.contains_key("id"))
         .unwrap_or(false)
 }
 

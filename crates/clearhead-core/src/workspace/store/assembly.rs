@@ -18,8 +18,7 @@ use crate::workspace::actions::convert::from_actions_with_charter;
 use crate::workspace::actions::repository::SourcedAction;
 use crate::workspace::calendar::ics::parse_ics;
 use crate::workspace::charter::{
-    MarkdownCharter, frontmatter_has_id_key, frontmatter_has_parent_key, implicit_charter,
-    parse_charter,
+    CharterIdSource, MarkdownCharter, frontmatter_has_parent_key, implicit_charter, parse_charter,
 };
 use crate::workspace::resource::{
     MountId, MountInventory, MountReadEvidence, WorkspaceMounts, WorkspacePath,
@@ -184,8 +183,6 @@ pub fn assemble_workspace(input: &WorkspaceAssemblyInput) -> Result<WorkspaceRea
     }
 
     let mut explicit_parent_charters = HashSet::new();
-    let mut explicit_id_charters = HashSet::new();
-    let mut documents_without_declared_id = HashSet::new();
     for relative in charter_files(input) {
         let Some(name) = infer_charter_name_for_workspace(&relative, root_charter) else {
             findings.push(Finding::violation(
@@ -210,11 +207,6 @@ pub fn assemble_workspace(input: &WorkspaceAssemblyInput) -> Result<WorkspaceRea
         if frontmatter_has_parent_key(content) {
             explicit_parent_charters.insert(name.clone());
         }
-        if frontmatter_has_id_key(content) {
-            explicit_id_charters.insert(name.clone());
-        } else {
-            documents_without_declared_id.insert(name.clone());
-        }
         let document = match parse_charter(content) {
             Ok(document) => document,
             Err(error) => {
@@ -229,9 +221,13 @@ pub fn assemble_workspace(input: &WorkspaceAssemblyInput) -> Result<WorkspaceRea
         // Resolution order (I3): the declared frontmatter id, else the
         // shell-supplied ephemeral id. Sidecar adoption happens later, for
         // documents that declared none. A missing entry is a host bug.
-        let resolved_id = document
-            .id
-            .or_else(|| input.charter_ids.get(&relative).copied());
+        let (resolved_id, id_source) = match document.id {
+            Some(id) => (Some(id), CharterIdSource::Document),
+            None => (
+                input.charter_ids.get(&relative).copied(),
+                CharterIdSource::Ephemeral,
+            ),
+        };
         let Some(resolved_id) = resolved_id else {
             findings.push(Finding::violation(
                 "charter-id-missing",
@@ -252,6 +248,7 @@ pub fn assemble_workspace(input: &WorkspaceAssemblyInput) -> Result<WorkspaceRea
             .entry(name)
             .and_modify(|implicit| {
                 implicit.id = explicit.id;
+                implicit.id_source = id_source;
                 implicit.title = explicit.title.clone();
                 implicit.description = explicit.description.clone();
                 if explicit.alias.is_some() {
@@ -270,6 +267,7 @@ pub fn assemble_workspace(input: &WorkspaceAssemblyInput) -> Result<WorkspaceRea
             })
             .or_insert_with(|| {
                 let mut charter = MarkdownCharter::from(explicit);
+                charter.id_source = id_source;
                 charter.plans_dir = charter_collection_from_anchor(&md_relative);
                 charter.md_file = Some(md_relative);
                 charter
@@ -295,9 +293,8 @@ pub fn assemble_workspace(input: &WorkspaceAssemblyInput) -> Result<WorkspaceRea
         root.state = Some(crate::domain::CharterState::Active);
     }
 
-    let mut sidecar_identities: HashMap<String, Uuid> = HashMap::new();
-    for (name, charter) in charters.iter_mut() {
-        if explicit_id_charters.contains(name) {
+    for charter in charters.values_mut() {
+        if charter.id_source == CharterIdSource::Document {
             continue;
         }
         let Some(actions_file) = &charter.actions_file else {
@@ -308,7 +305,7 @@ pub fn assemble_workspace(input: &WorkspaceAssemblyInput) -> Result<WorkspaceRea
             && let Ok(Some(id)) = parse_sidecar(source).map(|meta| meta.charter.and_then(|c| c.id))
         {
             charter.id = id;
-            sidecar_identities.insert(name.clone(), id);
+            charter.id_source = CharterIdSource::Sidecar;
         }
     }
 
@@ -319,20 +316,19 @@ pub fn assemble_workspace(input: &WorkspaceAssemblyInput) -> Result<WorkspaceRea
     // reported. The root README is excluded here because `doctor`'s
     // root-identity check already owns that case, with repair-aware wording.
     for (name, charter) in &charters {
-        if !documents_without_declared_id.contains(name) || name == root_charter {
+        let Some(path) = charter.md_file.clone() else {
+            continue;
+        };
+        if charter.id_source == CharterIdSource::Document || name == root_charter {
             continue;
         }
-        let path = charter
-            .md_file
-            .clone()
-            .or_else(|| path_for_name.get(name).cloned())
-            .unwrap_or_else(|| PathBuf::from("<unknown>"));
         let subject = charter.alias.as_deref().unwrap_or(&charter.title);
-        let detail = match sidecar_identities.get(name) {
-            Some(id) => format!(
+        let id = charter.id;
+        let detail = match charter.id_source {
+            CharterIdSource::Sidecar => format!(
                 "charter '{subject}' declares no id, so its document is not the identity anchor; its sidecar records {id}, which belongs in the document frontmatter; run `clearhead normalize file <charter.md> --write` to stamp it"
             ),
-            None => format!(
+            _ => format!(
                 "charter '{subject}' declares no id, so it loads with an ephemeral identity that changes on every load; run `clearhead normalize file <charter.md> --write` to stamp a durable id"
             ),
         };
