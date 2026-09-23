@@ -98,6 +98,7 @@ pub const ACTION_WARNING_CHECKS: &[ActionCheck] = &[
     check_future_creation_date,       // W005
     check_completion_before_creation, // W006
     check_incomplete_uuid,            // W013
+    check_decision_heading,           // W014
 ];
 
 /// Action-level info checks (I001-I003)
@@ -183,6 +184,71 @@ fn check_excessive_duration(action: &Action, metadata: &SourceMetadata) -> Optio
     } else {
         None
     }
+}
+
+/// Flag duplicated decision records, not citations such as "Decision 41".
+/// Only a decision-labelled Markdown heading or a line-start "Decision N:"
+/// label counts; ordinary prose and historical "DECIDED" notes do not.
+fn check_decision_heading(action: &Action, metadata: &SourceMetadata) -> Option<LintDiagnostic> {
+    let description = action.description.as_deref()?;
+    let mut fence: Option<(u8, usize)> = None;
+    let has_heading = description.lines().any(|line| {
+        // The action parser normalizes description indentation, so the
+        // source's indentation is not available at this action-level check.
+        let line = line.trim_start();
+        if let Some(marker) = line
+            .as_bytes()
+            .first()
+            .copied()
+            .filter(|byte| matches!(byte, b'`' | b'~'))
+        {
+            let width = line.bytes().take_while(|byte| *byte == marker).count();
+            if width >= 3 {
+                match fence {
+                    None => fence = Some((marker, width)),
+                    Some((open_marker, open_width))
+                        if marker == open_marker
+                            && width >= open_width
+                            && line[width..].trim().is_empty() =>
+                    {
+                        fence = None
+                    }
+                    _ => {}
+                }
+                return false;
+            }
+        }
+        if fence.is_some() {
+            return false;
+        }
+        let hashes = line.bytes().take_while(|byte| *byte == b'#').count();
+        if (1..=6).contains(&hashes) {
+            let heading = &line[hashes..];
+            if heading.starts_with(char::is_whitespace) {
+                let heading = heading.trim_start();
+                if heading.starts_with("Decision:") || heading == "Decision" {
+                    return true;
+                }
+                if let Some(rest) = heading.strip_prefix("Decision ") {
+                    return rest.starts_with(|character: char| character.is_ascii_digit())
+                        || rest.starts_with([':', '—', '-']);
+                }
+            }
+        }
+        line.strip_prefix("Decision ")
+            .and_then(|rest| rest.split_once(':'))
+            .is_some_and(|(number, _)| {
+                !number.is_empty() && number.bytes().all(|byte| byte.is_ascii_digit())
+            })
+    });
+    has_heading.then(|| {
+        LintDiagnostic::warning(
+            "W014",
+            "Decision text belongs in DECISIONS.md; link to it from the action instead (W014)."
+                .to_string(),
+            metadata.root,
+        )
+    })
 }
 
 /// Check hierarchy levels (E010, E011, W001)
@@ -544,6 +610,38 @@ mod tests {
             .unwrap();
         assert_eq!(uuid_diag.severity, LintSeverity::Info);
         assert!(uuid_diag.message.contains("missing a UUID"));
+    }
+
+    #[test]
+    fn decision_heading_lint_is_narrow() {
+        let id = "#01942d99-4c27-77f6-9316-107024843939";
+        for (note, flagged) in [
+            ("## Decision: Keep one owner", true),
+            ("Context first\n\n## Decision: Keep one owner", true),
+            ("Decision 42: Keep one owner", true),
+            ("# Decision 42 — Keep one owner", true),
+            ("See Decision 42 and DECISIONS.md", false),
+            ("See Decision 42: this was already decided", false),
+            ("DECIDED 2026-09-18 with the user", false),
+            ("RESOLVED 2026-09-22 in core", false),
+            ("Decision 42 is a citation", false),
+            ("## Background", false),
+            ("```markdown\n## Decision: example only\n```", false),
+            ("~~~\nDecision 42: example only\n~~~", false),
+            (
+                "```markdown\n## Decision: example only\n```\n## Decision: real",
+                true,
+            ),
+        ] {
+            let text = format!("[ ] Task ${note}$ {id}");
+            let parsed = get_parsed_document(&text).unwrap();
+            let results = lint_document(&parsed);
+            assert_eq!(
+                results.warnings.iter().any(|diag| diag.code == "W014"),
+                flagged,
+                "{note}"
+            );
+        }
     }
 
     #[test]
