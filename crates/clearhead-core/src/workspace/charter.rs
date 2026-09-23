@@ -480,7 +480,7 @@ pub fn append_log_entry(content: &str, entry: &str) -> String {
 /// Split content into optional YAML frontmatter and body.
 ///
 /// Frontmatter must start on line 1 with `---` and close with `---`.
-fn split_frontmatter(content: &str) -> (Option<&str>, &str) {
+pub(super) fn split_frontmatter(content: &str) -> (Option<&str>, &str) {
     let trimmed = content.trim_start();
     if !trimmed.starts_with("---") {
         return (None, content);

@@ -14,6 +14,7 @@ pub mod archive_charter;
 pub mod archive_facts;
 pub mod calendar;
 pub mod charter;
+pub mod charter_schema;
 pub mod init;
 pub mod manifest;
 pub mod mutate_actions;
@@ -66,6 +67,7 @@ pub use charter::{
     CharterDocument, MarkdownCharter, append_log_entry, charter_frontmatter_id,
     edit_charter_document, format_charter, implicit_charter, parse_charter,
 };
+pub use charter_schema::{project_charter_schema, project_charters_schema};
 pub use init::{
     InitPlan, InitRequest, InitSnapshot, ReadmeId, RootId, plan_workspace_init, resolve_root_id,
 };

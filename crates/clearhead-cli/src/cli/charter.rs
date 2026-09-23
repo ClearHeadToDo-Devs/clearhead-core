@@ -122,6 +122,40 @@ pub fn read_charters(
     explicit_only: bool,
 ) -> anyhow::Result<()> {
     let multi_ws = ctx.workspace_dirs().len() > 1;
+    if matches!(format, Some(argparser::OutputMode::Json)) {
+        let mut rows = Vec::new();
+        for (_, root, charters) in load_source_charters(ctx)? {
+            let charter_root = clearhead_cli::filesystem::charter_root(&root);
+            for charter in charters {
+                if explicit_only && charter.alias.is_none() && charter.description.is_none() {
+                    continue;
+                }
+                let content = charter
+                    .md_file
+                    .as_ref()
+                    .map(|path| {
+                        let path = charter_root.join(path);
+                        std::fs::read_to_string(&path).with_context(|| {
+                            format!("Cannot reread charter document {}", path.display())
+                        })
+                    })
+                    .transpose()?;
+                rows.push(
+                    clearhead_core::workspace::project_charter_schema(&charter, content.as_deref())
+                        .map_err(|error| {
+                            anyhow::anyhow!("Cannot project charter {}: {error}", charter.title)
+                        })?,
+                );
+            }
+        }
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&clearhead_core::workspace::project_charters_schema(
+                rows
+            ))?
+        );
+        return Ok(());
+    }
 
     // Keep the shell-minted ids from the domain model load: a second model
     // load would mint different ids. Re-read each document conservatively;
@@ -137,22 +171,7 @@ pub fn read_charters(
                 .map(|(name, model)| (name, model, HashSet::new())),
         );
     } else {
-        for (name, root) in ctx.workspace_dirs() {
-            let is_primary = root == ctx.data_dir;
-            let plan_override = if is_primary {
-                ctx.plan_override()
-            } else {
-                None
-            };
-            let charters =
-                match clearhead_cli::filesystem::load_workspace(&root, plan_override.as_deref()) {
-                    Ok(charters) => charters,
-                    Err(error) if is_primary => return Err(error.into()),
-                    Err(error) => {
-                        tracing::warn!(workspace = %root.display(), %error, "Skipping workspace");
-                        continue;
-                    }
-                };
+        for (name, root, charters) in load_source_charters(ctx)? {
             let charter_root = clearhead_cli::filesystem::charter_root(&root);
             let without_declared_id = charters
                 .iter()
@@ -205,15 +224,7 @@ pub fn read_charters(
                 println!("{}", jsonld);
             }
         }
-        Some(argparser::OutputMode::Json) => {
-            // Charters have no canonical actions-schema shape yet; emit plain
-            // structured JSON while materializing semantic defaults that source
-            // round-tripping deliberately keeps implicit.
-            for (_, model, _) in &models {
-                let semantic = semantic_charters_json(&model.charters)?;
-                println!("{}", serde_json::to_string_pretty(&semantic)?);
-            }
-        }
+        Some(argparser::OutputMode::Json) => unreachable!("JSON returned before model assembly"),
         Some(argparser::OutputMode::Ids) => {
             for (_, model, without_declared_id) in &models {
                 for charter in &model.charters {
@@ -252,19 +263,24 @@ pub fn read_charters(
     Ok(())
 }
 
-fn semantic_charters_json(charters: &[Charter]) -> serde_json::Result<serde_json::Value> {
-    let mut value = serde_json::to_value(charters)?;
-    if let Some(rows) = value.as_array_mut() {
-        for (row, charter) in rows.iter_mut().zip(charters) {
-            if let Some(object) = row.as_object_mut() {
-                object.insert(
-                    "state".into(),
-                    serde_json::to_value(charter.effective_state())?,
-                );
-            }
+fn load_source_charters(
+    ctx: &CommandContext,
+) -> anyhow::Result<Vec<(String, PathBuf, Vec<clearhead_core::MarkdownCharter>)>> {
+    let mut workspaces = Vec::new();
+    for (name, root) in ctx.workspace_dirs() {
+        let is_primary = root == ctx.data_dir;
+        let plan_override = if is_primary {
+            ctx.plan_override()
+        } else {
+            None
+        };
+        match clearhead_cli::filesystem::load_workspace(&root, plan_override.as_deref()) {
+            Ok(charters) => workspaces.push((name, root, charters)),
+            Err(error) if is_primary => return Err(error.into()),
+            Err(error) => tracing::warn!(workspace = %root.display(), %error, "Skipping workspace"),
         }
     }
-    Ok(value)
+    Ok(workspaces)
 }
 
 fn print_charter_table(workspaces: &[(String, Vec<Charter>)], multi_ws: bool) {

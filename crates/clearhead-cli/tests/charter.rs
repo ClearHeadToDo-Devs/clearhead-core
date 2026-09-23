@@ -42,13 +42,93 @@ fn read_charters_json_materializes_omitted_state_as_new() {
         panic!("read charters should emit JSON");
     };
 
-    let Some(charter) = rows
+    let Some(charter) = rows["charters"]
         .as_array()
         .and_then(|rows| rows.iter().find(|row| row["alias"] == "my-charter"))
     else {
         panic!("my-charter should be listed: {rows}");
     };
-    assert_eq!(charter["state"], "New");
+    assert_eq!(charter["state"], "new");
+}
+
+#[test]
+fn read_charters_json_is_source_aware_and_schema_shaped() {
+    let env = TestEnv::new();
+    env.write_text("charters/work.md", "---\nalias: work\ndefaults:\n  context: focused\n---\n# Work\n\nCore description.\n\n## Log\n\n- 2026-09-17T23:28-07:00 — offset entry\n- undated entry\n\n## Notes\n\nKeep these.\n");
+    env.write_actions(
+        "work.actions",
+        "[ ] Do work #01951111-0000-7000-8000-0000000000cc\n",
+    );
+    env.write_text(
+        "charters/.work.json",
+        r#"{"charter":{"id":"01951111-0000-7000-8000-0000000000bb"}}"#,
+    );
+    let result = env
+        .command()
+        .args(["read", "charters", "--format", "json"])
+        .assert()
+        .success();
+    let json: serde_json::Value = serde_json::from_slice(&result.get_output().stdout).unwrap();
+    let rows = json["charters"]
+        .as_array()
+        .expect("single charter document");
+    let row = rows.iter().find(|row| row["alias"] == "work").unwrap();
+    assert_eq!(row["state"], "new");
+    assert_eq!(row["description"], "Core description.");
+    assert_eq!(row["defaults"]["context"], "focused");
+    assert_eq!(row["log"][0]["at"], "2026-09-17T23:28-07:00");
+    assert_eq!(row["log"][1]["text"], "undated entry");
+    assert_eq!(row["sections"][0]["heading"], "Notes");
+    assert!(
+        row.get("id").is_none(),
+        "sidecar identity cannot be emitted: {row}"
+    );
+    assert!(row.get("actions").is_none() && row.get("plans").is_none());
+    assert!(!serde_json::to_string(row).unwrap().contains("null"));
+}
+
+#[test]
+fn read_charters_json_is_one_document_across_workspaces_and_empty_when_filtered() {
+    let env = TestEnv::new();
+    env.write_text("charters/first.md", "---\nalias: first\n---\n# First\n");
+    env.write_actions("first.actions", "");
+    let second = env.work_dir.join("second");
+    fs::create_dir_all(second.join("charters")).unwrap();
+    fs::write(
+        second.join("charters/second.md"),
+        "---\nalias: second\n---\n# Second\n",
+    )
+    .unwrap();
+    fs::write(second.join("charters/second.actions"), "").unwrap();
+    env.write_config(&format!(
+        r#"{{"additional_workspaces":["{}"]}}"#,
+        second.display()
+    ));
+    let result = env
+        .command()
+        .args(["read", "charters", "--format", "json"])
+        .assert()
+        .success();
+    let json: serde_json::Value = serde_json::from_slice(&result.get_output().stdout).unwrap();
+    let rows = json["charters"].as_array().unwrap();
+    assert!(rows.iter().any(|row| row["alias"] == "first"));
+    assert!(rows.iter().any(|row| row["alias"] == "second"));
+
+    let empty = TestEnv::new();
+    let result = empty
+        .command()
+        .args([
+            "read",
+            "charters",
+            "--format",
+            "json",
+            "--workspace",
+            "no-such-workspace",
+        ])
+        .assert()
+        .success();
+    let json: serde_json::Value = serde_json::from_slice(&result.get_output().stdout).unwrap();
+    assert_eq!(json, serde_json::json!({"charters": []}));
 }
 
 #[test]
@@ -290,7 +370,7 @@ fn jot_into_project_root_charter_creates_readme_not_phantom() {
         .success();
     let rows: serde_json::Value = serde_json::from_slice(&assert.get_output().stdout).unwrap();
     assert_eq!(
-        rows.as_array().map(|r| r.len()),
+        rows["charters"].as_array().map(|r| r.len()),
         Some(1),
         "next.actions + README.md must pair into one charter, not collide: {rows}"
     );
@@ -356,7 +436,7 @@ fn jot_into_user_root_charter_creates_readme_not_phantom() {
         .success();
     let rows: serde_json::Value = serde_json::from_slice(&assert.get_output().stdout).unwrap();
     assert_eq!(
-        rows.as_array().map(|r| r.len()),
+        rows["charters"].as_array().map(|r| r.len()),
         Some(1),
         "next.actions + README.md must pair into one charter, not collide: {rows}"
     );
