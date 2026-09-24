@@ -561,47 +561,23 @@ pub(crate) fn frontmatter_has_parent_key(content: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// Extract the first H1 title and remaining description from markdown body.
+/// Split a charter body into its H1 title and the description after it.
+///
+/// The title is the H1 only when it opens the body. Without one (the title
+/// may come from frontmatter instead), the whole body is the description.
 fn extract_title_and_description(body: &str) -> (Option<String>, Option<String>) {
-    let mut title = None;
-    let mut desc_lines = Vec::new();
-    let mut found_title = false;
-    let mut past_title_blank = false;
-
-    for line in body.lines() {
-        if !found_title {
-            if let Some(h1) = line.strip_prefix("# ") {
-                title = Some(h1.trim().to_string());
-                found_title = true;
-                continue;
-            }
-            // Skip blank lines before title
-            if line.trim().is_empty() {
-                continue;
-            }
-            // Non-H1, non-blank line before we find a title — no H1 present
-            break;
-        }
-
-        // After title: skip the first blank line, then collect description
-        if !past_title_blank && line.trim().is_empty() {
-            past_title_blank = true;
-            continue;
-        }
-        if found_title {
-            past_title_blank = true;
-            desc_lines.push(line);
-        }
-    }
-
-    let description = if desc_lines.is_empty() {
-        None
-    } else {
-        let desc = desc_lines.join("\n").trim().to_string();
-        if desc.is_empty() { None } else { Some(desc) }
-    };
-
-    (title, description)
+    let title = markdown::headings(body)
+        .into_iter()
+        .next()
+        .filter(|heading| heading.level == 1 && body[..heading.range.start].trim().is_empty());
+    let rest = title
+        .as_ref()
+        .map_or(body, |heading| &body[heading.range.end..]);
+    let description = rest.trim().replace("\r\n", "\n");
+    (
+        title.map(|heading| heading.text),
+        (!description.is_empty()).then_some(description),
+    )
 }
 
 #[cfg(test)]
@@ -851,5 +827,29 @@ Stay healthy and fit through regular exercise and diet.
             "{}",
             append_log_entry(content, "b")
         );
+    }
+
+    #[test]
+    fn frontmatter_title_keeps_the_body_as_description() {
+        // specifications/charters.md's own example.
+        let doc = parse_charter(
+            "---\ntitle: charter example\n---\nhere is a small charter description\n",
+        )
+        .unwrap();
+        assert_eq!(doc.title, "charter example");
+        assert_eq!(
+            doc.description.as_deref(),
+            Some("here is a small charter description")
+        );
+    }
+
+    #[test]
+    fn h1_title_survives_whitespace_after_the_frontmatter_fence() {
+        let doc = parse_charter(
+            "---\nid: 019f5854-ba57-7027-b7e7-91f8c4790294\n--- \n# Work `now`\nbody\n",
+        )
+        .unwrap();
+        assert_eq!(doc.title, "Work `now`");
+        assert_eq!(doc.description.as_deref(), Some("body"));
     }
 }
