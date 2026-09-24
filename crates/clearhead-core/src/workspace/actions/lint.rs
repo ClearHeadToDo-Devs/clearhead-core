@@ -1,4 +1,5 @@
 use crate::workspace::actions::{Action, ActionState, ParsedDocument, SourceMetadata, SourceRange};
+use crate::workspace::markdown;
 use chrono::Local;
 use std::collections::HashSet;
 use uuid::Uuid;
@@ -191,56 +192,12 @@ fn check_excessive_duration(action: &Action, metadata: &SourceMetadata) -> Optio
 /// label counts; ordinary prose and historical "DECIDED" notes do not.
 fn check_decision_heading(action: &Action, metadata: &SourceMetadata) -> Option<LintDiagnostic> {
     let description = action.description.as_deref()?;
-    let mut fence: Option<(u8, usize)> = None;
-    let has_heading = description.lines().any(|line| {
+    let has_heading = markdown::headings(description)
+        .iter()
+        .any(|heading| is_decision_heading(&heading.text))
         // The action parser normalizes description indentation, so the
         // source's indentation is not available at this action-level check.
-        let line = line.trim_start();
-        if let Some(marker) = line
-            .as_bytes()
-            .first()
-            .copied()
-            .filter(|byte| matches!(byte, b'`' | b'~'))
-        {
-            let width = line.bytes().take_while(|byte| *byte == marker).count();
-            if width >= 3 {
-                match fence {
-                    None => fence = Some((marker, width)),
-                    Some((open_marker, open_width))
-                        if marker == open_marker
-                            && width >= open_width
-                            && line[width..].trim().is_empty() =>
-                    {
-                        fence = None
-                    }
-                    _ => {}
-                }
-                return false;
-            }
-        }
-        if fence.is_some() {
-            return false;
-        }
-        let hashes = line.bytes().take_while(|byte| *byte == b'#').count();
-        if (1..=6).contains(&hashes) {
-            let heading = &line[hashes..];
-            if heading.starts_with(char::is_whitespace) {
-                let heading = heading.trim_start();
-                if heading.starts_with("Decision:") || heading == "Decision" {
-                    return true;
-                }
-                if let Some(rest) = heading.strip_prefix("Decision ") {
-                    return rest.starts_with(|character: char| character.is_ascii_digit())
-                        || rest.starts_with([':', '—', '-']);
-                }
-            }
-        }
-        line.strip_prefix("Decision ")
-            .and_then(|rest| rest.split_once(':'))
-            .is_some_and(|(number, _)| {
-                !number.is_empty() && number.bytes().all(|byte| byte.is_ascii_digit())
-            })
-    });
+        || markdown::prose_lines(description).any(|line| is_decision_label(line.trim_start()));
     has_heading.then(|| {
         LintDiagnostic::warning(
             "W014",
@@ -249,6 +206,22 @@ fn check_decision_heading(action: &Action, metadata: &SourceMetadata) -> Option<
             metadata.root,
         )
     })
+}
+
+/// `Decision`, `Decision: …`, `Decision 42 …` or `Decision — …` as heading text.
+fn is_decision_heading(text: &str) -> bool {
+    text == "Decision"
+        || text.starts_with("Decision:")
+        || text.strip_prefix("Decision ").is_some_and(|rest| {
+            rest.starts_with(|c: char| c.is_ascii_digit()) || rest.starts_with([':', '—', '-'])
+        })
+}
+
+/// A line opening with a `Decision 42:` label, as opposed to a citation.
+fn is_decision_label(line: &str) -> bool {
+    line.strip_prefix("Decision ")
+        .and_then(|rest| rest.split_once(':'))
+        .is_some_and(|(number, _)| !number.is_empty() && number.bytes().all(|b| b.is_ascii_digit()))
 }
 
 /// Check hierarchy levels (E010, E011, W001)

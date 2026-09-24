@@ -3,7 +3,10 @@
 
 use serde_json::{Map, Value, json};
 
-use super::charter::{CharterIdSource, MarkdownCharter, split_frontmatter};
+use super::charter::{CharterIdSource, MarkdownCharter, is_log_heading, split_frontmatter};
+use super::markdown;
+use regex::Regex;
+use std::sync::LazyLock;
 
 /// Project a charter from its loaded model and its document text (if any).
 /// Only a document-declared id is published; see [`CharterIdSource`].
@@ -65,50 +68,26 @@ pub fn project_charter_schema(
     } else {
         charter.description.as_deref().unwrap_or("")
     };
-    let body = body.trim_start_matches(['\r', '\n']);
-    let body = body
-        .strip_prefix("# ")
-        .map(|text| text.split_once('\n').map(|(_, rest)| rest).unwrap_or(""))
-        .unwrap_or(body);
-    let mut heading: Option<String> = None;
-    let mut lines = Vec::new();
-    let mut sections = Vec::new();
-    let mut logs = Vec::new();
-    let mut description = None;
-    let mut fence: Option<(u8, usize)> = None;
-    for line in body.lines() {
-        if let Some((kind, width)) = fence {
-            if let Some((end_kind, end_width)) = fence_marker(line)
-                && kind == end_kind
-                && end_width >= width
-                && line
-                    .trim_start_matches(' ')
-                    .trim_start_matches(kind as char)
-                    .trim()
-                    .is_empty()
-            {
-                fence = None;
-            }
-        } else {
-            fence = fence_marker(line);
-        }
-        if fence.is_none() && line.starts_with("## ") && !line[3..].trim().is_empty() {
-            flush_section(
-                heading.take(),
-                &lines,
-                &mut description,
-                &mut logs,
-                &mut sections,
-            );
-            heading = Some(line[3..].trim().to_string());
-            lines.clear();
-        } else {
-            lines.push(line);
-        }
+    let (preamble, mut parts) = markdown::sections(body, 2);
+    // The title heading opens the document; its section is the core description.
+    let core = if preamble.trim().is_empty() && parts.first().is_some_and(|s| s.heading.level == 1)
+    {
+        parts.remove(0).body
+    } else {
+        preamble
+    };
+    let core = text(core);
+    if !core.is_empty() {
+        row.insert("description".into(), json!(core));
     }
-    flush_section(heading, &lines, &mut description, &mut logs, &mut sections);
-    if let Some(description) = description {
-        row.insert("description".into(), json!(description));
+    let mut logs = Vec::new();
+    let mut sections = Vec::new();
+    for section in parts {
+        if is_log_heading(&section.heading) {
+            parse_log(&text(section.body), &mut logs);
+        } else {
+            sections.push(json!({"heading": section.heading.text, "body": text(section.body)}));
+        }
     }
     if !logs.is_empty() {
         row.insert("log".into(), json!(logs));
@@ -119,37 +98,9 @@ pub fn project_charter_schema(
     Ok(Value::Object(row))
 }
 
-fn fence_marker(line: &str) -> Option<(u8, usize)> {
-    let indent = line.bytes().take_while(|byte| *byte == b' ').count();
-    if indent > 3 {
-        return None;
-    }
-    let bytes = &line.as_bytes()[indent..];
-    let marker = *bytes.first()?;
-    if marker != b'`' && marker != b'~' {
-        return None;
-    }
-    let width = bytes.iter().take_while(|byte| **byte == marker).count();
-    (width >= 3).then_some((marker, width))
-}
-
-fn flush_section(
-    heading: Option<String>,
-    lines: &[&str],
-    description: &mut Option<String>,
-    logs: &mut Vec<Value>,
-    sections: &mut Vec<Value>,
-) {
-    let text = lines.join("\n").trim().to_string();
-    match heading {
-        None => {
-            if !text.is_empty() {
-                *description = Some(text);
-            }
-        }
-        Some(name) if name.eq_ignore_ascii_case("Log") => parse_log(&text, logs),
-        Some(name) => sections.push(json!({"heading": name, "body": text})),
-    }
+/// Trimmed section text with LF line endings.
+fn text(section: &str) -> String {
+    section.trim().replace("\r\n", "\n")
 }
 
 fn parse_log(body: &str, rows: &mut Vec<Value>) {
@@ -178,63 +129,28 @@ fn parse_log(body: &str, rows: &mut Vec<Value>) {
     }
 }
 
+/// `logEntry.at` in charters.schema.json: the same pattern, with its parts
+/// captured as date, hours:minutes, seconds and UTC offset.
+static LOG_DATE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^(\d{4}-\d{2}-\d{2})(?:T(\d{2}:\d{2})(?::(\d{2}))?(Z|[+-]\d{2}:\d{2})?)?$")
+        .expect("schema pattern is a valid regex")
+});
+
+/// The schema's shape, plus a real calendar date, time and offset.
 fn valid_log_date(at: &str) -> bool {
-    if !at.is_ascii() {
+    let Some(parts) = LOG_DATE.captures(at) else {
         return false;
-    }
-    let bytes = at.as_bytes();
-    if bytes.len() < 10
-        || bytes[4] != b'-'
-        || bytes[7] != b'-'
-        || !bytes[..4].iter().all(u8::is_ascii_digit)
-        || !bytes[5..7].iter().all(u8::is_ascii_digit)
-        || !bytes[8..10].iter().all(u8::is_ascii_digit)
-    {
-        return false;
-    }
-    if bytes.len() == 10 {
-        return chrono::NaiveDate::parse_from_str(at, "%Y-%m-%d").is_ok();
-    }
-    if bytes.len() < 16
-        || bytes[10] != b'T'
-        || bytes[13] != b':'
-        || !bytes[11..13].iter().all(u8::is_ascii_digit)
-        || !bytes[14..16].iter().all(u8::is_ascii_digit)
-    {
-        return false;
-    }
-    let has_seconds = bytes.get(16) == Some(&b':');
-    if has_seconds && (bytes.len() < 19 || !bytes[17..19].iter().all(u8::is_ascii_digit)) {
-        return false;
-    }
-    let end = if has_seconds { 19 } else { 16 };
-    let suffix = &at[end..];
-    if suffix.is_empty() {
-        return chrono::NaiveDateTime::parse_from_str(
-            at,
-            if has_seconds {
-                "%Y-%m-%dT%H:%M:%S"
-            } else {
-                "%Y-%m-%dT%H:%M"
-            },
-        )
-        .is_ok();
-    }
-    if suffix != "Z"
-        && !(suffix.len() == 6
-            && matches!(suffix.as_bytes()[0], b'+' | b'-')
-            && suffix.as_bytes()[3] == b':'
-            && suffix.as_bytes()[1..3].iter().all(u8::is_ascii_digit)
-            && suffix.as_bytes()[4..].iter().all(u8::is_ascii_digit))
-    {
-        return false;
-    }
-    let expanded = if has_seconds {
-        at.to_string()
-    } else {
-        format!("{}:00{suffix}", &at[..16])
     };
-    chrono::DateTime::parse_from_rfc3339(&expanded).is_ok()
+    let date = &parts[1];
+    match parts.get(2) {
+        None => chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d").is_ok(),
+        Some(clock) => {
+            let seconds = parts.get(3).map_or("00", |m| m.as_str());
+            let offset = parts.get(4).map_or("Z", |m| m.as_str());
+            let stamp = format!("{date}T{}:{seconds}{offset}", clock.as_str());
+            chrono::DateTime::parse_from_rfc3339(&stamp).is_ok()
+        }
+    }
 }
 
 pub fn project_charters_schema(rows: Vec<Value>) -> Value {
@@ -388,5 +304,29 @@ mod tests {
                 .get("id")
                 .is_none()
         );
+    }
+
+    #[test]
+    fn log_dates_follow_the_schema_and_the_calendar() {
+        for valid in [
+            "2026-09-17",
+            "2026-09-17T23:28",
+            "2026-09-17T23:28:05",
+            "2026-09-17T23:28Z",
+            "2026-09-17T23:28-07:00",
+        ] {
+            assert!(valid_log_date(valid), "{valid}");
+        }
+        for invalid in [
+            "2026-9-17",
+            " 2026-09-17",
+            "2026-09-17T23:28:05.5Z",
+            "2026-13-01",
+            "2026-02-30",
+            "2026-09-17T24:00",
+            "2026-09-17T23:28+24:00",
+        ] {
+            assert!(!valid_log_date(invalid), "{invalid}");
+        }
     }
 }

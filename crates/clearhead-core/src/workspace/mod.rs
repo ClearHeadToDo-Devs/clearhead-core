@@ -17,6 +17,7 @@ pub mod charter;
 pub mod charter_schema;
 pub mod init;
 pub mod manifest;
+pub mod markdown;
 pub mod mutate_actions;
 pub mod resource;
 pub mod selector;

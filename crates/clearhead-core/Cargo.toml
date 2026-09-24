@@ -48,6 +48,8 @@ tree-sitter = "0.26.3"
 # and local sibling development override this to the adjacent path via the
 # platform `.cargo/config.toml` `[patch]` table; see the README.
 tree-sitter-actions = { git = "https://github.com/ClearHeadToDo-Devs/tree-sitter-actions.git", rev = "32f7f6f86975a093eeca49938290605096af25ba", version = "0.10.0" }
+pulldown-cmark = { version = "0.13.4", default-features = false }
+regex = { version = "1.13.1", default-features = false, features = ["std", "unicode-perl"] }
 
 [dependencies.uuid]
 version = "1.0"

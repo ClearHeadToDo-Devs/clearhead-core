@@ -25,6 +25,7 @@ use crate::domain::update::CharterUpdate;
 use crate::domain::{Charter, CharterState};
 use crate::workspace::actions::repository::SourcedAction;
 use crate::workspace::calendar::ics::ICSPlan;
+use crate::workspace::markdown;
 
 /// Where a loaded charter's `id` came from.
 ///
@@ -465,14 +466,20 @@ fn replace_h1_title(content: &str, title: &str) -> Result<String, String> {
 /// parsed model and would silently drop unmodeled frontmatter (e.g. `defaults`)
 /// and normalize whitespace — wrong for an append-only log.
 ///
-/// If a `## Log` section exists, the bullet is inserted after the last non-blank
-/// line of that section (before trailing blank lines or a following heading).
-/// Otherwise a `## Log` section is created at the end of the document.
+/// If a Log section exists (see [`is_log_heading`]), the bullet is inserted
+/// after the last non-blank line of that section (before trailing blank lines
+/// or a following heading). Otherwise a `## Log` section is created at the end
+/// of the document.
 pub fn append_log_entry(content: &str, entry: &str) -> String {
     let bullet = format!("- {}", entry.trim());
-    let lines: Vec<&str> = content.lines().collect();
+    let (_, body) = split_frontmatter(content);
+    let offset = content.len() - body.len();
+    let (_, sections) = markdown::sections(body, 2);
 
-    let Some(start) = lines.iter().position(|line| line.trim() == "## Log") else {
+    let Some(log) = sections
+        .iter()
+        .find(|section| is_log_heading(&section.heading))
+    else {
         // No log section: create one at the end, separated from prior content.
         let mut result = content.trim_end().to_string();
         if !result.is_empty() {
@@ -484,29 +491,28 @@ pub fn append_log_entry(content: &str, entry: &str) -> String {
         return result;
     };
 
-    // The section runs until the next heading (level 1 or 2) or end of file.
-    let end = lines[start + 1..]
-        .iter()
-        .position(|line| line.starts_with("# ") || line.starts_with("## "))
-        .map(|rel| start + 1 + rel)
-        .unwrap_or(lines.len());
-    // Insert right after the last non-blank line inside the section, so the
-    // bullet joins the list rather than landing past trailing blank lines.
-    let insert_at = (start + 1..end)
-        .rev()
-        .find(|&i| !lines[i].trim().is_empty())
-        .map(|i| i + 1)
-        .unwrap_or(end);
-
-    let mut out: Vec<&str> = Vec::with_capacity(lines.len() + 1);
-    out.extend_from_slice(&lines[..insert_at]);
-    out.push(bullet.as_str());
-    out.extend_from_slice(&lines[insert_at..]);
-    let mut result = out.join("\n");
-    if content.ends_with('\n') {
+    let start = offset + log.body_range.start;
+    let filled = log.body.trim_end().len();
+    if filled > 0 {
+        // Join the existing list right after its last non-blank line.
+        let at = start + filled;
+        return format!("{}\n{bullet}{}", &content[..at], &content[at..]);
+    }
+    // An empty section: the bullet goes where the section ends.
+    let at = offset + log.body_range.end;
+    let mut result = content[..at].to_string();
+    if !result.ends_with('\n') {
         result.push('\n');
     }
+    result.push_str(&bullet);
+    result.push('\n');
+    result.push_str(&content[at..]);
     result
+}
+
+/// The charter's Log section: a level-2 heading reading `Log`, in any case.
+pub(super) fn is_log_heading(heading: &markdown::Heading) -> bool {
+    heading.level == 2 && heading.text.eq_ignore_ascii_case("Log")
 }
 
 /// Split content into optional YAML frontmatter and body.
@@ -824,5 +830,26 @@ Stay healthy and fit through regular exercise and diet.
         let out = append_log_entry(content, "note");
         assert!(out.contains("defaults:\n  priority: 3"), "{out}");
         assert!(out.ends_with("## Log\n\n- note\n"), "{out}");
+    }
+
+    #[test]
+    fn append_log_joins_a_lowercase_log_heading() {
+        // The projection reads `## log` as the Log section; jot must agree
+        // rather than open a second one.
+        let content = "# T\n\n## log\n\n- a\n";
+        assert_eq!(
+            append_log_entry(content, "b"),
+            "# T\n\n## log\n\n- a\n- b\n"
+        );
+    }
+
+    #[test]
+    fn append_log_ignores_a_log_heading_inside_a_fence() {
+        let content = "# T\n\n```md\n## Log\n```\n";
+        assert!(
+            append_log_entry(content, "b").ends_with("```\n\n## Log\n\n- b\n"),
+            "{}",
+            append_log_entry(content, "b")
+        );
     }
 }
