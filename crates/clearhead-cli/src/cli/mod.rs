@@ -262,6 +262,23 @@ impl CommandContext {
         )?)
     }
 
+    /// Refresh calendar collection names after a write that already committed,
+    /// returning how many were renamed. The names are derived from charter
+    /// aliases, so a failure here is reported as a warning, never as a failed
+    /// write: the source change stands and `doctor --fix` repairs the drift.
+    pub fn refresh_collection_displaynames(&self) -> usize {
+        clearhead_cli::filesystem::write_collection_displaynames(
+            &self.data_dir,
+            self.plan_override().as_deref(),
+        )
+        .unwrap_or_else(|error| {
+            eprintln!(
+                "warning: calendar collection names were not refreshed ({error}); the change is saved, run `clearhead doctor --fix` to rename the collections"
+            );
+            0
+        })
+    }
+
     /// Load the primary workspace with charter provenance, honoring `plan_path`.
     pub fn load_workspace_model(
         &self,

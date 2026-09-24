@@ -278,9 +278,17 @@ fn validate_source_path(source_path: &Path, charter_root: &Path) -> Result<(), W
     // A charter gaining its first action has no anchor on disk yet, so the
     // path cannot always be canonicalized. An existing target keeps the exact
     // previous check (resolve the file itself); a not-yet-created one is
-    // contained iff its deepest existing ancestor is.
+    // contained iff its deepest existing ancestor is. A missing path cannot be
+    // resolved, so it may not climb with `..` past that ancestor.
     let contained_in = |root: &Path| match source_path.canonicalize() {
         Ok(canonical) => canonical.starts_with(root),
+        Err(_)
+            if source_path
+                .components()
+                .any(|part| part == std::path::Component::ParentDir) =>
+        {
+            false
+        }
         Err(_) => source_path
             .parent()
             .and_then(|parent| parent.ancestors().find(|ancestor| ancestor.exists()))
@@ -368,7 +376,6 @@ pub fn read_charter_document(
 
 /// Write `content` to the document iff it still matches the revision captured
 /// by [`read_charter_document`].
-///
 pub fn write_charter_document(
     workspace_root: &Path,
     document: &CharterDocument,
@@ -776,6 +783,10 @@ mod mounted_effect_tests {
         // missing file that is not an actions anchor.
         assert!(validate_source_path(&temp.path().join("outside.actions"), &charter_root).is_err());
         assert!(validate_source_path(&charter_root.join("notes.md"), &charter_root).is_err());
+        // Nor may a missing path climb out through a directory that does not
+        // exist: its deepest existing ancestor is the charter root.
+        let escape = charter_root.join("nope/../../../x.actions");
+        assert!(validate_source_path(&escape, &charter_root).is_err());
     }
 }
 

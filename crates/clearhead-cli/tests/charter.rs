@@ -164,6 +164,60 @@ fn update_charter_edits_source_text_without_stamping_an_id() {
 }
 
 #[test]
+fn update_charter_saves_the_document_when_the_collection_rename_fails() {
+    // The charter document is authoritative; the collection's display name is
+    // derived from it. A failed refresh is a warning with a repair, not a
+    // failed update, because the document write already landed.
+    let env = TestEnv::new();
+    env.write_text("charters/work.md", "---\nalias: work\n---\n# Work\n");
+    env.write_actions("work.actions", "");
+    // A directory where the displayname file belongs makes the refresh fail.
+    fs::create_dir_all(env.data_dir.join("plans/work/displayname")).unwrap();
+
+    env.command()
+        .args(["update", "charter", "work", "--alias", "job"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Charter 'Work' updated."))
+        .stderr(predicate::str::contains("clearhead doctor --fix"));
+    let content = fs::read_to_string(env.data_dir.join("charters/work.md")).unwrap();
+    assert!(content.contains("alias: job\n"), "{content}");
+
+    env.command()
+        .args(["doctor"])
+        .assert()
+        .stdout(predicate::str::contains("stale-collection-displayname"));
+}
+
+#[test]
+fn doctor_fix_renames_a_stale_collection_once() {
+    let env = TestEnv::new();
+    env.write_text("charters/work.md", "---\nalias: work\n---\n# Work\n");
+    env.write_actions("work.actions", "");
+    env.write_text("plans/work/displayname", "old name");
+
+    env.command()
+        .args(["doctor"])
+        .assert()
+        .stdout(predicate::str::contains("stale-collection-displayname"));
+    env.command()
+        .args(["doctor", "--fix"])
+        .assert()
+        .stdout(predicate::str::contains(
+            "Named calendar collection work as 'work'",
+        ));
+    assert_eq!(
+        fs::read_to_string(env.data_dir.join("plans/work/displayname")).unwrap(),
+        "work"
+    );
+    env.command()
+        .args(["doctor", "--fix"])
+        .assert()
+        .stdout(predicate::str::contains("stale-collection-displayname").not())
+        .stdout(predicate::str::contains("Named calendar collection").not());
+}
+
+#[test]
 fn close_charter_by_query_updates_state() {
     let env = TestEnv::new();
     env.write_text("charters/my-charter.md", CHARTER_MD);

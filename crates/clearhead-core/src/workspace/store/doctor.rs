@@ -52,6 +52,8 @@ pub struct DurabilityResidue {
 pub struct DoctorCollectionEvidence {
     pub location: ResourceLocation,
     pub revision: ResourceRevision,
+    /// Contents of the collection's vdir `displayname` file, when present.
+    pub displayname: Option<String>,
 }
 
 /// Host-neutral observations required by doctor beyond normal workspace
@@ -86,6 +88,13 @@ pub enum DoctorRepair {
     },
     RemovePlansCollection {
         location: ResourceLocation,
+        expected: ResourceRevision,
+    },
+    /// Name a calendar collection after its charter's alias. The name is
+    /// derived from the charter document, so rewriting it is always safe.
+    WriteCollectionDisplayname {
+        location: ResourceLocation,
+        name: String,
         expected: ResourceRevision,
     },
     /// Rewrite the root sidecar's charter id to mirror the README's.
@@ -165,6 +174,12 @@ pub fn diagnose(read: &WorkspaceRead, evidence: &DoctorEvidence) -> Diagnosis {
             &mut repairs,
         );
     }
+    check_collection_displaynames(
+        charters,
+        &evidence.plan_collections,
+        &mut findings,
+        &mut repairs,
+    );
     check_sidecar_created_sanity(&evidence.sidecars, evidence.observed_at, &mut findings);
     check_durability_residue(&evidence.durability_residue, &mut findings);
 
@@ -667,6 +682,49 @@ fn check_sidecar_created_sanity(
                 ));
             }
         }
+    }
+}
+
+/// A charter's calendar collection whose `displayname` is missing or no longer
+/// its alias: the charter document committed, but refreshing this derived
+/// name did not (or never ran). Charters without an alias are skipped, as in
+/// the writer, since the folder name is then the only name available.
+fn check_collection_displaynames(
+    charters: &[MarkdownCharter],
+    collections: &[DoctorCollectionEvidence],
+    findings: &mut Vec<Finding>,
+    repairs: &mut Vec<DoctorRepair>,
+) {
+    for charter in charters {
+        let Some(alias) = charter.alias.as_deref() else {
+            continue;
+        };
+        let Some(collection) = collections
+            .iter()
+            .find(|collection| Path::new(collection.location.path.as_str()) == charter.plans_dir)
+        else {
+            continue;
+        };
+        if collection.displayname.as_deref() == Some(alias) {
+            continue;
+        }
+        let current = match &collection.displayname {
+            Some(name) => format!("is named '{name}'"),
+            None => "has no display name".to_string(),
+        };
+        findings.push(Finding::warning_at(
+            collection.location.mount,
+            "stale-collection-displayname",
+            &charter.plans_dir,
+            format!(
+                "calendar collection {current}, but its charter's alias is '{alias}'; `clearhead doctor --fix` renames it"
+            ),
+        ));
+        repairs.push(DoctorRepair::WriteCollectionDisplayname {
+            location: collection.location.clone(),
+            name: alias.to_string(),
+            expected: collection.revision.clone(),
+        });
     }
 }
 

@@ -127,10 +127,7 @@ pub fn sync_calendar(
     // that calendar clients and `vdirsyncer metasync` read. Done before the
     // "already in sync" early return, which is exactly the case where the vdir
     // exists but has never been named.
-    let named = clearhead_cli::filesystem::write_collection_displaynames(
-        &ctx.data_dir,
-        ctx.plan_override().as_deref(),
-    )?;
+    let named = ctx.refresh_collection_displaynames();
     if named > 0 {
         debug!(
             collections = named,

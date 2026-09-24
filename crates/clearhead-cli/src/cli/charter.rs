@@ -673,22 +673,19 @@ pub fn update_charter(
     clearhead_cli::filesystem::write_charter_document(&ctx.data_dir, &document, &formatted)
         .with_context(|| format!("Failed to write '{}'", md_path.display()))?;
 
-    // Renaming a charter renames its calendar collection's *display name*, not
-    // the collection path: the vdir metadata file is what calendar clients and
-    // `vdirsyncer metasync` read.
-    if alias.is_some() {
-        clearhead_cli::filesystem::write_collection_displaynames(
-            &ctx.data_dir,
-            ctx.plan_override().as_deref(),
-        )?;
-    }
-
     info!(charter = %updated.title, path = %md_path.display(), state = ?updated.state, "Charter updated");
 
     if let Some(new_state) = &updated.state {
         println!("Charter '{}' updated: state → {}", updated.title, new_state);
     } else {
         println!("Charter '{}' updated.", updated.title);
+    }
+
+    // Renaming a charter renames its calendar collection's *display name*, not
+    // the collection path: the vdir metadata file is what calendar clients and
+    // `vdirsyncer metasync` read.
+    if alias.is_some() {
+        ctx.refresh_collection_displaynames();
     }
 
     Ok(())

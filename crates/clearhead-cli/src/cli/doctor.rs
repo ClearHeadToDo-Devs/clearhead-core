@@ -4,7 +4,8 @@
 //! prove have no workspace owner: stale sidecar metadata and unowned calendar
 //! collections. Removing a vdir collection may propagate through vdirsyncer.
 //! It also mirrors the root README's id into a conflicting root sidecar when
-//! nothing references the replaced id.
+//! nothing references the replaced id, and renames calendar collections whose
+//! display name drifted from their charter's alias.
 
 use crate::cli::CommandContext;
 use anyhow::Context;
@@ -48,7 +49,7 @@ fn repair_unowned_state(
     dry_run: bool,
 ) -> anyhow::Result<()> {
     if diagnosis.repairs.is_empty() {
-        println!("No fixable unowned state found.");
+        println!("Nothing for doctor --fix to repair.");
         return Ok(());
     }
 
@@ -65,6 +66,7 @@ fn repair_unowned_state(
     let mut files = 0;
     let mut collections = 0;
     let mut identities = 0;
+    let mut names = 0;
     for repair in &diagnosis.repairs {
         match repair {
             DoctorRepair::PruneSidecarEntry { path, id, .. } => {
@@ -101,16 +103,26 @@ fn repair_unowned_state(
                     location.path
                 );
             }
+            DoctorRepair::WriteCollectionDisplayname { location, name, .. } => {
+                names += 1;
+                println!(
+                    "{} calendar collection {} as '{}'",
+                    if dry_run { "Would name" } else { "Named" },
+                    location.path,
+                    name
+                );
+            }
         }
     }
     if dry_run {
         println!(
-            "Dry run: {} entr{}, {} file(s), and {} calendar collection(s) would be removed; {} root charter id(s) would be mirrored.",
+            "Dry run: {} entr{}, {} file(s), and {} calendar collection(s) would be removed; {} root charter id(s) would be mirrored; {} collection name(s) would be refreshed.",
             entries,
             if entries == 1 { "y" } else { "ies" },
             files,
             collections,
-            identities
+            identities,
+            names
         );
         return Ok(());
     }

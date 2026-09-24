@@ -197,33 +197,55 @@ pub fn apply_doctor_repairs(
         remove_file_if_present(&path)?;
     }
     for repair in repairs {
-        let DoctorRepair::RemovePlansCollection { location, expected } = repair else {
-            continue;
-        };
-        if location.path.as_str().contains('/') {
-            return Err(WorkspaceError::Actions(format!(
-                "doctor refused unsafe calendar collection path '{}'",
-                location.path
-            )));
+        match repair {
+            DoctorRepair::RemovePlansCollection { location, expected } => {
+                let path = collection_dir(&mounts, location, expected)?;
+                remove_dir_if_present(&path)?;
+            }
+            DoctorRepair::WriteCollectionDisplayname {
+                location,
+                name,
+                expected,
+            } => {
+                let path = collection_dir(&mounts, location, expected)?;
+                let displayname = path.join(crate::filesystem::COLLECTION_DISPLAYNAME_FILE);
+                crate::filesystem::durability::atomic_write(&displayname, name)?;
+            }
+            _ => {}
         }
-        let root = match location.mount {
-            MountId::Workspace => mounts.workspace.join("plans"),
-            MountId::ExternalPlans => mounts.external_plans.clone().ok_or_else(|| {
-                WorkspaceError::Actions(
-                    "doctor repair names an external plans mount that is not configured".into(),
-                )
-            })?,
-        };
-        let path = root.join(location.path.as_str());
-        if collection_revision(&path)? != *expected {
-            return Err(WorkspaceError::Actions(format!(
-                "doctor repair evidence for calendar collection '{}' is stale",
-                location.path
-            )));
-        }
-        remove_dir_if_present(&path)?;
     }
     Ok(())
+}
+
+/// Resolve a repair's calendar collection, refusing nested paths, an
+/// unconfigured mount, or a collection that changed since diagnosis.
+fn collection_dir(
+    mounts: &NativeWorkspaceMounts,
+    location: &ResourceLocation,
+    expected: &ResourceRevision,
+) -> Result<PathBuf, WorkspaceError> {
+    if location.path.as_str().contains('/') {
+        return Err(WorkspaceError::Actions(format!(
+            "doctor refused unsafe calendar collection path '{}'",
+            location.path
+        )));
+    }
+    let root = match location.mount {
+        MountId::Workspace => mounts.workspace.join("plans"),
+        MountId::ExternalPlans => mounts.external_plans.clone().ok_or_else(|| {
+            WorkspaceError::Actions(
+                "doctor repair names an external plans mount that is not configured".into(),
+            )
+        })?,
+    };
+    let path = root.join(location.path.as_str());
+    if collection_revision(&path)? != *expected {
+        return Err(WorkspaceError::Actions(format!(
+            "doctor repair evidence for calendar collection '{}' is stale",
+            location.path
+        )));
+    }
+    Ok(path)
 }
 
 fn observe_document(root: &Path, path: PathBuf) -> Result<DoctorDocument, WorkspaceError> {
@@ -277,9 +299,16 @@ fn observe_plan_collections(
     for entry in entries {
         if entry.file_type()?.is_dir() {
             let path = logical_path_from_native(Path::new(&entry.file_name()))?;
+            let displayname = std::fs::read_to_string(
+                entry
+                    .path()
+                    .join(crate::filesystem::COLLECTION_DISPLAYNAME_FILE),
+            )
+            .ok();
             collections.push(DoctorCollectionEvidence {
                 location: ResourceLocation::new(mount, path),
                 revision: collection_revision(&entry.path())?,
+                displayname,
             });
         }
     }
