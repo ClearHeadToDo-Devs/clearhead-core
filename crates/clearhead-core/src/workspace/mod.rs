@@ -103,7 +103,7 @@ pub use store::{
     PRIMARY_ACTIONS_FILE, PRIMARY_DOCUMENT_FILE, ROOT_ANCHOR_STEM, Workspace,
     WorkspaceAssemblyInput, WorkspaceError, WorkspaceRead, actions_anchor_for_document,
     assemble_workspace, assembled_domain_model, charter_collection_from_anchor, diagnose,
-    infer_charter_name, infer_charter_name_for_workspace, infer_parent_charter_name,
-    infer_parent_charter_name_for_workspace, state_coherence_findings,
+    document_anchor_for_actions, infer_charter_name, infer_charter_name_for_workspace,
+    infer_parent_charter_name, infer_parent_charter_name_for_workspace, state_coherence_findings,
 };
 pub use templates::{instantiate_template, template_candidates};

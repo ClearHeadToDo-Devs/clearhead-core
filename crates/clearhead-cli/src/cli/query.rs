@@ -91,17 +91,46 @@ pub fn index(
 /// `charter-document-without-id` in `clearhead doctor` — so one loaded with
 /// any other [`clearhead_core::workspace::CharterIdSource`] is a clear error
 /// naming the same fix `doctor` does, not a silently ephemeral filter.
+///
+/// Unlike a `doctor` finding, this error has no companion `path` field to show
+/// the concrete file, so the message must name one itself. A named charter's
+/// `.md` doesn't exist yet on the implicit path (specifications/workspace.md,
+/// "Materialize implicit charters when they need an id"): `normalize file`
+/// now creates it, so naming its would-be path here actually works. The
+/// workspace root's missing identity is a different, already-owned repair
+/// (`clearhead init`), not a `normalize` target.
 #[cfg(feature = "sparql")]
 fn resolve_charter_target(ctx: &CommandContext, query: &str) -> anyhow::Result<String> {
     use crate::cli::verb_result::canonical_id;
-    use clearhead_core::workspace::CharterIdSource;
+    use clearhead_core::workspace::{
+        CharterIdSource, PRIMARY_ACTIONS_FILE, document_anchor_for_actions,
+    };
 
-    let (charter, _ws_root) = super::action::resolve_charter_across_workspaces(ctx, query)?;
+    let (charter, ws_root) = super::action::resolve_charter_across_workspaces(ctx, query)?;
     if charter.id_source != CharterIdSource::Document {
         let subject = charter.alias.as_deref().unwrap_or(&charter.title);
+        let fix = match charter.actions_file.as_deref() {
+            Some(path) if path == std::path::Path::new(PRIMARY_ACTIONS_FILE) => {
+                "the workspace root has no README.md; run `clearhead init` there to create one"
+                    .to_string()
+            }
+            Some(path) => match document_anchor_for_actions(path) {
+                Some(relative_md) => {
+                    let md_path =
+                        clearhead_cli::filesystem::charter_root(&ws_root).join(relative_md);
+                    format!(
+                        "run `clearhead normalize file {} --write` to stamp one",
+                        md_path.display()
+                    )
+                }
+                None => {
+                    "run `clearhead normalize file <charter.md> --write` to stamp one".to_string()
+                }
+            },
+            None => "run `clearhead normalize file <charter.md> --write` to stamp one".to_string(),
+        };
         anyhow::bail!(
-            "charter '{subject}' declares no id, so `--charter` cannot address it durably; \
-             run `clearhead normalize file <charter.md> --write` to stamp one"
+            "charter '{subject}' declares no id, so `--charter` cannot address it durably; {fix}"
         );
     }
     Ok(format!("<{}>", canonical_id(charter.id)))

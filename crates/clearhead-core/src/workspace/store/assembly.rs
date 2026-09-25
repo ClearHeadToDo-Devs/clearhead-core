@@ -9,7 +9,7 @@ use super::WorkspaceError;
 use super::findings::Finding;
 use super::load::WorkspaceRead;
 use super::pathing::{
-    charter_collection_from_anchor, infer_charter_name_for_workspace,
+    charter_collection_from_anchor, document_anchor_for_actions, infer_charter_name_for_workspace,
     infer_parent_charter_name_for_workspace,
 };
 use crate::domain::{Charter, DomainModel};
@@ -313,28 +313,50 @@ pub fn assemble_workspace(input: &WorkspaceAssemblyInput) -> Result<WorkspaceRea
     // one. Either way the document is the specified anchor, so the gap is
     // reported. The root README is excluded here because `doctor`'s
     // root-identity check already owns that case, with repair-aware wording.
+    //
+    // A charter with no `.md` at all — implicit, known only through its
+    // `.actions` file — is the same gap with no document yet to point at
+    // (specifications/workspace.md, "Materialize implicit charters when they
+    // need an id"): `normalize file` now creates that `.md` on request, so
+    // naming its would-be path here is a real, working fix rather than a
+    // silent skip.
     for (name, charter) in &charters {
-        let Some(path) = charter.md_file.clone() else {
-            continue;
-        };
-        if charter.id_source == CharterIdSource::Document || name == root_charter {
+        if name == root_charter || charter.id_source == CharterIdSource::Document {
             continue;
         }
         let subject = charter.alias.as_deref().unwrap_or(&charter.title);
         let id = charter.id;
-        let detail = match charter.id_source {
-            CharterIdSource::Sidecar => format!(
-                "charter '{subject}' declares no id, so its document is not the identity anchor; its sidecar records {id}, which belongs in the document frontmatter; run `clearhead normalize file <charter.md> --write` to stamp it"
-            ),
-            _ => format!(
-                "charter '{subject}' declares no id, so it loads with an ephemeral identity that changes on every load; run `clearhead normalize file <charter.md> --write` to stamp a durable id"
-            ),
+        let identity_gap = match charter.id_source {
+            CharterIdSource::Sidecar => {
+                format!("its sidecar records {id}, which belongs in the document frontmatter")
+            }
+            _ => "it loads with an ephemeral identity that changes on every load".to_string(),
         };
-        findings.push(Finding::warning(
-            "charter-document-without-id",
-            &path,
-            detail,
-        ));
+        match (&charter.md_file, &charter.actions_file) {
+            (Some(path), _) => {
+                findings.push(Finding::warning(
+                    "charter-document-without-id",
+                    path,
+                    format!(
+                        "charter '{subject}' declares no id, so {identity_gap}; run `clearhead normalize file <charter.md> --write` to stamp one"
+                    ),
+                ));
+            }
+            (None, Some(actions_file)) => {
+                let Some(md_path) = document_anchor_for_actions(actions_file) else {
+                    continue;
+                };
+                findings.push(Finding::warning(
+                    "charter-document-without-id",
+                    &md_path,
+                    format!(
+                        "charter '{subject}' has no document, so {identity_gap}; run `clearhead normalize file {} --write` to create it with a durable id",
+                        md_path.display()
+                    ),
+                ));
+            }
+            (None, None) => {}
+        }
     }
 
     let name_to_alias: HashMap<String, String> = charters

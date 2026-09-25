@@ -89,6 +89,30 @@ pub fn actions_anchor_for_document(relative_path: &Path) -> Option<PathBuf> {
     Some(directory.join(format!("{stem}.actions")))
 }
 
+/// The document anchor that pairs with a primary actions file in the same
+/// directory — the inverse of [`actions_anchor_for_document`]: `next.actions`
+/// pairs with `README.md`, and any other stem (`work.actions`) pairs by stem
+/// (`work.md`). Used to name a charter's would-be document when it has none
+/// yet (an implicit charter — specifications/workspace.md, "Materialize
+/// implicit charters when they need an id").
+///
+/// Returns `None` for a path that is not an actions file.
+pub fn document_anchor_for_actions(relative_path: &Path) -> Option<PathBuf> {
+    let filename = relative_path.file_name()?.to_str()?;
+    if !filename.ends_with(".actions") {
+        return None;
+    }
+    let directory = relative_path.parent().unwrap_or_else(|| Path::new(""));
+    if filename == PRIMARY_ACTIONS_FILE {
+        return Some(directory.join(PRIMARY_DOCUMENT_FILE));
+    }
+    let stem = relative_path.file_stem()?.to_str()?;
+    if stem.is_empty() {
+        return None;
+    }
+    Some(directory.join(format!("{stem}.md")))
+}
+
 /// Infer the charter name from a relative file path.
 pub fn infer_charter_name(relative_path: &Path) -> Option<String> {
     let components: Vec<_> = relative_path.components().collect();
