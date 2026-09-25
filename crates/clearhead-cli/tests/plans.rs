@@ -845,6 +845,49 @@ fn test_sync_calendar_status_cancelled_is_the_explicit_cancellation_signal() {
 }
 
 #[test]
+fn test_sync_calendar_exits_2_while_a_conflict_is_unresolved() {
+    let env = TestEnv::new();
+    let uuid = "019baaec-00b6-7991-be34-94b68212619a";
+    env.write_actions(
+        "inbox.actions",
+        &format!("[ ] Clash @2026-04-29T10:00 #{}", uuid),
+    );
+    let base = Local
+        .with_ymd_and_hms(2026, 4, 28, 10, 0, 0)
+        .unwrap()
+        .to_rfc3339();
+    write_plans_sync_store(&env, uuid, &base);
+    env.write_text(
+        &format!("plans/inbox/{}.ics", uuid),
+        &format!(
+            "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Test//Test//EN\r\nBEGIN:VTODO\r\nUID:{}\r\nSUMMARY:Clash\r\nSTATUS:NEEDS-ACTION\r\nDTSTART:20260430T100000\r\nEND:VTODO\r\nEND:VCALENDAR\r\n",
+            uuid
+        ),
+    );
+
+    for dry_run in [true, false] {
+        let mut command = env.command();
+        command.arg("sync").arg("calendar");
+        if dry_run {
+            command.arg("--dry-run");
+        }
+        command
+            .assert()
+            .code(2)
+            .stdout(predicate::str::contains("1 conflict."))
+            .stderr(predicate::str::contains("1 conflict(s) left unresolved"));
+    }
+
+    env.command()
+        .arg("sync")
+        .arg("calendar")
+        .arg("--conflict")
+        .arg("action")
+        .assert()
+        .success();
+}
+
+#[test]
 fn test_sync_calendar_conflict_can_be_resolved_toward_action() {
     let env = TestEnv::new();
     let uuid = "019baaec-00b6-7991-be34-94b68212619a";

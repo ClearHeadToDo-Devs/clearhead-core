@@ -111,6 +111,7 @@ pub fn sync_calendar(
             "Dry run complete. {} push, {} pull, {} converged, {} conflict.",
             tally.take_action, tally.take_calendar, tally.converged, tally.conflict
         );
+        exit_if_unresolved(tally.conflict);
         return Ok(());
     }
 
@@ -158,7 +159,22 @@ pub fn sync_calendar(
             "Ingested {rolled_forward} occurrence completion(s) from a calendar roll-forward."
         );
     }
+    exit_if_unresolved(applied.conflict);
     Ok(())
+}
+
+/// Exit status for a sync that finished but left conflicts for a person to
+/// decide, distinct from `1` for a sync that could not run.
+const UNRESOLVED_CONFLICTS: i32 = 2;
+
+/// Fail a sync that left conflicts unresolved, so automation notices them.
+fn exit_if_unresolved(conflicts: usize) {
+    if conflicts > 0 {
+        eprintln!(
+            "{conflicts} conflict(s) left unresolved; choose a side with `clearhead sync calendar --conflict action|calendar`"
+        );
+        std::process::exit(UNRESOLVED_CONFLICTS);
+    }
 }
 
 fn render_sync_report(report: &clearhead_core::SyncReport) {

@@ -1189,6 +1189,10 @@ pub enum SyncTarget {
         dry_run: bool,
     },
     /// Reconcile one-off and recurring Action realizations with configured Plan resources
+    ///
+    /// Every field that can be reconciled safely is applied. Exits 2 when
+    /// conflicts remain for a person to decide (also on --dry-run), and 1 when
+    /// the sync cannot run.
     Calendar {
         /// Dry run: show what would be changed without writing
         #[arg(long)]
