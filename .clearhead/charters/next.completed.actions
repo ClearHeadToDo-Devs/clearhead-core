@@ -69,3 +69,41 @@
 [x] Exit non-zero when calendar sync leaves conflicts unresolved =sync-conflict-exit $DECIDED 2026-09-24 with the user: sync owns the plans-actions contract and must fail loudly. Keep applying every safe field (ics_schedule_spec: a conflict in one field must not block others), then exit non-zero when anything stays unresolved, like git merge. Use exit 1 for broken and exit 2 for needs a decision, so automation can tell fixing the tool from choosing a side. Today it exits 0 with conflicts in the report, which hid the rent conflict. RESOLVED 2026-09-24: sync calendar, including --dry-run, exits 2 after applying every safe field when conflicts remain, with a stderr hint naming --conflict; errors still exit 1. Covered by test_sync_calendar_exits_2_while_a_conflict_is_unresolved.$ !2 ^2026-09-24T22:47 %2026-09-24T22:48 #01a0d71a-8886-7567-a3bb-88881ec5a76c
 [x] Resolve one calendar sync conflict at a time =sync-conflict-per-action $sync calendar --conflict action or calendar resolves every conflict at once. Add a per-action scope so doctor can name one precise resolution command per conflict. Needed by sync-conflicts-in-doctor. RESOLVED 2026-09-25: sync calendar --conflict <side> --action <id> resolves only that action, selected by full or short UUID among the actions still in conflict; no match or an ambiguous id errors before any write. Core SyncReport::resolve_conflicts takes a SyncConflictChoice.$ !3 ^2026-09-24T22:47 %2026-09-25T00:26 #01a0d71a-8891-72dc-b47c-341c025d3b2f
 [x] Make the workspace snapshot tests independent of the local time zone $Found 2026-09-25 on the first cloud run: scripts/gate.sh fails in a UTC container. fs_workspace::snapshots::fixture_user_flat_ron_snapshot and fs_workspace::load::mixed_workspace_ron_snapshots load fixtures whose actions carry floating date-times such as 2026-04-17T09:00, which resolve in the machine's local zone; the committed RON snapshots were generated in America/Los_Angeles and bake in -07:00. With TZ=America/Los_Angeles the full gate passes. Any UTC machine, including a GitHub runner, fails. Pin the zone inside the tests rather than in the environment. RESOLVED 2026-09-25: an in-test pin is not available, since chrono reads the process TZ and std::env::set_var is unsafe in edition 2024 and races parallel tests; and no snapshot normalization covers both fixtures, because user-flat has floating times whose instant depends on the zone while project-mixed has an explicit UTC DTSTART rendered in Local. So clearhead-core/.cargo/config.toml pins TZ through cargo's env table (POSIX Pacific rules, force) for every process cargo starts from inside the repo; snapshots unchanged. Gate passes with TZ unset (UTC) and with TZ=Asia/Tokyo. Injecting the zone into Core, the proper fix, rides with the pass-the-clock action.$ !2 ^2026-09-25T17:56 %2026-09-25T17:59 #01a0d9b6-2e41-7d62-99e1-b3cee64c32da
+[x] Refuse ambiguous title matches when archiving a charter $select_archive_charter's NotFound fallback matched charters by partial,
+case-insensitive title and returned the first hit via .find(), silently
+ignoring any other matching charter. UUID-prefix and alias ambiguity
+already error via ArchiveCharterError::Ambiguous through
+clearhead_core::reference::select_reference; the hand-rolled partial-title
+path (an adapter-only policy not covered by reference syntax) did not.
+
+Fix: collect all title matches, and return Ambiguous (same variant, same
+candidate-list format used by the sibling arm) when more than one charter's
+title contains the query; otherwise behave as before (Some for exactly one,
+None for zero).
+
+Added archive_selection_reports_ambiguous_partial_titles, modeled on the
+existing archive_selection_reports_ambiguous_aliases test, using two
+charters whose titles share a substring but do not collide on alias or
+UUID prefix, so it exercises the fallback path specifically.
+
+No new dependency needed or added; this is a small filter/match change.
+
+Review: used a fresh general-purpose subagent as reviewer (NEEDS DECISION
+N/A - recorded per runbook: this sandbox has no reviewer from a different
+vendor available, only Claude subagents, so the cross-vendor requirement in
+docs/overnight-runbook.md's review gate could not be met this run).
+Reviewer's verdict: no blocking findings on correctness or design; one
+non-blocking nit that the comma-joined candidate-id formatting is now
+duplicated a third time in the file and could be factored into a helper,
+but this duplication pre-existed the change and is not required by the
+action.
+
+Commits:
+- clearhead-core 77bbdb5: Refuse ambiguous partial title matches when archiving a charter
+- platform db01035: Pin core: refuse ambiguous partial title matches when archiving
+
+Gate: sh scripts/gate.sh passed (fmt, clippy, core/cli no-default-features
+builds, no-oxigraph check, wasm dependency gate, pure-core source gate,
+tests) after one cargo fmt pass to fix formatting. doctor shows the same
+8 pre-existing charter-document-without-id warnings as before the change;
+no new warnings or violations.$ !3 ^2026-09-24T11:22 %2026-09-25T20:44 #01a0d4a7-f0cc-74ef-86bb-27e5d766535f
