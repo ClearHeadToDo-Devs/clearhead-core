@@ -1,0 +1,2 @@
+# Completed actions are append-only facts, so a merge keeps both sides.
+*.completed.actions merge=union
