@@ -891,9 +891,11 @@ fn dispatch(cli: &argparser::Cli, ctx: &CommandContext) -> anyhow::Result<()> {
                 status,
                 format,
             } => query::named(ctx, name, status.as_deref(), *format),
-            argparser::QueryTarget::Index { name, format } => {
-                query::index(ctx, name.as_deref(), *format)
-            }
+            argparser::QueryTarget::Index {
+                name,
+                charter,
+                format,
+            } => query::index(ctx, name.as_deref(), charter.as_deref(), *format),
             argparser::QueryTarget::Tree { name, format } => {
                 query::tree(ctx, name.as_deref(), *format)
             }

@@ -816,6 +816,11 @@ pub enum QueryTarget {
     /// Run an index view (ordered, addressable rows). Omit name for "default".
     Index {
         name: Option<String>,
+        /// Scope rows to this charter and its sub-charters (name, alias, or
+        /// UUID). The charter must declare a stamped `id`; one that doesn't
+        /// names `clearhead normalize file <charter.md> --write` as the fix.
+        #[arg(long)]
+        charter: Option<String>,
         #[arg(long, value_enum)]
         format: Option<QueryFormat>,
     },

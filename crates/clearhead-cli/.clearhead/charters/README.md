@@ -1,3 +1,6 @@
+---
+id: 01a0daa5-a2c7-7811-b12f-5ce8283ceb76
+---
 # Creating the Clearhead CLI
 
 This is really where the rubber meets the road, the cli implements all the specifications we are writing, and is responsible for the actual execution of the commands and does that by parsing the workspace files, doing all the work to handle the workspace logic, and even the SPARQL queries to actually leverage the ontology

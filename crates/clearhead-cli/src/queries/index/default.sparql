@@ -9,6 +9,7 @@
 # =============================================================================
 
 PREFIX actions: <https://clearhead.us/vocab/actions/v4#>
+PREFIX bfo: <http://purl.obolibrary.org/obo/>
 PREFIX cco: <https://www.commoncoreontologies.org/>
 PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
 PREFIX ws: <https://clearhead.us/vocab/workspace/v1#>
@@ -23,6 +24,22 @@ SELECT (?action AS ?id) ?name ?status ?source_file ?source_line ?charter_root WH
         ?workspace_node a ws:Workspace ;
                         ws:charterRoot ?charter_root .
         FILTER(?raw_state != actions:Completed && ?raw_state != actions:Cancelled)
+
+        # Owning Charter, reached the same way unscheduled.sparql does: direct
+        # containment for a top-level/nested Action, or via its generating Plan.
+        OPTIONAL {
+            {
+                ?action bfo:BFO_0000050+ ?owner .
+                ?owner a actions:Charter .
+            }
+            UNION
+            {
+                ?plan cco:ont00001942 ?action ;
+                      bfo:BFO_0000050 ?owner .
+                ?owner a actions:Charter .
+            }
+        }
+        #CHARTER_FILTER#
     }
     BIND(STRAFTER(STR(?raw_state), "#") AS ?status)
 }

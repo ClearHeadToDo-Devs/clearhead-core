@@ -55,6 +55,7 @@ SELECT (?action AS ?id) ?name ?status ?source_file ?source_line ?charter_root ?p
                       actions:hasCharterState ?ancestor_state .
             FILTER(?ancestor_state != actions:CharterActive)
         }
+        #CHARTER_FILTER#
 
         OPTIONAL { ?action actions:hasPriority ?priority }
         # The denormalized parent edge is a parent *action*, not the charter a
