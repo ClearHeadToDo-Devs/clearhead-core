@@ -588,8 +588,8 @@ pub fn charter_from_plans_and_name(name: String, plans: Vec<Plan>) -> Charter {
 ///
 /// Fields set to `None` by the parser (no DSL syntax exists for them) are
 /// populated from machine metadata: live materialized recurring occurrences
-/// hydrate `plan_id` + `external_occurrence_key` from the sync store, while
-/// archived occurrence facts snapshot their lineage in completed sidecars.
+/// hydrate `plan_id` + `external_occurrence_key` from their sidecar Plan link,
+/// while resolved occurrence facts freeze their lineage as a sidecar snapshot.
 ///
 /// `predecessors` carries raw DSL references for file round-trips;
 /// call [`Action::depends_on`] to get resolved UUIDs for integration work.
@@ -628,7 +628,7 @@ pub struct Action {
     pub plan_id: Option<Uuid>,
     /// Canonical occurrence-slot key. With [`plan_id`](Self::plan_id) it is the
     /// handle a deviation write targets. Live materialized occurrences hydrate it
-    /// from the sync store; archived facts snapshot it in sidecar metadata.
+    /// from their sidecar Plan link; resolved facts snapshot it instead.
     pub external_occurrence_key: Option<String>,
 }
 

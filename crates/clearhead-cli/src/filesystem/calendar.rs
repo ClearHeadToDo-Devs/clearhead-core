@@ -21,9 +21,9 @@ use clearhead_core::workspace::calendar::reconcile::{
     MaterializedOccurrencePreparationInput, PlanResourceState, SyncActionResourceState,
     SyncCodecMigration, SyncConflictResolution, SyncImport, SyncLifecycleEntry, SyncLifecycleKind,
     SyncMirrorResourceState, SyncPlanLink, SyncPlanTemplate, SyncPlanUnlink, SyncReport,
-    plan_one_off_sync, plan_recurring_occurrence_sync, prepare_master_rollforward_changes,
-    prepare_master_rollforwards, prepare_materialized_occurrence_resolution, prepare_sync,
-    sync_import_actions_file,
+    occurrence_links, plan_one_off_sync, plan_recurring_occurrence_sync,
+    prepare_master_rollforward_changes, prepare_master_rollforwards,
+    prepare_materialized_occurrence_resolution, prepare_sync, sync_import_actions_file,
 };
 use clearhead_core::workspace::calendar::sync_store::{PlansSyncStore, decode_plans_sync_store};
 use clearhead_core::workspace::resource::{
@@ -358,7 +358,7 @@ fn prepare_calendar_sync(
     let mut mirror_resources = linked_mirrors;
     mirror_resources.extend(sync_recurring_mirror_resources(
         &observation.resources,
-        &store,
+        &linked_model,
     )?);
     report
         .entries
@@ -663,9 +663,9 @@ fn prepare_codec_migrations(
 
 fn sync_recurring_mirror_resources(
     resources: &[CalendarResource],
-    store: &PlansSyncStore,
+    model: &DomainModel,
 ) -> Result<Vec<SyncMirrorResourceState>, WorkspaceError> {
-    let links = store.occurrence_links();
+    let links = occurrence_links(model.all_actions());
     let occurrence_ids_by_plan = links.into_iter().fold(
         HashMap::<Uuid, Vec<Uuid>>::new(),
         |mut by_plan, (occurrence_id, (plan_id, _))| {
@@ -1832,9 +1832,12 @@ mod tests {
                 .occurrence_key,
             key
         );
-        let store = read_plans_sync_store(&project, &plans_root).unwrap();
-        assert!(store.occurrence_link(completed_id).is_none());
-        assert_eq!(store.occurrence_links().len(), 1);
+        assert!(
+            sidecar.actions[&completed_id.to_string()].plan.is_none(),
+            "the frozen snapshot replaces the live link"
+        );
+        let model = crate::filesystem::load_domain_model(&project).unwrap();
+        assert_eq!(occurrence_links(model.all_actions()).len(), 1);
 
         sync_calendar_with_component(&project, None, PlanComponentKind::VTodo).unwrap();
         assert_eq!(

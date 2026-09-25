@@ -16,8 +16,6 @@ use clearhead_core::workspace::{
     assemble_workspace, plan_workspace_read,
 };
 
-use crate::filesystem::calendar::read_plans_sync_store;
-
 /// Physical roots resolved by the native adapter.
 ///
 /// The workspace mount is rooted at the data directory (`.clearhead/` for a
@@ -234,9 +232,6 @@ fn assemble_native(workspace_root: &Path) -> Result<WorkspaceRead, WorkspaceErro
     let inventory = mounts.inventory()?;
     let plans = plan_workspace_read(&inventory);
     let reads = mounts.read(&plans, &inventory)?;
-    let occurrence_links = read_plans_sync_store(workspace_root, &mounts.plans_root())
-        .map(|store| store.occurrence_links().clone())
-        .unwrap_or_default();
     // The shell mints one ephemeral id per charter document so Core stays free
     // of the clock/RNG (I1, I3). Only an id-less document consumes its entry.
     let charter_ids: HashMap<PathBuf, Uuid> = inventory
@@ -251,7 +246,6 @@ fn assemble_native(workspace_root: &Path) -> Result<WorkspaceRead, WorkspaceErro
         root_charter: mounts.root_charter,
         inventory,
         reads,
-        occurrence_links,
         charter_ids,
     })
 }

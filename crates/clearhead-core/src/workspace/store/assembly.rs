@@ -32,8 +32,6 @@ pub struct WorkspaceAssemblyInput {
     pub root_charter: String,
     pub inventory: WorkspaceMounts<MountInventory>,
     pub reads: WorkspaceMounts<MountReadEvidence>,
-    /// Live occurrence lineage decoded and mount-validated by the native host.
-    pub occurrence_links: HashMap<Uuid, (Uuid, String)>,
     /// Shell-minted ephemeral ids, keyed by charter document path relative to
     /// the charter root (e.g. `README.md`, `someday/README.md`). One per charter
     /// document the host inventoried; a declared id never reads it. Supplying
@@ -389,7 +387,6 @@ pub fn assemble_workspace(input: &WorkspaceAssemblyInput) -> Result<WorkspaceRea
     attach_plans(input, &mut charters, &mut findings)?;
     let mut charters: Vec<_> = charters.into_values().collect();
     resolve_predecessor_aliases(&mut charters);
-    hydrate_occurrence_links(&mut charters, &input.occurrence_links);
     Ok(WorkspaceRead { charters, findings })
 }
 
@@ -635,20 +632,6 @@ fn resolve_predecessor_aliases(charters: &mut [MarkdownCharter]) {
     }
 }
 
-fn hydrate_occurrence_links(
-    charters: &mut [MarkdownCharter],
-    links: &HashMap<Uuid, (Uuid, String)>,
-) {
-    for charter in charters {
-        for sourced in &mut charter.actions {
-            if let Some((plan_id, slot_key)) = links.get(&sourced.action.id) {
-                sourced.action.plan_id = Some(*plan_id);
-                sourced.action.external_occurrence_key = Some(slot_key.clone());
-            }
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -714,7 +697,6 @@ mod tests {
                 workspace: workspace_reads,
                 external_plans: external_reads,
             },
-            occurrence_links: HashMap::new(),
             charter_ids,
         }
     }

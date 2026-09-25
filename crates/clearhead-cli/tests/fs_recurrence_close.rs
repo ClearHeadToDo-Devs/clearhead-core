@@ -1,11 +1,20 @@
+use std::collections::HashMap;
 use std::fs;
+use std::path::Path;
 
 use clearhead_cli::filesystem::read_actions;
 use clearhead_cli::filesystem::{
-    close_action_subtree, load_domain_model, read_plans_sync_store,
-    resolve_materialized_occurrence, sync_calendar,
+    close_action_subtree, load_domain_model, resolve_materialized_occurrence, sync_calendar,
 };
+use clearhead_core::workspace::calendar::reconcile::occurrence_links;
 use clearhead_core::{ActionSelector, OccurrenceOp, completed_actions_path};
+use uuid::Uuid;
+
+/// Live occurrence links as the loaded workspace sees them.
+fn live_links(root: &Path) -> HashMap<Uuid, (Uuid, String)> {
+    let model = load_domain_model(root).unwrap();
+    occurrence_links(model.all_actions())
+}
 
 fn recurring_plan_workspace() -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
@@ -26,13 +35,10 @@ fn recurring_plan_workspace() -> tempfile::TempDir {
 fn closing_materialized_occurrence_preserves_completed_sidecar_lineage() {
     let ws = recurring_plan_workspace();
     let root = ws.path();
-    let plans_root = root.join(".clearhead/plans");
     let actions_path = root.join(".clearhead/charters/health.actions");
     let now = chrono::Local::now();
     sync_calendar(root, None).unwrap();
-    let links = read_plans_sync_store(root, &plans_root)
-        .unwrap()
-        .occurrence_links();
+    let links = live_links(root);
     let (&occ_id, (plan_id, slot_key)) = links.iter().next().unwrap();
     let plan_id = *plan_id;
     let slot_key = slot_key.clone();
@@ -67,6 +73,14 @@ fn closing_materialized_occurrence_preserves_completed_sidecar_lineage() {
     assert_eq!(occurrence["plan_id"], plan_id.to_string());
     assert_eq!(occurrence["occurrence_key"], slot_key);
     assert_eq!(occurrence["plan_uid"], "run@example.com");
+    let live: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(actions_path.with_file_name(".health.json")).unwrap(),
+    )
+    .unwrap();
+    assert!(
+        live["actions"][occ_id.to_string()]["plan"].is_null(),
+        "resolution replaces the live link with the frozen snapshot"
+    );
 }
 
 #[test]
@@ -77,8 +91,7 @@ fn resolving_a_materialized_occurrence_writes_the_deviation_and_advances() {
     let now = chrono::Local::now();
     sync_calendar(root, None).unwrap();
 
-    let store = read_plans_sync_store(root, &plans_root).unwrap();
-    let links = store.occurrence_links();
+    let links = live_links(root);
     let (&occurrence_id, (plan_id, resolved_slot)) = links.iter().next().unwrap();
     let (plan_id, resolved_slot) = (*plan_id, resolved_slot.clone());
     assert!(
@@ -91,9 +104,8 @@ fn resolving_a_materialized_occurrence_writes_the_deviation_and_advances() {
         .unwrap()
     );
 
-    let advanced = read_plans_sync_store(root, &plans_root).unwrap();
-    assert!(advanced.occurrence_link(occurrence_id).is_none());
-    let advanced_links = advanced.occurrence_links();
+    let advanced_links = live_links(root);
+    assert!(!advanced_links.contains_key(&occurrence_id));
     assert_eq!(advanced_links.len(), 1);
     let (&next_id, (next_plan, _)) = advanced_links.iter().next().unwrap();
     assert_ne!(next_id, occurrence_id);
@@ -104,15 +116,22 @@ fn resolving_a_materialized_occurrence_writes_the_deviation_and_advances() {
 }
 
 #[test]
-fn materialized_occurrence_hydrates_its_plan_link_from_the_sync_store() {
+fn materialized_occurrence_link_lives_in_the_sidecar_and_survives_store_loss() {
     let ws = recurring_plan_workspace();
     let root = ws.path();
-    let plans_root = root.join(".clearhead/plans");
     sync_calendar(root, None).unwrap();
 
-    let store = read_plans_sync_store(root, &plans_root).unwrap();
-    let links = store.occurrence_links();
+    let links = live_links(root);
     let (&occurrence_id, (plan_id, slot_key)) = links.iter().next().unwrap();
+    let sidecar: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(root.join(".clearhead/charters/.health.json")).unwrap(),
+    )
+    .unwrap();
+    let link = &sidecar["actions"][occurrence_id.to_string()]["plan"];
+    assert_eq!(link["uid"], "run@example.com");
+    assert_eq!(link["occurrence_key"], slot_key.as_str());
+
+    fs::remove_file(root.join(".clearhead/sync/plans.json")).unwrap();
     let token = load_domain_model(root)
         .unwrap()
         .all_actions()

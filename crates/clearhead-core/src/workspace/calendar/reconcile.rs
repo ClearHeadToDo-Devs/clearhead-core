@@ -304,7 +304,7 @@ pub fn plan_one_off_sync(
     }
 
     let mut report = SyncReport::default();
-    let occurrence_owned = occurrence_subtree_ids(model, store);
+    let occurrence_owned = occurrence_subtree_ids(model);
     for action in model.all_actions() {
         if action.external_occurrence_key.is_some() || occurrence_owned.contains(&action.id) {
             continue;
@@ -410,7 +410,7 @@ pub fn plan_one_off_sync(
 /// Plan recurring-occurrence schedule reconciliation by the durable token link.
 ///
 /// The token's Action UUID locates its materialized line while `(Plan id,
-/// canonical slot)` in [`PlansSyncStore`] locates the immutable recurrence
+/// canonical slot)` from its sidecar link locates the immutable recurrence
 /// address. The rendered override supplies the calendar side of the merge; a
 /// move never changes either identity.
 pub fn plan_recurring_occurrence_sync(
@@ -441,7 +441,7 @@ pub fn plan_recurring_occurrence_sync(
     }
 
     let mut report = SyncReport::default();
-    for (occurrence_id, (plan_id, slot_key)) in store.occurrence_links() {
+    for (occurrence_id, (plan_id, slot_key)) in occurrence_links(actions.values().copied()) {
         let Some(action) = actions.get(&occurrence_id) else {
             continue;
         };
@@ -539,19 +539,19 @@ pub fn plan_recurring_occurrence_sync(
 
 /// The ids of every materialized occurrence token **and its grafted subtree**.
 ///
-/// A token root is any action carrying an occurrence link in `store`
-/// ([`stamp_occurrence_link`](PlansSyncStore::stamp_occurrence_link)); its grafted
+/// A token root is any action carrying an occurrence link (see
+/// [`occurrence_links`]); its grafted
 /// template steps are its descendants by `parent_id`. Together they are the actions
 /// the plans vdir represents through the master (RRULE occurrence + completion
 /// deviations) or keeps purely local — so one-off reconciliation excludes them
 /// from standalone creation. Returns an empty set when no tokens are stamped, the
 /// non-recurring common case.
-fn occurrence_subtree_ids(model: &DomainModel, store: &PlansSyncStore) -> HashSet<Uuid> {
-    let roots = store.occurrence_links();
+fn occurrence_subtree_ids(model: &DomainModel) -> HashSet<Uuid> {
+    let actions = model.all_actions();
+    let roots = occurrence_links(actions.iter().copied());
     if roots.is_empty() {
         return HashSet::new();
     }
-    let actions = model.all_actions();
     let parent_of: HashMap<Uuid, Option<Uuid>> =
         actions.iter().map(|a| (a.id, a.parent_id)).collect();
 
@@ -569,6 +569,24 @@ fn occurrence_subtree_ids(model: &DomainModel, store: &PlansSyncStore) -> HashSe
         }
     }
     owned
+}
+
+/// Materialized recurring occurrences among `actions`, as `occurrence id ->
+/// (Plan id, canonical slot key)`.
+///
+/// The link is durable sidecar metadata hydrated onto the Action, so an
+/// occurrence stays linked until resolution replaces the link with its frozen
+/// [`OccurrenceSnapshot`].
+pub fn occurrence_links<'a>(
+    actions: impl IntoIterator<Item = &'a Action>,
+) -> HashMap<Uuid, (Uuid, String)> {
+    actions
+        .into_iter()
+        .filter_map(|action| {
+            let slot = action.external_occurrence_key.clone()?;
+            Some((action.id, (action.plan_id?, slot)))
+        })
+        .collect()
 }
 
 fn normalized_contexts(mut contexts: Option<Vec<String>>) -> Option<Vec<String>> {
@@ -897,7 +915,9 @@ pub fn prepare_sync(
         if !is_resolved(action.state) {
             continue;
         }
-        let Some((plan_id, slot_key)) = store.occurrence_link(entry.action_id) else {
+        let (Some(plan_id), Some(slot_key)) =
+            (action.plan_id, action.external_occurrence_key.clone())
+        else {
             continue;
         };
         let Some(plan) = workspace
@@ -928,24 +948,14 @@ pub fn prepare_sync(
                     actions_file.display()
                 ))
             })?;
-        resource
-            .sidecar
-            .actions
-            .entry(entry.action_id.to_string())
-            .or_default()
-            .occurrence
-            .get_or_insert_with(|| OccurrenceSnapshot {
-                plan_id,
-                plan_uid: plan.plan.external_id.clone(),
-                occurrence_key: slot_key.clone(),
-                plan_title: plan.plan.name.clone(),
-                scheduled_at: action.scheduled_at,
-                rrule: plan.plan.recurrence.as_ref().map(|recurrence| {
-                    let text = recurrence.to_string();
-                    text.strip_prefix("R:").unwrap_or(&text).to_string()
-                }),
-                template: plan.plan.template_name.clone(),
-            });
+        freeze_occurrence_link(
+            resource
+                .sidecar
+                .actions
+                .entry(entry.action_id.to_string())
+                .or_default(),
+            occurrence_snapshot(plan, &slot_key, action.scheduled_at),
+        );
         dirty_sidecars.insert(actions_file);
         resolved_occurrences.push((
             charter_idx,
@@ -957,7 +967,6 @@ pub fn prepare_sync(
                 ))
             })?,
         ));
-        store.clear_occurrence_link(entry.action_id);
     }
     for (charter_idx, plan, floor) in resolved_occurrences {
         if let Some(actions_file) = stage_prepared_plan_token(
@@ -1111,7 +1120,7 @@ pub fn prepare_sync(
     dirty_actions.sort();
     for actions_file in dirty_actions {
         let resource = action_resources
-            .iter()
+            .iter_mut()
             .find(|resource| resource.actions_file == actions_file)
             .ok_or_else(|| {
                 WorkspaceError::Parse(format!(
@@ -1129,6 +1138,9 @@ pub fn prepare_sync(
                     actions_file.display()
                 ))
             })?;
+        if link_staged_occurrences(charter, &mut resource.sidecar) {
+            dirty_sidecars.insert(actions_file.clone());
+        }
         effects.push(Effect::Write {
             path: resource.location.clone(),
             bytes: render_actions(&charter.actions)?.into_bytes(),
@@ -1255,7 +1267,13 @@ pub fn prepare_sync(
                     )?;
                 }
             } else {
-                for (occurrence_id, (plan_id, slot_key)) in store.occurrence_links() {
+                let links = occurrence_links(
+                    workspace
+                        .charters
+                        .iter()
+                        .flat_map(|charter| charter.actions.iter().map(|sourced| &sourced.action)),
+                );
+                for (occurrence_id, (plan_id, slot_key)) in links {
                     if plan_id != migration.plan.id {
                         continue;
                     }
@@ -1320,14 +1338,33 @@ pub fn prepare_materialized_occurrence_resolution(
         operation,
         now,
         plan_resources,
-        action_resources,
+        mut action_resources,
         templates,
         mut archive,
         observed_resources,
         store_location,
         store_expected,
     } = input;
-    let Some((plan_id, slot_key)) = store.occurrence_link(occurrence_id) else {
+    // Closing moved the line to the completed file, but its sidecar entry (and
+    // so its Plan link) still sits in the live sidecar.
+    let occurrence_key = occurrence_id.to_string();
+    let linked = action_resources
+        .iter()
+        .enumerate()
+        .find_map(|(index, resource)| {
+            let link = resource
+                .sidecar
+                .actions
+                .get(&occurrence_key)?
+                .plan
+                .as_ref()?;
+            Some((
+                index,
+                plan_id_from_ics_uid(&link.uid),
+                link.occurrence_key.clone()?,
+            ))
+        });
+    let Some((live_sidecar, plan_id, slot_key)) = linked else {
         let batch = EffectBatch::new(Vec::new(), observed_resources)
             .map_err(|error| WorkspaceError::Actions(error.to_string()))?;
         return Ok((batch, false));
@@ -1364,22 +1401,26 @@ pub fn prepare_materialized_occurrence_resolution(
             .actions
             .entry(occurrence_id.to_string())
             .or_insert_with(ActionMeta::default);
-        if entry.occurrence.is_none() {
-            entry.occurrence = Some(OccurrenceSnapshot {
-                plan_id,
-                plan_uid: plan.plan.external_id.clone(),
-                occurrence_key: slot_key.clone(),
-                plan_title: plan.plan.name.clone(),
-                scheduled_at: archive.action.scheduled_at,
-                rrule: plan.plan.recurrence.as_ref().map(|recurrence| {
-                    let text = recurrence.to_string();
-                    text.strip_prefix("R:").unwrap_or(&text).to_string()
-                }),
-                template: plan.plan.template_name.clone(),
-            });
+        freeze_occurrence_link(
+            entry,
+            occurrence_snapshot(&plan, &slot_key, archive.action.scheduled_at),
+        );
+    }
+    let live = &mut action_resources[live_sidecar];
+    if let Some(meta) = live.sidecar.actions.get_mut(&occurrence_key) {
+        meta.plan = None;
+        if meta.created.is_none() && meta.occurrence.is_none() {
+            live.sidecar.actions.remove(&occurrence_key);
         }
     }
-    store.clear_occurrence_link(occurrence_id);
+    let mut dirty_sidecars = HashSet::from([live.actions_file.clone()]);
+    // An occurrence resolved before it was closed is still a live line; drop its
+    // hydrated link too, so staging below does not relink it.
+    if let Some((charter_idx, action_idx)) = locate_action(&workspace.charters, occurrence_id) {
+        let action = &mut workspace.charters[charter_idx].actions[action_idx].action;
+        action.plan_id = None;
+        action.external_occurrence_key = None;
+    }
 
     let mut dirty_actions = HashSet::new();
     let floor = parse_occurrence_key(&slot_key);
@@ -1410,7 +1451,7 @@ pub fn prepare_materialized_occurrence_resolution(
     }];
     for actions_file in dirty_actions {
         let resource = action_resources
-            .iter()
+            .iter_mut()
             .find(|resource| resource.actions_file == actions_file)
             .ok_or_else(|| {
                 WorkspaceError::Parse(format!(
@@ -1428,9 +1469,21 @@ pub fn prepare_materialized_occurrence_resolution(
                     actions_file.display()
                 ))
             })?;
+        if link_staged_occurrences(charter, &mut resource.sidecar) {
+            dirty_sidecars.insert(actions_file.clone());
+        }
         effects.push(Effect::Write {
             path: resource.location.clone(),
             bytes: render_actions(&charter.actions)?.into_bytes(),
+        });
+    }
+    for resource in action_resources
+        .iter()
+        .filter(|resource| dirty_sidecars.contains(&resource.actions_file))
+    {
+        effects.push(Effect::Write {
+            path: resource.sidecar_location.clone(),
+            bytes: render_sidecar(&resource.sidecar)?.into_bytes(),
         });
     }
     if let Some(archive) = &archive {
@@ -1453,6 +1506,15 @@ pub fn prepare_materialized_occurrence_resolution(
                 .map(|resource| ResourcePrecondition {
                     path: resource.location.clone(),
                     expected: resource.expected.clone(),
+                }),
+        )
+        .chain(
+            action_resources
+                .iter()
+                .filter(|resource| dirty_sidecars.contains(&resource.actions_file))
+                .map(|resource| ResourcePrecondition {
+                    path: resource.sidecar_location.clone(),
+                    expected: resource.sidecar_expected.clone(),
                 }),
         )
         .chain(archive.iter().map(|archive| ResourcePrecondition {
@@ -1485,6 +1547,64 @@ pub fn prepare_materialized_occurrence_resolution(
     Ok((batch, true))
 }
 
+/// Frozen lineage for one resolved occurrence of `plan`.
+fn occurrence_snapshot(
+    plan: &super::ics::ICSPlan,
+    slot_key: &str,
+    scheduled_at: Option<DateTime<Local>>,
+) -> OccurrenceSnapshot {
+    OccurrenceSnapshot {
+        plan_id: plan.plan.id,
+        plan_uid: plan.plan.external_id.clone(),
+        occurrence_key: slot_key.to_string(),
+        plan_title: plan.plan.name.clone(),
+        scheduled_at,
+        rrule: plan.plan.recurrence.as_ref().map(|recurrence| {
+            let text = recurrence.to_string();
+            text.strip_prefix("R:").unwrap_or(&text).to_string()
+        }),
+        template: plan.plan.template_name.clone(),
+    }
+}
+
+/// Replace a resolved occurrence's live Plan link with its frozen snapshot, so
+/// the sidecar holds exactly one form of the link. An existing snapshot wins.
+fn freeze_occurrence_link(meta: &mut ActionMeta, snapshot: OccurrenceSnapshot) {
+    meta.plan = None;
+    meta.occurrence.get_or_insert(snapshot);
+}
+
+/// Record every materialized occurrence staged in `charter` as a durable Plan
+/// link in its sidecar, returning whether the sidecar changed. A resolved
+/// occurrence already carries its frozen snapshot and is never relinked.
+fn link_staged_occurrences(charter: &MarkdownCharter, sidecar: &mut CharterMetadata) -> bool {
+    let mut changed = false;
+    let links = occurrence_links(charter.actions.iter().map(|sourced| &sourced.action));
+    for (occurrence_id, (plan_id, slot_key)) in links {
+        let Some(uid) = charter
+            .plans
+            .iter()
+            .find(|plan| plan.plan.id == plan_id)
+            .and_then(|plan| plan.plan.external_id.clone())
+        else {
+            continue;
+        };
+        let link = ActionPlanLink {
+            uid,
+            occurrence_key: Some(slot_key),
+        };
+        let meta = sidecar
+            .actions
+            .entry(occurrence_id.to_string())
+            .or_default();
+        if meta.occurrence.is_none() && meta.plan.as_ref() != Some(&link) {
+            meta.plan = Some(link);
+            changed = true;
+        }
+    }
+    changed
+}
+
 /// A resolved occurrence no longer holds the token — the next may be stamped.
 fn is_resolved(state: ActionState) -> bool {
     matches!(state, ActionState::Completed | ActionState::Cancelled)
@@ -1495,9 +1615,10 @@ fn is_resolved(state: ActionState) -> bool {
 ///
 /// For a plan with no live token, render its active slot ([`next_active_slot`],
 /// the next upcoming occurrence) and stage it: a real `.actions` line under the
-/// plan's own charter, plus its `(plan_id, slot)` link in `store` so the completion
-/// hook can later target the master deviation. Mutated action files are recorded in
-/// `dirty_actions`; the caller stages them and `store` into one atomic batch.
+/// plan's own charter, carrying its `(plan_id, slot)` link so the completion hook
+/// can later target the master deviation. Mutated action files are recorded in
+/// `dirty_actions`; the caller records the links in their sidecars
+/// ([`link_staged_occurrences`]) and stages everything into one atomic batch.
 ///
 /// Idempotent by construction: a plan whose token already exists unresolved is
 /// skipped, and a deterministic occurrence id already present (in any state) is
@@ -1511,19 +1632,18 @@ fn ensure_active_occurrences_prepared(
     templates: &[SyncPlanTemplate],
     now: DateTime<Local>,
 ) -> Result<usize, WorkspaceError> {
-    let links = store.occurrence_links();
     let mut stamped = 0;
 
     for charter_idx in 0..charters.len() {
         let plans = charters[charter_idx].plans.clone();
         for plan in &plans {
-            let has_live_token = links.iter().any(|(occ_id, (plan_id, _slot))| {
-                *plan_id == plan.plan.id
-                    && charters.iter().any(|charter| {
-                        charter.actions.iter().any(|action| {
-                            action.action.id == *occ_id && !is_resolved(action.action.state)
-                        })
-                    })
+            let has_live_token = charters.iter().any(|charter| {
+                charter.actions.iter().any(|sourced| {
+                    let action = &sourced.action;
+                    action.plan_id == Some(plan.plan.id)
+                        && action.external_occurrence_key.is_some()
+                        && !is_resolved(action.state)
+                })
             });
             if has_live_token {
                 continue;
@@ -1567,12 +1687,13 @@ fn stage_prepared_plan_token(
     {
         return Ok(None);
     }
-    let slot_key = occurrence.external_occurrence_key.clone().ok_or_else(|| {
-        WorkspaceError::Parse(format!(
+    // The slot key is the link the sidecar records for this token.
+    if occurrence.external_occurrence_key.is_none() {
+        return Err(WorkspaceError::Parse(format!(
             "rendered Plan {} occurrence has no occurrence key",
             plan.plan.id
-        ))
-    })?;
+        )));
+    }
     let actions_file = charter.actions_file.clone().ok_or_else(|| {
         WorkspaceError::Parse(format!(
             "charter {} carries plans but has no actions_file to stamp into",
@@ -1612,7 +1733,6 @@ fn stage_prepared_plan_token(
             });
         }
     }
-    store.stamp_occurrence_link(occurrence_id, plan.plan.id, &slot_key)?;
     store.stamp(occurrence_id, SCHEDULED_AT_FIELD, &occurrence.scheduled_at)?;
     store.stamp(occurrence_id, DUE_DATE_FIELD, &occurrence.due_date)?;
     if plan.component_kind == PlanComponentKind::VTodo {
@@ -2603,12 +2723,11 @@ mod tests {
             id: occurrence_id,
             name: "Series".into(),
             scheduled_at: Some(slot),
+            plan_id: Some(plan.plan.id),
+            external_occurrence_key: Some(key.clone()),
             ..Default::default()
         };
         let mut store = PlansSyncStore::new(Path::new("/tmp/plans"));
-        store
-            .stamp_occurrence_link(occurrence_id, plan.plan.id, &key)
-            .unwrap();
         store.stamp_scheduled_at(occurrence_id, Some(slot));
 
         let report = plan_recurring_occurrence_sync(&model_with(action), &store, &[plan]).unwrap();
@@ -2642,12 +2761,11 @@ mod tests {
             id: occurrence_id,
             name: "Series".into(),
             scheduled_at: Some(moved),
+            plan_id: Some(plan.plan.id),
+            external_occurrence_key: Some(key.clone()),
             ..Default::default()
         };
         let mut store = PlansSyncStore::new(Path::new("/tmp/plans"));
-        store
-            .stamp_occurrence_link(occurrence_id, plan.plan.id, &key)
-            .unwrap();
         store.stamp_scheduled_at(occurrence_id, Some(slot));
 
         let report = plan_recurring_occurrence_sync(&model_with(action), &store, &[plan]).unwrap();
@@ -2822,7 +2940,7 @@ mod tests {
             occ.id,
             crate::workspace::calendar::ics::occurrence_action_id(&uid, &key)
         );
-        assert_eq!(store.occurrence_link(occ.id), Some((plan_id, key)));
+        assert_eq!(occurrence_links([occ]).get(&occ.id), Some(&(plan_id, key)));
         assert!(dirty.contains(Path::new("health.actions")));
 
         // Second run while the token is live and unresolved → nothing new.
@@ -2831,6 +2949,47 @@ mod tests {
                 .unwrap();
         assert_eq!(again, 0, "idempotent while the token is live");
         assert_eq!(charters[0].actions.len(), 1);
+    }
+
+    #[cfg(feature = "formatting")]
+    #[test]
+    fn staged_token_links_in_the_sidecar_until_frozen() {
+        let (mut charters, _, uid) = weekly_charter(t(5));
+        let mut store = PlansSyncStore::new(Path::new("/tmp/plans"));
+        ensure_active_occurrences_prepared(
+            &mut charters,
+            &mut store,
+            &mut HashSet::new(),
+            &[],
+            t(20),
+        )
+        .unwrap();
+        let token = charters[0].actions[0].action.clone();
+        let key = token.id.to_string();
+
+        let mut sidecar = CharterMetadata::default();
+        assert!(link_staged_occurrences(&charters[0], &mut sidecar));
+        assert_eq!(
+            sidecar.actions[&key].plan,
+            Some(ActionPlanLink {
+                uid,
+                occurrence_key: token.external_occurrence_key.clone(),
+            })
+        );
+        assert!(
+            !link_staged_occurrences(&charters[0], &mut sidecar),
+            "an unchanged link is not rewritten"
+        );
+
+        let plan = charters[0].plans[0].clone();
+        let slot = token.external_occurrence_key.clone().unwrap();
+        let meta = sidecar.actions.get_mut(&key).unwrap();
+        freeze_occurrence_link(meta, occurrence_snapshot(&plan, &slot, token.scheduled_at));
+        assert!(meta.plan.is_none() && meta.occurrence.is_some());
+        assert!(
+            !link_staged_occurrences(&charters[0], &mut sidecar),
+            "a frozen occurrence is never relinked"
+        );
     }
 
     #[cfg(feature = "formatting")]
@@ -2856,11 +3015,11 @@ mod tests {
                 .unwrap();
 
         assert_eq!(stamped, 1, "only the second plan still needs a token");
-        let linked_plans: HashSet<_> = store
-            .occurrence_links()
-            .into_values()
-            .map(|(plan_id, _)| plan_id)
-            .collect();
+        let linked_plans: HashSet<_> =
+            occurrence_links(charters[0].actions.iter().map(|sourced| &sourced.action))
+                .into_values()
+                .map(|(plan_id, _)| plan_id)
+                .collect();
         assert_eq!(linked_plans, HashSet::from([first_plan_id, second_plan_id]));
     }
 
@@ -2912,7 +3071,7 @@ mod tests {
     #[cfg(feature = "formatting")]
     #[test]
     fn occurrence_tokens_and_grafted_steps_are_excluded_from_standalone_sync() {
-        // The materialized-token seal: an occurrence token (has a store link) and
+        // The materialized-token seal: an occurrence token (has a Plan link) and
         // its grafted template steps (its subtree) must never push as standalone
         // VTODOs — the master + deviations already represent the slot. An ordinary
         // dated action alongside them still syncs.
@@ -2929,6 +3088,8 @@ mod tests {
                         id: token,
                         name: "Weekly Review".into(),
                         scheduled_at: Some(t(20)),
+                        plan_id: Some(plan_id),
+                        external_occurrence_key: Some("20260420T170000Z".into()),
                         ..Default::default()
                     },
                     Action {
@@ -2948,10 +3109,7 @@ mod tests {
             }],
         };
 
-        let mut store = PlansSyncStore::new(Path::new("/tmp/plans"));
-        store
-            .stamp_occurrence_link(token, plan_id, "20260420T170000Z")
-            .unwrap();
+        let store = PlansSyncStore::new(Path::new("/tmp/plans"));
 
         // Empty vdir: without the seal every action here would push as a new Plan.
         let report = plan_one_off_sync(&model, &store, &[]).unwrap();
@@ -2976,7 +3134,7 @@ mod tests {
     fn templated_plan_stamps_root_plus_grafted_steps() {
         // The templated lane: `template:` adds a step-forest beneath the same
         // synthesized occurrence root the atomic lane stamps. One root token
-        // (carrying the occurrence identity + store link), with the template's own
+        // (carrying the occurrence identity + Plan link), with the template's own
         // roots grafted as its children.
         let (mut charters, plan_id, uid) = weekly_charter(t(5));
         charters[0].plans[0].plan.template_name = Some("weekly-review".into());
@@ -3003,7 +3161,7 @@ mod tests {
         .unwrap();
         assert_eq!(n, 1, "one plan → one token stamped");
 
-        // Root token: carries the occurrence identity + store link, is parentless.
+        // Root token: carries the occurrence identity + Plan link, is parentless.
         let acts = &charters[0].actions;
         assert_eq!(acts.len(), 3, "one synthesized root + two grafted steps");
         let root = acts
@@ -3020,7 +3178,10 @@ mod tests {
             root.action.id,
             crate::workspace::calendar::ics::occurrence_action_id(&uid, &key)
         );
-        assert_eq!(store.occurrence_link(root.action.id), Some((plan_id, key)));
+        assert_eq!(
+            occurrence_links([&root.action]).get(&root.action.id),
+            Some(&(plan_id, key))
+        );
 
         // The template's roots graft *beneath* the occurrence root.
         let steps: Vec<_> = acts

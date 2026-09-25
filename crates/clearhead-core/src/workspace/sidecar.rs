@@ -70,12 +70,12 @@ pub struct ActionMeta {
     /// immutable canonical slot.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub plan: Option<ActionPlanLink>,
-    /// Frozen lineage for an archived materialized recurring occurrence.
+    /// Frozen lineage for a resolved materialized recurring occurrence.
     ///
-    /// Live occurrence lineage is hydrated from the plans sync store because it is
-    /// mutable working state. Once the occurrence is closed into a completed
-    /// archive, the fact must be self-contained: future plan edits/deletion must
-    /// not change what this completed instance realized.
+    /// Resolution replaces the occurrence's live [`plan`](Self::plan) link with
+    /// this snapshot, so an entry carries one form or the other. The fact must be
+    /// self-contained: future plan edits/deletion must not change what this
+    /// completed instance realized.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub occurrence: Option<OccurrenceSnapshot>,
 }
