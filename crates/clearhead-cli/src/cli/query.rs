@@ -102,7 +102,9 @@ pub fn index(
 #[cfg(feature = "sparql")]
 fn resolve_charter_target(ctx: &CommandContext, query: &str) -> anyhow::Result<String> {
     use crate::cli::verb_result::canonical_id;
-    use clearhead_core::workspace::{CharterIdSource, PRIMARY_ACTIONS_FILE};
+    use clearhead_core::workspace::{
+        CharterIdSource, PRIMARY_ACTIONS_FILE, document_anchor_for_actions,
+    };
 
     let (charter, ws_root) = super::action::resolve_charter_across_workspaces(ctx, query)?;
     if charter.id_source != CharterIdSource::Document {
@@ -112,15 +114,19 @@ fn resolve_charter_target(ctx: &CommandContext, query: &str) -> anyhow::Result<S
                 "the workspace root has no README.md; run `clearhead init` there to create one"
                     .to_string()
             }
-            Some(path) => {
-                let md_path = clearhead_cli::filesystem::charter_root(&ws_root)
-                    .join(path)
-                    .with_extension("md");
-                format!(
-                    "run `clearhead normalize file {} --write` to stamp one",
-                    md_path.display()
-                )
-            }
+            Some(path) => match document_anchor_for_actions(path) {
+                Some(relative_md) => {
+                    let md_path =
+                        clearhead_cli::filesystem::charter_root(&ws_root).join(relative_md);
+                    format!(
+                        "run `clearhead normalize file {} --write` to stamp one",
+                        md_path.display()
+                    )
+                }
+                None => {
+                    "run `clearhead normalize file <charter.md> --write` to stamp one".to_string()
+                }
+            },
             None => "run `clearhead normalize file <charter.md> --write` to stamp one".to_string(),
         };
         anyhow::bail!(

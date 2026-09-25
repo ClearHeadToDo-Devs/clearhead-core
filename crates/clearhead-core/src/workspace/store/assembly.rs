@@ -9,7 +9,7 @@ use super::WorkspaceError;
 use super::findings::Finding;
 use super::load::WorkspaceRead;
 use super::pathing::{
-    charter_collection_from_anchor, infer_charter_name_for_workspace,
+    charter_collection_from_anchor, document_anchor_for_actions, infer_charter_name_for_workspace,
     infer_parent_charter_name_for_workspace,
 };
 use crate::domain::{Charter, DomainModel};
@@ -326,29 +326,31 @@ pub fn assemble_workspace(input: &WorkspaceAssemblyInput) -> Result<WorkspaceRea
         }
         let subject = charter.alias.as_deref().unwrap_or(&charter.title);
         let id = charter.id;
+        let identity_gap = match charter.id_source {
+            CharterIdSource::Sidecar => {
+                format!("its sidecar records {id}, which belongs in the document frontmatter")
+            }
+            _ => "it loads with an ephemeral identity that changes on every load".to_string(),
+        };
         match (&charter.md_file, &charter.actions_file) {
             (Some(path), _) => {
-                let detail = match charter.id_source {
-                    CharterIdSource::Sidecar => format!(
-                        "charter '{subject}' declares no id, so its document is not the identity anchor; its sidecar records {id}, which belongs in the document frontmatter; run `clearhead normalize file <charter.md> --write` to stamp it"
-                    ),
-                    _ => format!(
-                        "charter '{subject}' declares no id, so it loads with an ephemeral identity that changes on every load; run `clearhead normalize file <charter.md> --write` to stamp a durable id"
-                    ),
-                };
                 findings.push(Finding::warning(
                     "charter-document-without-id",
                     path,
-                    detail,
+                    format!(
+                        "charter '{subject}' declares no id, so {identity_gap}; run `clearhead normalize file <charter.md> --write` to stamp one"
+                    ),
                 ));
             }
             (None, Some(actions_file)) => {
-                let md_path = actions_file.with_extension("md");
+                let Some(md_path) = document_anchor_for_actions(actions_file) else {
+                    continue;
+                };
                 findings.push(Finding::warning(
                     "charter-document-without-id",
                     &md_path,
                     format!(
-                        "charter '{subject}' has no document, so it loads with an ephemeral identity that changes on every load; run `clearhead normalize file {} --write` to create it with a durable id",
+                        "charter '{subject}' has no document, so {identity_gap}; run `clearhead normalize file {} --write` to create it with a durable id",
                         md_path.display()
                     ),
                 ));

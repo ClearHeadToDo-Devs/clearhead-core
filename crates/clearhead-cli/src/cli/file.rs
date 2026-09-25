@@ -161,18 +161,38 @@ pub fn normalize_file(
     Ok(())
 }
 
-/// A flat charter is implicit when its `.md` is absent but a same-stem
-/// `.actions` (or `.completed.actions` / `.upcoming.actions`) sibling exists —
-/// exactly the convention `charters/<charter>.actions` beside
-/// `charters/<charter>.md` describes. Returns the stem to seed the new
-/// document's alias and title with.
+/// A charter is implicit when its `.md` is absent but the document/actions
+/// pairing rule (`README.md` ↔ `next.actions`, or same-stem otherwise —
+/// [`clearhead_core::workspace::actions_anchor_for_document`]) finds an
+/// `.actions`, `.completed.actions`, or `.upcoming.actions` sibling. Returns
+/// the stem to seed the new document's alias and title with: the directory
+/// name for `README.md`, the file stem otherwise. The *workspace* root
+/// (bare `README.md` at the charter tree's own root, no parent directory) is
+/// excluded — its missing document is `clearhead init`'s job, not this one's,
+/// per 01a0dab7's exclusion of root identity.
 fn implicit_charter_stem(md_path: &std::path::Path) -> Option<String> {
-    let stem = md_path.file_stem()?.to_str()?;
+    use clearhead_core::workspace::actions_anchor_for_document;
+
+    let is_readme = md_path.file_name().and_then(|n| n.to_str()) == Some("README.md");
     let dir = md_path.parent().unwrap_or_else(|| std::path::Path::new(""));
+    if is_readme && dir.as_os_str().is_empty() {
+        return None;
+    }
+    let anchor = actions_anchor_for_document(md_path)?;
+    let anchor_stem = anchor.file_stem()?.to_str()?;
     ["actions", "completed.actions", "upcoming.actions"]
         .iter()
-        .any(|ext| dir.join(format!("{stem}.{ext}")).exists())
-        .then(|| stem.to_string())
+        .any(|ext| anchor.with_extension(ext).exists())
+        .then(|| {
+            if is_readme {
+                dir.file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or(anchor_stem)
+                    .to_string()
+            } else {
+                anchor_stem.to_string()
+            }
+        })
 }
 
 /// Create the `.md` for an implicit charter, so a durable id can be stamped

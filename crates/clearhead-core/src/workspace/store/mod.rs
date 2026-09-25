@@ -25,8 +25,9 @@ pub use findings::{Finding, FindingSeverity};
 pub use load::{Workspace, WorkspaceRead};
 pub use pathing::{
     PRIMARY_ACTIONS_FILE, PRIMARY_DOCUMENT_FILE, ROOT_ANCHOR_STEM, actions_anchor_for_document,
-    charter_collection_from_anchor, infer_charter_name, infer_charter_name_for_workspace,
-    infer_parent_charter_name, infer_parent_charter_name_for_workspace,
+    charter_collection_from_anchor, document_anchor_for_actions, infer_charter_name,
+    infer_charter_name_for_workspace, infer_parent_charter_name,
+    infer_parent_charter_name_for_workspace,
 };
 
 /// Errors that can occur when interacting with a workspace.
