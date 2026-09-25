@@ -658,9 +658,25 @@ fn select_archive_charter<'a>(
         clearhead_core::reference::ReferenceSelection::NotFound => {
             // Human-friendly archive search remains an adapter policy, not reference syntax.
             let query_lower = query.to_lowercase();
-            Ok(charters
+            let matches: Vec<&MarkdownCharter> = charters
                 .iter()
-                .find(|charter| charter.title.to_lowercase().contains(&query_lower)))
+                .filter(|charter| charter.title.to_lowercase().contains(&query_lower))
+                .collect();
+            match matches.as_slice() {
+                [] => Ok(None),
+                [only] => Ok(Some(*only)),
+                many => {
+                    let candidates = many
+                        .iter()
+                        .map(|charter| charter.id.to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    Err(ArchiveCharterError::Ambiguous(
+                        query.to_string(),
+                        candidates,
+                    ))
+                }
+            }
         }
     }
 }
@@ -712,6 +728,17 @@ mod tests {
         let mut second = make_mc("work", Some(CharterState::Closed));
         second.id = Uuid::now_v7();
         let error = select_archive_charter(&[first, second], "work").unwrap_err();
+        assert!(matches!(error, ArchiveCharterError::Ambiguous(_, _)));
+    }
+
+    #[test]
+    fn archive_selection_reports_ambiguous_partial_titles() {
+        // Neither alias matches exactly, so resolution falls through to the
+        // partial-title fallback; both titles contain "fit", so it must error
+        // instead of silently picking whichever happens to be first.
+        let first = make_mc("health-and-fitness", Some(CharterState::Closed));
+        let second = make_mc("fitful-sleep-log", Some(CharterState::Closed));
+        let error = select_archive_charter(&[first, second], "fit").unwrap_err();
         assert!(matches!(error, ArchiveCharterError::Ambiguous(_, _)));
     }
 
