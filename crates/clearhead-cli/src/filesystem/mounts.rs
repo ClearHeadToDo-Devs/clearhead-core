@@ -21,8 +21,9 @@ use crate::filesystem::calendar::read_plans_sync_store;
 /// Physical roots resolved by the native adapter.
 ///
 /// The workspace mount is rooted at the data directory (`.clearhead/` for a
-/// project workspace). An external plans mount, when configured, remains a
-/// second physical and logical namespace.
+/// project workspace), and its plans vdir is always `<data_root>/plans`. The
+/// external plans mount exists only for a loose `--file` Plan outside the
+/// workspace, and remains a second physical and logical namespace.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct NativeWorkspaceMounts {
     pub workspace: PathBuf,
@@ -32,7 +33,7 @@ pub struct NativeWorkspaceMounts {
 }
 
 impl NativeWorkspaceMounts {
-    pub fn resolve(workspace_root: &Path, external_plans: Option<&Path>) -> Self {
+    pub fn resolve(workspace_root: &Path) -> Self {
         let project_data = workspace_root.join(".clearhead");
         let workspace = if project_data.is_dir() {
             project_data
@@ -42,8 +43,16 @@ impl NativeWorkspaceMounts {
         let root_charter = persisted_root_charter_name(&workspace);
         Self {
             workspace,
-            external_plans: external_plans.map(Path::to_path_buf),
+            external_plans: None,
             root_charter,
+        }
+    }
+
+    /// Mount a loose Plan file's parent directory beside the workspace.
+    pub fn with_loose_plans(workspace_root: &Path, parent: &Path) -> Self {
+        Self {
+            external_plans: Some(parent.to_path_buf()),
+            ..Self::resolve(workspace_root)
         }
     }
 
@@ -57,11 +66,9 @@ impl NativeWorkspaceMounts {
         self.workspace.join("charters")
     }
 
-    /// Effective physical plans root, honoring an external plans mount.
+    /// Physical plans vdir root.
     pub fn plans_root(&self) -> PathBuf {
-        self.external_plans
-            .clone()
-            .unwrap_or_else(|| self.workspace.join("plans"))
+        self.workspace.join("plans")
     }
 
     /// Name of the workspace's single root charter.
@@ -126,22 +133,22 @@ impl NativeWorkspaceMounts {
 
 /// Detect and return the physical data root for a native workspace.
 pub fn workspace_data_root(root: &Path) -> PathBuf {
-    NativeWorkspaceMounts::resolve(root, None).workspace
+    NativeWorkspaceMounts::resolve(root).workspace
 }
 
 /// Detect and return the physical charter root for a native workspace.
 pub fn charter_root(root: &Path) -> PathBuf {
-    NativeWorkspaceMounts::resolve(root, None).charter_root()
+    NativeWorkspaceMounts::resolve(root).charter_root()
 }
 
 /// Detect and return the default physical plans root for a native workspace.
 pub fn plans_root(root: &Path) -> PathBuf {
-    NativeWorkspaceMounts::resolve(root, None).plans_root()
+    NativeWorkspaceMounts::resolve(root).plans_root()
 }
 
 /// The persisted root charter name for a native workspace.
 pub fn root_charter_name(root: &Path) -> String {
-    NativeWorkspaceMounts::resolve(root, None).root_charter
+    NativeWorkspaceMounts::resolve(root).root_charter
 }
 
 /// Root charter name when neither a README alias nor a persisted workspace name
@@ -170,19 +177,13 @@ fn persisted_root_charter_name(data_root: &Path) -> String {
 }
 
 /// Relaxed native read: inventory and read bytes without replaying pending intent.
-pub fn read_workspace(
-    workspace_root: &Path,
-    external_plans: Option<&Path>,
-) -> Result<WorkspaceRead, WorkspaceError> {
-    assemble_native(workspace_root, external_plans)
+pub fn read_workspace(workspace_root: &Path) -> Result<WorkspaceRead, WorkspaceError> {
+    assemble_native(workspace_root)
 }
 
 /// Native load: inventory, read, and surface findings as warnings.
-pub fn load_workspace(
-    workspace_root: &Path,
-    external_plans: Option<&Path>,
-) -> Result<Vec<MarkdownCharter>, WorkspaceError> {
-    let read = assemble_native(workspace_root, external_plans)?;
+pub fn load_workspace(workspace_root: &Path) -> Result<Vec<MarkdownCharter>, WorkspaceError> {
+    let read = assemble_native(workspace_root)?;
     for finding in &read.findings {
         eprintln!("warning: [{}] {}", finding.path.display(), finding.message);
     }
@@ -191,7 +192,7 @@ pub fn load_workspace(
 
 /// Discover active `.actions` resources and map them to native paths.
 pub fn list_action_files(workspace_root: &Path) -> Result<Vec<PathBuf>, WorkspaceError> {
-    let mounts = NativeWorkspaceMounts::resolve(workspace_root, None);
+    let mounts = NativeWorkspaceMounts::resolve(workspace_root);
     let inventory = mounts.inventory()?;
     let mut paths = inventory
         .workspace
@@ -207,11 +208,8 @@ pub fn list_action_files(workspace_root: &Path) -> Result<Vec<PathBuf>, Workspac
     Ok(paths)
 }
 
-pub fn load_domain_model(
-    workspace_root: &Path,
-    external_plans: Option<&Path>,
-) -> Result<DomainModel, WorkspaceError> {
-    let charters = load_workspace(workspace_root, external_plans)?;
+pub fn load_domain_model(workspace_root: &Path) -> Result<DomainModel, WorkspaceError> {
+    let charters = load_workspace(workspace_root)?;
     Ok(load_workspace_envelope(workspace_root, charters).into())
 }
 
@@ -226,28 +224,17 @@ pub fn load_workspace_envelope(workspace_root: &Path, charters: Vec<MarkdownChar
     )
 }
 
-pub fn load_workspace_model(
-    workspace_root: &Path,
-    external_plans: Option<&Path>,
-) -> Result<Workspace, WorkspaceError> {
-    let charters = load_workspace(workspace_root, external_plans)?;
+pub fn load_workspace_model(workspace_root: &Path) -> Result<Workspace, WorkspaceError> {
+    let charters = load_workspace(workspace_root)?;
     Ok(load_workspace_envelope(workspace_root, charters))
 }
 
-fn assemble_native(
-    workspace_root: &Path,
-    external_plans: Option<&Path>,
-) -> Result<WorkspaceRead, WorkspaceError> {
-    let mounts = NativeWorkspaceMounts::resolve(workspace_root, external_plans);
+fn assemble_native(workspace_root: &Path) -> Result<WorkspaceRead, WorkspaceError> {
+    let mounts = NativeWorkspaceMounts::resolve(workspace_root);
     let inventory = mounts.inventory()?;
     let plans = plan_workspace_read(&inventory);
     let reads = mounts.read(&plans, &inventory)?;
-    let effective_plans_root = mounts
-        .external_plans
-        .as_deref()
-        .map(Path::to_path_buf)
-        .unwrap_or_else(|| mounts.workspace.join("plans"));
-    let occurrence_links = read_plans_sync_store(workspace_root, &effective_plans_root)
+    let occurrence_links = read_plans_sync_store(workspace_root, &mounts.plans_root())
         .map(|store| store.occurrence_links().clone())
         .unwrap_or_default();
     // The shell mints one ephemeral id per charter document so Core stays free
@@ -389,14 +376,14 @@ mod tests {
     use clearhead_core::workspace::plan_workspace_read;
 
     #[test]
-    fn resolves_project_and_external_plans_as_distinct_mounts() {
+    fn resolves_project_and_loose_plans_as_distinct_mounts() {
         let root = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(root.path().join("project/.clearhead/charters")).unwrap();
         let external = root.path().join("vdir");
         std::fs::create_dir_all(external.join("next")).unwrap();
 
         let mounts =
-            NativeWorkspaceMounts::resolve(&root.path().join("project"), Some(external.as_path()));
+            NativeWorkspaceMounts::with_loose_plans(&root.path().join("project"), &external);
         assert_eq!(mounts.workspace, root.path().join("project/.clearhead"));
         assert_eq!(mounts.external_plans, Some(external.clone()));
         assert_eq!(mounts.data_root(), root.path().join("project/.clearhead"));
@@ -404,7 +391,10 @@ mod tests {
             mounts.charter_root(),
             root.path().join("project/.clearhead/charters")
         );
-        assert_eq!(mounts.plans_root(), external);
+        assert_eq!(
+            mounts.plans_root(),
+            root.path().join("project/.clearhead/plans")
+        );
         assert_eq!(mounts.root_charter(), UNNAMED_ROOT_CHARTER);
     }
 
@@ -463,7 +453,7 @@ mod tests {
         )
         .unwrap();
 
-        let mounted = load_domain_model(root.path(), None).unwrap();
+        let mounted = load_domain_model(root.path()).unwrap();
         assert_eq!(mounted.charters.len(), 2, "work plus the implicit root");
         let work = mounted
             .charters
@@ -484,7 +474,7 @@ mod tests {
         std::fs::write(workspace.join("plans/next/same.ics"), "workspace").unwrap();
         std::fs::write(external.join("next/same.ics"), "external").unwrap();
 
-        let mounts = NativeWorkspaceMounts::resolve(&workspace, Some(&external));
+        let mounts = NativeWorkspaceMounts::with_loose_plans(&workspace, &external);
         let inventory = mounts.inventory().unwrap();
         assert!(
             inventory

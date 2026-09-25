@@ -101,7 +101,6 @@ pub fn sync_calendar(
     if dry_run {
         let preview = clearhead_cli::filesystem::preview_calendar_sync_with_component(
             &ctx.data_dir,
-            ctx.plan_override().as_deref(),
             conflict_resolution(conflict),
             ctx.config.plan_component,
         )?;
@@ -117,7 +116,6 @@ pub fn sync_calendar(
 
     let result = clearhead_cli::filesystem::sync_calendar_with_component(
         &ctx.data_dir,
-        ctx.plan_override().as_deref(),
         conflict_resolution(conflict),
         ctx.config.plan_component,
     )?;

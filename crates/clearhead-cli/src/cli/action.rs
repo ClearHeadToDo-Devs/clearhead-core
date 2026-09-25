@@ -256,7 +256,6 @@ fn close_action_subtree(
     if let Some(op) = occurrence_op
         && clearhead_cli::filesystem::resolve_materialized_occurrence(
             &workspace_root,
-            ctx.plan_override().as_deref(),
             action_id,
             &op,
             Local::now(),
@@ -337,13 +336,7 @@ fn try_close_occurrence(
         return Ok(true);
     }
 
-    clearhead_cli::filesystem::apply_occurrence_op(
-        &ctx.data_dir,
-        ctx.plan_override().as_deref(),
-        plan_id,
-        &key,
-        &op,
-    )?;
+    clearhead_cli::filesystem::apply_occurrence_op(&ctx.data_dir, plan_id, &key, &op)?;
 
     let outcome = match closing_state {
         ActionState::Cancelled => VerbOutcome::Cancelled {
@@ -413,7 +406,6 @@ fn try_reschedule_occurrence(
 
     clearhead_cli::filesystem::apply_occurrence_op(
         &ctx.data_dir,
-        ctx.plan_override().as_deref(),
         plan_id,
         &key,
         &clearhead_core::OccurrenceOp::Reschedule {
@@ -909,7 +901,7 @@ pub fn read_actions_cmd(
                         let mut ws_model = if is_primary {
                             model.clone()
                         } else {
-                            match clearhead_cli::filesystem::load_domain_model(&ws_path, None) {
+                            match clearhead_cli::filesystem::load_domain_model(&ws_path) {
                                 Ok(m) => m,
                                 Err(e) => {
                                     tracing::warn!(
@@ -979,16 +971,14 @@ fn collect_workspace_actions(
         let is_primary = ws_path == ctx.data_dir;
         let label = if multi_ws { Some(ws_name) } else { None };
 
-        let plan_override = is_primary.then(|| ctx.plan_override()).flatten();
-        let charters =
-            match clearhead_cli::filesystem::load_workspace(&ws_path, plan_override.as_deref()) {
-                Ok(c) => c,
-                Err(e) if is_primary => return Err(e.into()),
-                Err(e) => {
-                    warn!("Skipping workspace '{}': {}", ws_path.display(), e);
-                    continue;
-                }
-            };
+        let charters = match clearhead_cli::filesystem::load_workspace(&ws_path) {
+            Ok(c) => c,
+            Err(e) if is_primary => return Err(e.into()),
+            Err(e) => {
+                warn!("Skipping workspace '{}': {}", ws_path.display(), e);
+                continue;
+            }
+        };
         let charter_root = clearhead_cli::filesystem::charter_root(&ws_path);
 
         for mc in &charters {
@@ -1324,18 +1314,14 @@ pub(super) fn resolve_charter_across_workspaces(
 ) -> anyhow::Result<(clearhead_core::MarkdownCharter, PathBuf)> {
     for (_, ws_root) in ctx.workspace_dirs() {
         let is_primary = ws_root == ctx.data_dir;
-        let plan_override = (ws_root == ctx.data_dir)
-            .then(|| ctx.plan_override())
-            .flatten();
-        let mcs =
-            match clearhead_cli::filesystem::load_workspace(&ws_root, plan_override.as_deref()) {
-                Ok(m) => m,
-                Err(e) if is_primary => return Err(e.into()),
-                Err(e) => {
-                    warn!("Skipping workspace '{}': {}", ws_root.display(), e);
-                    continue;
-                }
-            };
+        let mcs = match clearhead_cli::filesystem::load_workspace(&ws_root) {
+            Ok(m) => m,
+            Err(e) if is_primary => return Err(e.into()),
+            Err(e) => {
+                warn!("Skipping workspace '{}': {}", ws_root.display(), e);
+                continue;
+            }
+        };
         if let Some(mc) = resolve_markdown_charter(&mcs, query)? {
             return Ok((mc.clone(), ws_root));
         }
@@ -1364,8 +1350,7 @@ fn collect_all_actions(
     open_only: bool,
 ) -> anyhow::Result<Vec<Action>> {
     let charter_root = clearhead_cli::filesystem::charter_root(&ctx.data_dir);
-    let charters =
-        clearhead_cli::filesystem::load_workspace(&ctx.data_dir, ctx.plan_override().as_deref())?;
+    let charters = clearhead_cli::filesystem::load_workspace(&ctx.data_dir)?;
 
     let matches = |mc: &clearhead_core::MarkdownCharter| match (file, &mc.actions_file) {
         (Some(target), Some(actions_file)) => {

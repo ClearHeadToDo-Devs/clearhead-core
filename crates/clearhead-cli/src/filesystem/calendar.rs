@@ -27,7 +27,7 @@ use clearhead_core::workspace::calendar::reconcile::{
 };
 use clearhead_core::workspace::calendar::sync_store::{PlansSyncStore, decode_plans_sync_store};
 use clearhead_core::workspace::resource::{
-    Effect, EffectBatch, ExpectedResource, MountId, MountInventory, ReadPlan, ResourceLocation,
+    Effect, EffectBatch, ExpectedResource, MountInventory, ReadPlan, ResourceLocation,
     ResourcePrecondition, ResourceRevision, WorkspaceMounts, WorkspacePath,
 };
 use clearhead_core::workspace::{
@@ -81,60 +81,31 @@ struct PreparedCalendarSync {
     rolled_forward: usize,
 }
 
-/// Discover and read all visible `.ics` resources from the effective plans mount.
+/// Discover and read all visible `.ics` resources from the workspace's plans vdir.
 pub fn read_calendar_resources(
     workspace_root: &Path,
-    external_plans: Option<&Path>,
 ) -> Result<Vec<CalendarResource>, WorkspaceError> {
-    Ok(observe_calendar_resources(workspace_root, external_plans)?.resources)
+    Ok(observe_calendar_resources(workspace_root)?.resources)
 }
 
-/// Observe the effective plans inventory and immutable resource bytes together.
+/// Observe the plans inventory and immutable resource bytes together.
 pub fn observe_calendar_resources(
     workspace_root: &Path,
-    external_plans: Option<&Path>,
 ) -> Result<CalendarObservation, WorkspaceError> {
-    let mounts = NativeWorkspaceMounts::resolve(workspace_root, external_plans);
+    let mounts = NativeWorkspaceMounts::resolve(workspace_root);
     let inventory = mounts.inventory()?;
-    let effective_mount = if mounts.external_plans.is_some() {
-        MountId::ExternalPlans
-    } else {
-        MountId::Workspace
-    };
-    let effective_inventory = match effective_mount {
-        MountId::Workspace => &inventory.workspace,
-        MountId::ExternalPlans => inventory
-            .external_plans
-            .as_ref()
-            .ok_or_else(|| WorkspaceError::Actions("external plans inventory is missing".into()))?,
-    };
-    let paths = effective_inventory
+    let paths = inventory
+        .workspace
         .files
         .paths()
-        .filter(|path| calendar_relative_path(effective_mount, path).is_some())
-        .cloned()
-        .collect::<Vec<_>>();
+        .filter(|path| calendar_relative_path(path).is_some())
+        .cloned();
     let read_plans = WorkspaceMounts {
-        workspace: if effective_mount == MountId::Workspace {
-            ReadPlan::new(paths.clone())
-        } else {
-            ReadPlan::default()
-        },
-        external_plans: mounts.external_plans.as_ref().map(|_| {
-            if effective_mount == MountId::ExternalPlans {
-                ReadPlan::new(paths.clone())
-            } else {
-                ReadPlan::default()
-            }
-        }),
+        workspace: ReadPlan::new(paths),
+        external_plans: None,
     };
     let reads = mounts.read(&read_plans, &inventory)?;
-    let evidence = match effective_mount {
-        MountId::Workspace => &reads.workspace,
-        MountId::ExternalPlans => reads.external_plans.as_ref().ok_or_else(|| {
-            WorkspaceError::Actions("external plans read evidence is missing".into())
-        })?,
-    };
+    let evidence = &reads.workspace;
     if let Some(failure) = evidence.failures.first() {
         return Err(WorkspaceError::Actions(format!(
             "could not read calendar resource {}: {}",
@@ -145,7 +116,7 @@ pub fn observe_calendar_resources(
     let root_charter = mounts.root_charter();
     let mut resources = Vec::new();
     for snapshot in evidence.snapshot.resources() {
-        let Some(relative_path) = calendar_relative_path(effective_mount, snapshot.path()) else {
+        let Some(relative_path) = calendar_relative_path(snapshot.path()) else {
             continue;
         };
         let relative = PathBuf::from(relative_path);
@@ -154,7 +125,7 @@ pub fn observe_calendar_resources(
             continue;
         };
         let inferred_parent = infer_plan_parent_for_workspace(&relative, root_charter);
-        let location = ResourceLocation::new(effective_mount, snapshot.path().clone());
+        let location = ResourceLocation::workspace(snapshot.path().clone());
         resources.push(CalendarResource {
             path: mounts.physical_path(&location)?,
             location,
@@ -168,7 +139,7 @@ pub fn observe_calendar_resources(
     resources.sort_by(|left, right| left.relative_path.cmp(&right.relative_path));
     Ok(CalendarObservation {
         mounts,
-        inventory: effective_inventory.clone(),
+        inventory: inventory.workspace,
         resources,
     })
 }
@@ -176,32 +147,19 @@ pub fn observe_calendar_resources(
 /// Recompute and deliver one calendar sync from fresh evidence under the native lock.
 pub fn sync_calendar(
     workspace_root: &Path,
-    external_plans: Option<&Path>,
     conflict: Option<SyncConflictResolution>,
 ) -> Result<CalendarSyncResult, WorkspaceError> {
-    sync_calendar_with_component(
-        workspace_root,
-        external_plans,
-        conflict,
-        PlanComponentKind::VTodo,
-    )
+    sync_calendar_with_component(workspace_root, conflict, PlanComponentKind::VTodo)
 }
 
 pub fn sync_calendar_with_component(
     workspace_root: &Path,
-    external_plans: Option<&Path>,
     conflict: Option<SyncConflictResolution>,
     configured_component: PlanComponentKind,
 ) -> Result<CalendarSyncResult, WorkspaceError> {
-    let mounts = NativeWorkspaceMounts::resolve(workspace_root, external_plans);
+    let mounts = NativeWorkspaceMounts::resolve(workspace_root);
 
-    let planned = prepare_calendar_sync(
-        workspace_root,
-        external_plans,
-        conflict,
-        configured_component,
-        mounts,
-    )?;
+    let planned = prepare_calendar_sync(workspace_root, conflict, configured_component, mounts)?;
     if planned.mounts.inventory()? != planned.inventory {
         return Err(WorkspaceError::Actions(
             "workspace or plans vdir changed before calendar sync delivery".into(),
@@ -219,18 +177,11 @@ pub fn sync_calendar_with_component(
 /// Compute the exact Plan-native lifecycle sync without locking, journaling, or delivery.
 pub fn preview_calendar_sync_with_component(
     workspace_root: &Path,
-    external_plans: Option<&Path>,
     conflict: Option<SyncConflictResolution>,
     configured_component: PlanComponentKind,
 ) -> Result<CalendarSyncPreview, WorkspaceError> {
-    let mounts = NativeWorkspaceMounts::resolve(workspace_root, external_plans);
-    let planned = prepare_calendar_sync(
-        workspace_root,
-        external_plans,
-        conflict,
-        configured_component,
-        mounts,
-    )?;
+    let mounts = NativeWorkspaceMounts::resolve(workspace_root);
+    let planned = prepare_calendar_sync(workspace_root, conflict, configured_component, mounts)?;
     Ok(CalendarSyncPreview {
         report: planned.report,
         rolled_forward: planned.rolled_forward,
@@ -239,32 +190,20 @@ pub fn preview_calendar_sync_with_component(
 
 fn prepare_calendar_sync(
     workspace_root: &Path,
-    external_plans: Option<&Path>,
     conflict: Option<SyncConflictResolution>,
     configured_component: PlanComponentKind,
     mounts: NativeWorkspaceMounts,
 ) -> Result<PreparedCalendarSync, WorkspaceError> {
     let inventory = mounts.inventory()?;
-    let workspace =
-        crate::filesystem::mounts::load_workspace_model(workspace_root, external_plans)?;
-    let mut observation = observe_calendar_resources(workspace_root, external_plans)?;
-    let observed_effective = if mounts.external_plans.is_some() {
-        inventory.external_plans.as_ref()
-    } else {
-        Some(&inventory.workspace)
-    }
-    .ok_or_else(|| WorkspaceError::Actions("external plans inventory is missing".into()))?;
-    if &observation.inventory != observed_effective {
+    let workspace = crate::filesystem::mounts::load_workspace_model(workspace_root)?;
+    let mut observation = observe_calendar_resources(workspace_root)?;
+    if observation.inventory != inventory.workspace {
         return Err(WorkspaceError::Actions(
             "plans vdir changed while calendar sync was being read".into(),
         ));
     }
 
-    let plans_root = mounts
-        .external_plans
-        .as_deref()
-        .map(Path::to_path_buf)
-        .unwrap_or_else(|| mounts.workspace.join("plans"));
+    let plans_root = mounts.plans_root();
     let store_path = WorkspacePath::new("sync/plans.json")
         .map_err(|error| WorkspaceError::Actions(error.to_string()))?;
     let store_location = ResourceLocation::workspace(store_path);
@@ -503,11 +442,10 @@ fn prepare_calendar_sync(
             &workspace.charters[charter_idx],
             &workspace.charters[charter_idx].actions[action_idx].action,
         );
-        let (target_mounts, location, _) =
-            mutation_target(workspace_root, external_plans, &target)?;
+        let (target_mounts, location, _) = mutation_target(workspace_root, &target)?;
         if target_mounts != mounts {
             return Err(WorkspaceError::Actions(format!(
-                "calendar mirror target escaped the configured plans mount: {}",
+                "calendar mirror target escaped the workspace plans vdir: {}",
                 target.display()
             )));
         }
@@ -563,34 +501,22 @@ fn prepare_calendar_sync(
 /// Resolve one closed materialized recurring token through native mounted delivery.
 pub fn resolve_materialized_occurrence(
     workspace_root: &Path,
-    external_plans: Option<&Path>,
     occurrence_id: Uuid,
     operation: &OccurrenceOp,
     now: chrono::DateTime<Local>,
 ) -> Result<bool, WorkspaceError> {
-    let mounts = NativeWorkspaceMounts::resolve(workspace_root, external_plans);
+    let mounts = NativeWorkspaceMounts::resolve(workspace_root);
 
     let inventory = mounts.inventory()?;
-    let workspace =
-        crate::filesystem::mounts::load_workspace_model(workspace_root, external_plans)?;
-    let observation = observe_calendar_resources(workspace_root, external_plans)?;
-    let observed_effective = if mounts.external_plans.is_some() {
-        inventory.external_plans.as_ref()
-    } else {
-        Some(&inventory.workspace)
-    }
-    .ok_or_else(|| WorkspaceError::Actions("external plans inventory is missing".into()))?;
-    if &observation.inventory != observed_effective {
+    let workspace = crate::filesystem::mounts::load_workspace_model(workspace_root)?;
+    let observation = observe_calendar_resources(workspace_root)?;
+    if observation.inventory != inventory.workspace {
         return Err(WorkspaceError::Actions(
             "plans vdir changed while materialized occurrence was being read".into(),
         ));
     }
 
-    let plans_root = mounts
-        .external_plans
-        .as_deref()
-        .map(Path::to_path_buf)
-        .unwrap_or_else(|| mounts.workspace.join("plans"));
+    let plans_root = mounts.plans_root();
     let store_path = WorkspacePath::new("sync/plans.json")
         .map_err(|error| WorkspaceError::Actions(error.to_string()))?;
     let store_location = ResourceLocation::workspace(store_path);
@@ -947,21 +873,6 @@ fn sync_read_preconditions(
             expected,
         });
     }
-    if let Some(external) = &inventory.external_plans {
-        for path in external.files.paths() {
-            let location = ResourceLocation::external_plans(path.clone());
-            let expected = expected_resource(mounts, &location)?;
-            if expected == ExpectedResource::Missing {
-                return Err(WorkspaceError::Actions(format!(
-                    "calendar resource disappeared during sync: {location}"
-                )));
-            }
-            preconditions.push(ResourcePrecondition {
-                path: location,
-                expected,
-            });
-        }
-    }
     Ok(preconditions)
 }
 
@@ -1013,22 +924,8 @@ fn sync_plan_templates(
     Ok(templates)
 }
 
-fn effective_inventory(mounts: &NativeWorkspaceMounts) -> Result<MountInventory, WorkspaceError> {
-    let inventory = mounts.inventory()?;
-    if mounts.external_plans.is_some() {
-        inventory
-            .external_plans
-            .ok_or_else(|| WorkspaceError::Actions("external plans inventory is missing".into()))
-    } else {
-        Ok(inventory.workspace)
-    }
-}
-
-fn calendar_relative_path(mount: MountId, path: &WorkspacePath) -> Option<&str> {
-    let relative = match mount {
-        MountId::Workspace => path.as_str().strip_prefix("plans/")?,
-        MountId::ExternalPlans => path.as_str(),
-    };
+fn calendar_relative_path(path: &WorkspacePath) -> Option<&str> {
+    let relative = path.as_str().strip_prefix("plans/")?;
     if !relative.ends_with(".ics")
         || relative
             .split('/')
@@ -1042,12 +939,11 @@ fn calendar_relative_path(mount: MountId, path: &WorkspacePath) -> Option<&str> 
 /// Apply one projected-occurrence operation through a stale-guarded native batch.
 pub fn apply_occurrence_op(
     workspace_root: &Path,
-    external_plans: Option<&Path>,
     plan_id: Uuid,
     occurrence_key: &str,
     op: &OccurrenceOp,
 ) -> Result<(), WorkspaceError> {
-    let observation = observe_calendar_resources(workspace_root, external_plans)?;
+    let observation = observe_calendar_resources(workspace_root)?;
     let mut matched: Option<(&CalendarResource, ICSPlan)> = None;
     for resource in &observation.resources {
         let source = std::str::from_utf8(&resource.bytes)
@@ -1058,7 +954,7 @@ pub fn apply_occurrence_op(
             }
             if matched.is_some() {
                 return Err(WorkspaceError::Parse(format!(
-                    "recurring plan {plan_id} appears more than once in the configured plans vdir"
+                    "recurring plan {plan_id} appears more than once in the plans vdir"
                 )));
             }
             matched = Some((resource, plan));
@@ -1066,7 +962,7 @@ pub fn apply_occurrence_op(
     }
     let Some((resource, plan)) = matched else {
         return Err(WorkspaceError::Parse(format!(
-            "recurring plan {plan_id} not found in the configured plans vdir"
+            "recurring plan {plan_id} not found in the plans vdir"
         )));
     };
     let uid = plan.plan.external_id.as_deref().ok_or_else(|| {
@@ -1092,9 +988,9 @@ pub fn apply_occurrence_op(
     )
     .map_err(|error| WorkspaceError::Actions(error.to_string()))?;
 
-    if effective_inventory(&observation.mounts)? != observation.inventory {
+    if observation.mounts.inventory()?.workspace != observation.inventory {
         return Err(WorkspaceError::Actions(
-            "configured plans vdir changed before occurrence delivery".into(),
+            "plans vdir changed before occurrence delivery".into(),
         ));
     }
     crate::filesystem::validate_preconditions(&observation.mounts, effects.preconditions())?;
@@ -1102,16 +998,9 @@ pub fn apply_occurrence_op(
 }
 
 /// Normalize foreign recurring-master roll-forwards in one mounted transaction.
-pub fn sync_master_rollforwards(
-    workspace_root: &Path,
-    external_plans: Option<&Path>,
-) -> Result<usize, WorkspaceError> {
-    let observation = observe_calendar_resources(workspace_root, external_plans)?;
-    let plans_root = observation
-        .mounts
-        .external_plans
-        .clone()
-        .unwrap_or_else(|| observation.mounts.workspace.join("plans"));
+pub fn sync_master_rollforwards(workspace_root: &Path) -> Result<usize, WorkspaceError> {
+    let observation = observe_calendar_resources(workspace_root)?;
+    let plans_root = observation.mounts.plans_root();
     let store_path = observation.mounts.workspace.join("sync/plans.json");
     let store_location =
         ResourceLocation::workspace(WorkspacePath::new("sync/plans.json").unwrap());
@@ -1146,9 +1035,9 @@ pub fn sync_master_rollforwards(
     let (batch, recorded) =
         prepare_master_rollforwards(store, store_location, store_expected, &resources)?;
 
-    if effective_inventory(&observation.mounts)? != observation.inventory {
+    if observation.mounts.inventory()?.workspace != observation.inventory {
         return Err(WorkspaceError::Actions(
-            "configured plans vdir changed before roll-forward delivery".into(),
+            "plans vdir changed before roll-forward delivery".into(),
         ));
     }
     super::deliver(&observation.mounts, &batch)?;
@@ -1175,20 +1064,13 @@ fn logical_path(path: &Path) -> Result<WorkspacePath, WorkspaceError> {
 
 fn mutation_target(
     workspace_root: &Path,
-    configured_external: Option<&Path>,
     target: &Path,
 ) -> Result<(NativeWorkspaceMounts, ResourceLocation, PathBuf), WorkspaceError> {
     let target = absolute_path(target)?;
-    let configured = NativeWorkspaceMounts::resolve(workspace_root, configured_external);
-    if let Ok(relative) = target.strip_prefix(&configured.workspace) {
+    let mounts = NativeWorkspaceMounts::resolve(workspace_root);
+    if let Ok(relative) = target.strip_prefix(&mounts.workspace) {
         let location = ResourceLocation::workspace(logical_path(relative)?);
-        return Ok((configured, location, target));
-    }
-    if let Some(external) = &configured.external_plans
-        && let Ok(relative) = target.strip_prefix(external)
-    {
-        let location = ResourceLocation::external_plans(logical_path(relative)?);
-        return Ok((configured, location, target));
+        return Ok((mounts, location, target));
     }
 
     // Loose `--file`: preserve exactly the named file and use its parent only as
@@ -1199,7 +1081,7 @@ fn mutation_target(
     let file_name = target
         .file_name()
         .ok_or_else(|| WorkspaceError::InvalidPath(target.clone()))?;
-    let mounts = NativeWorkspaceMounts::resolve(workspace_root, Some(parent));
+    let mounts = NativeWorkspaceMounts::with_loose_plans(workspace_root, parent);
     let location = ResourceLocation::external_plans(logical_path(Path::new(file_name))?);
     Ok((mounts, location, target))
 }
@@ -1218,16 +1100,10 @@ pub const COLLECTION_DISPLAYNAME_FILE: &str = "displayname";
 ///
 /// Only collections that already exist are named: writing metadata must never
 /// bring an empty collection into being.
-pub fn write_collection_displaynames(
-    workspace_root: &Path,
-    external_plans: Option<&Path>,
-) -> Result<usize, WorkspaceError> {
-    let mounts = NativeWorkspaceMounts::resolve(workspace_root, external_plans);
-    let plans_root = mounts.plans_root();
+pub fn write_collection_displaynames(workspace_root: &Path) -> Result<usize, WorkspaceError> {
+    let plans_root = crate::filesystem::mounts::plans_root(workspace_root);
     let mut refreshed = 0;
-    for charter in
-        crate::filesystem::mounts::read_workspace(workspace_root, external_plans)?.charters
-    {
+    for charter in crate::filesystem::mounts::read_workspace(workspace_root)?.charters {
         let Some(alias) = charter.alias.as_deref() else {
             continue;
         };
@@ -1248,12 +1124,11 @@ pub fn write_collection_displaynames(
 /// Write one Plan through the mounted, stale-guarded native effect boundary.
 pub fn write_plan_file(
     workspace_root: &Path,
-    configured_external: Option<&Path>,
     path: &Path,
     plan: &Plan,
     component_kind: PlanComponentKind,
 ) -> Result<(), WorkspaceError> {
-    let (mounts, location, target) = mutation_target(workspace_root, configured_external, path)?;
+    let (mounts, location, target) = mutation_target(workspace_root, path)?;
     let (source, expected) = match std::fs::read(&target) {
         Ok(bytes) => {
             let source = std::str::from_utf8(&bytes)
@@ -1286,12 +1161,8 @@ pub fn write_plan_file(
 }
 
 /// Delete one explicitly selected Plan resource through durable removal.
-pub fn delete_plan_file(
-    workspace_root: &Path,
-    configured_external: Option<&Path>,
-    path: &Path,
-) -> Result<(), WorkspaceError> {
-    let (mounts, location, target) = mutation_target(workspace_root, configured_external, path)?;
+pub fn delete_plan_file(workspace_root: &Path, path: &Path) -> Result<(), WorkspaceError> {
+    let (mounts, location, target) = mutation_target(workspace_root, path)?;
     let bytes = std::fs::read(&target)?;
     let effects = EffectBatch::new(
         vec![Effect::Remove {
@@ -1320,7 +1191,7 @@ pub fn read_ics_file(path: &Path) -> Result<Vec<ICSPlan>, WorkspaceError> {
 
 /// Native location of the machine-local plans merge-base store.
 pub fn plans_sync_store_path(workspace_root: &Path) -> PathBuf {
-    NativeWorkspaceMounts::resolve(workspace_root, None)
+    NativeWorkspaceMounts::resolve(workspace_root)
         .workspace
         .join("sync/plans.json")
 }
@@ -1347,36 +1218,6 @@ mod tests {
     const PLAN: &str = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VTODO\r\nUID:weekly@example.com\r\nSUMMARY:Weekly\r\nDTSTART:20260821T120000Z\r\nRRULE:FREQ=WEEKLY\r\nEND:VTODO\r\nEND:VCALENDAR\r\n";
 
     #[test]
-    fn external_vdir_stays_a_distinct_mount_and_wins_when_configured() {
-        let temp = tempfile::tempdir().unwrap();
-        let project = temp.path().join("project");
-        let internal = project.join(".clearhead/plans/next");
-        let external = temp.path().join("vdir/next");
-        std::fs::create_dir_all(project.join(".clearhead/charters")).unwrap();
-        std::fs::write(
-            project.join(".clearhead/workspace.json"),
-            r#"{"workspace_name": "project"}"#,
-        )
-        .unwrap();
-        std::fs::create_dir_all(&internal).unwrap();
-        std::fs::create_dir_all(&external).unwrap();
-        std::fs::write(internal.join("internal.ics"), PLAN).unwrap();
-        std::fs::write(external.join("external.ics"), PLAN).unwrap();
-
-        let resources = read_calendar_resources(&project, Some(&temp.path().join("vdir"))).unwrap();
-
-        assert_eq!(resources.len(), 1);
-        assert_eq!(resources[0].location.mount, MountId::ExternalPlans);
-        assert_eq!(resources[0].location.path.as_str(), "next/external.ics");
-        assert_eq!(
-            resources[0].relative_path,
-            PathBuf::from("next/external.ics")
-        );
-        assert_eq!(resources[0].charter_name, "project");
-        assert_eq!(resources[0].path, external.join("external.ics"));
-    }
-
-    #[test]
     fn collection_displaynames_come_from_the_charter_alias() {
         let temp = tempfile::tempdir().unwrap();
         let project = temp.path().join("project");
@@ -1399,7 +1240,7 @@ mod tests {
         let plans = project.join(".clearhead/plans");
         std::fs::create_dir_all(plans.join("work")).unwrap();
 
-        assert_eq!(write_collection_displaynames(&project, None).unwrap(), 1);
+        assert_eq!(write_collection_displaynames(&project).unwrap(), 1);
         assert_eq!(
             std::fs::read_to_string(plans.join("work/displayname")).unwrap(),
             "work"
@@ -1409,7 +1250,7 @@ mod tests {
         assert!(!plans.join("anon").exists());
 
         // Idempotent once it matches.
-        assert_eq!(write_collection_displaynames(&project, None).unwrap(), 0);
+        assert_eq!(write_collection_displaynames(&project).unwrap(), 0);
 
         // A rename refreshes the display name, not the collection path.
         std::fs::write(
@@ -1417,40 +1258,11 @@ mod tests {
             "---\nid: 01951111-0000-7000-8000-0000000000c1\nalias: labor\n---\n# Work\n",
         )
         .unwrap();
-        assert_eq!(write_collection_displaynames(&project, None).unwrap(), 1);
+        assert_eq!(write_collection_displaynames(&project).unwrap(), 1);
         assert_eq!(
             std::fs::read_to_string(plans.join("work/displayname")).unwrap(),
             "labor"
         );
-    }
-
-    #[test]
-    fn collection_displaynames_follow_the_configured_plans_root() {
-        let temp = tempfile::tempdir().unwrap();
-        let project = temp.path().join("project");
-        let charters = project.join(".clearhead/charters");
-        std::fs::create_dir_all(&charters).unwrap();
-        std::fs::write(
-            charters.join("work.md"),
-            "---\nid: 01951111-0000-7000-8000-0000000000c3\nalias: work\n---\n# Work\n",
-        )
-        .unwrap();
-        std::fs::write(charters.join("work.actions"), "").unwrap();
-
-        let external = temp.path().join("vdir");
-        std::fs::create_dir_all(external.join("work")).unwrap();
-
-        assert_eq!(
-            write_collection_displaynames(&project, Some(&external)).unwrap(),
-            1
-        );
-        assert_eq!(
-            std::fs::read_to_string(external.join("work/displayname")).unwrap(),
-            "work"
-        );
-        // The vdir the calendar client reads is the mounted one, not the internal
-        // plans root shadowed by it.
-        assert!(!project.join(".clearhead/plans/work").exists());
     }
 
     #[test]
@@ -1463,39 +1275,31 @@ mod tests {
     }
 
     #[test]
-    fn occurrence_write_targets_the_external_mount_without_flattening_it() {
+    fn occurrence_write_targets_the_plans_vdir() {
         let temp = tempfile::tempdir().unwrap();
         let project = temp.path().join("project");
-        let external_root = temp.path().join("vdir");
-        let external_file = external_root.join("next/weekly.ics");
+        let plans_root = project.join(".clearhead/plans");
+        let plan_file = plans_root.join("next/weekly.ics");
         std::fs::create_dir_all(project.join(".clearhead/charters")).unwrap();
-        std::fs::create_dir_all(external_file.parent().unwrap()).unwrap();
-        std::fs::write(&external_file, PLAN).unwrap();
+        std::fs::create_dir_all(plan_file.parent().unwrap()).unwrap();
+        std::fs::write(&plan_file, PLAN).unwrap();
         let plan_id =
             clearhead_core::workspace::calendar::ics::plan_id_from_ics_uid("weekly@example.com");
 
-        apply_occurrence_op(
-            &project,
-            Some(&external_root),
-            plan_id,
-            "20260821T120000Z",
-            &OccurrenceOp::Skip,
-        )
-        .unwrap();
+        apply_occurrence_op(&project, plan_id, "20260821T120000Z", &OccurrenceOp::Skip).unwrap();
 
-        let rendered = std::fs::read_to_string(&external_file).unwrap();
+        let rendered = std::fs::read_to_string(&plan_file).unwrap();
         assert!(rendered.contains("EXDATE:20260821T120000Z"));
-        assert!(!project.join(".clearhead/plans").exists());
     }
 
     #[test]
-    fn sync_commits_action_mirror_and_store_across_distinct_mounts() {
+    fn sync_commits_action_mirror_and_store_together() {
         let temp = tempfile::tempdir().unwrap();
         let project = temp.path().join("project");
-        let external_root = temp.path().join("vdir");
+        let plans_root = project.join(".clearhead/plans");
         let actions = project.join(".clearhead/charters/inbox.actions");
         std::fs::create_dir_all(actions.parent().unwrap()).unwrap();
-        std::fs::create_dir_all(external_root.join("inbox")).unwrap();
+        std::fs::create_dir_all(plans_root.join("inbox")).unwrap();
         let action_id = Uuid::parse_str("019baaec-00b6-7991-be34-94b68212619a").unwrap();
         std::fs::write(
             &actions,
@@ -1503,26 +1307,25 @@ mod tests {
         )
         .unwrap();
 
-        let result = sync_calendar(&project, Some(&external_root), None).unwrap();
+        let result = sync_calendar(&project, None).unwrap();
 
         assert_eq!(result.applied.take_action, 1);
-        let mirror = external_root.join("inbox").join(format!("{action_id}.ics"));
+        let mirror = plans_root.join("inbox").join(format!("{action_id}.ics"));
         assert!(
             std::fs::read_to_string(mirror)
                 .unwrap()
                 .contains("SUMMARY:Sync me")
         );
         assert!(plans_sync_store_path(&project).exists());
-        assert!(!project.join(".clearhead/plans").exists());
     }
 
     #[test]
     fn sync_patches_multiple_owned_vtodos_in_one_resource() {
         let temp = tempfile::tempdir().unwrap();
         let project = temp.path().join("project");
-        let external_root = temp.path().join("vdir");
+        let plans_root = project.join(".clearhead/plans");
         let actions = project.join(".clearhead/charters/inbox.actions");
-        let calendar = external_root.join("inbox/shared.ics");
+        let calendar = plans_root.join("inbox/shared.ics");
         std::fs::create_dir_all(actions.parent().unwrap()).unwrap();
         std::fs::create_dir_all(calendar.parent().unwrap()).unwrap();
         let first = "019baaec-00b6-7991-be34-94b68212619a";
@@ -1541,7 +1344,7 @@ mod tests {
             ),
         )
         .unwrap();
-        sync_calendar(&project, Some(&external_root), None).unwrap();
+        sync_calendar(&project, None).unwrap();
         let sidecar = std::fs::read_to_string(actions.parent().unwrap().join(".inbox.json"))
             .unwrap_or_else(|_| "MISSING".into());
         assert!(sidecar.contains(first), "{sidecar}");
@@ -1554,7 +1357,7 @@ mod tests {
             ),
         )
         .unwrap();
-        let result = sync_calendar(&project, Some(&external_root), None).unwrap();
+        let result = sync_calendar(&project, None).unwrap();
 
         assert_eq!(result.applied.take_action, 2);
         let rendered = std::fs::read_to_string(calendar).unwrap();
@@ -1576,9 +1379,9 @@ mod tests {
     fn unlinked_vevent_adopts_native_action_and_is_idempotent() {
         let temp = tempfile::tempdir().unwrap();
         let project = temp.path().join("project");
-        let external_root = temp.path().join("vdir");
+        let plans_root = project.join(".clearhead/plans");
         let actions = project.join(".clearhead/charters/inbox.actions");
-        let calendar = external_root.join("inbox/event.ics");
+        let calendar = plans_root.join("inbox/event.ics");
         std::fs::create_dir_all(actions.parent().unwrap()).unwrap();
         std::fs::create_dir_all(calendar.parent().unwrap()).unwrap();
         std::fs::write(&actions, "").unwrap();
@@ -1588,7 +1391,7 @@ mod tests {
         )
         .unwrap();
 
-        let result = sync_calendar(&project, Some(&external_root), None).unwrap();
+        let result = sync_calendar(&project, None).unwrap();
 
         assert_eq!(result.applied.take_calendar, 1);
         let adopted = parse_actions(&std::fs::read_to_string(&actions).unwrap()).unwrap();
@@ -1610,7 +1413,7 @@ mod tests {
         );
         assert!(calendar.exists(), "transport-selected path is retained");
 
-        sync_calendar(&project, Some(&external_root), None).unwrap();
+        sync_calendar(&project, None).unwrap();
         assert_eq!(
             parse_actions(&std::fs::read_to_string(actions).unwrap())
                 .unwrap()
@@ -1623,10 +1426,10 @@ mod tests {
     fn scheduled_action_creates_configured_vevent_with_link_and_bases() {
         let temp = tempfile::tempdir().unwrap();
         let project = temp.path().join("project");
-        let external_root = temp.path().join("vdir");
+        let plans_root = project.join(".clearhead/plans");
         let actions = project.join(".clearhead/charters/inbox.actions");
         std::fs::create_dir_all(actions.parent().unwrap()).unwrap();
-        std::fs::create_dir_all(external_root.join("inbox")).unwrap();
+        std::fs::create_dir_all(plans_root.join("inbox")).unwrap();
         let id = Uuid::parse_str("019baaec-00b6-7991-be34-94b6821261a1").unwrap();
         std::fs::write(
             &actions,
@@ -1634,15 +1437,9 @@ mod tests {
         )
         .unwrap();
 
-        sync_calendar_with_component(
-            &project,
-            Some(&external_root),
-            None,
-            PlanComponentKind::VEvent,
-        )
-        .unwrap();
+        sync_calendar_with_component(&project, None, PlanComponentKind::VEvent).unwrap();
 
-        let resource = external_root.join(format!("inbox/{id}.ics"));
+        let resource = plans_root.join(format!("inbox/{id}.ics"));
         let rendered = std::fs::read_to_string(&resource).unwrap();
         assert!(rendered.contains("BEGIN:VEVENT"));
         assert!(!rendered.contains("BEGIN:VTODO"));
@@ -1658,7 +1455,7 @@ mod tests {
             sidecar.actions[&id.to_string()].plan.as_ref().unwrap().uid,
             id.to_string()
         );
-        let store = read_plans_sync_store(&project, &external_root).unwrap();
+        let store = read_plans_sync_store(&project, &plans_root).unwrap();
         assert_eq!(
             store
                 .field_bases::<String>(clearhead_core::workspace::calendar::sync_store::UID_FIELD,)
@@ -1666,29 +1463,18 @@ mod tests {
             id.to_string()
         );
 
-        sync_calendar_with_component(
-            &project,
-            Some(&external_root),
-            None,
-            PlanComponentKind::VEvent,
-        )
-        .unwrap();
-        assert_eq!(
-            read_calendar_resources(&project, Some(&external_root))
-                .unwrap()
-                .len(),
-            1
-        );
+        sync_calendar_with_component(&project, None, PlanComponentKind::VEvent).unwrap();
+        assert_eq!(read_calendar_resources(&project).unwrap().len(), 1);
     }
 
     #[test]
     fn scheduled_action_creates_full_profile_vtodo() {
         let temp = tempfile::tempdir().unwrap();
         let project = temp.path().join("project");
-        let external_root = temp.path().join("vdir");
+        let plans_root = project.join(".clearhead/plans");
         let actions = project.join(".clearhead/charters/inbox.actions");
         std::fs::create_dir_all(actions.parent().unwrap()).unwrap();
-        std::fs::create_dir_all(external_root.join("inbox")).unwrap();
+        std::fs::create_dir_all(plans_root.join("inbox")).unwrap();
         let id = Uuid::parse_str("019baaec-00b6-7991-be34-94b6821261a2").unwrap();
         std::fs::write(
             &actions,
@@ -1696,16 +1482,9 @@ mod tests {
         )
         .unwrap();
 
-        sync_calendar_with_component(
-            &project,
-            Some(&external_root),
-            None,
-            PlanComponentKind::VTodo,
-        )
-        .unwrap();
+        sync_calendar_with_component(&project, None, PlanComponentKind::VTodo).unwrap();
 
-        let rendered =
-            std::fs::read_to_string(external_root.join(format!("inbox/{id}.ics"))).unwrap();
+        let rendered = std::fs::read_to_string(plans_root.join(format!("inbox/{id}.ics"))).unwrap();
         assert!(rendered.contains("BEGIN:VTODO"));
         assert!(rendered.contains("STATUS:IN-PROCESS"));
         assert!(rendered.contains("PRIORITY:2"));
@@ -1717,9 +1496,9 @@ mod tests {
     fn arbitrary_uid_vtodo_adopts_native_action_with_full_profile() {
         let temp = tempfile::tempdir().unwrap();
         let project = temp.path().join("project");
-        let external_root = temp.path().join("vdir");
+        let plans_root = project.join(".clearhead/plans");
         let actions = project.join(".clearhead/charters/inbox.actions");
-        let resource = external_root.join("inbox/transport-name.ics");
+        let resource = plans_root.join("inbox/transport-name.ics");
         std::fs::create_dir_all(actions.parent().unwrap()).unwrap();
         std::fs::create_dir_all(resource.parent().unwrap()).unwrap();
         std::fs::write(&actions, "").unwrap();
@@ -1729,7 +1508,7 @@ mod tests {
         )
         .unwrap();
 
-        sync_calendar(&project, Some(&external_root), None).unwrap();
+        sync_calendar(&project, None).unwrap();
 
         let adopted = parse_actions(&std::fs::read_to_string(&actions).unwrap()).unwrap();
         assert_eq!(adopted.len(), 1);
@@ -1762,7 +1541,7 @@ mod tests {
             "peer-owned@example.com"
         );
 
-        sync_calendar(&project, Some(&external_root), None).unwrap();
+        sync_calendar(&project, None).unwrap();
         assert_eq!(
             parse_actions(&std::fs::read_to_string(actions).unwrap())
                 .unwrap()
@@ -1775,10 +1554,10 @@ mod tests {
     fn uuid_uid_migration_links_same_charter_action_without_duplicate() {
         let temp = tempfile::tempdir().unwrap();
         let project = temp.path().join("project");
-        let external_root = temp.path().join("vdir");
+        let plans_root = project.join(".clearhead/plans");
         let actions = project.join(".clearhead/charters/inbox.actions");
         let id = Uuid::parse_str("019baaec-00b6-7991-be34-94b6821261a3").unwrap();
-        let resource = external_root.join("inbox/legacy.ics");
+        let resource = plans_root.join("inbox/legacy.ics");
         std::fs::create_dir_all(actions.parent().unwrap()).unwrap();
         std::fs::create_dir_all(resource.parent().unwrap()).unwrap();
         std::fs::write(
@@ -1792,7 +1571,7 @@ mod tests {
         )
         .unwrap();
 
-        sync_calendar(&project, Some(&external_root), None).unwrap();
+        sync_calendar(&project, None).unwrap();
 
         let parsed = parse_actions(&std::fs::read_to_string(&actions).unwrap()).unwrap();
         assert_eq!(parsed.len(), 1);
@@ -1812,9 +1591,9 @@ mod tests {
     fn arbitrary_uid_migration_reuses_projection_store_evidence() {
         let temp = tempfile::tempdir().unwrap();
         let project = temp.path().join("project");
-        let external_root = temp.path().join("vdir");
+        let plans_root = project.join(".clearhead/plans");
         let actions = project.join(".clearhead/charters/inbox.actions");
-        let resource = external_root.join("inbox/legacy.ics");
+        let resource = plans_root.join("inbox/legacy.ics");
         let action_id = Uuid::parse_str("019baaec-00b6-7991-be34-94b6821261a4").unwrap();
         std::fs::create_dir_all(actions.parent().unwrap()).unwrap();
         std::fs::create_dir_all(resource.parent().unwrap()).unwrap();
@@ -1828,7 +1607,7 @@ mod tests {
             "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VTODO\r\nUID:legacy@example.com\r\nSUMMARY:Existing\r\nDTSTART:20260420T100000Z\r\nSTATUS:NEEDS-ACTION\r\nEND:VTODO\r\nEND:VCALENDAR\r\n",
         )
         .unwrap();
-        let mut store = PlansSyncStore::new(&external_root);
+        let mut store = PlansSyncStore::new(&plans_root);
         store
             .stamp(
                 action_id,
@@ -1845,13 +1624,7 @@ mod tests {
         )
         .unwrap();
 
-        sync_calendar_with_component(
-            &project,
-            Some(&external_root),
-            None,
-            PlanComponentKind::VTodo,
-        )
-        .unwrap();
+        sync_calendar_with_component(&project, None, PlanComponentKind::VTodo).unwrap();
 
         let parsed = parse_actions(&std::fs::read_to_string(&actions).unwrap()).unwrap();
         assert_eq!(parsed.len(), 1);
@@ -1874,36 +1647,26 @@ mod tests {
     fn configured_codec_migration_is_atomic_idempotent_and_seeds_vtodo_profile() {
         let temp = tempfile::tempdir().unwrap();
         let project = temp.path().join("project");
-        let external_root = temp.path().join("vdir");
+        let plans_root = project.join(".clearhead/plans");
         let actions = project.join(".clearhead/charters/inbox.actions");
         let action_id = Uuid::parse_str("019baaec-00b6-7991-be34-94b6821261a5").unwrap();
         std::fs::create_dir_all(actions.parent().unwrap()).unwrap();
-        std::fs::create_dir_all(external_root.join("inbox")).unwrap();
+        std::fs::create_dir_all(plans_root.join("inbox")).unwrap();
         std::fs::write(
             &actions,
             format!("[-] Focus $Detail$ @2026-04-20T10:00:00+00:00 :2026-04-20T11:00:00+00:00 !3 +deep #{action_id}\n"),
         )
         .unwrap();
-        sync_calendar_with_component(
-            &project,
-            Some(&external_root),
-            None,
-            PlanComponentKind::VTodo,
-        )
-        .unwrap();
-        let resource = external_root.join(format!("inbox/{action_id}.ics"));
+        sync_calendar_with_component(&project, None, PlanComponentKind::VTodo).unwrap();
+        let resource = plans_root.join(format!("inbox/{action_id}.ics"));
         let source = std::fs::read_to_string(&resource)
             .unwrap()
             .replace("END:VTODO", "X-VENDOR-KEEP:yes\r\nEND:VTODO");
         std::fs::write(&resource, source).unwrap();
 
-        let preview = preview_calendar_sync_with_component(
-            &project,
-            Some(&external_root),
-            None,
-            PlanComponentKind::VEvent,
-        )
-        .unwrap();
+        let preview =
+            preview_calendar_sync_with_component(&project, None, PlanComponentKind::VEvent)
+                .unwrap();
         assert!(
             preview
                 .report
@@ -1911,13 +1674,7 @@ mod tests {
                 .iter()
                 .any(|value| value.contains("migrate 1"))
         );
-        sync_calendar_with_component(
-            &project,
-            Some(&external_root),
-            None,
-            PlanComponentKind::VEvent,
-        )
-        .unwrap();
+        sync_calendar_with_component(&project, None, PlanComponentKind::VEvent).unwrap();
         let event = std::fs::read_to_string(&resource).unwrap();
         assert!(event.contains("BEGIN:VEVENT"));
         assert!(!event.contains("BEGIN:VTODO"));
@@ -1929,26 +1686,14 @@ mod tests {
             1
         );
 
-        sync_calendar_with_component(
-            &project,
-            Some(&external_root),
-            None,
-            PlanComponentKind::VTodo,
-        )
-        .unwrap();
+        sync_calendar_with_component(&project, None, PlanComponentKind::VTodo).unwrap();
         let todo = std::fs::read_to_string(&resource).unwrap();
         assert!(todo.contains("BEGIN:VTODO"));
         assert!(todo.contains("STATUS:IN-PROCESS"));
         assert!(todo.contains("PRIORITY:3"));
         assert!(todo.contains("CATEGORIES:deep"));
         assert!(todo.contains("X-VENDOR-KEEP:yes"));
-        sync_calendar_with_component(
-            &project,
-            Some(&external_root),
-            None,
-            PlanComponentKind::VTodo,
-        )
-        .unwrap();
+        sync_calendar_with_component(&project, None, PlanComponentKind::VTodo).unwrap();
         assert_eq!(std::fs::read_to_string(&resource).unwrap(), todo);
     }
 
@@ -1956,9 +1701,9 @@ mod tests {
     fn recurring_vevent_moves_roundtrip_through_the_materialized_action() {
         let temp = tempfile::tempdir().unwrap();
         let project = temp.path().join("project");
-        let external_root = temp.path().join("vdir");
+        let plans_root = project.join(".clearhead/plans");
         let actions = project.join(".clearhead/charters/inbox.actions");
-        let resource = external_root.join("inbox/series.ics");
+        let resource = plans_root.join("inbox/series.ics");
         std::fs::create_dir_all(actions.parent().unwrap()).unwrap();
         std::fs::create_dir_all(resource.parent().unwrap()).unwrap();
         std::fs::write(&actions, "").unwrap();
@@ -1975,13 +1720,7 @@ mod tests {
             format!("BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:series@example.com\r\nSUMMARY:Series\r\nDTSTART:{key}\r\nRRULE:FREQ=DAILY\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"),
         )
         .unwrap();
-        sync_calendar_with_component(
-            &project,
-            Some(&external_root),
-            None,
-            PlanComponentKind::VEvent,
-        )
-        .unwrap();
+        sync_calendar_with_component(&project, None, PlanComponentKind::VEvent).unwrap();
         let initial = parse_actions(&std::fs::read_to_string(&actions).unwrap()).unwrap();
         assert_eq!(initial.len(), 1);
         let occurrence_id = initial[0].id;
@@ -1995,13 +1734,7 @@ mod tests {
                 &format!("BEGIN:VEVENT\r\nUID:series@example.com\r\nRECURRENCE-ID:{key}\r\nSUMMARY:Series\r\nDTSTART:{calendar_move_text}\r\nEND:VEVENT\r\nEND:VCALENDAR"),
             );
         std::fs::write(&resource, source).unwrap();
-        sync_calendar_with_component(
-            &project,
-            Some(&external_root),
-            None,
-            PlanComponentKind::VEvent,
-        )
-        .unwrap();
+        sync_calendar_with_component(&project, None, PlanComponentKind::VEvent).unwrap();
         let pulled = parse_actions(&std::fs::read_to_string(&actions).unwrap()).unwrap();
         assert_eq!(pulled[0].id, occurrence_id);
         assert_eq!(
@@ -2018,13 +1751,7 @@ mod tests {
             ),
         )
         .unwrap();
-        sync_calendar_with_component(
-            &project,
-            Some(&external_root),
-            None,
-            PlanComponentKind::VEvent,
-        )
-        .unwrap();
+        sync_calendar_with_component(&project, None, PlanComponentKind::VEvent).unwrap();
         let rendered = std::fs::read_to_string(&resource).unwrap();
         assert_eq!(rendered.matches(&format!("RECURRENCE-ID:{key}")).count(), 1);
         assert!(rendered.contains(&format!("DTSTART:{}", action_move.format("%Y%m%dT%H%M%SZ"))));
@@ -2034,9 +1761,9 @@ mod tests {
     fn recurring_vtodo_terminal_pull_snapshots_lineage_and_advances_once() {
         let temp = tempfile::tempdir().unwrap();
         let project = temp.path().join("project");
-        let external_root = temp.path().join("vdir");
+        let plans_root = project.join(".clearhead/plans");
         let actions = project.join(".clearhead/charters/inbox.actions");
-        let resource = external_root.join("inbox/series.ics");
+        let resource = plans_root.join("inbox/series.ics");
         std::fs::create_dir_all(actions.parent().unwrap()).unwrap();
         std::fs::create_dir_all(resource.parent().unwrap()).unwrap();
         std::fs::write(&actions, "").unwrap();
@@ -2053,13 +1780,7 @@ mod tests {
             format!("BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VTODO\r\nUID:series-task@example.com\r\nSUMMARY:Series task\r\nDTSTART:{key}\r\nRRULE:FREQ=DAILY\r\nSTATUS:NEEDS-ACTION\r\nEND:VTODO\r\nEND:VCALENDAR\r\n"),
         )
         .unwrap();
-        sync_calendar_with_component(
-            &project,
-            Some(&external_root),
-            None,
-            PlanComponentKind::VTodo,
-        )
-        .unwrap();
+        sync_calendar_with_component(&project, None, PlanComponentKind::VTodo).unwrap();
         let first = parse_actions(&std::fs::read_to_string(&actions).unwrap()).unwrap();
         let completed_id = first[0].id;
         let completed_at = (anchor + chrono::Duration::minutes(5))
@@ -2073,13 +1794,7 @@ mod tests {
             );
         std::fs::write(&resource, source).unwrap();
 
-        sync_calendar_with_component(
-            &project,
-            Some(&external_root),
-            None,
-            PlanComponentKind::VTodo,
-        )
-        .unwrap();
+        sync_calendar_with_component(&project, None, PlanComponentKind::VTodo).unwrap();
 
         let parsed = parse_actions(&std::fs::read_to_string(&actions).unwrap()).unwrap();
         assert_eq!(
@@ -2117,17 +1832,11 @@ mod tests {
                 .occurrence_key,
             key
         );
-        let store = read_plans_sync_store(&project, &external_root).unwrap();
+        let store = read_plans_sync_store(&project, &plans_root).unwrap();
         assert!(store.occurrence_link(completed_id).is_none());
         assert_eq!(store.occurrence_links().len(), 1);
 
-        sync_calendar_with_component(
-            &project,
-            Some(&external_root),
-            None,
-            PlanComponentKind::VTodo,
-        )
-        .unwrap();
+        sync_calendar_with_component(&project, None, PlanComponentKind::VTodo).unwrap();
         assert_eq!(
             parse_actions(&std::fs::read_to_string(&actions).unwrap())
                 .unwrap()
@@ -2145,10 +1854,10 @@ mod tests {
         {
             let temp = tempfile::tempdir().unwrap();
             let project = temp.path().join("project");
-            let external_root = temp.path().join("vdir");
+            let plans_root = project.join(".clearhead/plans");
             let actions = project.join(".clearhead/charters/inbox.actions");
             std::fs::create_dir_all(actions.parent().unwrap()).unwrap();
-            std::fs::create_dir_all(external_root.join("inbox")).unwrap();
+            std::fs::create_dir_all(plans_root.join("inbox")).unwrap();
             let action_id =
                 Uuid::parse_str(&format!("019baaec-00b6-7991-be34-94b6821261c{index}")).unwrap();
             std::fs::write(
@@ -2159,14 +1868,12 @@ mod tests {
             )
             .unwrap();
 
-            sync_calendar_with_component(&project, Some(&external_root), None, component_kind)
-                .unwrap();
-            let resource = external_root.join(format!("inbox/{action_id}.ics"));
+            sync_calendar_with_component(&project, None, component_kind).unwrap();
+            let resource = plans_root.join(format!("inbox/{action_id}.ics"));
             assert!(resource.exists());
             std::fs::remove_file(&resource).unwrap();
 
-            sync_calendar_with_component(&project, Some(&external_root), None, component_kind)
-                .unwrap();
+            sync_calendar_with_component(&project, None, component_kind).unwrap();
 
             let parsed = parse_actions(&std::fs::read_to_string(&actions).unwrap()).unwrap();
             assert_eq!(parsed.len(), 1);
@@ -2188,12 +1895,11 @@ mod tests {
             )
             .unwrap();
             assert!(!sidecar.actions.contains_key(&action_id.to_string()));
-            let store = read_plans_sync_store(&project, &external_root).unwrap();
+            let store = read_plans_sync_store(&project, &plans_root).unwrap();
             assert!(!store.actions.contains_key(&action_id));
 
             // Repeating deletion reconciliation is a no-op.
-            sync_calendar_with_component(&project, Some(&external_root), None, component_kind)
-                .unwrap();
+            sync_calendar_with_component(&project, None, component_kind).unwrap();
             assert!(!resource.exists());
 
             // Scheduling the preserved Action again creates a fresh canonical Plan.
@@ -2204,8 +1910,7 @@ mod tests {
                 ),
             )
             .unwrap();
-            sync_calendar_with_component(&project, Some(&external_root), None, component_kind)
-                .unwrap();
+            sync_calendar_with_component(&project, None, component_kind).unwrap();
             let rendered = std::fs::read_to_string(&resource).unwrap();
             match component_kind {
                 PlanComponentKind::VEvent => assert!(rendered.contains("BEGIN:VEVENT")),
@@ -2234,10 +1939,10 @@ mod tests {
         {
             let temp = tempfile::tempdir().unwrap();
             let project = temp.path().join("project");
-            let external_root = temp.path().join("vdir");
+            let plans_root = project.join(".clearhead/plans");
             let actions = project.join(".clearhead/charters/inbox.actions");
             std::fs::create_dir_all(actions.parent().unwrap()).unwrap();
-            std::fs::create_dir_all(external_root.join("inbox")).unwrap();
+            std::fs::create_dir_all(plans_root.join("inbox")).unwrap();
             let action_id =
                 Uuid::parse_str(&format!("019baaec-00b6-7991-be34-94b6821261d{index}")).unwrap();
             std::fs::write(
@@ -2247,14 +1952,12 @@ mod tests {
                 ),
             )
             .unwrap();
-            sync_calendar_with_component(&project, Some(&external_root), None, component_kind)
-                .unwrap();
-            let resource = external_root.join(format!("inbox/{action_id}.ics"));
+            sync_calendar_with_component(&project, None, component_kind).unwrap();
+            let resource = plans_root.join(format!("inbox/{action_id}.ics"));
             assert!(resource.exists());
 
             std::fs::write(&actions, format!("[ ] Clear me !2 +local #{action_id}\n")).unwrap();
-            sync_calendar_with_component(&project, Some(&external_root), None, component_kind)
-                .unwrap();
+            sync_calendar_with_component(&project, None, component_kind).unwrap();
 
             assert!(!resource.exists());
             let parsed = parse_actions(&std::fs::read_to_string(&actions).unwrap()).unwrap();
@@ -2268,14 +1971,13 @@ mod tests {
             .unwrap();
             assert!(!sidecar.actions.contains_key(&action_id.to_string()));
             assert!(
-                !read_plans_sync_store(&project, &external_root)
+                !read_plans_sync_store(&project, &plans_root)
                     .unwrap()
                     .actions
                     .contains_key(&action_id)
             );
 
-            sync_calendar_with_component(&project, Some(&external_root), None, component_kind)
-                .unwrap();
+            sync_calendar_with_component(&project, None, component_kind).unwrap();
             assert!(!resource.exists());
         }
     }
@@ -2284,9 +1986,9 @@ mod tests {
     fn linked_vevent_reschedule_updates_only_action_schedule() {
         let temp = tempfile::tempdir().unwrap();
         let project = temp.path().join("project");
-        let external_root = temp.path().join("vdir");
+        let plans_root = project.join(".clearhead/plans");
         let actions = project.join(".clearhead/charters/inbox.actions");
-        let calendar = external_root.join("inbox/event.ics");
+        let calendar = plans_root.join("inbox/event.ics");
         std::fs::create_dir_all(actions.parent().unwrap()).unwrap();
         std::fs::create_dir_all(calendar.parent().unwrap()).unwrap();
         let action_id = Uuid::parse_str("019baaec-00b6-7991-be34-94b68212619a").unwrap();
@@ -2303,13 +2005,7 @@ mod tests {
             "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:{uid}\r\nSUMMARY:Calendar display\r\nDTSTART:20260420T100000Z\r\nDTEND:20260420T110000Z\r\nX-VENDOR-KEEP:yes\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
         );
         std::fs::write(&calendar, &initial).unwrap();
-        sync_calendar_with_component(
-            &project,
-            Some(&external_root),
-            None,
-            PlanComponentKind::VEvent,
-        )
-        .unwrap();
+        sync_calendar_with_component(&project, None, PlanComponentKind::VEvent).unwrap();
 
         std::fs::write(
             &calendar,
@@ -2319,13 +2015,8 @@ mod tests {
                 .replace("20260420T110000Z", "20260421T130000Z"),
         )
         .unwrap();
-        let result = sync_calendar_with_component(
-            &project,
-            Some(&external_root),
-            None,
-            PlanComponentKind::VEvent,
-        )
-        .unwrap();
+        let result =
+            sync_calendar_with_component(&project, None, PlanComponentKind::VEvent).unwrap();
 
         assert_eq!(result.applied.take_calendar, 1);
         let parsed = parse_actions(&std::fs::read_to_string(&actions).unwrap()).unwrap();
@@ -2359,9 +2050,9 @@ mod tests {
     fn linked_vtodo_peer_edit_updates_full_profile_without_reidentifying_action() {
         let temp = tempfile::tempdir().unwrap();
         let project = temp.path().join("project");
-        let external_root = temp.path().join("vdir");
+        let plans_root = project.join(".clearhead/plans");
         let actions = project.join(".clearhead/charters/inbox.actions");
-        let calendar = external_root.join("inbox/task.ics");
+        let calendar = plans_root.join("inbox/task.ics");
         std::fs::create_dir_all(actions.parent().unwrap()).unwrap();
         std::fs::create_dir_all(calendar.parent().unwrap()).unwrap();
         let action_id = Uuid::parse_str("019baaec-00b6-7991-be34-94b68212619b").unwrap();
@@ -2378,13 +2069,13 @@ mod tests {
             "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VTODO\r\nUID:{uid}\r\nSUMMARY:Base title\r\nDESCRIPTION:Base description\r\nDTSTART:20260420T100000Z\r\nDUE:20260420T110000Z\r\nSTATUS:NEEDS-ACTION\r\nPRIORITY:5\r\nCATEGORIES:base\r\nX-VENDOR-KEEP:yes\r\nEND:VTODO\r\nEND:VCALENDAR\r\n"
         );
         std::fs::write(&calendar, &initial).unwrap();
-        sync_calendar(&project, Some(&external_root), None).unwrap();
+        sync_calendar(&project, None).unwrap();
 
         let edited = format!(
             "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VTODO\r\nUID:{uid}\r\nSUMMARY:Calendar title\r\nDESCRIPTION:Calendar description\r\nDTSTART:20260421T120000Z\r\nDUE:20260421T130000Z\r\nSTATUS:IN-PROCESS\r\nPRIORITY:2\r\nCATEGORIES:calendar,home\r\nX-VENDOR-KEEP:yes\r\nEND:VTODO\r\nEND:VCALENDAR\r\n"
         );
         std::fs::write(&calendar, edited).unwrap();
-        let result = sync_calendar(&project, Some(&external_root), None).unwrap();
+        let result = sync_calendar(&project, None).unwrap();
 
         assert_eq!(result.applied.take_calendar, 1);
         let parsed = parse_actions(&std::fs::read_to_string(&actions).unwrap()).unwrap();
@@ -2419,57 +2110,46 @@ mod tests {
     }
 
     #[test]
-    fn calendar_sync_folds_rollforward_into_its_mixed_mount_batch() {
+    fn calendar_sync_folds_rollforward_into_its_batch() {
         let temp = tempfile::tempdir().unwrap();
         let project = temp.path().join("project");
-        let external_root = temp.path().join("vdir");
-        let external_file = external_root.join("next/weekly.ics");
+        let plans_root = project.join(".clearhead/plans");
+        let plan_file = plans_root.join("next/weekly.ics");
         let actions = project.join(".clearhead/charters/next.actions");
         std::fs::create_dir_all(actions.parent().unwrap()).unwrap();
-        std::fs::create_dir_all(external_file.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(plan_file.parent().unwrap()).unwrap();
         std::fs::write(&actions, "").unwrap();
-        std::fs::write(&external_file, PLAN).unwrap();
+        std::fs::write(&plan_file, PLAN).unwrap();
 
-        assert_eq!(
-            sync_calendar(&project, Some(&external_root), None)
-                .unwrap()
-                .rolled_forward,
-            0
-        );
+        assert_eq!(sync_calendar(&project, None).unwrap().rolled_forward, 0);
         let advanced = PLAN.replace("20260821T120000Z", "20260828T120000Z");
-        std::fs::write(&external_file, advanced).unwrap();
+        std::fs::write(&plan_file, advanced).unwrap();
 
-        let result = sync_calendar(&project, Some(&external_root), None).unwrap();
+        let result = sync_calendar(&project, None).unwrap();
 
         assert_eq!(result.rolled_forward, 1);
-        let rendered = std::fs::read_to_string(&external_file).unwrap();
+        let rendered = std::fs::read_to_string(&plan_file).unwrap();
         assert!(rendered.contains("DTSTART:20260821T120000Z"));
         assert!(rendered.contains("RECURRENCE-ID:20260821T120000Z"));
         assert!(plans_sync_store_path(&project).exists());
     }
 
     #[test]
-    fn roll_forward_and_store_commit_across_workspace_and_external_mounts() {
+    fn roll_forward_and_store_commit_together() {
         let temp = tempfile::tempdir().unwrap();
         let project = temp.path().join("project");
-        let external_root = temp.path().join("vdir");
-        let external_file = external_root.join("next/weekly.ics");
+        let plans_root = project.join(".clearhead/plans");
+        let plan_file = plans_root.join("next/weekly.ics");
         std::fs::create_dir_all(project.join(".clearhead/charters")).unwrap();
-        std::fs::create_dir_all(external_file.parent().unwrap()).unwrap();
-        std::fs::write(&external_file, PLAN).unwrap();
+        std::fs::create_dir_all(plan_file.parent().unwrap()).unwrap();
+        std::fs::write(&plan_file, PLAN).unwrap();
 
-        assert_eq!(
-            sync_master_rollforwards(&project, Some(&external_root)).unwrap(),
-            0
-        );
+        assert_eq!(sync_master_rollforwards(&project).unwrap(), 0);
         let advanced = PLAN.replace("20260821T120000Z", "20260828T120000Z");
-        std::fs::write(&external_file, advanced).unwrap();
+        std::fs::write(&plan_file, advanced).unwrap();
 
-        assert_eq!(
-            sync_master_rollforwards(&project, Some(&external_root)).unwrap(),
-            1
-        );
-        let rendered = std::fs::read_to_string(&external_file).unwrap();
+        assert_eq!(sync_master_rollforwards(&project).unwrap(), 1);
+        let rendered = std::fs::read_to_string(&plan_file).unwrap();
         assert!(rendered.contains("DTSTART:20260821T120000Z"));
         assert!(rendered.contains("RECURRENCE-ID:20260821T120000Z"));
         assert!(plans_sync_store_path(&project).exists());

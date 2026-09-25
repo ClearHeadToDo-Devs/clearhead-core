@@ -65,7 +65,7 @@ pub struct MarkdownCharter {
 
     pub md_file: Option<PathBuf>,
     pub actions_file: Option<PathBuf>,
-    /// Canonical collection path relative to the configured plans root.
+    /// Canonical collection path relative to the plans root.
     /// Calculated from the charter anchor; the directory need not exist.
     pub plans_dir: PathBuf,
 }

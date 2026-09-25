@@ -87,17 +87,6 @@ fn print_config_section(ctx: &CommandContext) {
     }
 
     println!(
-        "  plan_path: {}",
-        ctx.config
-            .plan_path
-            .as_deref()
-            .map(|p| format!(
-                "{}  [override: CLEARHEAD_PLAN_PATH | project config.local.json]",
-                p
-            ))
-            .unwrap_or_else(|| "<unset> — plans live under the workspace's own plans/".to_string()),
-    );
-    println!(
         "  plan_component: {}  [override: CLEARHEAD_PLAN_COMPONENT | project config.local.json]",
         ctx.config.plan_component,
     );
@@ -113,14 +102,14 @@ fn print_workspace_section(ctx: &CommandContext) -> anyhow::Result<()> {
         data_root.display(),
         workspace_source
     );
+    println!("  plans_root: {}", ctx.plans_root().display());
 
     let manifest = clearhead_cli::filesystem::collect_workspace_manifest(&ctx.data_dir)
         .context("Failed to collect workspace manifest")?;
     // Diagnostics must observe, not alter: the pure reader (no journal replay,
     // per-file failures become findings) instead of the healing load path.
-    let read =
-        clearhead_cli::filesystem::read_workspace(&ctx.data_dir, ctx.plan_override().as_deref())
-            .context("Failed to read workspace")?;
+    let read = clearhead_cli::filesystem::read_workspace(&ctx.data_dir)
+        .context("Failed to read workspace")?;
 
     let root_alias = find_root_charter_alias(&read.charters).unwrap_or("-".to_string());
     println!("  root_charter: {}", root_alias);
@@ -144,12 +133,8 @@ fn print_workspace_section(ctx: &CommandContext) -> anyhow::Result<()> {
     let plan_count: usize = read.charters.iter().map(|c| c.plans.len()).sum();
     let action_count: usize = read.charters.iter().map(|c| c.actions.len()).sum();
 
-    let diagnosis = clearhead_cli::filesystem::diagnose_workspace_read(
-        &ctx.data_dir,
-        ctx.plan_override().as_deref(),
-        &read,
-    )
-    .context("Failed to diagnose workspace")?;
+    let diagnosis = clearhead_cli::filesystem::diagnose_workspace_read(&ctx.data_dir, &read)
+        .context("Failed to diagnose workspace")?;
     println!(
         "  graph_summary: {} charters | {} plans | {} actions | {} violations, {} warnings",
         charter_count,

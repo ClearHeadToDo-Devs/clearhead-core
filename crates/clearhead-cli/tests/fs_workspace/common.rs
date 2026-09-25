@@ -17,17 +17,17 @@ pub use clearhead_cli::filesystem::{
 
 /// Load a workspace's domain model from the native filesystem (no external plans mount).
 pub fn load_domain_model(root: &Path) -> Result<DomainModel, WorkspaceError> {
-    clearhead_cli::filesystem::load_domain_model(root, None)
+    clearhead_cli::filesystem::load_domain_model(root)
 }
 
 /// Load a workspace's charter list from the native filesystem.
 pub fn load_workspace(root: &Path) -> Result<Vec<MarkdownCharter>, WorkspaceError> {
-    clearhead_cli::filesystem::load_workspace(root, None)
+    clearhead_cli::filesystem::load_workspace(root)
 }
 
 /// Relaxed read of a workspace from the native filesystem.
 pub fn read_workspace(root: &Path) -> Result<WorkspaceRead, WorkspaceError> {
-    clearhead_cli::filesystem::read_workspace(root, None)
+    clearhead_cli::filesystem::read_workspace(root)
 }
 
 pub fn make_workspace(files: &[(&str, &str)]) -> TempDir {

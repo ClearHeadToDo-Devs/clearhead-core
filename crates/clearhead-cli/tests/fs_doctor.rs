@@ -54,8 +54,8 @@ fn doctor_flags_uninitialized_workspace() {
         "[ ] Task one #01951111-0000-7000-0000-000000000010\n",
     )]);
 
-    let diagnosis = clearhead_cli::filesystem::diagnose_workspace(workspace.path(), None)
-        .expect("diagnose failed");
+    let diagnosis =
+        clearhead_cli::filesystem::diagnose_workspace(workspace.path()).expect("diagnose failed");
     let finding = diagnosis
         .findings
         .iter()
@@ -71,9 +71,8 @@ fn doctor_reports_clean_on_a_coherent_workspace() {
         "[ ] Task one #01951111-0000-7000-0000-000000000010\n",
     )]);
 
-    let diagnosis =
-        clearhead_cli::filesystem::diagnose_workspace(initialized(workspace.path()), None)
-            .expect("diagnose failed");
+    let diagnosis = clearhead_cli::filesystem::diagnose_workspace(initialized(workspace.path()))
+        .expect("diagnose failed");
     // The tempdir root charter is inferred but has no charter file — filter to
     // real violations/warnings that concern the fixture.
     let relevant: Vec<_> = diagnosis
@@ -103,9 +102,8 @@ fn doctor_warns_about_active_work_beneath_new_ancestry() {
         ),
     ]);
 
-    let diagnosis =
-        clearhead_cli::filesystem::diagnose_workspace(initialized(workspace.path()), None)
-            .expect("diagnose failed");
+    let diagnosis = clearhead_cli::filesystem::diagnose_workspace(initialized(workspace.path()))
+        .expect("diagnose failed");
     let codes: Vec<_> = diagnosis
         .findings
         .iter()
@@ -134,9 +132,8 @@ fn doctor_rejects_open_work_beneath_terminal_ancestry() {
         ),
     ]);
 
-    let diagnosis =
-        clearhead_cli::filesystem::diagnose_workspace(initialized(workspace.path()), None)
-            .expect("diagnose failed");
+    let diagnosis = clearhead_cli::filesystem::diagnose_workspace(initialized(workspace.path()))
+        .expect("diagnose failed");
     let codes: Vec<_> = diagnosis
         .findings
         .iter()
@@ -159,9 +156,8 @@ fn doctor_flags_duplicate_uuids_across_files() {
         ),
     ]);
 
-    let diagnosis =
-        clearhead_cli::filesystem::diagnose_workspace(initialized(workspace.path()), None)
-            .expect("diagnose failed");
+    let diagnosis = clearhead_cli::filesystem::diagnose_workspace(initialized(workspace.path()))
+        .expect("diagnose failed");
     let finding = diagnosis
         .findings
         .iter()
@@ -187,9 +183,8 @@ fn doctor_flags_dangling_predecessor_but_not_completed_one() {
         ),
     ]);
 
-    let diagnosis =
-        clearhead_cli::filesystem::diagnose_workspace(initialized(workspace.path()), None)
-            .expect("diagnose failed");
+    let diagnosis = clearhead_cli::filesystem::diagnose_workspace(initialized(workspace.path()))
+        .expect("diagnose failed");
     let dangling: Vec<_> = diagnosis
         .findings
         .iter()
@@ -224,9 +219,8 @@ fn doctor_resolves_predecessors_into_the_archive_three_ways() {
     )
     .expect("write archived actions");
 
-    let diagnosis =
-        clearhead_cli::filesystem::diagnose_workspace(initialized(workspace.path()), None)
-            .expect("diagnose failed");
+    let diagnosis = clearhead_cli::filesystem::diagnose_workspace(initialized(workspace.path()))
+        .expect("diagnose failed");
 
     let dangling: Vec<_> = diagnosis
         .findings
@@ -277,9 +271,8 @@ fn doctor_flags_orphaned_sidecar_entry() {
         (".work.json", &sidecar),
     ]);
 
-    let diagnosis =
-        clearhead_cli::filesystem::diagnose_workspace(initialized(workspace.path()), None)
-            .expect("diagnose failed");
+    let diagnosis = clearhead_cli::filesystem::diagnose_workspace(initialized(workspace.path()))
+        .expect("diagnose failed");
     let orphans: Vec<_> = diagnosis
         .findings
         .iter()
@@ -303,7 +296,7 @@ fn doctor_does_not_prune_sidecars_while_source_is_quarantined() {
     ]);
 
     let diagnosis =
-        clearhead_cli::filesystem::diagnose_workspace(initialized(workspace.path()), None).unwrap();
+        clearhead_cli::filesystem::diagnose_workspace(initialized(workspace.path())).unwrap();
     assert!(
         diagnosis.findings.iter().any(|f| f.code == "syntax-errors"),
         "the source-integrity finding must remain visible"
@@ -328,7 +321,7 @@ fn doctor_preserves_sidecar_metadata_after_an_action_moves_charters() {
     ]);
 
     let diagnosis =
-        clearhead_cli::filesystem::diagnose_workspace(initialized(workspace.path()), None).unwrap();
+        clearhead_cli::filesystem::diagnose_workspace(initialized(workspace.path())).unwrap();
     assert!(
         !diagnosis.findings.iter().any(|finding| {
             finding.code == "sidecar-orphan" || finding.code == "orphaned-sidecar"
@@ -361,7 +354,7 @@ fn doctor_finds_project_root_history_at_project_named_completed_path() {
     .unwrap();
 
     let diagnosis =
-        clearhead_cli::filesystem::diagnose_workspace(initialized(workspace.path()), None).unwrap();
+        clearhead_cli::filesystem::diagnose_workspace(initialized(workspace.path())).unwrap();
     assert!(
         !diagnosis
             .findings
@@ -388,9 +381,8 @@ fn doctor_flags_implausible_created_timestamp() {
         (".work.json", &sidecar),
     ]);
 
-    let diagnosis =
-        clearhead_cli::filesystem::diagnose_workspace(initialized(workspace.path()), None)
-            .expect("diagnose failed");
+    let diagnosis = clearhead_cli::filesystem::diagnose_workspace(initialized(workspace.path()))
+        .expect("diagnose failed");
     let bad: Vec<_> = diagnosis
         .findings
         .iter()
@@ -419,9 +411,8 @@ fn doctor_reports_pending_journal_without_replaying_it() {
     )
     .expect("write journal");
 
-    let diagnosis =
-        clearhead_cli::filesystem::diagnose_workspace(initialized(workspace.path()), None)
-            .expect("diagnose failed");
+    let diagnosis = clearhead_cli::filesystem::diagnose_workspace(initialized(workspace.path()))
+        .expect("diagnose failed");
     assert!(
         charter_root.join(".pending").exists(),
         "doctor must not replay the journal"
@@ -450,9 +441,8 @@ fn doctor_flags_charter_alias_collision() {
         ("two.md", "---\nalias: shared\n---\n# Two\n"),
     ]);
 
-    let diagnosis =
-        clearhead_cli::filesystem::diagnose_workspace(initialized(workspace.path()), None)
-            .expect("diagnose failed");
+    let diagnosis = clearhead_cli::filesystem::diagnose_workspace(initialized(workspace.path()))
+        .expect("diagnose failed");
     let finding = diagnosis
         .findings
         .iter()
@@ -471,7 +461,7 @@ fn doctor_flags_open_actions_under_archived_parent_charter() {
         )],
     );
 
-    let diagnosis = clearhead_cli::filesystem::diagnose_workspace(initialized(&project), None)
+    let diagnosis = clearhead_cli::filesystem::diagnose_workspace(initialized(&project))
         .expect("diagnose failed");
     let finding = diagnosis
         .findings
@@ -484,7 +474,7 @@ fn doctor_flags_open_actions_under_archived_parent_charter() {
 }
 
 #[test]
-fn doctor_repairs_external_plan_collections_in_their_own_mount() {
+fn doctor_repairs_unowned_plan_collections() {
     use clearhead_core::workspace::DoctorRepair;
     use clearhead_core::workspace::resource::MountId;
 
@@ -492,27 +482,19 @@ fn doctor_repairs_external_plan_collections_in_their_own_mount() {
         "next.actions",
         "[ ] Root #01951111-0000-7000-0000-000000000021\n",
     )]);
-    let external = tempfile::tempdir().unwrap();
-    fs::create_dir(external.path().join("surprise")).unwrap();
+    let root = initialized(workspace.path());
+    let plans = root.join(".clearhead/plans");
+    fs::create_dir_all(plans.join("surprise")).unwrap();
 
-    let diagnosis = clearhead_cli::filesystem::diagnose_workspace(
-        initialized(workspace.path()),
-        Some(external.path()),
-    )
-    .unwrap();
+    let diagnosis = clearhead_cli::filesystem::diagnose_workspace(root).unwrap();
     assert!(diagnosis.repairs.iter().any(|repair| matches!(
         repair,
         DoctorRepair::RemovePlansCollection { location, .. }
-            if location.mount == MountId::ExternalPlans && location.path.as_str() == "surprise"
+            if location.mount == MountId::Workspace && location.path.as_str() == "surprise"
     )));
 
-    clearhead_cli::filesystem::apply_doctor_repairs(
-        workspace.path(),
-        Some(external.path()),
-        &diagnosis.repairs,
-    )
-    .unwrap();
-    assert!(!external.path().join("surprise").exists());
+    clearhead_cli::filesystem::apply_doctor_repairs(root, &diagnosis.repairs).unwrap();
+    assert!(!plans.join("surprise").exists());
 }
 
 #[test]
@@ -521,7 +503,7 @@ fn doctor_rejects_a_sidecar_repair_when_ownership_changed_after_diagnosis() {
     let sidecar = format!(r#"{{"actions":{{"{id}":{{}}}}}}"#);
     let workspace = make_workspace(&[("work.actions", ""), (".work.json", &sidecar)]);
     let root = initialized(workspace.path());
-    let diagnosis = clearhead_cli::filesystem::diagnose_workspace(root, None).unwrap();
+    let diagnosis = clearhead_cli::filesystem::diagnose_workspace(root).unwrap();
     assert!(!diagnosis.repairs.is_empty());
 
     fs::write(
@@ -529,36 +511,30 @@ fn doctor_rejects_a_sidecar_repair_when_ownership_changed_after_diagnosis() {
         format!("[ ] Restored owner #{id}\n"),
     )
     .unwrap();
-    let error = clearhead_cli::filesystem::apply_doctor_repairs(root, None, &diagnosis.repairs)
-        .unwrap_err();
+    let error =
+        clearhead_cli::filesystem::apply_doctor_repairs(root, &diagnosis.repairs).unwrap_err();
     assert!(error.to_string().contains("stale"));
     assert!(root.join(".clearhead/charters/.work.json").exists());
 }
 
 #[test]
-fn doctor_rejects_an_external_collection_repair_when_contents_changed() {
+fn doctor_rejects_a_collection_repair_when_contents_changed() {
     let workspace = make_workspace(&[(
         "next.actions",
         "[ ] Root #01951111-0000-7000-0000-000000000023\n",
     )]);
-    let external = tempfile::tempdir().unwrap();
-    let collection = external.path().join("surprise");
-    fs::create_dir(&collection).unwrap();
     let root = initialized(workspace.path());
-    let diagnosis =
-        clearhead_cli::filesystem::diagnose_workspace(root, Some(external.path())).unwrap();
+    let collection = root.join(".clearhead/plans/surprise");
+    fs::create_dir_all(&collection).unwrap();
+    let diagnosis = clearhead_cli::filesystem::diagnose_workspace(root).unwrap();
 
     fs::write(
         collection.join("new.ics"),
         "BEGIN:VCALENDAR\nEND:VCALENDAR\n",
     )
     .unwrap();
-    let error = clearhead_cli::filesystem::apply_doctor_repairs(
-        root,
-        Some(external.path()),
-        &diagnosis.repairs,
-    )
-    .unwrap_err();
+    let error =
+        clearhead_cli::filesystem::apply_doctor_repairs(root, &diagnosis.repairs).unwrap_err();
     assert!(error.to_string().contains("stale"));
     assert!(collection.join("new.ics").exists());
 }
@@ -595,7 +571,7 @@ fn has_mirror_repair(diagnosis: &clearhead_core::workspace::Diagnosis) -> bool {
 fn doctor_mirrors_the_readme_id_into_an_unreferenced_conflicting_root_sidecar() {
     let (_outer, project) = conflicting_root(&[]);
 
-    let diagnosis = clearhead_cli::filesystem::diagnose_workspace(&project, None).unwrap();
+    let diagnosis = clearhead_cli::filesystem::diagnose_workspace(&project).unwrap();
     let finding = diagnosis
         .findings
         .iter()
@@ -607,12 +583,12 @@ fn doctor_mirrors_the_readme_id_into_an_unreferenced_conflicting_root_sidecar() 
     );
     assert!(has_mirror_repair(&diagnosis));
 
-    clearhead_cli::filesystem::apply_doctor_repairs(&project, None, &diagnosis.repairs).unwrap();
+    clearhead_cli::filesystem::apply_doctor_repairs(&project, &diagnosis.repairs).unwrap();
 
     let sidecar = fs::read_to_string(project.join(".clearhead/charters/.next.json")).unwrap();
     assert!(sidecar.contains(README_ID), "{sidecar}");
     assert!(!sidecar.contains(STALE_SIDECAR_ID), "{sidecar}");
-    let after = clearhead_cli::filesystem::diagnose_workspace(&project, None).unwrap();
+    let after = clearhead_cli::filesystem::diagnose_workspace(&project).unwrap();
     assert!(
         !after
             .findings
@@ -628,7 +604,7 @@ fn doctor_reports_a_referenced_root_identity_conflict_without_repairing() {
     let child = format!("---\nalias: work\nparent: {STALE_SIDECAR_ID}\n---\n# Work\n");
     let (_outer, project) = conflicting_root(&[("work.md", child.as_str())]);
 
-    let diagnosis = clearhead_cli::filesystem::diagnose_workspace(&project, None).unwrap();
+    let diagnosis = clearhead_cli::filesystem::diagnose_workspace(&project).unwrap();
     let finding = diagnosis
         .findings
         .iter()
@@ -647,7 +623,7 @@ fn doctor_flags_a_root_readme_without_an_id() {
     let workspace = make_workspace(&[("README.md", "---\nalias: demo\n---\n# Demo\n")]);
     initialized(workspace.path());
 
-    let diagnosis = clearhead_cli::filesystem::diagnose_workspace(workspace.path(), None).unwrap();
+    let diagnosis = clearhead_cli::filesystem::diagnose_workspace(workspace.path()).unwrap();
 
     assert!(
         diagnosis
@@ -679,7 +655,7 @@ fn doctor_flags_a_legacy_next_md_root_document() {
     ]);
     initialized(workspace.path());
 
-    let diagnosis = clearhead_cli::filesystem::diagnose_workspace(workspace.path(), None).unwrap();
+    let diagnosis = clearhead_cli::filesystem::diagnose_workspace(workspace.path()).unwrap();
 
     assert!(
         diagnosis
@@ -707,7 +683,7 @@ fn doctor_flags_a_legacy_root_completed_history_file() {
     ]);
     initialized(workspace.path());
 
-    let diagnosis = clearhead_cli::filesystem::diagnose_workspace(workspace.path(), None).unwrap();
+    let diagnosis = clearhead_cli::filesystem::diagnose_workspace(workspace.path()).unwrap();
 
     assert!(
         diagnosis
@@ -723,7 +699,7 @@ fn doctor_flags_a_legacy_root_completed_history_file() {
 fn doctor_flags_a_root_without_a_persisted_name() {
     let workspace = make_workspace(&[("work.actions", "")]);
 
-    let diagnosis = clearhead_cli::filesystem::diagnose_workspace(workspace.path(), None).unwrap();
+    let diagnosis = clearhead_cli::filesystem::diagnose_workspace(workspace.path()).unwrap();
 
     assert!(
         diagnosis
@@ -745,7 +721,7 @@ fn doctor_reports_a_charter_document_without_a_declared_id() {
     ]);
 
     let diagnosis =
-        clearhead_cli::filesystem::diagnose_workspace(initialized(workspace.path()), None).unwrap();
+        clearhead_cli::filesystem::diagnose_workspace(initialized(workspace.path())).unwrap();
 
     let finding = diagnosis
         .findings
@@ -771,7 +747,7 @@ fn doctor_points_a_sidecar_identity_at_the_document() {
     ]);
 
     let diagnosis =
-        clearhead_cli::filesystem::diagnose_workspace(initialized(workspace.path()), None).unwrap();
+        clearhead_cli::filesystem::diagnose_workspace(initialized(workspace.path())).unwrap();
 
     let finding = diagnosis
         .findings
@@ -799,7 +775,7 @@ fn doctor_treats_a_null_id_as_undeclared() {
     ]);
 
     let diagnosis =
-        clearhead_cli::filesystem::diagnose_workspace(initialized(workspace.path()), None).unwrap();
+        clearhead_cli::filesystem::diagnose_workspace(initialized(workspace.path())).unwrap();
 
     let finding = diagnosis
         .findings

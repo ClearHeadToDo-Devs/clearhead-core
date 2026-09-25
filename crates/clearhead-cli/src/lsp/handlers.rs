@@ -537,7 +537,7 @@ fn find_definition_in_workspace(
 ) -> Option<(std::path::PathBuf, tower_lsp_server::ls_types::Range)> {
     use clearhead_core::{ReferenceOptions, ReferenceTarget, resolve_reference};
 
-    let model = crate::filesystem::load_domain_model(workspace_root, None).ok()?;
+    let model = crate::filesystem::load_domain_model(workspace_root).ok()?;
     let opts = ReferenceOptions::default();
     let target = resolve_reference(&model, ref_text, &opts).ok()?;
 

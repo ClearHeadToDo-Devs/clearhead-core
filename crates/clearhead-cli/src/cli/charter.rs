@@ -253,12 +253,7 @@ fn load_source_charters(
     let mut workspaces = Vec::new();
     for (name, root) in ctx.workspace_dirs() {
         let is_primary = root == ctx.data_dir;
-        let plan_override = if is_primary {
-            ctx.plan_override()
-        } else {
-            None
-        };
-        match clearhead_cli::filesystem::load_workspace(&root, plan_override.as_deref()) {
+        match clearhead_cli::filesystem::load_workspace(&root) {
             Ok(charters) => workspaces.push((name, root, charters)),
             Err(error) if is_primary => return Err(error.into()),
             Err(error) => tracing::warn!(workspace = %root.display(), %error, "Skipping workspace"),
@@ -567,10 +562,7 @@ pub fn archive_charter(
     // Resolve query: from --file, explicit query, or error
     let q: String = if let Some(file_path) = file {
         let ws_dir = ctx.workspace_for_file(file_path);
-        let plan_override = (ws_dir == ctx.data_dir)
-            .then(|| ctx.plan_override())
-            .flatten();
-        let mcs = clearhead_cli::filesystem::load_workspace(&ws_dir, plan_override.as_deref())?;
+        let mcs = clearhead_cli::filesystem::load_workspace(&ws_dir)?;
         let charter_root = clearhead_cli::filesystem::charter_root(&ws_dir);
         let mc_full = resolve_charter_by_file(&mcs, file_path, &charter_root)
             .ok_or_else(|| anyhow::anyhow!("No charter found for file: {}", file_path.display()))?;
@@ -710,10 +702,7 @@ pub fn close_charter(
     let ws_root = file
         .map(|f| ctx.workspace_for_file(f))
         .unwrap_or_else(|| ctx.data_dir.clone());
-    let plan_override = (ws_root == ctx.data_dir)
-        .then(|| ctx.plan_override())
-        .flatten();
-    let mcs = clearhead_cli::filesystem::load_workspace(&ws_root, plan_override.as_deref())?;
+    let mcs = clearhead_cli::filesystem::load_workspace(&ws_root)?;
     let charter_root = clearhead_cli::filesystem::charter_root(&ws_root);
     let mc_full = find_target_charter(&mcs, query, file, &charter_root)?;
     let current = Charter::from(mc_full.clone());
@@ -780,8 +769,7 @@ pub fn jot(
     dry_run: bool,
 ) -> anyhow::Result<()> {
     let ws_root = ctx.data_dir.clone();
-    let plan_override = ctx.plan_override();
-    let mcs = clearhead_cli::filesystem::load_workspace(&ws_root, plan_override.as_deref())?;
+    let mcs = clearhead_cli::filesystem::load_workspace(&ws_root)?;
     let charter_root = clearhead_cli::filesystem::charter_root(&ws_root);
 
     let mc_full = resolve_jot_charter(&mcs, charter)?;

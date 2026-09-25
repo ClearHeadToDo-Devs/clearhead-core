@@ -437,14 +437,8 @@ fn save_plan_file(
     path: &Path,
     plan: &clearhead_core::Plan,
 ) -> anyhow::Result<()> {
-    clearhead_cli::filesystem::write_plan_file(
-        &ctx.data_dir,
-        ctx.plan_override().as_deref(),
-        path,
-        plan,
-        ctx.config.plan_component,
-    )
-    .with_context(|| format!("Failed to write plan file '{}'", path.display()))
+    clearhead_cli::filesystem::write_plan_file(&ctx.data_dir, path, plan, ctx.config.plan_component)
+        .with_context(|| format!("Failed to write plan file '{}'", path.display()))
 }
 
 fn parse_local_datetime(value: Option<&str>) -> anyhow::Result<Option<DateTime<Local>>> {
@@ -688,12 +682,8 @@ pub fn delete_plan(
             clearhead_core::plans_to_icalendar_with_component(&[plan], ctx.config.plan_component,)
         );
     } else {
-        clearhead_cli::filesystem::delete_plan_file(
-            &ctx.data_dir,
-            ctx.plan_override().as_deref(),
-            &input_file,
-        )
-        .with_context(|| format!("Failed to delete plan file '{}'", input_file.display()))?;
+        clearhead_cli::filesystem::delete_plan_file(&ctx.data_dir, &input_file)
+            .with_context(|| format!("Failed to delete plan file '{}'", input_file.display()))?;
 
         try_emit(
             &plan.id,

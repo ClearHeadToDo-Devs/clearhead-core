@@ -85,9 +85,7 @@ fn published_id(charter: &clearhead_core::MarkdownCharter) -> Option<String> {
 }
 
 pub fn build(ctx: &CommandContext) -> anyhow::Result<Orient> {
-    let charters =
-        clearhead_cli::filesystem::load_workspace(&ctx.data_dir, ctx.plan_override().as_deref())
-            .context("orient")?;
+    let charters = clearhead_cli::filesystem::load_workspace(&ctx.data_dir).context("orient")?;
     let charter_root = clearhead_cli::filesystem::charter_root(&ctx.data_dir);
 
     let active_charters = Bounded::take(

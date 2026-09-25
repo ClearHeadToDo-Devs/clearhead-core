@@ -77,7 +77,7 @@ impl Backend {
         let Ok(relative) = file_path.strip_prefix(&charter_root) else {
             return Vec::new();
         };
-        let Ok(read) = crate::filesystem::read_workspace(&workspace_root, None) else {
+        let Ok(read) = crate::filesystem::read_workspace(&workspace_root) else {
             return Vec::new();
         };
 

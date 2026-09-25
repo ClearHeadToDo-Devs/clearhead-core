@@ -22,8 +22,7 @@ use crate::cli::CommandContext;
 /// durable manifest identity — an identity-less workspace's ephemeral graph
 /// name is intentionally unstable, see `Workspace::ephemeral_id`).
 ///
-/// The primary workspace honors `plan_path` and contributes the configured
-/// context hierarchy; additional workspaces warn and are skipped on error so
+/// The primary workspace contributes the configured context hierarchy; additional workspaces warn and are skipped on error so
 /// one bad workspace never blocks the others.
 pub fn assemble_dataset(ctx: &CommandContext) -> anyhow::Result<Vec<Quad>> {
     let config = ctx.workspace_config();
@@ -32,12 +31,7 @@ pub fn assemble_dataset(ctx: &CommandContext) -> anyhow::Result<Vec<Quad>> {
 
     for (_name, path) in ctx.workspace_dirs() {
         let is_primary = path == ctx.data_dir;
-        let loaded = if is_primary {
-            clearhead_cli::filesystem::load_workspace_model(&path, ctx.plan_override().as_deref())
-        } else {
-            clearhead_cli::filesystem::load_workspace_model(&path, None)
-        };
-        let workspace = match loaded {
+        let workspace = match clearhead_cli::filesystem::load_workspace_model(&path) {
             Ok(workspace) => workspace,
             Err(error) if is_primary => {
                 return Err(error).context("Failed to load workspace");

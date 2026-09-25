@@ -16,7 +16,7 @@ use crate::filesystem::{NativeWorkspaceMounts, WorkspaceError, deliver, snapshot
 /// `root` is a project directory whose `.clearhead/` already exists, or the
 /// user workspace's data dir; both resolve to their data root the same way.
 pub fn init_workspace(root: &Path, request: &InitRequest) -> Result<InitPlan, WorkspaceError> {
-    let mounts = NativeWorkspaceMounts::resolve(root, None);
+    let mounts = NativeWorkspaceMounts::resolve(root);
     let read = |path: &str| {
         let (resource, expected) = snapshot(&mounts.workspace, &mounts.workspace.join(path))?;
         Ok::<_, WorkspaceError>((expected != ExpectedResource::Missing).then_some(resource))

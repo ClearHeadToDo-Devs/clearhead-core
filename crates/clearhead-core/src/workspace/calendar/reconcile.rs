@@ -1,4 +1,4 @@
-//! Field-wise three-way reconciliation between Actions and the configured plans vdir.
+//! Field-wise three-way reconciliation between Actions and the plans vdir.
 //!
 //! The plans vdir is the complete integration boundary. No server, account,
 //! href, ETag, or transport-specific metadata enters this module. Each owned
@@ -1341,7 +1341,7 @@ pub fn prepare_materialized_occurrence_resolution(
             }
             if matched.is_some() {
                 return Err(WorkspaceError::Parse(format!(
-                    "recurring plan {plan_id} appears more than once in the configured plans vdir"
+                    "recurring plan {plan_id} appears more than once in the plans vdir"
                 )));
             }
             matched = Some((resource, plan));
@@ -1349,7 +1349,7 @@ pub fn prepare_materialized_occurrence_resolution(
     }
     let Some((plan_resource, plan)) = matched else {
         return Err(WorkspaceError::Parse(format!(
-            "recurring plan {plan_id} not found in the configured plans vdir"
+            "recurring plan {plan_id} not found in the plans vdir"
         )));
     };
     let uid = plan.plan.external_id.as_deref().ok_or_else(|| {

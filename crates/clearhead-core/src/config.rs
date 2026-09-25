@@ -73,16 +73,7 @@ pub struct WorkspaceConfig {
     /// filed. Defaults to `2`.
     pub expansion_total_instances: u32,
 
-    /// Configured vdir where plan `.ics` files are written, laid out as
-    /// `<plan_path>/<charter>/<uid>.ics`. ClearHead's integration boundary is
-    /// this filesystem convention; transport or sharing is external.
-    ///
-    /// When `None`, plans live under the workspace's own `<data_root>/plans`.
-    /// Callers resolve configured values before passing them into workspace
-    /// operations.
-    pub plan_path: Option<String>,
-
-    /// Component used to encode Plans in the configured iCalendar vdir.
+    /// Component used to encode Plans in the plans vdir.
     pub plan_component: PlanComponentKind,
 }
 
@@ -93,7 +84,6 @@ impl Default for WorkspaceConfig {
             default_to_user_scope: false,
             additional_workspaces: Vec::new(),
             expansion_total_instances: 2,
-            plan_path: None,
             plan_component: PlanComponentKind::default(),
         }
     }

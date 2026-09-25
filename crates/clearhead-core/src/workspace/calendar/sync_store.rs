@@ -1,4 +1,4 @@
-//! Local merge bases for the configured plans vdir projection.
+//! Local merge bases for the plans vdir projection.
 //!
 //! ClearHead synchronizes actions with one configured directory of vdir-compatible
 //! iCalendar files. This store records the last agreement between those two
@@ -41,8 +41,9 @@ type Time = Option<DateTime<Local>>;
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PlansSyncStore {
     pub version: u32,
-    /// The configured vdir this projection state belongs to. A different path
-    /// starts with an empty store rather than reusing unrelated merge bases.
+    /// The plans vdir this projection state belongs to. A different path (the
+    /// workspace moved) starts with an empty store rather than reusing
+    /// unrelated merge bases.
     pub plans_root: PathBuf,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub actions: BTreeMap<Uuid, BTreeMap<String, Value>>,

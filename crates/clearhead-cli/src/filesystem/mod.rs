@@ -267,7 +267,7 @@ fn begin_mutation(
     workspace_root: &Path,
     source_path: &Path,
 ) -> Result<NativeWorkspaceMounts, WorkspaceError> {
-    let mounts = NativeWorkspaceMounts::resolve(workspace_root, None);
+    let mounts = NativeWorkspaceMounts::resolve(workspace_root);
     let charter_root = mounts.workspace.join("charters");
     validate_source_path(source_path, &charter_root)?;
     std::fs::create_dir_all(&charter_root)?;
@@ -351,7 +351,7 @@ pub fn read_charter_document(
     workspace_root: &Path,
     md_path: &Path,
 ) -> Result<CharterDocument, WorkspaceError> {
-    let mounts = NativeWorkspaceMounts::resolve(workspace_root, None);
+    let mounts = NativeWorkspaceMounts::resolve(workspace_root);
     let data_root = &mounts.workspace;
     charter_document_location(data_root, md_path)?;
     let (snapshot, expected) = snapshot(data_root, md_path)?;
@@ -381,7 +381,7 @@ pub fn write_charter_document(
     document: &CharterDocument,
     content: &str,
 ) -> Result<(), WorkspaceError> {
-    let mounts = NativeWorkspaceMounts::resolve(workspace_root, None);
+    let mounts = NativeWorkspaceMounts::resolve(workspace_root);
     let location = charter_document_location(&mounts.workspace, &document.path)?;
     let batch = EffectBatch::new(
         vec![Effect::Write {
@@ -500,7 +500,7 @@ pub fn transact(
         .iter()
         .map(|operation| operation.target())
         .collect();
-    let mounts = NativeWorkspaceMounts::resolve(workspace_root, None);
+    let mounts = NativeWorkspaceMounts::resolve(workspace_root);
     let data_root = &mounts.workspace;
     std::fs::create_dir_all(data_root.join("charters"))?;
 

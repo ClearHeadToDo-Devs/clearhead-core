@@ -1,5 +1,5 @@
 //! The calendar projection: the bridge between ClearHead actions and the
-//! configured vdir of `.ics` plans.
+//! plans vdir of `.ics` plans.
 //!
 //! Everything here is about that one boundary — parsing and emitting `.ics`,
 //! expanding recurring plans into actions, locating plan files on disk, and

@@ -60,12 +60,6 @@ pub struct Config {
     #[serde(default = "default_expansion_total_instances")]
     pub expansion_total_instances: u32,
 
-    // Configured plans vdir, laid out as <plan_path>/<charter>/<uid>.ics.
-    // Transport and sharing are external. When None, plans live under
-    // <data_root>/plans.
-    #[serde(default)]
-    pub plan_path: Option<String>,
-
     // RFC 5545 component used for Plan resources. VEVENT is the calendar-native
     // default; VTODO remains available for task-oriented clients.
     #[serde(default)]
@@ -120,7 +114,14 @@ fn default_expansion_total_instances() -> u32 {
 /// [`clearhead_cli::filesystem::config::config_sources`]; per-field defaults come
 /// from this struct's serde `default` attributes.
 pub fn load_config(custom_config_path: Option<PathBuf>) -> Result<Config, ConfigError> {
-    clearhead_cli::filesystem::config::config_sources(custom_config_path)
-        .build()?
-        .try_deserialize()
+    let sources = clearhead_cli::filesystem::config::config_sources(custom_config_path).build()?;
+    // Fail loudly rather than silently ignore a setting that used to move plans.
+    if sources.get::<String>("plan_path").is_ok() {
+        return Err(ConfigError::Message(
+            "`plan_path` is no longer supported: plans always live in the workspace's \
+             `plans/` directory, so point sync tools such as vdirsyncer there instead"
+                .into(),
+        ));
+    }
+    sources.try_deserialize()
 }

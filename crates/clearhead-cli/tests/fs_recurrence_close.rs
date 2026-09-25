@@ -29,7 +29,7 @@ fn closing_materialized_occurrence_preserves_completed_sidecar_lineage() {
     let plans_root = root.join(".clearhead/plans");
     let actions_path = root.join(".clearhead/charters/health.actions");
     let now = chrono::Local::now();
-    sync_calendar(root, None, None).unwrap();
+    sync_calendar(root, None).unwrap();
     let links = read_plans_sync_store(root, &plans_root)
         .unwrap()
         .occurrence_links();
@@ -50,7 +50,7 @@ fn closing_materialized_occurrence_preserves_completed_sidecar_lineage() {
         now,
     )
     .unwrap();
-    resolve_materialized_occurrence(root, None, occ_id, &OccurrenceOp::Complete { at: now }, now)
+    resolve_materialized_occurrence(root, occ_id, &OccurrenceOp::Complete { at: now }, now)
         .unwrap();
 
     let completed_path = completed_actions_path(&actions_path);
@@ -75,7 +75,7 @@ fn resolving_a_materialized_occurrence_writes_the_deviation_and_advances() {
     let root = ws.path();
     let plans_root = root.join(".clearhead/plans");
     let now = chrono::Local::now();
-    sync_calendar(root, None, None).unwrap();
+    sync_calendar(root, None).unwrap();
 
     let store = read_plans_sync_store(root, &plans_root).unwrap();
     let links = store.occurrence_links();
@@ -84,7 +84,6 @@ fn resolving_a_materialized_occurrence_writes_the_deviation_and_advances() {
     assert!(
         resolve_materialized_occurrence(
             root,
-            None,
             occurrence_id,
             &OccurrenceOp::Complete { at: now },
             now,
@@ -109,12 +108,12 @@ fn materialized_occurrence_hydrates_its_plan_link_from_the_sync_store() {
     let ws = recurring_plan_workspace();
     let root = ws.path();
     let plans_root = root.join(".clearhead/plans");
-    sync_calendar(root, None, None).unwrap();
+    sync_calendar(root, None).unwrap();
 
     let store = read_plans_sync_store(root, &plans_root).unwrap();
     let links = store.occurrence_links();
     let (&occurrence_id, (plan_id, slot_key)) = links.iter().next().unwrap();
-    let token = load_domain_model(root, None)
+    let token = load_domain_model(root)
         .unwrap()
         .all_actions()
         .into_iter()

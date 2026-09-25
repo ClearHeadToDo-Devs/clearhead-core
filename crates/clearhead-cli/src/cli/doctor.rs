@@ -12,22 +12,16 @@ use anyhow::Context;
 use clearhead_core::workspace::{Diagnosis, DoctorRepair, FindingSeverity};
 
 pub fn run(ctx: &CommandContext, json: bool, fix: bool, dry_run: bool) -> anyhow::Result<()> {
-    let mut diagnosis = clearhead_cli::filesystem::diagnose_workspace(
-        &ctx.data_dir,
-        ctx.plan_override().as_deref(),
-    )
-    .context("doctor")?;
+    let mut diagnosis =
+        clearhead_cli::filesystem::diagnose_workspace(&ctx.data_dir).context("doctor")?;
 
     if fix {
         repair_unowned_state(ctx, &diagnosis, dry_run)?;
         if dry_run {
             return Ok(());
         }
-        diagnosis = clearhead_cli::filesystem::diagnose_workspace(
-            &ctx.data_dir,
-            ctx.plan_override().as_deref(),
-        )
-        .context("doctor after repair")?;
+        diagnosis = clearhead_cli::filesystem::diagnose_workspace(&ctx.data_dir)
+            .context("doctor after repair")?;
     }
 
     if json {
@@ -54,12 +48,8 @@ fn repair_unowned_state(
     }
 
     if !dry_run {
-        clearhead_cli::filesystem::apply_doctor_repairs(
-            &ctx.data_dir,
-            ctx.plan_override().as_deref(),
-            &diagnosis.repairs,
-        )
-        .context("apply doctor repairs")?;
+        clearhead_cli::filesystem::apply_doctor_repairs(&ctx.data_dir, &diagnosis.repairs)
+            .context("apply doctor repairs")?;
     }
 
     let mut entries = 0;

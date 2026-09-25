@@ -16,45 +16,30 @@ use clearhead_core::workspace::{
 use crate::filesystem::mounts::NativeWorkspaceMounts;
 
 /// Observe and diagnose a native workspace without replaying pending intent.
-pub fn diagnose_workspace(
-    workspace_root: &Path,
-    external_plans: Option<&Path>,
-) -> Result<Diagnosis, WorkspaceError> {
-    let read = crate::filesystem::read_workspace(workspace_root, external_plans)?;
-    diagnose_workspace_read(workspace_root, external_plans, &read)
+pub fn diagnose_workspace(workspace_root: &Path) -> Result<Diagnosis, WorkspaceError> {
+    let read = crate::filesystem::read_workspace(workspace_root)?;
+    diagnose_workspace_read(workspace_root, &read)
 }
 
 /// Diagnose an already assembled workspace while observing doctor's additional
 /// native evidence exactly once.
 pub fn diagnose_workspace_read(
     workspace_root: &Path,
-    external_plans: Option<&Path>,
     read: &WorkspaceRead,
 ) -> Result<Diagnosis, WorkspaceError> {
-    let evidence = observe_doctor(workspace_root, external_plans)?;
+    let evidence = observe_doctor(workspace_root)?;
     Ok(diagnose(read, &evidence))
 }
 
 /// Gather native facts that normal workspace assembly intentionally excludes.
-pub fn observe_doctor(
-    workspace_root: &Path,
-    external_plans: Option<&Path>,
-) -> Result<DoctorEvidence, WorkspaceError> {
-    let mounts = NativeWorkspaceMounts::resolve(workspace_root, external_plans);
+pub fn observe_doctor(workspace_root: &Path) -> Result<DoctorEvidence, WorkspaceError> {
+    let mounts = NativeWorkspaceMounts::resolve(workspace_root);
     if !mounts.workspace.is_dir() {
         return Err(WorkspaceError::InvalidPath(mounts.workspace));
     }
     let charter_root = mounts.workspace.join("charters");
     let archive_root = mounts.workspace.join("archive");
-    let plans_root = mounts
-        .external_plans
-        .clone()
-        .unwrap_or_else(|| mounts.workspace.join("plans"));
-    let plans_mount = if mounts.external_plans.is_some() {
-        MountId::ExternalPlans
-    } else {
-        MountId::Workspace
-    };
+    let plans_root = mounts.plans_root();
 
     let completed_actions = walk_visible_files(&charter_root)
         .into_iter()
@@ -89,7 +74,7 @@ pub fn observe_doctor(
         })
         .map(|path| observe_sidecar(&charter_root, path))
         .collect::<Result<Vec<_>, _>>()?;
-    let plan_collections = observe_plan_collections(&plans_root, plans_mount)?;
+    let plan_collections = observe_plan_collections(&plans_root, MountId::Workspace)?;
 
     let mut durability_residue = Vec::new();
     if charter_root.join(".pending").is_file() {
@@ -99,7 +84,7 @@ pub fn observe_doctor(
         });
     }
     collect_temps(&charter_root, MountId::Workspace, &mut durability_residue)?;
-    collect_temps(&plans_root, plans_mount, &mut durability_residue)?;
+    collect_temps(&plans_root, MountId::Workspace, &mut durability_residue)?;
 
     Ok(DoctorEvidence {
         manifest: crate::filesystem::read_workspace_manifest(workspace_root),
@@ -117,16 +102,15 @@ pub fn observe_doctor(
 /// Execute repairs selected by Core against freshly-read workspace state.
 pub fn apply_doctor_repairs(
     workspace_root: &Path,
-    external_plans: Option<&Path>,
     repairs: &[DoctorRepair],
 ) -> Result<(), WorkspaceError> {
     if repairs.is_empty() {
         return Ok(());
     }
-    let mounts = NativeWorkspaceMounts::resolve(workspace_root, external_plans);
+    let mounts = NativeWorkspaceMounts::resolve(workspace_root);
     let charter_root = mounts.workspace.join("charters");
 
-    let current = diagnose_workspace(workspace_root, external_plans)?;
+    let current = diagnose_workspace(workspace_root)?;
     if current.repairs != repairs {
         return Err(WorkspaceError::Actions(
             "doctor repair evidence is stale; rerun doctor and review the current repair plan"
@@ -230,15 +214,12 @@ fn collection_dir(
             location.path
         )));
     }
-    let root = match location.mount {
-        MountId::Workspace => mounts.workspace.join("plans"),
-        MountId::ExternalPlans => mounts.external_plans.clone().ok_or_else(|| {
-            WorkspaceError::Actions(
-                "doctor repair names an external plans mount that is not configured".into(),
-            )
-        })?,
-    };
-    let path = root.join(location.path.as_str());
+    if !location.mount.is_workspace() {
+        return Err(WorkspaceError::Actions(
+            "doctor repair names a calendar collection outside the workspace".into(),
+        ));
+    }
+    let path = mounts.plans_root().join(location.path.as_str());
     if collection_revision(&path)? != *expected {
         return Err(WorkspaceError::Actions(format!(
             "doctor repair evidence for calendar collection '{}' is stale",

@@ -554,7 +554,7 @@ struct ArchiveLayout {
 }
 
 fn archive_layout(root: &Path) -> ArchiveLayout {
-    let mounts = NativeWorkspaceMounts::resolve(root, None);
+    let mounts = NativeWorkspaceMounts::resolve(root);
     ArchiveLayout {
         charter_root: mounts.workspace.join("charters"),
         data_root: mounts.workspace,
@@ -566,9 +566,9 @@ fn prepare_archive_read(
     opts: &ArchiveCharterOptions,
 ) -> Result<Vec<MarkdownCharter>, ArchiveCharterError> {
     if opts.dry_run {
-        return Ok(read_workspace(root, None)?.charters);
+        return Ok(read_workspace(root)?.charters);
     }
-    Ok(load_workspace(root, None)?)
+    Ok(load_workspace(root)?)
 }
 
 /// Files owned by a directory-form charter, recursively, sorted for
@@ -871,7 +871,7 @@ mod tests {
         .unwrap();
         let sidecar = charters.join(".done.json");
         std::fs::write(&sidecar, "{\"actions\":{}}\n").unwrap();
-        let charter_id = find_charter(&read_workspace(&root, None).unwrap().charters, "done")
+        let charter_id = find_charter(&read_workspace(&root).unwrap().charters, "done")
             .unwrap()
             .id;
         let archive = root.join(".clearhead/archive");
@@ -1000,7 +1000,7 @@ mod tests {
         // Capture the charter's stable UUID before it is archived — the flat
         // archive names every file `<uuid>.*`.
         let uuid = {
-            let charters = load_workspace(&root, None).expect("load");
+            let charters = load_workspace(&root).expect("load");
             find_charter(&charters, "done").expect("charter").id
         };
 
@@ -1078,7 +1078,7 @@ mod tests {
         assert!(sc_path.exists(), "sidecar written before archiving");
 
         let uuid = {
-            let charters = load_workspace(&root, None).expect("load");
+            let charters = load_workspace(&root).expect("load");
             find_charter(&charters, "done").expect("charter").id
         };
 
@@ -1172,7 +1172,7 @@ mod tests {
 
         // Capture both charters' stable UUIDs before the flatten.
         let (work_uuid, ops_uuid) = {
-            let charters = load_workspace(&root, None).expect("load");
+            let charters = load_workspace(&root).expect("load");
             (
                 find_charter(&charters, "work").expect("work charter").id,
                 find_charter(&charters, "ops").expect("ops charter").id,
@@ -1289,7 +1289,7 @@ mod tests {
         .expect("write alternate completed history");
 
         let charter_uuid = find_charter(
-            &load_workspace(&root, None).expect("load workspace"),
+            &load_workspace(&root).expect("load workspace"),
             "graph-views",
         )
         .expect("graph-views charter")
@@ -1377,7 +1377,7 @@ mod tests {
         std::fs::write(charters_dir.join("q3.actions"), "").unwrap();
 
         let (goals_uuid, q3_uuid) = {
-            let cs = load_workspace(&root, None).unwrap();
+            let cs = load_workspace(&root).unwrap();
             (
                 find_charter(&cs, "goals").unwrap().id,
                 find_charter(&cs, "q3").unwrap().id,
@@ -1426,7 +1426,7 @@ mod tests {
         std::fs::write(ops_dir.join("next.actions"), "").unwrap();
 
         let (work_uuid, ops_uuid) = {
-            let cs = load_workspace(&root, None).unwrap();
+            let cs = load_workspace(&root).unwrap();
             (
                 find_charter(&cs, "work").unwrap().id,
                 find_charter(&cs, "ops").unwrap().id,

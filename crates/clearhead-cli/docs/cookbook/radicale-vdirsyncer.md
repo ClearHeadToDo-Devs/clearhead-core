@@ -2,7 +2,7 @@
 
 This recipe publishes ClearHead Plans to CalDAV while keeping the integration server-agnostic.
 
-- ClearHead owns `.actions` files and reads/writes a configured iCalendar vdir.
+- ClearHead owns `.actions` files and reads/writes the workspace's iCalendar vdir.
 - vdirsyncer transports vdir resources through CalDAV.
 - Radicale owns its private server storage and serves CalDAV clients.
 - Calendar or task clients communicate with Radicale, not with ClearHead files.
@@ -18,7 +18,7 @@ calendar/task clients
         ↕ CalDAV
      vdirsyncer
         ↕ filesystem
- configured plans vdir
+ workspace plans vdir
         ↕
 clearhead sync calendar
         ↕
@@ -68,15 +68,7 @@ plans/
 
 ClearHead calculates this collection topology from the workspace's charter anchors. A new resource in a known collection is expected; an unknown immediate child directory is quarantined rather than silently creating a charter. Inspect it with `clearhead doctor`. `clearhead doctor --fix --dry-run` previews removal, and `clearhead doctor --fix` removes it locally with a warning because vdirsyncer may propagate that deletion to the CalDAV server.
 
-To use a different location, set `plan_path` in `~/.config/clearhead/config.json`:
-
-```json
-{
-  "plan_path": "~/.local/share/clearhead/plans"
-}
-```
-
-Confirm the resolved path before connecting a transport:
+The location is not configurable; point vdirsyncer at it rather than moving it. Confirm the resolved path before connecting a transport:
 
 ```sh
 clearhead debug
@@ -304,4 +296,4 @@ Never reset Radicale's entire storage directory as part of this procedure. Radic
 
 ## Replaceable components
 
-This recipe chooses Radicale, vdirsyncer, and systemd, but none are required by the ClearHead data contract. Another CalDAV server, filesystem synchronization tool, scheduler, or manual process can replace them as long as ClearHead sees a standards-compliant VEVENT/VTODO vdir at its configured `plan_path`.
+This recipe chooses Radicale, vdirsyncer, and systemd, but none are required by the ClearHead data contract. Another CalDAV server, filesystem synchronization tool, scheduler, or manual process can replace them as long as ClearHead sees a standards-compliant VEVENT/VTODO vdir at the workspace's `plans/` directory.
