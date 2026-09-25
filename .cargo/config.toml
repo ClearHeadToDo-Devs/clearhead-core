@@ -1,0 +1,16 @@
+# Pin the local time zone for everything cargo runs from inside this repository
+# (tests, `cargo run`; scripts/gate.sh, CI and the pre-push hook all do), so
+# results do not depend on the machine.
+#
+# Core resolves floating DSL date-times such as `@2026-04-17T09:00` into
+# chrono's `Local`, and renders explicit instants (an ICS `DTSTART:...Z`) in
+# `Local` too, so any snapshot of a loaded model carries the zone. The committed
+# snapshots were written in US Pacific time; without this pin a UTC machine
+# (a cloud container, a GitHub runner) fails them.
+#
+# A POSIX rule string rather than `America/Los_Angeles`, so no tzdata install is
+# needed. `force` overrides a TZ already set in the shell. Built binaries are
+# unaffected: this reaches only processes cargo itself starts.
+
+[env]
+TZ = { value = "PST8PDT,M3.2.0,M11.1.0", force = true }
