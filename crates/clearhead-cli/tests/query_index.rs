@@ -43,6 +43,13 @@ fn run_index(env: &TestEnv, view: &str, fmt: &str) -> Vec<u8> {
     output.stdout
 }
 
+fn run_index_with_args(env: &TestEnv, args: &[&str]) -> std::process::Output {
+    env.std_command()
+        .args(args)
+        .output()
+        .expect("run clearhead query index")
+}
+
 #[test]
 fn default_view_frames_context_and_graph() {
     let env = seed(&format!("[ ] Alpha #{A}\n[ ] Beta #{B}\n"));
@@ -111,6 +118,119 @@ fn unscheduled_includes_in_progress_leaves_and_excludes_containers() {
     assert!(
         !names.contains(&"Blocked"),
         "blocked work leaked: {nodes:?}"
+    );
+}
+
+#[test]
+fn charter_filter_scopes_to_charter_and_its_sub_charters() {
+    let env = TestEnv::new();
+    env.write_text(
+        "workspace.json",
+        &format!(r#"{{"workspace_id":"{WS}","workspace_name":"testws"}}"#),
+    );
+    env.write_text(
+        "charters/work.md",
+        "---\nid: 019f733d-4600-7000-8000-00000000f001\nalias: work\nstate: Active\n---\n# Work\n",
+    );
+    env.write_actions("work.actions", &format!("[ ] Parent task #{A}\n"));
+    env.write_text(
+        "charters/sub.md",
+        "---\nid: 019f733d-4600-7000-8000-00000000f002\nalias: sub\nparent: work\nstate: Active\n---\n# Sub\n",
+    );
+    env.write_actions("sub.actions", &format!("[ ] Child task #{B}\n"));
+    env.write_text(
+        "charters/other.md",
+        "---\nid: 019f733d-4600-7000-8000-00000000f003\nalias: other\nstate: Active\n---\n# Other\n",
+    );
+    env.write_actions("other.actions", &format!("[ ] Unrelated task #{C}\n"));
+
+    // Sanity: unfiltered, the default view sees all three charters' actions.
+    let unfiltered = String::from_utf8(run_index(&env, "default", "ids")).unwrap();
+    assert_eq!(unfiltered.lines().count(), 3, "{unfiltered}");
+
+    // `--charter work` includes work's own action and its sub-charter's, not
+    // the unrelated charter's.
+    let output = run_index_with_args(
+        &env,
+        &[
+            "query",
+            "index",
+            "default",
+            "--charter",
+            "work",
+            "--format",
+            "ids",
+        ],
+    );
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let ids: Vec<String> = String::from_utf8(output.stdout)
+        .unwrap()
+        .lines()
+        .map(String::from)
+        .collect();
+    assert_eq!(ids.len(), 2, "{ids:?}");
+    assert!(ids.contains(&format!("urn:uuid:{A}")), "{ids:?}");
+    assert!(ids.contains(&format!("urn:uuid:{B}")), "{ids:?}");
+    assert!(!ids.contains(&format!("urn:uuid:{C}")), "{ids:?}");
+
+    // `--charter sub` narrows to just the sub-charter's own action.
+    let output = run_index_with_args(
+        &env,
+        &[
+            "query",
+            "index",
+            "default",
+            "--charter",
+            "sub",
+            "--format",
+            "ids",
+        ],
+    );
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let ids: Vec<String> = String::from_utf8(output.stdout)
+        .unwrap()
+        .lines()
+        .map(String::from)
+        .collect();
+    assert_eq!(ids, vec![format!("urn:uuid:{B}")]);
+}
+
+#[test]
+fn charter_filter_errors_when_charter_declares_no_id() {
+    // `seed()`'s charter has an alias but no frontmatter `id:` — an ephemeral
+    // identity that changes on every load, same case `clearhead doctor` flags
+    // as `charter-document-without-id`.
+    let env = seed(&format!("[ ] Alpha #{A}\n"));
+
+    let output = run_index_with_args(
+        &env,
+        &[
+            "query",
+            "index",
+            "default",
+            "--charter",
+            "work",
+            "--format",
+            "ids",
+        ],
+    );
+    assert!(
+        !output.status.success(),
+        "expected failure for a charter with no stamped id"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("declares no id"), "{stderr}");
+    assert!(
+        stderr.contains("clearhead normalize file"),
+        "error should name the fix: {stderr}"
     );
 }
 

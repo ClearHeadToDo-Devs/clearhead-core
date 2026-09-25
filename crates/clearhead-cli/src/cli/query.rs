@@ -68,17 +68,43 @@ pub fn named(
 pub fn index(
     ctx: &CommandContext,
     name: Option<&str>,
+    charter: Option<&str>,
     format: Option<QueryFormat>,
 ) -> anyhow::Result<()> {
     #[cfg(feature = "sparql")]
     {
-        crate::query::sparql::index::run(ctx, name, None, format)
+        let charter_target = charter
+            .map(|query| resolve_charter_target(ctx, query))
+            .transpose()?;
+        crate::query::sparql::index::run(ctx, name, None, charter_target.as_deref(), format)
     }
     #[cfg(not(feature = "sparql"))]
     {
-        let _ = (ctx, name, format);
+        let _ = (ctx, name, charter, format);
         Err(no_query_engine())
     }
+}
+
+/// Resolve a `--charter` reference to the `<urn:uuid:…>` term an index view's
+/// `#CHARTER_FILTER#` marker binds against. Only a charter with a
+/// document-declared id is a durable join key — see
+/// `charter-document-without-id` in `clearhead doctor` — so one loaded with
+/// any other [`clearhead_core::workspace::CharterIdSource`] is a clear error
+/// naming the same fix `doctor` does, not a silently ephemeral filter.
+#[cfg(feature = "sparql")]
+fn resolve_charter_target(ctx: &CommandContext, query: &str) -> anyhow::Result<String> {
+    use crate::cli::verb_result::canonical_id;
+    use clearhead_core::workspace::CharterIdSource;
+
+    let (charter, _ws_root) = super::action::resolve_charter_across_workspaces(ctx, query)?;
+    if charter.id_source != CharterIdSource::Document {
+        let subject = charter.alias.as_deref().unwrap_or(&charter.title);
+        anyhow::bail!(
+            "charter '{subject}' declares no id, so `--charter` cannot address it durably; \
+             run `clearhead normalize file <charter.md> --write` to stamp one"
+        );
+    }
+    Ok(format!("<{}>", canonical_id(charter.id)))
 }
 
 pub fn tree(
@@ -119,7 +145,7 @@ pub fn chain(ctx: &CommandContext, query: &str, format: Option<QueryFormat>) -> 
         use crate::cli::verb_result::canonical_id;
         let id = super::action::resolve_action_id(ctx, query)?;
         let target = format!("<{}>", canonical_id(id));
-        crate::query::sparql::index::run(ctx, Some("chain"), Some(&target), format)
+        crate::query::sparql::index::run(ctx, Some("chain"), Some(&target), None, format)
     }
     #[cfg(not(feature = "sparql"))]
     {

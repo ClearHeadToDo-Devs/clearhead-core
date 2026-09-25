@@ -43,11 +43,13 @@ const INDEX_REQUIRED: &[&str] = &[
 ];
 
 /// Run a named index view: resolve the query, bind `?TARGET_ACTION` when a
-/// chain target is supplied, execute, validate/frame, and render.
+/// chain target is supplied, apply `--charter` scoping when supplied,
+/// execute, validate/frame, and render.
 pub fn run(
     ctx: &CommandContext,
     name: Option<&str>,
     target: Option<&str>,
+    charter: Option<&str>,
     format: Option<QueryFormat>,
 ) -> anyhow::Result<()> {
     let name = name.unwrap_or("default");
@@ -63,6 +65,21 @@ pub fn run(
     // wrapped itself — a controlled, validated term, not free-form input.
     let sparql = match target {
         Some(target) => sparql.replace("?TARGET_ACTION", target),
+        None => sparql,
+    };
+    // Every built-in view carries a `#CHARTER_FILTER#` marker line next to its
+    // `?owner` binding — a SPARQL comment, so it is a no-op unless replaced. A
+    // resolved `--charter` (already validated and wrapped as `<urn:uuid:…>` by
+    // the caller) becomes a semi-join that also matches sub-charters via
+    // `hasSubCharter*`, requiring `?owner` bound so an action with no
+    // resolvable owner never passes a charter scope silently.
+    let sparql = match charter {
+        Some(charter_iri) => sparql.replace(
+            "#CHARTER_FILTER#",
+            &format!(
+                "FILTER(BOUND(?owner) && EXISTS {{ {charter_iri} actions:hasSubCharter* ?owner }})"
+            ),
+        ),
         None => sparql,
     };
 
