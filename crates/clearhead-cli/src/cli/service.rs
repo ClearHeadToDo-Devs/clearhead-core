@@ -95,13 +95,15 @@ pub fn sync_calendar(
     ctx: &CommandContext,
     dry_run: bool,
     conflict: Option<crate::argparser::ConflictResolutionArg>,
+    action: Option<String>,
 ) -> anyhow::Result<()> {
     ctx.require_source_integrity("sync calendar")?;
+    let choice = conflict_choice(conflict, action);
 
     if dry_run {
         let preview = clearhead_cli::filesystem::preview_calendar_sync_with_component(
             &ctx.data_dir,
-            conflict_resolution(conflict),
+            choice.as_ref(),
             ctx.config.plan_component,
         )?;
         render_sync_report(&preview.report);
@@ -117,7 +119,7 @@ pub fn sync_calendar(
 
     let result = clearhead_cli::filesystem::sync_calendar_with_component(
         &ctx.data_dir,
-        conflict_resolution(conflict),
+        choice.as_ref(),
         ctx.config.plan_component,
     )?;
 
@@ -171,7 +173,7 @@ const UNRESOLVED_CONFLICTS: i32 = 2;
 fn exit_if_unresolved(conflicts: usize) {
     if conflicts > 0 {
         eprintln!(
-            "{conflicts} conflict(s) left unresolved; choose a side with `clearhead sync calendar --conflict action|calendar`"
+            "{conflicts} conflict(s) left unresolved; choose a side with `clearhead sync calendar --conflict action|calendar [--action <id>]`"
         );
         std::process::exit(UNRESOLVED_CONFLICTS);
     }
@@ -204,17 +206,19 @@ fn render_sync_report(report: &clearhead_core::SyncReport) {
     }
 }
 
-fn conflict_resolution(
-    choice: Option<crate::argparser::ConflictResolutionArg>,
-) -> Option<clearhead_core::SyncConflictResolution> {
-    choice.map(|choice| match choice {
+fn conflict_choice(
+    side: Option<crate::argparser::ConflictResolutionArg>,
+    action: Option<String>,
+) -> Option<clearhead_core::SyncConflictChoice> {
+    let prefer = match side? {
         crate::argparser::ConflictResolutionArg::Action => {
             clearhead_core::SyncConflictResolution::PreferAction
         }
         crate::argparser::ConflictResolutionArg::Calendar => {
             clearhead_core::SyncConflictResolution::PreferCalendar
         }
-    })
+    };
+    Some(clearhead_core::SyncConflictChoice { prefer, action })
 }
 
 fn render_sync_entry(entry: &SyncEntry) -> String {

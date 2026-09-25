@@ -975,9 +975,11 @@ fn dispatch(cli: &argparser::Cli, ctx: &CommandContext) -> anyhow::Result<()> {
             argparser::SyncTarget::Events { file, dry_run } => {
                 service::sync_events(ctx, file, *dry_run)
             }
-            argparser::SyncTarget::Calendar { dry_run, conflict } => {
-                service::sync_calendar(ctx, *dry_run, *conflict)
-            }
+            argparser::SyncTarget::Calendar {
+                dry_run,
+                conflict,
+                action,
+            } => service::sync_calendar(ctx, *dry_run, *conflict, action.clone()),
         },
         Verb::Debug => debug::run(ctx),
         Verb::Orient => orient::run(ctx),

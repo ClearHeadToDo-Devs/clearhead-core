@@ -33,14 +33,24 @@ fn snapshot_tree(root: &Path) -> BTreeMap<PathBuf, Option<Vec<u8>>> {
 }
 
 fn write_plans_sync_store(env: &TestEnv, action_id: &str, scheduled_at: &str) {
+    write_plans_sync_store_for(env, &[action_id], scheduled_at);
+}
+
+/// Record `scheduled_at` as the last-agreed base for every action in `action_ids`.
+fn write_plans_sync_store_for(env: &TestEnv, action_ids: &[&str], scheduled_at: &str) {
+    let actions: serde_json::Map<_, _> = action_ids
+        .iter()
+        .map(|id| {
+            (
+                id.to_string(),
+                serde_json::json!({ "scheduled_at": scheduled_at }),
+            )
+        })
+        .collect();
     let content = serde_json::json!({
         "version": 1,
         "plans_root": env.data_dir.join("plans"),
-        "actions": {
-            (action_id): {
-                "scheduled_at": scheduled_at
-            }
-        }
+        "actions": actions
     });
     env.write_text(
         "sync/plans.json",
@@ -969,6 +979,64 @@ fn test_sync_calendar_conflict_can_be_resolved_toward_calendar() {
 
     let actions = fs::read_to_string(env.data_dir.join("charters").join("inbox.actions")).unwrap();
     assert!(actions.contains("@2026-04-30T10:00"));
+}
+
+#[test]
+fn test_sync_calendar_conflict_can_be_resolved_for_one_action() {
+    let env = TestEnv::new();
+    let chosen = "019baaec-00b6-7991-be34-94b68212619a";
+    let other = "019bffff-0000-7000-8000-000000000001";
+    env.write_actions(
+        "inbox.actions",
+        &format!("[ ] Chosen @2026-04-29T10:00 #{chosen}\n[ ] Other @2026-04-29T10:00 #{other}"),
+    );
+    let base = Local
+        .with_ymd_and_hms(2026, 4, 28, 10, 0, 0)
+        .unwrap()
+        .to_rfc3339();
+    write_plans_sync_store_for(&env, &[chosen, other], &base);
+    for (uid, title) in [(chosen, "Chosen"), (other, "Other")] {
+        env.write_text(
+            &format!("plans/inbox/{uid}.ics"),
+            &format!(
+                "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Test//Test//EN\r\nBEGIN:VTODO\r\nUID:{uid}\r\nSUMMARY:{title}\r\nSTATUS:NEEDS-ACTION\r\nDTSTART:20260430T100000\r\nEND:VTODO\r\nEND:VCALENDAR\r\n"
+            ),
+        );
+    }
+
+    env.command()
+        .args([
+            "sync",
+            "calendar",
+            "--conflict",
+            "calendar",
+            "--action",
+            "nope",
+        ])
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains(
+            "no unresolved calendar conflict matches 'nope'",
+        ));
+
+    env.command()
+        .args([
+            "sync",
+            "calendar",
+            "--conflict",
+            "calendar",
+            "--action",
+            "019baa",
+        ])
+        .assert()
+        .code(2)
+        .stdout(predicate::str::contains(
+            "Sync complete. 0 push, 1 pull, 0 converged, 1 conflict.",
+        ));
+    let actions = fs::read_to_string(env.data_dir.join("charters/inbox.actions")).unwrap();
+    let line = |title: &str| actions.lines().find(|line| line.contains(title)).unwrap();
+    assert!(line("Chosen").contains("@2026-04-30T10:00"), "{actions}");
+    assert!(line("Other").contains("@2026-04-29T10:00"), "{actions}");
 }
 
 #[test]

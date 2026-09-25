@@ -19,7 +19,7 @@ use clearhead_core::workspace::calendar::plans::{
 use clearhead_core::workspace::calendar::reconcile::{
     AppliedSync, CalendarSyncPreparationInput, MaterializedOccurrenceArchiveState,
     MaterializedOccurrencePreparationInput, PlanResourceState, SyncActionResourceState,
-    SyncCodecMigration, SyncConflictResolution, SyncImport, SyncLifecycleEntry, SyncLifecycleKind,
+    SyncCodecMigration, SyncConflictChoice, SyncImport, SyncLifecycleEntry, SyncLifecycleKind,
     SyncMirrorResourceState, SyncPlanLink, SyncPlanTemplate, SyncPlanUnlink, SyncReport,
     occurrence_links, plan_one_off_sync, plan_recurring_occurrence_sync,
     prepare_master_rollforward_changes, prepare_master_rollforwards,
@@ -147,14 +147,14 @@ pub fn observe_calendar_resources(
 /// Recompute and deliver one calendar sync from fresh evidence under the native lock.
 pub fn sync_calendar(
     workspace_root: &Path,
-    conflict: Option<SyncConflictResolution>,
+    conflict: Option<&SyncConflictChoice>,
 ) -> Result<CalendarSyncResult, WorkspaceError> {
     sync_calendar_with_component(workspace_root, conflict, PlanComponentKind::VTodo)
 }
 
 pub fn sync_calendar_with_component(
     workspace_root: &Path,
-    conflict: Option<SyncConflictResolution>,
+    conflict: Option<&SyncConflictChoice>,
     configured_component: PlanComponentKind,
 ) -> Result<CalendarSyncResult, WorkspaceError> {
     let mounts = NativeWorkspaceMounts::resolve(workspace_root);
@@ -177,7 +177,7 @@ pub fn sync_calendar_with_component(
 /// Compute the exact Plan-native lifecycle sync without locking, journaling, or delivery.
 pub fn preview_calendar_sync_with_component(
     workspace_root: &Path,
-    conflict: Option<SyncConflictResolution>,
+    conflict: Option<&SyncConflictChoice>,
     configured_component: PlanComponentKind,
 ) -> Result<CalendarSyncPreview, WorkspaceError> {
     let mounts = NativeWorkspaceMounts::resolve(workspace_root);
@@ -190,7 +190,7 @@ pub fn preview_calendar_sync_with_component(
 
 fn prepare_calendar_sync(
     workspace_root: &Path,
-    conflict: Option<SyncConflictResolution>,
+    conflict: Option<&SyncConflictChoice>,
     configured_component: PlanComponentKind,
     mounts: NativeWorkspaceMounts,
 ) -> Result<PreparedCalendarSync, WorkspaceError> {
@@ -395,7 +395,7 @@ fn prepare_calendar_sync(
             }
         }
     }
-    let mut report = report.resolve_conflicts(conflict);
+    let mut report = report.resolve_conflicts(conflict)?;
     let codec_migrations = if report.tally().conflict == 0 {
         let migrations = prepare_codec_migrations(&observation.resources, configured_component)?;
         if !migrations.is_empty() {

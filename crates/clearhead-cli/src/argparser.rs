@@ -1198,9 +1198,13 @@ pub enum SyncTarget {
         #[arg(long)]
         dry_run: bool,
 
-        /// Resolve all calendar conflicts by explicitly choosing one side
+        /// Resolve calendar conflicts by explicitly choosing one side
         #[arg(long, value_enum)]
         conflict: Option<ConflictResolutionArg>,
+
+        /// Apply --conflict only to this action (full or short UUID)
+        #[arg(long, requires = "conflict")]
+        action: Option<String>,
     },
 }
 

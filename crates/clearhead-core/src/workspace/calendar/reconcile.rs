@@ -24,6 +24,7 @@ use super::sync_store::{
 };
 use crate::config::PlanComponentKind;
 use crate::domain::{Action, ActionState, DomainModel, Plan};
+use crate::reference::{ReferenceEntity, ReferenceSelection, select_reference_where};
 use crate::workspace::actions::format::require_actions_formatting;
 use crate::workspace::charter::MarkdownCharter;
 use crate::workspace::resource::{
@@ -202,11 +203,30 @@ pub struct SyncReport {
     pub warnings: Vec<String>,
 }
 
-/// Optional policy for resolving every remaining field conflict in one sync run.
+/// Which side wins a remaining field conflict.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SyncConflictResolution {
     PreferAction,
     PreferCalendar,
+}
+
+/// A person's decision on remaining conflicts: which side wins, for every
+/// conflicting action or only the one `action` references.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SyncConflictChoice {
+    pub prefer: SyncConflictResolution,
+    /// A full or short UUID, selected among the actions still in conflict.
+    pub action: Option<String>,
+}
+
+impl ReferenceEntity for SyncEntry {
+    fn reference_id(&self) -> Uuid {
+        self.action_id
+    }
+
+    fn reference_alias(&self) -> Option<&str> {
+        None
+    }
 }
 
 impl SyncReport {
@@ -217,20 +237,59 @@ impl SyncReport {
             && self.warnings.is_empty()
     }
 
-    pub fn resolve_conflicts(mut self, choice: Option<SyncConflictResolution>) -> Self {
+    /// Apply `choice` to the conflicts it covers. A scoped choice must select
+    /// exactly one action that is still in conflict; other actions keep theirs.
+    pub fn resolve_conflicts(
+        mut self,
+        choice: Option<&SyncConflictChoice>,
+    ) -> Result<Self, WorkspaceError> {
         let Some(choice) = choice else {
-            return self;
+            return Ok(self);
         };
+        let scope = match &choice.action {
+            Some(query) => Some(self.conflicting_action(query)?),
+            None => None,
+        };
+        let prefer = choice.prefer;
         for entry in &mut self.entries {
-            resolve_one(&mut entry.scheduled_at, choice);
-            resolve_one(&mut entry.due_date, choice);
-            resolve_one(&mut entry.state, choice);
-            resolve_one(&mut entry.title, choice);
-            resolve_one(&mut entry.description, choice);
-            resolve_one(&mut entry.priority, choice);
-            resolve_one(&mut entry.contexts, choice);
+            if scope.is_some_and(|id| id != entry.action_id) {
+                continue;
+            }
+            resolve_one(&mut entry.scheduled_at, prefer);
+            resolve_one(&mut entry.due_date, prefer);
+            resolve_one(&mut entry.state, prefer);
+            resolve_one(&mut entry.title, prefer);
+            resolve_one(&mut entry.description, prefer);
+            resolve_one(&mut entry.priority, prefer);
+            resolve_one(&mut entry.contexts, prefer);
         }
-        self
+        Ok(self)
+    }
+
+    /// The one still-conflicting action `query` references.
+    fn conflicting_action(&self, query: &str) -> Result<Uuid, WorkspaceError> {
+        let in_conflict = |entry: &SyncEntry| {
+            entry
+                .outcomes()
+                .iter()
+                .any(|(_, kind)| *kind == OutcomeKind::Conflict)
+        };
+        match select_reference_where(&self.entries, query, in_conflict) {
+            ReferenceSelection::Unique { index, .. } => Ok(self.entries[index].action_id),
+            ReferenceSelection::NotFound => Err(WorkspaceError::Actions(format!(
+                "no unresolved calendar conflict matches '{query}'"
+            ))),
+            ReferenceSelection::Ambiguous { indices, .. } => {
+                let candidates = indices
+                    .iter()
+                    .map(|&index| self.entries[index].action_id.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                Err(WorkspaceError::Actions(format!(
+                    "'{query}' matches more than one conflicting action: {candidates}"
+                )))
+            }
+        }
     }
 
     pub fn tally(&self) -> SyncTally {
@@ -2231,6 +2290,88 @@ mod tests {
             Reconcile::Conflict { .. }
         ));
         assert_eq!(reconcile(&"a", None, None), Reconcile::TakeAction("a"));
+    }
+
+    fn title_conflict(action_id: &str) -> SyncEntry {
+        SyncEntry {
+            action_id: Uuid::parse_str(action_id).unwrap(),
+            uid: action_id.to_string(),
+            occurrence_key: None,
+            name: "Clash".into(),
+            scheduled_at: Reconcile::NoOp,
+            due_date: Reconcile::NoOp,
+            state: Reconcile::NoOp,
+            title: Reconcile::Conflict {
+                action: "mine".into(),
+                calendar: "theirs".into(),
+            },
+            description: Reconcile::NoOp,
+            priority: Reconcile::NoOp,
+            contexts: Reconcile::NoOp,
+            calendar_completed_at: None,
+        }
+    }
+
+    fn two_conflicts() -> SyncReport {
+        SyncReport {
+            entries: vec![
+                title_conflict("019baaec-00b6-7991-be34-94b68212619a"),
+                title_conflict("019bffff-0000-7000-8000-000000000001"),
+            ],
+            ..SyncReport::default()
+        }
+    }
+
+    fn choice(action: Option<&str>) -> SyncConflictChoice {
+        SyncConflictChoice {
+            prefer: SyncConflictResolution::PreferCalendar,
+            action: action.map(String::from),
+        }
+    }
+
+    #[test]
+    fn an_unscoped_choice_resolves_every_conflict() {
+        let report = two_conflicts()
+            .resolve_conflicts(Some(&choice(None)))
+            .unwrap();
+        assert_eq!(report.tally().conflict, 0);
+    }
+
+    #[test]
+    fn a_scoped_choice_resolves_only_the_selected_action() {
+        let report = two_conflicts()
+            .resolve_conflicts(Some(&choice(Some("019bff"))))
+            .unwrap();
+        assert_eq!(
+            report.entries[0].title,
+            title_conflict("019baaec-00b6-7991-be34-94b68212619a").title
+        );
+        assert_eq!(
+            report.entries[1].title,
+            Reconcile::TakeCalendar("theirs".into())
+        );
+    }
+
+    #[test]
+    fn a_scoped_choice_must_name_one_conflicting_action() {
+        let unknown = two_conflicts().resolve_conflicts(Some(&choice(Some("ffff"))));
+        assert!(
+            unknown
+                .unwrap_err()
+                .to_string()
+                .contains("no unresolved calendar conflict")
+        );
+
+        let mut report = two_conflicts();
+        report.entries[1].title = Reconcile::NoOp;
+        let settled = report.resolve_conflicts(Some(&choice(Some("019bff"))));
+        assert!(
+            settled.is_err(),
+            "an action without a conflict is not selectable"
+        );
+
+        let ambiguous = two_conflicts().resolve_conflicts(Some(&choice(Some("019b"))));
+        assert!(ambiguous.unwrap_err().to_string().contains("more than one"));
     }
 
     #[test]
