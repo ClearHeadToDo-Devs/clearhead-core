@@ -14,6 +14,10 @@ fn doctor_fix_previews_then_prunes_orphaned_sidecar_state() {
     let stale = "019e0000-0000-7000-8000-000000000011";
     env.write_actions("inbox.actions", &format!("[ ] Live #{live}\n"));
     env.write_text(
+        "charters/inbox.md",
+        "---\nid: 019e0000-0000-7000-8000-000000000013\nalias: inbox\n---\n# Inbox\n",
+    );
+    env.write_text(
         "charters/.inbox.json",
         &format!(r#"{{"actions":{{"{live}":{{}},"{stale}":{{}}}}}}"#),
     );

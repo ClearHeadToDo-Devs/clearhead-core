@@ -98,6 +98,17 @@ pub fn normalize_file(
 ) -> anyhow::Result<()> {
     let input_file = path.as_ref();
     debug!(input_file = ?input_file, write = write, "Executing Normalize File");
+    // An implicit charter (specifications/workspace.md) has no `.md` file to
+    // read: its `.actions` sibling is the only evidence it exists. Materialize
+    // it with `add charter`'s defaults rather than failing on a bare "no such
+    // file", so the fix this same command's own error message names actually
+    // works (see the `--charter` no-id error in cli/query.rs and the matching
+    // `doctor` warning).
+    if let Some(md_path) =
+        input_file.filter(|path| path.extension().is_some_and(|ext| ext == "md") && !path.exists())
+    {
+        return materialize_implicit_charter(md_path, write);
+    }
     let content = read_input(input_file)?;
     let source = source_label(input_file);
     // Charter documents are Markdown, not actions DSL. Normalize their
@@ -148,6 +159,50 @@ pub fn normalize_file(
         tracing::warn!(path = %file_path.display(), error = %e, "Failed to update sidecar");
     }
     Ok(())
+}
+
+/// A flat charter is implicit when its `.md` is absent but a same-stem
+/// `.actions` (or `.completed.actions` / `.upcoming.actions`) sibling exists —
+/// exactly the convention `charters/<charter>.actions` beside
+/// `charters/<charter>.md` describes. Returns the stem to seed the new
+/// document's alias and title with.
+fn implicit_charter_stem(md_path: &std::path::Path) -> Option<String> {
+    let stem = md_path.file_stem()?.to_str()?;
+    let dir = md_path.parent().unwrap_or_else(|| std::path::Path::new(""));
+    ["actions", "completed.actions", "upcoming.actions"]
+        .iter()
+        .any(|ext| dir.join(format!("{stem}.{ext}")).exists())
+        .then(|| stem.to_string())
+}
+
+/// Create the `.md` for an implicit charter, so a durable id can be stamped
+/// once instead of failing with "no such file". Defaults mirror `add charter`:
+/// a fresh id, alias and title from the stem, state `New` — reusing that
+/// scaffold rather than inventing a second one. A sidecar-recorded id (left by
+/// an earlier `close charter`/`jot` on this same implicit charter) is adopted
+/// instead of a fresh one, per Concept Identity: an id is never reinvented
+/// once persisted.
+fn materialize_implicit_charter(md_path: &std::path::PathBuf, write: bool) -> anyhow::Result<()> {
+    let stem = implicit_charter_stem(md_path).ok_or_else(|| {
+        anyhow::anyhow!(
+            "Cannot normalize charter {}: file not found",
+            md_path.display()
+        )
+    })?;
+    let id = charter_sidecar_id(md_path)?.unwrap_or_else(uuid::Uuid::now_v7);
+    let charter = clearhead_core::domain::Charter {
+        id,
+        title: stem.clone(),
+        description: None,
+        alias: Some(stem),
+        parent: None,
+        objectives: None,
+        state: Some(clearhead_core::domain::CharterState::New),
+        plans: vec![],
+        actions: vec![],
+    };
+    let output = clearhead_core::format_charter(&charter);
+    write_or_print(&output, write, Some(md_path))
 }
 
 fn charter_sidecar_id(path: &std::path::Path) -> anyhow::Result<Option<uuid::Uuid>> {

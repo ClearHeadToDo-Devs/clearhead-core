@@ -66,10 +66,16 @@ fn doctor_flags_uninitialized_workspace() {
 
 #[test]
 fn doctor_reports_clean_on_a_coherent_workspace() {
-    let workspace = make_workspace(&[(
-        "work.actions",
-        "[ ] Task one #01951111-0000-7000-0000-000000000010\n",
-    )]);
+    let workspace = make_workspace(&[
+        (
+            "work.md",
+            "---\nid: 01951111-0000-7000-0000-000000000011\nalias: work\n---\n# Work\n",
+        ),
+        (
+            "work.actions",
+            "[ ] Task one #01951111-0000-7000-0000-000000000010\n",
+        ),
+    ]);
 
     let diagnosis = clearhead_cli::filesystem::diagnose_workspace(initialized(workspace.path()))
         .expect("diagnose failed");
@@ -82,6 +88,29 @@ fn doctor_reports_clean_on_a_coherent_workspace() {
         .collect();
     assert!(relevant.is_empty(), "unexpected findings: {:?}", relevant);
     assert_eq!(diagnosis.checked_actions, 1);
+}
+
+#[test]
+fn doctor_warns_about_a_named_charter_with_no_document() {
+    // A charter known only through its `.actions` file (no `.md` at all) is
+    // implicit (specifications/workspace.md, "Materialize implicit charters
+    // when they need an id"). It gets the same identity warning as a
+    // charter document that declares no id, naming the `.md` path that
+    // `normalize file --write` will create.
+    let workspace = make_workspace(&[(
+        "work.actions",
+        "[ ] Task one #01951111-0000-7000-0000-000000000010\n",
+    )]);
+
+    let diagnosis = clearhead_cli::filesystem::diagnose_workspace(initialized(workspace.path()))
+        .expect("diagnose failed");
+    let finding = diagnosis
+        .findings
+        .iter()
+        .find(|f| f.code == "charter-document-without-id")
+        .expect("implicit charter should be flagged");
+    assert!(finding.message.contains("work.md"));
+    assert!(finding.message.contains("clearhead normalize file"));
 }
 
 #[test]
