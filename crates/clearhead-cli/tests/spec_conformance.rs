@@ -59,6 +59,12 @@ fn seeded_env() -> TestEnv {
         "workspace.json",
         r#"{"workspace_id":"00000000-0000-0000-0000-0000000000cc","workspace_name":"testws"}"#,
     );
+    // A documentless root is New and hides its descendants from engagement.
+    // This fixture tests index columns, so explicitly admit its work stream.
+    env.write_text(
+        "charters/README.md",
+        "---\nid: 01900000-0000-7000-8000-000000000004\nalias: testws\nstate: Active\n---\n# Testws\n",
+    );
     env.write_text(
         "charters/next.md",
         "---\nalias: next\nstate: Active\n---\n# Next\n",
