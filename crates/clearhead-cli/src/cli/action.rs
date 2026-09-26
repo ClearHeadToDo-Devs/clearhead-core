@@ -129,11 +129,7 @@ fn resolve_acts_target(
         let charter_root = clearhead_cli::filesystem::charter_root(&ws_root);
         let matched = clearhead_cli::filesystem::load_workspace(&ws_root)?
             .into_iter()
-            .find(|mc| {
-                mc.actions_file
-                    .as_deref()
-                    .is_some_and(|rel| same_actions_file(&charter_root, rel, path))
-            });
+            .find(|mc| charter_targets_file(mc, &charter_root, path));
         return Ok((path.clone(), matched));
     }
     if let Some(query) = charter {
@@ -175,11 +171,9 @@ fn resolve_acts_target(
     let default_path = ctx.resolve_action_file(None);
     if default_path.exists() {
         let root = clearhead_cli::filesystem::charter_root(&ctx.data_dir);
-        let matched = primary_charters.into_iter().find(|mc| {
-            mc.actions_file
-                .as_deref()
-                .is_some_and(|rel| same_actions_file(&root, rel, &default_path))
-        });
+        let matched = primary_charters
+            .into_iter()
+            .find(|mc| charter_targets_file(mc, &root, &default_path));
         return Ok((default_path, matched));
     }
 
@@ -1361,12 +1355,42 @@ fn warn_if_charter_is_new(charter: Option<&clearhead_core::MarkdownCharter>, act
     );
 }
 
+/// Match the existing actions anchor, or the anchor a document-only Charter
+/// will acquire when the first action is inserted.
+fn charter_targets_file(
+    charter: &clearhead_core::MarkdownCharter,
+    charter_root: &Path,
+    target: &Path,
+) -> bool {
+    charter
+        .actions_file
+        .clone()
+        .or_else(|| {
+            charter
+                .md_file
+                .as_deref()
+                .and_then(clearhead_core::workspace::actions_anchor_for_document)
+        })
+        .is_some_and(|rel| same_actions_file(charter_root, &rel, target))
+}
+
 /// True if `actions_file` (relative to the charter root) resolves to the same
 /// file as `target` (an absolute or CWD-relative path from the caller).
 fn same_actions_file(charter_root: &Path, actions_file: &Path, target: &Path) -> bool {
     let candidate = charter_root.join(actions_file);
     let candidate = std::fs::canonicalize(&candidate).unwrap_or(candidate);
-    let target = std::fs::canonicalize(target).unwrap_or_else(|_| target.to_path_buf());
+    let absolute_target = if target.is_absolute() {
+        target.to_path_buf()
+    } else {
+        std::env::current_dir().unwrap_or_default().join(target)
+    };
+    let target = std::fs::canonicalize(&absolute_target).unwrap_or_else(|_| {
+        absolute_target
+            .parent()
+            .and_then(|parent| std::fs::canonicalize(parent).ok())
+            .and_then(|parent| absolute_target.file_name().map(|name| parent.join(name)))
+            .unwrap_or(absolute_target)
+    });
     candidate == target
 }
 

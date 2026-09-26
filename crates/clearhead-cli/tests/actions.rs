@@ -883,6 +883,34 @@ fn test_add_action_creates_a_missing_charter_anchor() {
 }
 
 #[test]
+fn test_add_action_by_file_reminds_for_a_document_only_charter() {
+    let env = TestEnv::new();
+    let id = "01a0b456-0000-7000-8000-000000000abc";
+    env.write_text(
+        "charters/notes.md",
+        &format!("---\nid: {id}\nalias: notes\n---\n# Notes with spaces; $(echo unsafe)\n"),
+    );
+    let reminder = format!("clearhead update charter {id} --state active");
+
+    // The anchor does not exist yet; the explicit absolute path must still
+    // identify the document-only charter before delivery materializes it.
+    env.command()
+        .args(["add", "action", "First captured action", "--file"])
+        .arg(env.data_dir.join("charters/notes.actions"))
+        .assert()
+        .success()
+        .stderr(predicate::str::contains(reminder.clone()));
+
+    // Once materialized, the same path still identifies the charter.
+    env.command()
+        .args(["add", "action", "Second captured action", "--file"])
+        .arg(env.data_dir.join("charters/notes.actions"))
+        .assert()
+        .success()
+        .stderr(predicate::str::contains(reminder));
+}
+
+#[test]
 fn test_add_action_creates_the_primary_anchor_of_a_readme_charter() {
     // The primary pairing: `README.md` anchors its collection's
     // `next.actions`, not `README.actions`.
