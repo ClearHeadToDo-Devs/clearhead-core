@@ -124,12 +124,21 @@ fn report(plan: &InitPlan) {
         // init writes the root as New (a workspace starts in planning,
         // specifications/workspace.md, The Root Charter); say so loudly, since
         // a New root's open Actions are otherwise silently hidden from
-        // engagement until someone activates it.
-        println!(
-            "The root charter '{}' is New; its Actions are hidden from engagement until activated. \
-             Run `clearhead update charter {} --state active` when ready.",
-            name, name
-        );
+        // engagement until someone activates it. Use the stable ID in the
+        // command: names can contain shell whitespace or metacharacters.
+        if let RootId::Resolved(root_id) = plan.root_id {
+            println!(
+                "The root charter '{}' is New; its Actions are hidden from engagement until activated. \
+                 Run `clearhead update charter {root_id} --state active` when ready.",
+                name
+            );
+        } else {
+            println!(
+                "The root charter '{}' is New; its Actions are hidden from engagement until activated. \
+                 Resolve its identity with `clearhead doctor` before activation.",
+                name
+            );
+        }
     }
     match plan.root_id {
         RootId::Resolved(_) => {}

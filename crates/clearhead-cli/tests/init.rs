@@ -69,15 +69,36 @@ fn fresh_init_names_the_activation_command_for_its_new_root() {
     // the exact command, not leave the reader to discover it via `doctor`.
     let env = TestEnv::new();
 
-    env.command()
-        .arg("init")
+    let output = env.command().arg("init").assert().success();
+    let readme = fs::read_to_string(env.work_dir.join(".clearhead/charters/README.md")).unwrap();
+    let id = readme
+        .lines()
+        .find_map(|line| line.strip_prefix("id: "))
+        .expect("init should assign a root ID");
+    output.stdout(
+        predicate::str::contains("is New").and(predicate::str::contains(format!(
+            "clearhead update charter {id} --state active"
+        ))),
+    );
+}
+
+#[test]
+fn user_init_uses_a_stable_selector_for_a_shell_unsafe_name() {
+    let env = TestEnv::new();
+    let output = env
+        .command()
+        .args(["init", "--user"])
+        .env("USER", "Some User; $(echo unsafe)")
         .assert()
-        .success()
-        .stdout(
-            predicate::str::contains("is New").and(predicate::str::contains(
-                "clearhead update charter work --state active",
-            )),
-        );
+        .success();
+    let readme = fs::read_to_string(env.data_dir.join("charters/README.md")).unwrap();
+    let id = readme
+        .lines()
+        .find_map(|line| line.strip_prefix("id: "))
+        .expect("init should assign a root ID");
+    output.stdout(predicate::str::contains(format!(
+        "clearhead update charter {id} --state active"
+    )));
 }
 
 #[test]

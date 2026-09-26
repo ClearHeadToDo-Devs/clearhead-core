@@ -156,7 +156,7 @@ fn doctor_warns_about_a_new_charter_with_open_actions() {
         ("root.actions", ""),
         (
             "someday.md",
-            "---\nid: 01951111-0000-7000-0000-000000000031\nalias: someday\nparent: root\n---\n# Someday\n",
+            "---\nid: 01951111-0000-7000-0000-000000000031\nalias: someday\nparent: root\n---\n# Someday Work; $(echo unsafe)\n",
         ),
         (
             "someday.actions",
@@ -174,9 +174,9 @@ fn doctor_warns_about_a_new_charter_with_open_actions() {
     assert!(finding.message.contains("Someday"));
     assert!(finding.message.contains("1 open action"));
     assert!(
-        finding
-            .message
-            .contains("clearhead update charter someday --state active")
+        finding.message.contains(
+            "clearhead update charter 01951111-0000-7000-0000-000000000031 --state active"
+        )
     );
 }
 

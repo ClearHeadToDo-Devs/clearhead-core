@@ -40,7 +40,7 @@ pub fn add_action(
     duration: Option<u32>,
     dry_run: bool,
 ) -> anyhow::Result<()> {
-    let actions_path = resolve_acts_file(ctx, charter, file)?;
+    let (actions_path, target_charter) = resolve_acts_target(ctx, charter, file)?;
     // Client-side read: resolve the fuzzy parent query to a stable selector and
     // support the dry-run preview. Core re-reads before delivery and re-resolves
     // the parent there, so this read is never the one that's written against.
@@ -101,7 +101,7 @@ pub fn add_action(
     )?;
 
     info!(id = %result.action_id, name = %name, "Action added");
-    warn_if_charter_is_new(&workspace_root, &actions_path, name);
+    warn_if_charter_is_new(target_charter.as_ref(), name);
     emit(&VerbOutcome::Added {
         id: canonical_id(result.action_id),
     });
@@ -119,13 +119,22 @@ fn predecessor_refs(references: &[String]) -> Vec<PredecessorRef> {
 }
 
 /// Resolve the `.actions` file path from a charter query or explicit file path.
-fn resolve_acts_file(
+fn resolve_acts_target(
     ctx: &CommandContext,
     charter: &Option<String>,
     file: &Option<PathBuf>,
-) -> anyhow::Result<PathBuf> {
+) -> anyhow::Result<(PathBuf, Option<clearhead_core::MarkdownCharter>)> {
     if let Some(path) = file {
-        return Ok(path.clone());
+        let ws_root = ctx.workspace_for_file(path);
+        let charter_root = clearhead_cli::filesystem::charter_root(&ws_root);
+        let matched = clearhead_cli::filesystem::load_workspace(&ws_root)?
+            .into_iter()
+            .find(|mc| {
+                mc.actions_file
+                    .as_deref()
+                    .is_some_and(|rel| same_actions_file(&charter_root, rel, path))
+            });
+        return Ok((path.clone(), matched));
     }
     if let Some(query) = charter {
         let (mc, ws_root) = resolve_charter_across_workspaces(ctx, query)?;
@@ -148,7 +157,7 @@ fn resolve_acts_file(
                     )
                 })?,
         };
-        return Ok(root.join(rel));
+        return Ok((root.join(rel), Some(mc)));
     }
 
     let primary_charters = ctx.load_charters()?;
@@ -158,14 +167,20 @@ fn resolve_acts_file(
         .collect();
 
     if actionable.len() == 1 {
-        let (_mc, rel) = actionable[0];
+        let (mc, rel) = actionable[0];
         let root = clearhead_cli::filesystem::charter_root(&ctx.data_dir);
-        return Ok(root.join(rel));
+        return Ok((root.join(rel), Some(mc.clone())));
     }
 
     let default_path = ctx.resolve_action_file(None);
     if default_path.exists() {
-        return Ok(default_path);
+        let root = clearhead_cli::filesystem::charter_root(&ctx.data_dir);
+        let matched = primary_charters.into_iter().find(|mc| {
+            mc.actions_file
+                .as_deref()
+                .is_some_and(|rel| same_actions_file(&root, rel, &default_path))
+        });
+        return Ok((default_path, matched));
     }
 
     anyhow::bail!("Specify --charter <name> or --file <path> to target a charter's actions file")
@@ -1334,25 +1349,15 @@ pub(super) fn resolve_charter_across_workspaces(
 /// specifications/charters.md, a `New` Charter's open actions are invisible to
 /// engagement until it is explicitly activated, so a silent add would hide
 /// work the caller has no reason to suspect is hidden.
-fn warn_if_charter_is_new(workspace_root: &Path, actions_path: &Path, action_name: &str) {
-    let Ok(mcs) = clearhead_cli::filesystem::load_workspace(workspace_root) else {
+fn warn_if_charter_is_new(charter: Option<&clearhead_core::MarkdownCharter>, action_name: &str) {
+    let Some(mc) = charter.filter(|mc| mc.state.unwrap_or_default() == CharterState::New) else {
         return;
     };
-    let charter_root = clearhead_cli::filesystem::charter_root(workspace_root);
-    let Some(mc) = mcs.iter().find(|mc| {
-        mc.actions_file
-            .as_deref()
-            .is_some_and(|rel| same_actions_file(&charter_root, rel, actions_path))
-    }) else {
-        return;
-    };
-    if mc.state.unwrap_or_default() != CharterState::New {
-        return;
-    }
     let name = mc.alias.as_deref().unwrap_or(&mc.title);
+    let id = mc.id;
     eprintln!(
         "note: Charter '{name}' is New; action '{action_name}' is hidden from engagement until \
-         it is activated. Run `clearhead update charter {name} --state active`."
+         it is activated. Run `clearhead update charter {id} --state active`."
     );
 }
 

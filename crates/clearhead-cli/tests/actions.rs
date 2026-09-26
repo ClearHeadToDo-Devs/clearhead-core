@@ -210,18 +210,55 @@ fn test_add_action_into_a_new_charter_names_the_activation_command() {
     // landing there is hidden from engagement until the charter is
     // activated, so the CLI must say so and name the exact command.
     let env = TestEnv::new();
-    env.command()
-        .args(["add", "charter", "Someday", "--alias", "someday"])
+    let created = env
+        .command()
+        .args([
+            "add",
+            "charter",
+            "Someday Work; $(echo unsafe)",
+            "--alias",
+            "someday",
+        ])
         .assert()
         .success();
+    let result: serde_json::Value = serde_json::from_slice(&created.get_output().stdout).unwrap();
+    let id = result["id"]
+        .as_str()
+        .unwrap()
+        .trim_start_matches("urn:uuid:");
+    let command = format!("clearhead update charter {id} --state active");
 
     env.command()
         .args(["add", "action", "Not yet", "--charter", "someday"])
         .assert()
         .success()
-        .stderr(predicate::str::contains("Charter 'someday' is New").and(
-            predicate::str::contains("clearhead update charter someday --state active"),
-        ));
+        .stderr(
+            predicate::str::contains("Charter 'someday' is New")
+                .and(predicate::str::contains(command.clone())),
+        );
+
+    env.command()
+        .args(["add", "action", "Not yet either", "--file"])
+        .arg(env.data_dir.join("charters/someday.actions"))
+        .assert()
+        .success()
+        .stderr(
+            predicate::str::contains("Charter 'someday' is New")
+                .and(predicate::str::contains(command)),
+        );
+
+    // A shell-quoted title arrives as one argument; the full title must still
+    // resolve even though the generated copyable command prefers the UUID.
+    env.command()
+        .args([
+            "update",
+            "charter",
+            "Someday Work; $(echo unsafe)",
+            "--state",
+            "active",
+        ])
+        .assert()
+        .success();
 }
 
 #[test]

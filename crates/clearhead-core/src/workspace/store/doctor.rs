@@ -240,12 +240,12 @@ pub fn state_coherence_findings(charters: &[MarkdownCharter]) -> Vec<Finding> {
                 })
                 .count();
             if open_actions > 0 {
-                let name = charter.alias.as_deref().unwrap_or(&charter.title);
+                let id = charter.id;
                 findings.push(Finding::warning(
                     "new-charter-open-actions",
                     charter.actions_file.as_ref().or(charter.md_file.as_ref()).cloned().unwrap_or_else(|| PathBuf::from("<unknown>")),
                     format!(
-                        "Charter '{}' is New with {open_actions} open action(s) hidden from engagement; run `clearhead update charter {name} --state active` to admit them",
+                        "Charter '{}' is New with {open_actions} open action(s) hidden from engagement; run `clearhead update charter {id} --state active` to admit them",
                         charter.title
                     ),
                 ));
