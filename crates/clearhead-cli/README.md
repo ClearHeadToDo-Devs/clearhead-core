@@ -52,6 +52,33 @@ an existing sidecar charter id when present; repeated runs preserve the id.
 `update`, `close`, and `jot` do **not** stamp an id; `close` and `jot` stamp one
 only when creating a new document.
 
+## Charter lifecycle state
+
+A Charter with no declared `state` — a fresh `add charter`, a root `init`
+just wrote, or a Charter known only through its `.actions` file — is `New`:
+defined, but not yet admitted for engagement. `New` is deliberately the
+planning state; a Charter's open Actions stay hidden from engagement queries
+until it is explicitly activated:
+
+```bash
+clearhead update charter <name> --state active
+```
+
+`init`, `add charter`, and `add action` all write `state: New` (or leave it
+unset, which reads the same way) rather than defaulting a fresh Charter to
+`Active`. `add action` prints a reminder naming the exact activation command
+when the Action it just added landed in a `New` Charter, and `clearhead
+doctor` reports every `New` Charter that still owns open Actions — the
+catch-all that covers every path into that state, including a `jot`-created
+document (`jot` never sets or changes state itself). Engagement also requires
+every ancestor Charter to be `Active`; `doctor` warns when an `Active`
+Charter sits beneath one that is not.
+
+`normalize file --write` only stamps a missing `id`; it never touches
+`state`. Because a Charter's own state never cascades, activating a parent
+does not activate its children — each still needs its own explicit
+`clearhead update charter <name> --state active`.
+
 ## Documentation
 
 Full reference documentation is in the man page:

@@ -282,14 +282,11 @@ pub fn assemble_workspace(input: &WorkspaceAssemblyInput) -> Result<WorkspaceRea
                 charter_collection_from_anchor(Path::new(super::pathing::PRIMARY_ACTIONS_FILE));
             root
         });
-    // A root without a README has no document to declare a state; it is
-    // structural and must not gate engagement of the charters beneath it.
-    if let Some(root) = charters.get_mut(root_charter)
-        && root.md_file.is_none()
-        && root.state.is_none()
-    {
-        root.state = Some(crate::domain::CharterState::Active);
-    }
+    // A root without a README has no document to declare a state, so it
+    // stays `New` like any other undeclared charter (implicit_charter leaves
+    // `state: None`, and `effective_state()` defaults that to `New`).
+    // Engagement requires every ancestor to be `Active`, so nothing beneath
+    // an unactivated root is admitted until the root is explicitly activated.
 
     for charter in charters.values_mut() {
         if charter.id_source == CharterIdSource::Document {
@@ -843,7 +840,7 @@ mod tests {
         assert_eq!(roots.len(), 1);
         assert_eq!(roots[0].alias.as_deref(), Some("personal"));
         assert_eq!(roots[0].plans_dir, PathBuf::from("next"));
-        assert_eq!(roots[0].state, Some(crate::domain::CharterState::Active));
+        assert_eq!(roots[0].state, None);
         let health = read
             .charters
             .iter()

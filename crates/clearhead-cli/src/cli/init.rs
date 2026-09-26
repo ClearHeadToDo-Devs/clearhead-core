@@ -112,10 +112,24 @@ fn report(plan: &InitPlan) {
     } else {
         println!("Workspace '{}' already initialized ({})", name, id);
     }
+    let wrote_readme = plan.batch.effects().iter().any(|effect| {
+        matches!(effect, Effect::Write { path, .. } if path.path.as_str() == clearhead_core::workspace::init::ROOT_README_PATH)
+    });
     for effect in plan.batch.effects() {
         if let Effect::Write { path, .. } = effect {
             println!("  wrote {}", path.path.as_str());
         }
+    }
+    if wrote_readme {
+        // init writes the root as New (a workspace starts in planning,
+        // specifications/workspace.md, The Root Charter); say so loudly, since
+        // a New root's open Actions are otherwise silently hidden from
+        // engagement until someone activates it.
+        println!(
+            "The root charter '{}' is New; its Actions are hidden from engagement until activated. \
+             Run `clearhead update charter {} --state active` when ready.",
+            name, name
+        );
     }
     match plan.root_id {
         RootId::Resolved(_) => {}

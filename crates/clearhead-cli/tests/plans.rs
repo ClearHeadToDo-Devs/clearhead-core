@@ -101,6 +101,19 @@ fn fresh_init_charter_calendar_sync_stamps_into_the_real_charter() {
         fs::read_to_string(env.work_dir.join(".clearhead/charters/dogfood.actions")).unwrap();
     assert!(actions.contains("Dogfood recurring check"), "{actions}");
 
+    // A fresh charter — and the project root `init` just wrote — starts New
+    // (specifications/charters.md), which hides open Actions from engagement
+    // and from `doctor`'s clean bill of health; activate both before
+    // asserting the workspace is clean.
+    env.command()
+        .args(["update", "charter", "work", "--state", "active"])
+        .assert()
+        .success();
+    env.command()
+        .args(["update", "charter", "dogfood", "--state", "active"])
+        .assert()
+        .success();
+
     env.command()
         .arg("doctor")
         .assert()

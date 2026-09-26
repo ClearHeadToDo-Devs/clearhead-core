@@ -9,7 +9,7 @@ use chrono::Local;
 use tracing::{info, warn};
 
 use clearhead_cli::filesystem::action_files;
-use clearhead_core::{Action, ActionList, ActionState, PredecessorRef};
+use clearhead_core::{Action, ActionList, ActionState, CharterState, PredecessorRef};
 
 use super::CommandContext;
 use super::verb_result::{VerbError, VerbOutcome, canonical_id, emit};
@@ -101,6 +101,7 @@ pub fn add_action(
     )?;
 
     info!(id = %result.action_id, name = %name, "Action added");
+    warn_if_charter_is_new(&workspace_root, &actions_path, name);
     emit(&VerbOutcome::Added {
         id: canonical_id(result.action_id),
     });
@@ -1327,6 +1328,32 @@ pub(super) fn resolve_charter_across_workspaces(
         }
     }
     anyhow::bail!("No charter found matching '{}'", query)
+}
+
+/// Print a reminder when the just-added action landed in a `New` Charter: per
+/// specifications/charters.md, a `New` Charter's open actions are invisible to
+/// engagement until it is explicitly activated, so a silent add would hide
+/// work the caller has no reason to suspect is hidden.
+fn warn_if_charter_is_new(workspace_root: &Path, actions_path: &Path, action_name: &str) {
+    let Ok(mcs) = clearhead_cli::filesystem::load_workspace(workspace_root) else {
+        return;
+    };
+    let charter_root = clearhead_cli::filesystem::charter_root(workspace_root);
+    let Some(mc) = mcs.iter().find(|mc| {
+        mc.actions_file
+            .as_deref()
+            .is_some_and(|rel| same_actions_file(&charter_root, rel, actions_path))
+    }) else {
+        return;
+    };
+    if mc.state.unwrap_or_default() != CharterState::New {
+        return;
+    }
+    let name = mc.alias.as_deref().unwrap_or(&mc.title);
+    eprintln!(
+        "note: Charter '{name}' is New; action '{action_name}' is hidden from engagement until \
+         it is activated. Run `clearhead update charter {name} --state active`."
+    );
 }
 
 /// True if `actions_file` (relative to the charter root) resolves to the same

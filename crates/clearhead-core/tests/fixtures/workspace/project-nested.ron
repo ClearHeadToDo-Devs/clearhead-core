@@ -59,7 +59,6 @@
             alias: Some("project-nested"),
             parent: None,
             objectives: None,
-            state: Some(Active),
             plans: [],
             actions: [
                 (

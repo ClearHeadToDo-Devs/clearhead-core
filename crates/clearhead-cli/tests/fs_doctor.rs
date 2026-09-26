@@ -68,8 +68,13 @@ fn doctor_flags_uninitialized_workspace() {
 fn doctor_reports_clean_on_a_coherent_workspace() {
     let workspace = make_workspace(&[
         (
+            "README.md",
+            "---\nid: 01951111-0000-7000-0000-000000000012\nalias: test\nstate: Active\n---\n# Test\n",
+        ),
+        ("next.actions", ""),
+        (
             "work.md",
-            "---\nid: 01951111-0000-7000-0000-000000000011\nalias: work\n---\n# Work\n",
+            "---\nid: 01951111-0000-7000-0000-000000000011\nalias: work\nstate: Active\n---\n# Work\n",
         ),
         (
             "work.actions",
@@ -79,13 +84,7 @@ fn doctor_reports_clean_on_a_coherent_workspace() {
 
     let diagnosis = clearhead_cli::filesystem::diagnose_workspace(initialized(workspace.path()))
         .expect("diagnose failed");
-    // The tempdir root charter is inferred but has no charter file — filter to
-    // real violations/warnings that concern the fixture.
-    let relevant: Vec<_> = diagnosis
-        .findings
-        .iter()
-        .filter(|f| f.code != "unresolvable-parent")
-        .collect();
+    let relevant: Vec<_> = diagnosis.findings.iter().collect();
     assert!(relevant.is_empty(), "unexpected findings: {:?}", relevant);
     assert_eq!(diagnosis.checked_actions, 1);
 }
@@ -141,6 +140,44 @@ fn doctor_warns_about_active_work_beneath_new_ancestry() {
 
     assert!(codes.contains(&"active-charter-under-inactive-ancestor"));
     assert!(codes.contains(&"in-progress-action-under-inactive-charter"));
+}
+
+#[test]
+fn doctor_warns_about_a_new_charter_with_open_actions() {
+    // A New Charter's open Actions are invisible to engagement
+    // (specifications/charters.md); doctor's catch-all reminder fires
+    // regardless of which command left the Charter New (init, jot, or a
+    // charter document that simply omits `state`).
+    let workspace = make_workspace(&[
+        (
+            "root.md",
+            "---\nid: 01951111-0000-7000-0000-000000000030\nalias: root\nstate: Active\n---\n# Root\n",
+        ),
+        ("root.actions", ""),
+        (
+            "someday.md",
+            "---\nid: 01951111-0000-7000-0000-000000000031\nalias: someday\nparent: root\n---\n# Someday\n",
+        ),
+        (
+            "someday.actions",
+            "[ ] Not yet #01951111-0000-7000-0000-000000000032\n[x] Done #01951111-0000-7000-0000-000000000033\n",
+        ),
+    ]);
+
+    let diagnosis = clearhead_cli::filesystem::diagnose_workspace(initialized(workspace.path()))
+        .expect("diagnose failed");
+    let finding = diagnosis
+        .findings
+        .iter()
+        .find(|f| f.code == "new-charter-open-actions")
+        .expect("New charter with an open action should warn");
+    assert!(finding.message.contains("Someday"));
+    assert!(finding.message.contains("1 open action"));
+    assert!(
+        finding
+            .message
+            .contains("clearhead update charter someday --state active")
+    );
 }
 
 #[test]

@@ -205,6 +205,26 @@ fn test_add_action_defaults_to_only_charter() {
 }
 
 #[test]
+fn test_add_action_into_a_new_charter_names_the_activation_command() {
+    // `add charter` writes state New (specifications/charters.md); an Action
+    // landing there is hidden from engagement until the charter is
+    // activated, so the CLI must say so and name the exact command.
+    let env = TestEnv::new();
+    env.command()
+        .args(["add", "charter", "Someday", "--alias", "someday"])
+        .assert()
+        .success();
+
+    env.command()
+        .args(["add", "action", "Not yet", "--charter", "someday"])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("Charter 'someday' is New").and(
+            predicate::str::contains("clearhead update charter someday --state active"),
+        ));
+}
+
+#[test]
 fn test_add_action_defaults_to_existing_default_file() {
     let env = TestEnv::new();
     env.write_actions("inbox.actions", "[ ] Existing inbox\n");

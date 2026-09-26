@@ -63,6 +63,36 @@ fn rerunning_init_changes_nothing() {
 }
 
 #[test]
+fn fresh_init_names_the_activation_command_for_its_new_root() {
+    // The root starts New (specifications/workspace.md, The Root Charter),
+    // which hides its Actions from engagement; `init` must say so and name
+    // the exact command, not leave the reader to discover it via `doctor`.
+    let env = TestEnv::new();
+
+    env.command()
+        .arg("init")
+        .assert()
+        .success()
+        .stdout(
+            predicate::str::contains("is New").and(predicate::str::contains(
+                "clearhead update charter work --state active",
+            )),
+        );
+}
+
+#[test]
+fn rerunning_init_does_not_repeat_the_activation_reminder() {
+    let env = TestEnv::new();
+    env.command().arg("init").assert().success();
+
+    env.command()
+        .arg("init")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("is New").not());
+}
+
+#[test]
 fn init_mirrors_an_existing_readme_id_instead_of_minting() {
     let env = TestEnv::new();
     let charters = env.work_dir.join(".clearhead/charters");
