@@ -131,7 +131,6 @@
             alias: Some("workspace"),
             parent: None,
             objectives: None,
-            state: Some(Active),
             plans: [],
             actions: [],
         ),

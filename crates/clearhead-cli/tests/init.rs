@@ -63,6 +63,57 @@ fn rerunning_init_changes_nothing() {
 }
 
 #[test]
+fn fresh_init_names_the_activation_command_for_its_new_root() {
+    // The root starts New (specifications/workspace.md, The Root Charter),
+    // which hides its Actions from engagement; `init` must say so and name
+    // the exact command, not leave the reader to discover it via `doctor`.
+    let env = TestEnv::new();
+
+    let output = env.command().arg("init").assert().success();
+    let readme = fs::read_to_string(env.work_dir.join(".clearhead/charters/README.md")).unwrap();
+    let id = readme
+        .lines()
+        .find_map(|line| line.strip_prefix("id: "))
+        .expect("init should assign a root ID");
+    output.stdout(
+        predicate::str::contains("is New").and(predicate::str::contains(format!(
+            "clearhead update charter {id} --state active"
+        ))),
+    );
+}
+
+#[test]
+fn user_init_uses_a_stable_selector_for_a_shell_unsafe_name() {
+    let env = TestEnv::new();
+    let output = env
+        .command()
+        .args(["init", "--user"])
+        .env("USER", "Some User; $(echo unsafe)")
+        .assert()
+        .success();
+    let readme = fs::read_to_string(env.data_dir.join("charters/README.md")).unwrap();
+    let id = readme
+        .lines()
+        .find_map(|line| line.strip_prefix("id: "))
+        .expect("init should assign a root ID");
+    output.stdout(predicate::str::contains(format!(
+        "clearhead update charter {id} --state active"
+    )));
+}
+
+#[test]
+fn rerunning_init_does_not_repeat_the_activation_reminder() {
+    let env = TestEnv::new();
+    env.command().arg("init").assert().success();
+
+    env.command()
+        .arg("init")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("is New").not());
+}
+
+#[test]
 fn init_mirrors_an_existing_readme_id_instead_of_minting() {
     let env = TestEnv::new();
     let charters = env.work_dir.join(".clearhead/charters");

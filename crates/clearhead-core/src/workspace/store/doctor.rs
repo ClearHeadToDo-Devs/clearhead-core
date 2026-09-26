@@ -228,6 +228,30 @@ pub fn state_coherence_findings(charters: &[MarkdownCharter]) -> Vec<Finding> {
         let ancestors = charter_ancestors(charter, charters);
         let local_state = charter.state.unwrap_or_default();
 
+        if local_state == CharterState::New {
+            let open_actions = charter
+                .actions
+                .iter()
+                .filter(|sourced| {
+                    !matches!(
+                        sourced.action.state,
+                        ActionState::Completed | ActionState::Cancelled
+                    )
+                })
+                .count();
+            if open_actions > 0 {
+                let id = charter.id;
+                findings.push(Finding::warning(
+                    "new-charter-open-actions",
+                    charter.actions_file.as_ref().or(charter.md_file.as_ref()).cloned().unwrap_or_else(|| PathBuf::from("<unknown>")),
+                    format!(
+                        "Charter '{}' is New with {open_actions} open action(s) hidden from engagement; run `clearhead update charter {id} --state active` to admit them",
+                        charter.title
+                    ),
+                ));
+            }
+        }
+
         if let Some((ancestor, state)) = ancestors.iter().find(|(_, state)| state.is_terminal()) {
             if !local_state.is_terminal() {
                 findings.push(Finding::violation(

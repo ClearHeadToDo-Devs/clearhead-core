@@ -21,6 +21,14 @@ fn seed(actions: &str) -> TestEnv {
         "workspace.json",
         &format!(r#"{{"workspace_id":"{WS}","workspace_name":"testws"}}"#),
     );
+    // Engagement requires every ancestor Charter to be Active
+    // (specifications/charters.md); the root defaults to New with no
+    // document, so it must be declared Active for `work`'s Active state to
+    // actually admit its work.
+    env.write_text(
+        "charters/README.md",
+        "---\nalias: testws\nstate: Active\n---\n# Testws\n",
+    );
     env.write_text(
         "charters/work.md",
         "---\nalias: work\nstate: Active\n---\n# Work\n",

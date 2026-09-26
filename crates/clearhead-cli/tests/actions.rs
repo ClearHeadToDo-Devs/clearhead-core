@@ -205,6 +205,63 @@ fn test_add_action_defaults_to_only_charter() {
 }
 
 #[test]
+fn test_add_action_into_a_new_charter_names_the_activation_command() {
+    // `add charter` writes state New (specifications/charters.md); an Action
+    // landing there is hidden from engagement until the charter is
+    // activated, so the CLI must say so and name the exact command.
+    let env = TestEnv::new();
+    let created = env
+        .command()
+        .args([
+            "add",
+            "charter",
+            "Someday Work; $(echo unsafe)",
+            "--alias",
+            "someday",
+        ])
+        .assert()
+        .success();
+    let result: serde_json::Value = serde_json::from_slice(&created.get_output().stdout).unwrap();
+    let id = result["id"]
+        .as_str()
+        .unwrap()
+        .trim_start_matches("urn:uuid:");
+    let command = format!("clearhead update charter {id} --state active");
+
+    env.command()
+        .args(["add", "action", "Not yet", "--charter", "someday"])
+        .assert()
+        .success()
+        .stderr(
+            predicate::str::contains("Charter 'someday' is New")
+                .and(predicate::str::contains(command.clone())),
+        );
+
+    env.command()
+        .args(["add", "action", "Not yet either", "--file"])
+        .arg(env.data_dir.join("charters/someday.actions"))
+        .assert()
+        .success()
+        .stderr(
+            predicate::str::contains("Charter 'someday' is New")
+                .and(predicate::str::contains(command)),
+        );
+
+    // A shell-quoted title arrives as one argument; the full title must still
+    // resolve even though the generated copyable command prefers the UUID.
+    env.command()
+        .args([
+            "update",
+            "charter",
+            "Someday Work; $(echo unsafe)",
+            "--state",
+            "active",
+        ])
+        .assert()
+        .success();
+}
+
+#[test]
 fn test_add_action_defaults_to_existing_default_file() {
     let env = TestEnv::new();
     env.write_actions("inbox.actions", "[ ] Existing inbox\n");
@@ -823,6 +880,34 @@ fn test_add_action_creates_a_missing_charter_anchor() {
 
     let content = fs::read_to_string(env.data_dir.join("charters").join("notes.actions")).unwrap();
     assert!(content.contains("First captured action"), "got: {content}");
+}
+
+#[test]
+fn test_add_action_by_file_reminds_for_a_document_only_charter() {
+    let env = TestEnv::new();
+    let id = "01a0b456-0000-7000-8000-000000000abc";
+    env.write_text(
+        "charters/notes.md",
+        &format!("---\nid: {id}\nalias: notes\n---\n# Notes with spaces; $(echo unsafe)\n"),
+    );
+    let reminder = format!("clearhead update charter {id} --state active");
+
+    // The anchor does not exist yet; the explicit absolute path must still
+    // identify the document-only charter before delivery materializes it.
+    env.command()
+        .args(["add", "action", "First captured action", "--file"])
+        .arg(env.data_dir.join("charters/notes.actions"))
+        .assert()
+        .success()
+        .stderr(predicate::str::contains(reminder.clone()));
+
+    // Once materialized, the same path still identifies the charter.
+    env.command()
+        .args(["add", "action", "Second captured action", "--file"])
+        .arg(env.data_dir.join("charters/notes.actions"))
+        .assert()
+        .success()
+        .stderr(predicate::str::contains(reminder));
 }
 
 #[test]

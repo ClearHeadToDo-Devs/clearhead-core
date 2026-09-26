@@ -461,10 +461,29 @@ fn jot_into_project_root_charter_creates_readme_not_phantom() {
         !charters.join("next.md").exists(),
         "must not create a phantom next.md"
     );
+    let readme_text = fs::read_to_string(&readme).unwrap();
+    assert!(readme_text.contains("a project finding"));
     assert!(
-        fs::read_to_string(&readme)
-            .unwrap()
-            .contains("a project finding")
+        !readme_text.contains("state:"),
+        "jot never sets or changes state: {readme_text}"
+    );
+
+    // The implicit root had no persisted anchor (a name-hashed id, never
+    // authoritative — specifications/workspace.md, Concept Identity); writing
+    // a whole new document is a valid time to mint a durable one, but it must
+    // be a fresh UUIDv7, not the ephemeral name hash carried over.
+    let id = clearhead_core::workspace::charter_frontmatter_id(&readme_text)
+        .unwrap()
+        .expect("new document declares an id");
+    assert_eq!(
+        id.get_version_num(),
+        7,
+        "must mint a fresh id, not a name hash: {id}"
+    );
+    let sidecar = fs::read_to_string(charters.join(".next.json")).unwrap();
+    assert!(
+        sidecar.contains(&id.to_string()),
+        "the minted id must be mirrored into the sidecar: {sidecar}"
     );
 
     let assert = env

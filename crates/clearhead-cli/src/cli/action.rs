@@ -9,7 +9,7 @@ use chrono::Local;
 use tracing::{info, warn};
 
 use clearhead_cli::filesystem::action_files;
-use clearhead_core::{Action, ActionList, ActionState, PredecessorRef};
+use clearhead_core::{Action, ActionList, ActionState, CharterState, PredecessorRef};
 
 use super::CommandContext;
 use super::verb_result::{VerbError, VerbOutcome, canonical_id, emit};
@@ -40,7 +40,7 @@ pub fn add_action(
     duration: Option<u32>,
     dry_run: bool,
 ) -> anyhow::Result<()> {
-    let actions_path = resolve_acts_file(ctx, charter, file)?;
+    let (actions_path, target_charter) = resolve_acts_target(ctx, charter, file)?;
     // Client-side read: resolve the fuzzy parent query to a stable selector and
     // support the dry-run preview. Core re-reads before delivery and re-resolves
     // the parent there, so this read is never the one that's written against.
@@ -101,6 +101,7 @@ pub fn add_action(
     )?;
 
     info!(id = %result.action_id, name = %name, "Action added");
+    warn_if_charter_is_new(target_charter.as_ref(), name);
     emit(&VerbOutcome::Added {
         id: canonical_id(result.action_id),
     });
@@ -118,13 +119,18 @@ fn predecessor_refs(references: &[String]) -> Vec<PredecessorRef> {
 }
 
 /// Resolve the `.actions` file path from a charter query or explicit file path.
-fn resolve_acts_file(
+fn resolve_acts_target(
     ctx: &CommandContext,
     charter: &Option<String>,
     file: &Option<PathBuf>,
-) -> anyhow::Result<PathBuf> {
+) -> anyhow::Result<(PathBuf, Option<clearhead_core::MarkdownCharter>)> {
     if let Some(path) = file {
-        return Ok(path.clone());
+        let ws_root = ctx.workspace_for_file(path);
+        let charter_root = clearhead_cli::filesystem::charter_root(&ws_root);
+        let matched = clearhead_cli::filesystem::load_workspace(&ws_root)?
+            .into_iter()
+            .find(|mc| charter_targets_file(mc, &charter_root, path));
+        return Ok((path.clone(), matched));
     }
     if let Some(query) = charter {
         let (mc, ws_root) = resolve_charter_across_workspaces(ctx, query)?;
@@ -147,7 +153,7 @@ fn resolve_acts_file(
                     )
                 })?,
         };
-        return Ok(root.join(rel));
+        return Ok((root.join(rel), Some(mc)));
     }
 
     let primary_charters = ctx.load_charters()?;
@@ -157,14 +163,18 @@ fn resolve_acts_file(
         .collect();
 
     if actionable.len() == 1 {
-        let (_mc, rel) = actionable[0];
+        let (mc, rel) = actionable[0];
         let root = clearhead_cli::filesystem::charter_root(&ctx.data_dir);
-        return Ok(root.join(rel));
+        return Ok((root.join(rel), Some(mc.clone())));
     }
 
     let default_path = ctx.resolve_action_file(None);
     if default_path.exists() {
-        return Ok(default_path);
+        let root = clearhead_cli::filesystem::charter_root(&ctx.data_dir);
+        let matched = primary_charters
+            .into_iter()
+            .find(|mc| charter_targets_file(mc, &root, &default_path));
+        return Ok((default_path, matched));
     }
 
     anyhow::bail!("Specify --charter <name> or --file <path> to target a charter's actions file")
@@ -1329,12 +1339,58 @@ pub(super) fn resolve_charter_across_workspaces(
     anyhow::bail!("No charter found matching '{}'", query)
 }
 
+/// Print a reminder when the just-added action landed in a `New` Charter: per
+/// specifications/charters.md, a `New` Charter's open actions are invisible to
+/// engagement until it is explicitly activated, so a silent add would hide
+/// work the caller has no reason to suspect is hidden.
+fn warn_if_charter_is_new(charter: Option<&clearhead_core::MarkdownCharter>, action_name: &str) {
+    let Some(mc) = charter.filter(|mc| mc.state.unwrap_or_default() == CharterState::New) else {
+        return;
+    };
+    let name = mc.alias.as_deref().unwrap_or(&mc.title);
+    let id = mc.id;
+    eprintln!(
+        "note: Charter '{name}' is New; action '{action_name}' is hidden from engagement until \
+         it is activated. Run `clearhead update charter {id} --state active`."
+    );
+}
+
+/// Match the existing actions anchor, or the anchor a document-only Charter
+/// will acquire when the first action is inserted.
+fn charter_targets_file(
+    charter: &clearhead_core::MarkdownCharter,
+    charter_root: &Path,
+    target: &Path,
+) -> bool {
+    charter
+        .actions_file
+        .clone()
+        .or_else(|| {
+            charter
+                .md_file
+                .as_deref()
+                .and_then(clearhead_core::workspace::actions_anchor_for_document)
+        })
+        .is_some_and(|rel| same_actions_file(charter_root, &rel, target))
+}
+
 /// True if `actions_file` (relative to the charter root) resolves to the same
 /// file as `target` (an absolute or CWD-relative path from the caller).
 fn same_actions_file(charter_root: &Path, actions_file: &Path, target: &Path) -> bool {
     let candidate = charter_root.join(actions_file);
     let candidate = std::fs::canonicalize(&candidate).unwrap_or(candidate);
-    let target = std::fs::canonicalize(target).unwrap_or_else(|_| target.to_path_buf());
+    let absolute_target = if target.is_absolute() {
+        target.to_path_buf()
+    } else {
+        std::env::current_dir().unwrap_or_default().join(target)
+    };
+    let target = std::fs::canonicalize(&absolute_target).unwrap_or_else(|_| {
+        absolute_target
+            .parent()
+            .and_then(|parent| std::fs::canonicalize(parent).ok())
+            .and_then(|parent| absolute_target.file_name().map(|name| parent.join(name)))
+            .unwrap_or(absolute_target)
+    });
     candidate == target
 }
 

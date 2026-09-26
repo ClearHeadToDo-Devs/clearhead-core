@@ -151,7 +151,7 @@ pub fn plan_workspace_init(
         if snapshot.readme.is_none() {
             let root = Charter {
                 id,
-                state: Some(CharterState::Active),
+                state: Some(CharterState::New),
                 ..implicit_charter(&name)
             };
             effects.push(write(ROOT_README_PATH, format_charter(&root))?);

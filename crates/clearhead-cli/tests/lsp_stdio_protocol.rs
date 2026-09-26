@@ -80,6 +80,14 @@ fn stdio_lifecycle_diagnostics_formatting_and_save() {
     std::fs::create_dir_all(&charters).unwrap();
     let source = charters.join("next.actions");
     std::fs::write(&source, "[ ] First\n").unwrap();
+    // Declare the root Active so its one open Action is admitted; otherwise
+    // the New default (specifications/charters.md) adds an unrelated
+    // "new-charter-open-actions" diagnostic that this test isn't about.
+    std::fs::write(
+        charters.join("README.md"),
+        "---\nid: 019f733d-4612-7770-af8f-c6e1da5214aa\nalias: project\nstate: Active\n---\n# Project\n",
+    )
+    .unwrap();
 
     let root_uri = Uri::from_file_path(&project).unwrap().to_string();
     let source_uri = Uri::from_file_path(&source).unwrap().to_string();

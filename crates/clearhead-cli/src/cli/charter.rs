@@ -788,12 +788,22 @@ pub fn jot(
     // rather than a lost log entry.
     let document = clearhead_cli::filesystem::read_charter_document(&ws_root, &md_path)?;
     let is_new = document.is_missing();
+
+    // Creating a whole new document is a valid time to mint a durable id
+    // (specifications/workspace.md, Concept Identity) — but only when the
+    // charter had no persisted anchor already. `Derived` and `Ephemeral`
+    // ids are never authoritative (the root's name-hashed id, or a
+    // shell-minted stand-in): writing one down here would persist an id
+    // nobody declared. A `Document` or `Sidecar` id is already real and
+    // must be kept, not replaced.
+    let minted_id = is_new.then(|| match mc_full.id_source {
+        CharterIdSource::Document | CharterIdSource::Sidecar => None,
+        CharterIdSource::Ephemeral | CharterIdSource::Derived => Some(uuid::Uuid::now_v7()),
+    });
+    let new_doc_id = minted_id.flatten().unwrap_or(charter_model.id);
     let base = match document.content() {
         Some(existing) => existing.to_string(),
-        None => format!(
-            "---\nid: {}\n---\n# {}\n",
-            charter_model.id, charter_model.title
-        ),
+        None => format!("---\nid: {}\n---\n# {}\n", new_doc_id, charter_model.title),
     };
 
     let stamp = Local::now().format("%Y-%m-%dT%H:%M%:z");
@@ -812,6 +822,16 @@ pub fn jot(
 
     clearhead_cli::filesystem::write_charter_document(&ws_root, &document, &updated)
         .with_context(|| format!("Failed to write '{}'", md_path.display()))?;
+    // Mirror a freshly minted id into the sidecar (best-effort, matching
+    // `add_charter`) so the two anchors agree from the moment the document
+    // exists, rather than leaving a `charter-document-without-id` gap for
+    // `doctor` to find on the very next load.
+    if let (Some(id), Some(actions_file)) = (minted_id.flatten(), &mc_full.actions_file) {
+        let actions_path = charter_root.join(actions_file);
+        if let Err(e) = clearhead_cli::filesystem::sidecar::stamp_charter_id(&actions_path, id) {
+            tracing::warn!(path = %actions_path.display(), error = %e, "Failed to record charter id in sidecar");
+        }
+    }
     info!(charter = %charter_model.title, path = %md_path.display(), created = is_new, "Jotted log entry");
     println!(
         "Jotted to '{}' ({})",
