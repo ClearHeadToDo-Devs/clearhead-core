@@ -778,7 +778,8 @@ The nearest ancestor directory containing a \fB.clearhead/\fR subdirectory.
     <workspace>/
     ├── archive/                 # UUID-addressed plaintext charter history
     ├── charters/
-    │   ├── inbox.actions        # default capture zone
+    │   ├── README.md            # root charter
+    │   ├── next.actions         # root charter actions; default capture file
     │   ├── <charter>.actions    # flat charter actions
     │   ├── <charter>.completed.actions
     │   ├── <charter>.md         # charter metadata / description
@@ -810,15 +811,15 @@ A typical daily workflow:
 .PP
 .B 1. Capture
 .PP
-Dump everything into the inbox without worrying about organisation:
+Dump everything into the root charter without worrying about organisation;
+with no \fB\-\-charter\fR, actions land in \fBcharters/next.actions\fR:
 .EX
-    clearhead add action "Reply to Alice" --charter inbox +work
+    clearhead add action "Reply to Alice" +work
     clearhead add action "Pick up prescription" +health \\
         --scheduled-at "2026-05-18T10:00:00"
 .EE
 .PP
-Or open the inbox in your editor (\fB:ClearheadInbox\fR in Neovim) and type
-actions directly.
+Or open \fBcharters/next.actions\fR in your editor and type actions directly.
 .PP
 .B 2. Triage
 .PP
@@ -1008,7 +1009,7 @@ Command-line flags
 .EX
     {
       "data_dir": "~/.local/share/clearhead",
-      "default_file": "inbox.actions",
+      "default_file": "next.actions",
       "cli_format": "table",
       "expansion_primary_instances": 3
     }
@@ -1024,7 +1025,8 @@ Override the workspace data directory.
 Override the configuration directory.
 .TP
 \fBCLEARHEAD_DEFAULT_FILE\fR
-Override the default actions file stem (default: \fBinbox.actions\fR).
+Override the default capture file, resolved relative to the workspace's
+\fBcharters/\fR directory (default: \fBnext.actions\fR).
 .TP
 \fBXDG_DATA_HOME\fR
 Base for \fI$XDG_DATA_HOME/clearhead\fR (default: \fI~/.local/share\fR).
@@ -1041,8 +1043,8 @@ User configuration file.
 \fI~/.local/share/clearhead/\fR
 Default global workspace data directory.
 .TP
-\fI~/.local/share/clearhead/charters/inbox.actions\fR
-Default inbox (uncategorised captures).
+\fI~/.local/share/clearhead/charters/next.actions\fR
+Root charter actions; the default capture file (uncategorised captures).
 .TP
 \fI~/.local/share/clearhead/archive/\fR
 UUID-addressed plaintext history for archived charters.
@@ -1060,7 +1062,7 @@ Project-level named SPARQL queries.
 .\" ====================================================================
 .B Daily capture
 .EX
-    # Open inbox in editor (clearhead.nvim)
+    # Open charters/next.actions in your editor
     # Or add from the shell:
     clearhead add action "Review PR #412" --charter work +review -p 2
     clearhead add action "Call dentist" +health @2026-05-18T10:00

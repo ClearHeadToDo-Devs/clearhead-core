@@ -21,8 +21,8 @@ cargo build --release -p clearhead_cli
 ## Quick start
 
 ```bash
-# Add an action to your inbox
-clearhead add action "Buy oat milk" --charter inbox
+# Capture an action (lands in the root charter's charters/next.actions)
+clearhead add action "Buy oat milk"
 
 # List open actions
 clearhead read actions --open-only

@@ -2,7 +2,12 @@ use super::ActionList;
 use crate::domain::{Charter, DomainModel};
 use uuid::Uuid;
 
-/// Namespace UUID for the synthetic inbox charter.
+/// Namespace UUID for charter parents that don't resolve to a known charter.
+///
+/// RDF projection mints `v5(ns, parent_ref)` so an unresolved parent reference
+/// still yields a stable node. The name and bytes are historical (they spell
+/// `inbox-charter-ns`) and are kept so these ids don't change; nothing about
+/// it is inbox-specific.
 pub const INBOX_CHARTER_NS: Uuid = Uuid::from_bytes([
     0x69, 0x6e, 0x62, 0x6f, 0x78, 0x2d, 0x63, 0x68, 0x61, 0x72, 0x74, 0x65, 0x72, 0x2d, 0x6e, 0x73,
 ]);

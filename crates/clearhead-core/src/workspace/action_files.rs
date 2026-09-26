@@ -9,8 +9,6 @@
 //! `subdir/next.actions` use the directory name, except the root anchor
 //! itself (`charters/next.actions`), which keeps the reserved `next` stem
 //! regardless of project or user scope — every workspace's root shares it.
-//! Unlike charter name inference, `inbox` is NOT skipped — `inbox.actions`
-//! is valid.
 
 use std::path::{Path, PathBuf};
 

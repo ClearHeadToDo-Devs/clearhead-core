@@ -87,7 +87,7 @@ fn default_config_dir() -> String {
 }
 
 fn default_file() -> String {
-    "inbox.actions".to_string()
+    "next.actions".to_string()
 }
 
 fn default_format() -> String {

@@ -6,7 +6,7 @@ use std::fs;
 #[test]
 fn test_read_acts_with_default_file() {
     let env = TestEnv::new();
-    env.write_actions("inbox.actions", "[ ] Test task");
+    env.write_actions("next.actions", "[ ] Test task");
     env.command()
         .arg("read")
         .arg("actions")
@@ -264,19 +264,41 @@ fn test_add_action_into_a_new_charter_names_the_activation_command() {
 #[test]
 fn test_add_action_defaults_to_existing_default_file() {
     let env = TestEnv::new();
-    env.write_actions("inbox.actions", "[ ] Existing inbox\n");
+    env.write_actions("next.actions", "[ ] Existing root task\n");
 
     env.command()
         .arg("add")
         .arg("action")
-        .arg("New inbox task")
+        .arg("New root task")
         .assert()
         .success()
         .stdout(predicate::str::contains(r#""kind":"added""#));
 
-    let content = fs::read_to_string(env.data_dir.join("charters").join("inbox.actions")).unwrap();
-    assert!(content.contains("[ ] Existing inbox"));
-    assert!(content.contains("[ ] New inbox task"));
+    let content = fs::read_to_string(env.data_dir.join("charters").join("next.actions")).unwrap();
+    assert!(content.contains("[ ] Existing root task"));
+    assert!(content.contains("[ ] New root task"));
+}
+
+#[test]
+fn test_add_action_without_config_lands_in_root_next_actions() {
+    // Spec: `default_file` defaults to `next.actions`, resolved from the
+    // workspace's `charters/` directory; `inbox.actions` is an ordinary
+    // charter. With two charters present the sole-charter shortcut doesn't
+    // apply, so only the default can pick the target.
+    let env = TestEnv::new();
+    env.command().args(["init", "--user"]).assert().success();
+    env.write_actions("inbox.actions", "[ ] Existing inbox task\n");
+
+    env.command()
+        .args(["add", "action", "x"])
+        .assert()
+        .success();
+
+    let charters = env.data_dir.join("charters");
+    let root = fs::read_to_string(charters.join("next.actions")).unwrap();
+    assert!(root.contains("[ ] x"));
+    let inbox = fs::read_to_string(charters.join("inbox.actions")).unwrap();
+    assert!(!inbox.contains("[ ] x"));
 }
 
 #[test]
@@ -284,7 +306,7 @@ fn test_add_action_prints_full_distinct_ids_for_back_to_back_adds() {
     // UUIDv7 ids minted within a minute share their first 8 hex digits, so a
     // truncated id would print identically for both adds.
     let env = TestEnv::new();
-    env.write_actions("inbox.actions", "[ ] Existing inbox\n");
+    env.write_actions("next.actions", "[ ] Existing root task\n");
 
     let added_id = |name: &str| {
         let output = env

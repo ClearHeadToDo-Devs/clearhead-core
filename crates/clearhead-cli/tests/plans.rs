@@ -320,7 +320,7 @@ fn test_error_on_missing_ics_file() {
 #[test]
 fn test_add_command_with_options() {
     let env = TestEnv::new();
-    env.write_actions("inbox.actions", "");
+    env.write_actions("next.actions", "");
     env.command()
         .arg("add")
         .arg("plan")
@@ -337,7 +337,7 @@ fn test_add_command_with_options() {
         .arg("FREQ=WEEKLY;BYDAY=MO")
         .assert()
         .success();
-    let plans_dir = env.data_dir.join("plans").join("inbox");
+    let plans_dir = env.data_dir.join("plans").join("next");
     let written = fs::read_dir(&plans_dir)
         .unwrap()
         .next()
@@ -422,7 +422,7 @@ fn test_sync_events_command() {
     let uuid1 = "019baaec-00b6-7991-be34-94b68212619a";
     let uuid2 = "019baaec-00b6-7991-be34-94b68212619b";
     env.write_actions(
-        "inbox.actions",
+        "next.actions",
         &format!("[ ] Task 1 #{}\n[ ] Task 2 #{}", uuid1, uuid2),
     );
     env.command()
@@ -434,7 +434,7 @@ fn test_sync_events_command() {
     env.command().arg("sync").arg("events").assert().success();
     let uuid3 = "019baaec-00b6-7991-be34-94b68212619c";
     env.write_actions(
-        "inbox.actions",
+        "next.actions",
         &format!(
             "[ ] Task 1 #{}\n[ ] Task 2 #{}\n[ ] Task 3 #{}",
             uuid1, uuid2, uuid3
