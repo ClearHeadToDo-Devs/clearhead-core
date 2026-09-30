@@ -26,9 +26,13 @@ fn debug_emits_json_when_piped() {
 
     let config = &value["config"];
     assert!(config["global_config_file"]["path"].is_string());
-    assert!(config["global_config_file"]["found"].is_boolean());
-    assert!(config["data_dir"].is_string());
-    assert!(config["config_dir"].is_string());
+    assert!(config["global_config_file"]["exists"].is_boolean());
+    // Unset values are null, never a display placeholder.
+    for key in ["data_dir", "config_dir"] {
+        assert!(config[key].is_null() || config[key].is_string());
+        assert_ne!(config[key], "<xdg-config-default>");
+        assert_ne!(config[key], "<project-root-or-xdg-default>");
+    }
     assert!(config["default_file"].is_string());
     assert!(config["additional_workspaces"].is_array());
     assert!(config["plan_component"].is_string());
@@ -40,7 +44,8 @@ fn debug_emits_json_when_piped() {
     let workspace = &value["workspace"];
     assert!(workspace["resolved_data_root"].is_string());
     assert!(workspace["resolution"].is_string());
-    assert!(workspace["root_charter"].is_string());
+    assert!(workspace["root_charter"].is_string() || workspace["root_charter"].is_null());
+    assert_ne!(workspace["root_charter"], "-");
     let charters = workspace["charters"].as_array().unwrap();
     assert!(
         charters
@@ -49,7 +54,8 @@ fn debug_emits_json_when_piped() {
     );
     for entry in charters {
         assert!(entry["file"].is_string());
-        assert!(entry["parent"].is_string());
+        assert!(entry["parent"].is_string() || entry["parent"].is_null());
+        assert_ne!(entry["parent"], "-");
     }
     let summary = &workspace["graph_summary"];
     assert!(summary["charters"].as_u64().unwrap() >= 1);
