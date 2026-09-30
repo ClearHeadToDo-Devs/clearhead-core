@@ -48,6 +48,34 @@ fn test_normalize_adds_uuids() {
 }
 
 #[test]
+fn doctors_implicit_charter_command_works_from_project_root() {
+    for (actions, document) in [
+        ("work.actions", "work.md"),
+        ("nested/next.actions", "nested/README.md"),
+    ] {
+        let env = TestEnv::new();
+        env.write_text(&format!("charters/{actions}"), "");
+        let output = env.command().args(["doctor", "--json"]).output().unwrap();
+        let diagnosis: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        let message = diagnosis["findings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|finding| finding["code"] == "charter-document-without-id")
+            .unwrap()["message"]
+            .as_str()
+            .unwrap();
+        let command = message.split('`').nth(1).unwrap();
+        let args: Vec<_> = command.split_whitespace().collect();
+        assert_eq!(args[0], "clearhead");
+        env.command().args(&args[1..]).assert().success();
+        let content = fs::read_to_string(env.data_dir.join("charters").join(document)).unwrap();
+        assert!(content.contains("state: New"), "{content}");
+        assert!(content.contains("id: "), "{content}");
+    }
+}
+
+#[test]
 fn normalize_charter_stamps_once_and_doctor_clears_warning() {
     let env = TestEnv::new();
     let original = "---\nalias: work\ncustom: keep\n---\n# Work\n\n## Log\n\n- keep this entry\n";

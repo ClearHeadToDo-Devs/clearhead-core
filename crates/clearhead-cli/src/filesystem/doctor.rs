@@ -28,7 +28,17 @@ pub fn diagnose_workspace_read(
     read: &WorkspaceRead,
 ) -> Result<Diagnosis, WorkspaceError> {
     let evidence = observe_doctor(workspace_root)?;
-    Ok(diagnose(read, &evidence))
+    let mut diagnosis = diagnose(read, &evidence);
+    let charter_root = crate::filesystem::charter_root(workspace_root);
+    for finding in &mut diagnosis.findings {
+        if finding.code == "charter-document-without-id" {
+            let document = charter_root.join(&finding.path);
+            finding.message = finding
+                .message
+                .replace("<charter.md>", &document.display().to_string());
+        }
+    }
+    Ok(diagnosis)
 }
 
 /// Gather native facts that normal workspace assembly intentionally excludes.

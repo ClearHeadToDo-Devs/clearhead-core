@@ -108,8 +108,11 @@ fn doctor_warns_about_a_named_charter_with_no_document() {
         .iter()
         .find(|f| f.code == "charter-document-without-id")
         .expect("implicit charter should be flagged");
-    assert!(finding.message.contains("work.md"));
-    assert!(finding.message.contains("clearhead normalize file"));
+    let document = workspace.path().join(".clearhead/charters/work.md");
+    assert!(finding.message.contains(&format!(
+        "clearhead normalize file {} --write",
+        document.display()
+    )));
 }
 
 #[test]

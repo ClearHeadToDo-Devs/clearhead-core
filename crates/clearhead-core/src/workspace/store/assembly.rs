@@ -347,8 +347,7 @@ pub fn assemble_workspace(input: &WorkspaceAssemblyInput) -> Result<WorkspaceRea
                     "charter-document-without-id",
                     &md_path,
                     format!(
-                        "charter '{subject}' has no document, so {identity_gap}; run `clearhead normalize file {} --write` to create it with a durable id",
-                        md_path.display()
+                        "charter '{subject}' has no document, so {identity_gap}; run `clearhead normalize file <charter.md> --write` to create it with a durable id"
                     ),
                 ));
             }
