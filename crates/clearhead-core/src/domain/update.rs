@@ -84,8 +84,9 @@ pub fn disallowed_terminal_update(update: &ActionUpdate) -> Option<ActionState> 
 /// Apply updates to an action
 ///
 /// Only fields that are `Some` in the update are changed.
-/// The action's ID and parent_id are never modified.
-pub fn apply_updates(action: &mut Action, updates: ActionUpdate) {
+/// The action's ID and parent_id are never modified. `now` stamps `completed_at`
+/// when the update completes an action that has none.
+pub fn apply_updates(action: &mut Action, updates: ActionUpdate, now: DateTime<Local>) {
     if let Some(name) = updates.name {
         action.name = name;
     }
@@ -130,7 +131,7 @@ pub fn apply_updates(action: &mut Action, updates: ActionUpdate) {
         action.state = state;
         // If completing, set completed_at
         if state == ActionState::Completed && action.completed_at.is_none() {
-            action.completed_at = Some(chrono::Local::now());
+            action.completed_at = Some(now);
         }
     }
     if let Some(scheduled_at) = updates.scheduled_at {
@@ -196,10 +197,31 @@ mod tests {
                 priority: Some(1),
                 ..Default::default()
             },
+            Local::now(),
         );
 
         assert_eq!(action.name, "Original name"); // unchanged
         assert_eq!(action.priority, Some(1)); // updated
+    }
+
+    #[test]
+    fn completing_stamps_the_supplied_clock_and_keeps_an_existing_date() {
+        use chrono::TimeZone;
+        let now = Local.with_ymd_and_hms(2026, 7, 31, 10, 30, 0).unwrap();
+        let earlier = Local.with_ymd_and_hms(2026, 7, 1, 9, 0, 0).unwrap();
+        let complete = || ActionUpdate {
+            state: Some(ActionState::Completed),
+            ..Default::default()
+        };
+
+        let mut fresh = make_action("Fresh", None);
+        apply_updates(&mut fresh, complete(), now);
+        assert_eq!(fresh.completed_at, Some(now));
+
+        let mut dated = make_action("Dated", None);
+        dated.completed_at = Some(earlier);
+        apply_updates(&mut dated, complete(), now);
+        assert_eq!(dated.completed_at, Some(earlier));
     }
 
     #[test]
@@ -215,6 +237,7 @@ mod tests {
                 )),
                 ..Default::default()
             },
+            Local::now(),
         );
 
         assert_eq!(

@@ -302,7 +302,7 @@ fn apply_one(
                     .iter_mut()
                     .find(|action| action.id == target)
                     .expect("target located in this active list");
-                apply_updates(action, update.clone());
+                apply_updates(action, update.clone(), now);
                 file.active_dirty = true;
                 Ok(VerbOutcome::Updated {
                     id: canonical_id(target),

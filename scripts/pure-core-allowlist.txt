@@ -12,11 +12,7 @@ workspace/actions/parser.rs now_v7 1
 domain/mod.rs now_v7 2
 domain/mod.rs new_v4 1
 #
-# Wall-clock reads that already have, or need, an injectable time argument.
-# archive_actions: plan_action_archive is a thin wrapper over the pure
-# plan_action_archive_at, so only the wrapper needs to move to the shell.
-workspace/archive_actions.rs Local::now 1
-domain/update.rs Local::now 1
+# Wall-clock reads that need an injectable time argument.
 workspace/actions/lint.rs Local::now 1
 #
 # Telemetry stamps its own event times. Arguably a host concern; decide whether

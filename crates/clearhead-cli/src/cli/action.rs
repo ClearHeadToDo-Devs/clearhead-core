@@ -536,6 +536,7 @@ pub fn update_action(
         &actions_path,
         &selector,
         update,
+        Local::now(),
     )?;
     info!(action_id = %result.action_id, "Action updated");
     emit(&VerbOutcome::Updated {
@@ -1077,7 +1078,7 @@ pub fn archive_actions(
             let active = action_files::read_actions(actions_path)?;
             let completed_path = action_files::completed_actions_path(actions_path);
             let completed = action_files::read_actions(&completed_path)?;
-            clearhead_core::plan_action_archive(&active, &completed).archived_count
+            clearhead_core::plan_action_archive(&active, &completed, Local::now()).archived_count
         } else {
             let workspace_root = ctx.workspace_for_file(actions_path);
             clearhead_cli::filesystem::archive_actions(&workspace_root, actions_path)?
