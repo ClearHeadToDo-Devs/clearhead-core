@@ -235,6 +235,28 @@ fn schema_validator(relative: &str) -> jsonschema::JSONSchema {
     jsonschema::JSONSchema::compile(&schema).expect("spec schema compiles")
 }
 
+/// The `$schema` Core stamps into the files it writes must be the `$id` of the
+/// schema in the specification release it conforms to, so the pointer names a
+/// release rather than a branch that keeps moving.
+#[test]
+fn stamped_schema_urls_are_the_pinned_release_ids() {
+    use clearhead_core::workspace::{
+        manifest::WORKSPACE_SCHEMA_URL, sidecar::CHARTER_METADATA_SCHEMA_URL,
+    };
+    for (stamped, relative) in [
+        (WORKSPACE_SCHEMA_URL, "schemas/workspace.schema.json"),
+        (
+            CHARTER_METADATA_SCHEMA_URL,
+            "schemas/charter_metadata.schema.json",
+        ),
+    ] {
+        let path = spec_dir().join(relative);
+        let schema: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(Some(stamped), schema["$id"].as_str(), "{relative}");
+    }
+}
+
 fn transaction_fixture(relative: &str) -> serde_json::Value {
     let path = spec_dir().join("examples/transactions").join(relative);
     serde_json::from_str(&std::fs::read_to_string(&path).unwrap())

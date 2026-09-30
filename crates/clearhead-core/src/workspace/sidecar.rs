@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 /// validate on write — the same declarative-filesystem theme as recording
 /// `charter.id`. Points at `master`; retargeting to a tagged release is
 /// tracked separately (see the schema-source-of-truth decision).
-pub const CHARTER_METADATA_SCHEMA_URL: &str = "https://raw.githubusercontent.com/ClearHeadToDo-Devs/specifications/master/schemas/charter_metadata.schema.json";
+pub const CHARTER_METADATA_SCHEMA_URL: &str = "https://raw.githubusercontent.com/ClearHeadToDo-Devs/specifications/v0.1.0/schemas/charter_metadata.schema.json";
 
 /// Root of the per-charter sidecar JSON (`.<charter>.json`).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
