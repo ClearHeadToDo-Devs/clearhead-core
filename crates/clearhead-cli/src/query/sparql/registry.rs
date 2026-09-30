@@ -15,7 +15,10 @@
 //! (`index`, `tree`, `graph`) are separate: a family's drop-ins live in a
 //! same-named subdirectory (`.clearhead/queries/index/…`), matching graphd.
 
+use std::io::IsTerminal;
 use std::path::PathBuf;
+
+use serde::Serialize;
 
 use crate::cli::CommandContext;
 
@@ -189,12 +192,40 @@ pub fn show(ctx: &CommandContext, name: &str) -> anyhow::Result<()> {
     crate::stdout::write_stdout(sparql.as_bytes())
 }
 
-/// `query list`: every resolvable query as a NAME / TYPE / SOURCE table, with
-/// drop-ins shadowing built-ins so the listed source is the one that would run.
+/// One row of `query list`'s output — a resolvable query's name, family
+/// (`None` for the flat namespace, the table's `—`), and the tier it would
+/// resolve from.
+#[derive(Serialize)]
+pub struct QueryEntry {
+    pub name: String,
+    #[serde(rename = "type")]
+    pub kind: Option<String>,
+    pub source: String,
+}
+
+/// `query list`: every resolvable query, with drop-ins shadowing built-ins so
+/// the listed source is the one that would run. A human table at a terminal,
+/// a JSON array when piped (clearhead.nvim's `query.parse_list` consumer).
 #[cfg(feature = "sparql")]
 pub fn list(ctx: &CommandContext) -> anyhow::Result<()> {
-    use comfy_table::{Cell, Color, ContentArrangement, Table, presets::UTF8_FULL};
+    let rows = list_rows(ctx);
+    if std::io::stdout().is_terminal() {
+        print_table(&rows)
+    } else {
+        let entries: Vec<QueryEntry> = rows
+            .iter()
+            .map(|(name, kind, source)| QueryEntry {
+                name: name.clone(),
+                kind: (*kind != "—").then(|| (*kind).to_string()),
+                source: source.to_string(),
+            })
+            .collect();
+        crate::stdout::write_stdout_line(&serde_json::to_string_pretty(&entries)?)
+    }
+}
 
+#[cfg(feature = "sparql")]
+fn list_rows(ctx: &CommandContext) -> Vec<(String, &'static str, Source)> {
     let mut rows: Vec<(String, &'static str, Source)> = Vec::new();
 
     // Flat namespace: built-in names, each overridden by a matching drop-in.
@@ -209,6 +240,20 @@ pub fn list(ctx: &CommandContext) -> anyhow::Result<()> {
     push_family_rows(ctx, "graph", BUILT_IN_GRAPH, &mut rows);
     // Drop-ins with no built-in counterpart, so `list` shows everything runnable.
     push_extra_dropins(ctx, &mut rows);
+    rows
+}
+
+#[cfg(feature = "sparql")]
+fn print_table(rows: &[(String, &'static str, Source)]) -> anyhow::Result<()> {
+    crate::stdout::write_stdout_line(&render_table(rows))
+}
+
+/// Builds the `NAME`/`TYPE`/`SOURCE` table's exact text — split out from
+/// [`print_table`] so `table_is_pinned_byte_for_byte` below can pin it
+/// without touching real stdout.
+#[cfg(feature = "sparql")]
+fn render_table(rows: &[(String, &'static str, Source)]) -> String {
+    use comfy_table::{Cell, Color, ContentArrangement, Table, presets::UTF8_FULL};
 
     let mut table = Table::new();
     table
@@ -222,11 +267,11 @@ pub fn list(ctx: &CommandContext) -> anyhow::Result<()> {
     for (name, kind, source) in rows {
         table.add_row(vec![
             Cell::new(name),
-            Cell::new(kind),
+            Cell::new(*kind),
             Cell::new(source.to_string()),
         ]);
     }
-    crate::stdout::write_stdout_line(&table.to_string())
+    table.to_string()
 }
 
 #[cfg(feature = "sparql")]
@@ -283,6 +328,28 @@ fn push_extra_dropins(ctx: &CommandContext, rows: &mut Vec<(String, &'static str
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Pins the `query list` human table's exact text (specifications/
+    /// workspace.md output rule: TTY gets prose, a pipe gets JSON) so the
+    /// row-based rendering this module now does cannot silently change it.
+    #[test]
+    fn table_is_pinned_byte_for_byte() {
+        let rows = vec![
+            ("open-actions".to_string(), "—", Source::BuiltIn),
+            ("unscheduled".to_string(), "index", Source::Project),
+        ];
+        assert_eq!(
+            render_table(&rows),
+            "\
+┌──────────────┬───────┬──────────┐
+│ NAME         ┆ TYPE  ┆ SOURCE   │
+╞══════════════╪═══════╪══════════╡
+│ open-actions ┆ —     ┆ built-in │
+├╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌┤
+│ unscheduled  ┆ index ┆ project  │
+└──────────────┴───────┴──────────┘"
+        );
+    }
 
     #[test]
     fn built_in_tables_parse_and_self_declare_prefixes() {
