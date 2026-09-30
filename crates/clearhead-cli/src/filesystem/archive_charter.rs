@@ -598,7 +598,7 @@ fn collect_supporting_files(
     Ok(files)
 }
 
-/// Count the actions in an optional file, treating a missing file as empty.
+/// Record the charter's id in the sidecar at `path`; `None` when nothing changed.
 fn crystallized_sidecar(
     path: &Path,
     charter_id: uuid::Uuid,
@@ -623,6 +623,7 @@ fn map_policy_error(error: ArchivePolicyError) -> ArchiveCharterError {
     }
 }
 
+/// Count the actions in an optional file, treating a missing file as empty.
 fn count_actions(path: &Option<PathBuf>) -> Result<usize, ArchiveCharterError> {
     match path {
         Some(p) => Ok(read_actions(p)?.len()),

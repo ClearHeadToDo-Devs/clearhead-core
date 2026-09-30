@@ -129,6 +129,7 @@ pub fn update_action(
     source_path: &Path,
     selector: &ActionSelector,
     update: ActionUpdate,
+    now: chrono::DateTime<Local>,
 ) -> Result<UpdateActionResult, WorkspaceError> {
     let mounts = begin_mutation(workspace_root, source_path)?;
     let data_root = &mounts.workspace;
@@ -138,7 +139,7 @@ pub fn update_action(
         actions: parse_snapshot(&snapshot)?,
         expected,
     };
-    let (batch, outcome) = prepare_action_update(source, selector, update)
+    let (batch, outcome) = prepare_action_update(source, selector, update, now)
         .map_err(|error| WorkspaceError::Actions(error.to_string()))?;
     deliver(&mounts, &batch)?;
     Ok(map_update(data_root, outcome))

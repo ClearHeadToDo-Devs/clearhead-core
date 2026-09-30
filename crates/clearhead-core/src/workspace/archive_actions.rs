@@ -32,12 +32,8 @@ pub struct ActionArchivePlan {
 /// parent links inside the archived subtree. Completed files are history, but
 /// the hierarchy is part of the fact (especially for templated recurring
 /// occurrences). Any archived action without a completion date is stamped at
-/// plan construction time; an existing completion date is preserved.
-pub fn plan_action_archive(active: &[Action], existing_completed: &[Action]) -> ActionArchivePlan {
-    plan_action_archive_at(active, existing_completed, Local::now())
-}
-
-fn plan_action_archive_at(
+/// `archived_at`; an existing completion date is preserved.
+pub fn plan_action_archive(
     active: &[Action],
     existing_completed: &[Action],
     archived_at: DateTime<Local>,
@@ -126,7 +122,7 @@ pub fn prepare_action_archive(
     completed: ActionResourceState,
     archived_at: DateTime<Local>,
 ) -> Result<(EffectBatch, PreparedArchiveOutcome), ActionPrepareError> {
-    let plan = plan_action_archive_at(&active.actions, &completed.actions, archived_at);
+    let plan = plan_action_archive(&active.actions, &completed.actions, archived_at);
     let mut effects = Vec::new();
     if plan.archived_count > 0 {
         // Additive ordering (direct-delivery charter §4): write the destination
@@ -447,7 +443,7 @@ mod tests {
         let open = action("still open", ActionState::NotStarted, None);
         let existing = action("older", ActionState::Completed, None);
         let archived_at = Local.with_ymd_and_hms(2026, 7, 31, 10, 30, 0).unwrap();
-        let plan = plan_action_archive_at(
+        let plan = plan_action_archive(
             &[root.clone(), child, open.clone()],
             &[existing],
             archived_at,
@@ -462,7 +458,11 @@ mod tests {
     fn plan_keeps_terminal_root_when_a_descendant_is_open() {
         let root = action("done root", ActionState::Completed, None);
         let child = action("open child", ActionState::NotStarted, Some(root.id));
-        let plan = plan_action_archive(&[root, child], &[]);
+        let plan = plan_action_archive(
+            &[root, child],
+            &[],
+            Local.with_ymd_and_hms(2026, 7, 31, 10, 30, 0).unwrap(),
+        );
         assert_eq!(plan.archived_count, 0);
         assert_eq!(plan.active_actions.len(), 2);
     }

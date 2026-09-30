@@ -1,5 +1,6 @@
 //! Pure preparation for action-file insertion, update, and deletion.
 
+use chrono::{DateTime, Local};
 use thiserror::Error;
 use uuid::Uuid;
 
@@ -118,6 +119,7 @@ pub fn prepare_action_update(
     source: ActionResourceState,
     selector: &ActionSelector,
     update: ActionUpdate,
+    now: DateTime<Local>,
 ) -> Result<(EffectBatch, PreparedUpdateOutcome), ActionPrepareError> {
     if let Some(state) = disallowed_terminal_update(&update) {
         return Err(ActionPrepareError::Domain(format!(
@@ -137,7 +139,7 @@ pub fn prepare_action_update(
         .iter_mut()
         .find(|action| action.id == action_id)
         .expect("selected action came from active list");
-    apply_updates(target, update);
+    apply_updates(target, update, now);
     let effects = write_batch(&source.path, &next, source.expected)?;
     Ok((
         effects,

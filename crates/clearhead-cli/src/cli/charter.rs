@@ -622,7 +622,7 @@ pub fn update_charter(
     alias: &Option<String>,
     dry_run: bool,
 ) -> anyhow::Result<()> {
-    use clearhead_cli::mutations::CharterUpdate;
+    use clearhead_core::CharterUpdate;
 
     let mcs = ctx.load_charters()?;
     let charter_root = clearhead_cli::filesystem::charter_root(&ctx.data_dir);
@@ -698,7 +698,7 @@ pub fn close_charter(
     file: Option<&std::path::Path>,
     dry_run: bool,
 ) -> anyhow::Result<()> {
-    use clearhead_cli::mutations::CharterUpdate;
+    use clearhead_core::CharterUpdate;
     let ws_root = file
         .map(|f| ctx.workspace_for_file(f))
         .unwrap_or_else(|| ctx.data_dir.clone());
