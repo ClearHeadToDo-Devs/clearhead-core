@@ -210,17 +210,7 @@ fn materialize_implicit_charter(md_path: &std::path::PathBuf, write: bool) -> an
         )
     })?;
     let id = charter_sidecar_id(md_path)?.unwrap_or_else(uuid::Uuid::now_v7);
-    let charter = clearhead_core::domain::Charter {
-        id,
-        title: stem.clone(),
-        description: None,
-        alias: Some(stem),
-        parent: None,
-        objectives: None,
-        state: Some(clearhead_core::domain::CharterState::New),
-        plans: vec![],
-        actions: vec![],
-    };
+    let charter = super::charter::new_charter(id, &stem, Some(stem.clone()), None);
     let output = clearhead_core::format_charter(&charter);
     write_or_print(&output, write, Some(md_path))
 }

@@ -33,17 +33,8 @@ fn charter_md_path(
     let path = mc
         .actions_file
         .as_ref()
-        .and_then(|p| {
-            let dir = p.parent().unwrap_or(Path::new(""));
-            let md_name = if p.file_name().and_then(|n| n.to_str())
-                == Some(clearhead_core::workspace::PRIMARY_ACTIONS_FILE)
-            {
-                clearhead_core::workspace::PRIMARY_DOCUMENT_FILE.to_string()
-            } else {
-                format!("{}.md", p.file_stem()?.to_str()?)
-            };
-            Some(charter_root.join(dir).join(md_name))
-        })
+        .and_then(|p| clearhead_core::workspace::document_anchor_for_actions(p))
+        .map(|p| charter_root.join(p))
         .unwrap_or_else(|| {
             let slug = title.to_lowercase().replace(' ', "-").replace('&', "and");
             charter_root.join(format!("{}.md", slug))
@@ -405,6 +396,26 @@ where
     }
 }
 
+/// The shared scaffold for newly declared charters, including implicit ones.
+pub(super) fn new_charter(
+    id: uuid::Uuid,
+    title: &str,
+    alias: Option<String>,
+    parent: Option<String>,
+) -> Charter {
+    Charter {
+        id,
+        title: title.to_string(),
+        description: None,
+        alias,
+        parent,
+        objectives: None,
+        state: Some(CharterState::New),
+        plans: vec![],
+        actions: vec![],
+    }
+}
+
 pub fn add_charter(
     ctx: &CommandContext,
     title: &str,
@@ -413,21 +424,10 @@ pub fn add_charter(
     template: &Option<String>,
     dry_run: bool,
 ) -> anyhow::Result<()> {
-    use clearhead_core::domain::Charter;
     use clearhead_core::workspace::templates;
 
     let id = uuid::Uuid::now_v7();
-    let charter = Charter {
-        id,
-        title: title.to_string(),
-        description: None,
-        alias: alias.clone(),
-        parent: parent.clone(),
-        objectives: None,
-        state: Some(CharterState::New),
-        plans: vec![],
-        actions: vec![],
-    };
+    let charter = new_charter(id, title, alias.clone(), parent.clone());
 
     if dry_run {
         let formatted = clearhead_core::format_charter(&charter);
