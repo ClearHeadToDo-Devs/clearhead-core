@@ -216,7 +216,7 @@ pub fn list(ctx: &CommandContext) -> anyhow::Result<()> {
             .iter()
             .map(|(name, kind, source)| QueryEntry {
                 name: name.clone(),
-                kind: (*kind != "—").then(|| (*kind).to_string()),
+                kind: kind.map(str::to_string),
                 source: source.to_string(),
             })
             .collect();
@@ -225,15 +225,15 @@ pub fn list(ctx: &CommandContext) -> anyhow::Result<()> {
 }
 
 #[cfg(feature = "sparql")]
-fn list_rows(ctx: &CommandContext) -> Vec<(String, &'static str, Source)> {
-    let mut rows: Vec<(String, &'static str, Source)> = Vec::new();
+fn list_rows(ctx: &CommandContext) -> Vec<(String, Option<&'static str>, Source)> {
+    let mut rows: Vec<(String, Option<&'static str>, Source)> = Vec::new();
 
     // Flat namespace: built-in names, each overridden by a matching drop-in.
     for (name, _) in BUILT_IN {
         let source = read_dropin(ctx, None, name)
             .map(|(_, s)| s)
             .unwrap_or(Source::BuiltIn);
-        rows.push(((*name).to_string(), "—", source));
+        rows.push(((*name).to_string(), None, source));
     }
     push_family_rows(ctx, "index", BUILT_IN_INDEX, &mut rows);
     push_family_rows(ctx, "tree", BUILT_IN_TREE, &mut rows);
@@ -244,7 +244,7 @@ fn list_rows(ctx: &CommandContext) -> Vec<(String, &'static str, Source)> {
 }
 
 #[cfg(feature = "sparql")]
-fn print_table(rows: &[(String, &'static str, Source)]) -> anyhow::Result<()> {
+fn print_table(rows: &[(String, Option<&'static str>, Source)]) -> anyhow::Result<()> {
     crate::stdout::write_stdout_line(&render_table(rows))
 }
 
@@ -252,7 +252,7 @@ fn print_table(rows: &[(String, &'static str, Source)]) -> anyhow::Result<()> {
 /// [`print_table`] so `table_is_pinned_byte_for_byte` below can pin it
 /// without touching real stdout.
 #[cfg(feature = "sparql")]
-fn render_table(rows: &[(String, &'static str, Source)]) -> String {
+fn render_table(rows: &[(String, Option<&'static str>, Source)]) -> String {
     use comfy_table::{Cell, Color, ContentArrangement, Table, presets::UTF8_FULL};
 
     let mut table = Table::new();
@@ -267,7 +267,7 @@ fn render_table(rows: &[(String, &'static str, Source)]) -> String {
     for (name, kind, source) in rows {
         table.add_row(vec![
             Cell::new(name),
-            Cell::new(*kind),
+            Cell::new(kind.unwrap_or("—")),
             Cell::new(source.to_string()),
         ]);
     }
@@ -279,13 +279,13 @@ fn push_family_rows(
     ctx: &CommandContext,
     family: &'static str,
     built_ins: &[(&str, &str)],
-    rows: &mut Vec<(String, &'static str, Source)>,
+    rows: &mut Vec<(String, Option<&'static str>, Source)>,
 ) {
     for (name, _) in built_ins {
         let source = read_dropin(ctx, Some(family), name)
             .map(|(_, s)| s)
             .unwrap_or(Source::BuiltIn);
-        rows.push(((*name).to_string(), family, source));
+        rows.push(((*name).to_string(), Some(family), source));
     }
 }
 
@@ -293,10 +293,12 @@ fn push_family_rows(
 /// reflects the full runnable set. Duplicates of built-in names are skipped
 /// (already listed with their shadowing source).
 #[cfg(feature = "sparql")]
-fn push_extra_dropins(ctx: &CommandContext, rows: &mut Vec<(String, &'static str, Source)>) {
+fn push_extra_dropins(
+    ctx: &CommandContext,
+    rows: &mut Vec<(String, Option<&'static str>, Source)>,
+) {
     let scan = |family: Option<&'static str>,
-                kind: &'static str,
-                rows: &mut Vec<(String, &'static str, Source)>| {
+                rows: &mut Vec<(String, Option<&'static str>, Source)>| {
         for (dir, source) in dropin_dirs(ctx, family)
             .into_iter()
             .zip([Source::Project, Source::User])
@@ -312,31 +314,30 @@ fn push_extra_dropins(ctx: &CommandContext, rows: &mut Vec<(String, &'static str
                 let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
                     continue;
                 };
-                let already = rows.iter().any(|(n, k, _)| n == stem && *k == kind);
+                let already = rows.iter().any(|(n, k, _)| n == stem && *k == family);
                 if !already {
-                    rows.push((stem.to_string(), kind, source));
+                    rows.push((stem.to_string(), family, source));
                 }
             }
         }
     };
-    scan(None, "—", rows);
-    scan(Some("index"), "index", rows);
-    scan(Some("tree"), "tree", rows);
-    scan(Some("graph"), "graph", rows);
+    scan(None, rows);
+    scan(Some("index"), rows);
+    scan(Some("tree"), rows);
+    scan(Some("graph"), rows);
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// Pins the `query list` human table's exact text (specifications/
-    /// workspace.md output rule: TTY gets prose, a pipe gets JSON) so the
-    /// row-based rendering this module now does cannot silently change it.
+    /// Pins the `query list` human table's exact text so the row-based
+    /// rendering cannot silently change it.
     #[test]
     fn table_is_pinned_byte_for_byte() {
         let rows = vec![
-            ("open-actions".to_string(), "—", Source::BuiltIn),
-            ("unscheduled".to_string(), "index", Source::Project),
+            ("open-actions".to_string(), None, Source::BuiltIn),
+            ("unscheduled".to_string(), Some("index"), Source::Project),
         ];
         assert_eq!(
             render_table(&rows),
