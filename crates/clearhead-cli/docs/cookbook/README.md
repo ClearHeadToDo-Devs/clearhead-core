@@ -2,7 +2,7 @@
 
 This cookbook contains non-normative recipes for composing `clearhead` with other command-line and self-hosted tools. The recipes describe working operations, deployment boundaries, and failure recovery; they do not redefine the ClearHead data contracts.
 
-Normative behavior lives in the [ClearHead specifications](https://github.com/ClearHeadToDo-Devs/specifications), especially the [iCalendar VTODO projection specification](https://github.com/ClearHeadToDo-Devs/specifications/blob/master/ics_schedule_spec.md).
+Normative behavior lives in the [ClearHead specifications](https://github.com/ClearHeadToDo-Devs/specifications), especially the [iCalendar VTODO projection specification](https://github.com/ClearHeadToDo-Devs/specifications/blob/main/ics_schedule_spec.md).
 
 ## Calendar compositions
 

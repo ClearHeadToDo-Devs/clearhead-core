@@ -125,7 +125,7 @@ ancestors. Run `clearhead doctor` when expected work is absent: it reports
 cross-level state contradictions instead of silently normalizing source data.
 
 The normative readiness and Charter-state semantics live in the
-[process specification](https://github.com/ClearHeadToDo-Devs/specifications/blob/master/process.md).
+[process specification](https://github.com/ClearHeadToDo-Devs/specifications/blob/main/process.md).
 The CLI only evaluates and presents that shared contract.
 
 ## Editor integration
@@ -146,9 +146,9 @@ clearhead-lsp
 
 The file format, workspace layout, and process model are defined in the [ClearHead specifications](https://github.com/ClearHeadToDo-Devs/specifications):
 
-- [Action file format](https://github.com/ClearHeadToDo-Devs/specifications/blob/master/action_file_format.md)
-- [Naming conventions and workspace layout](https://github.com/ClearHeadToDo-Devs/specifications/blob/master/naming_conventions.md)
-- [Process](https://github.com/ClearHeadToDo-Devs/specifications/blob/master/process.md)
+- [Action file format](https://github.com/ClearHeadToDo-Devs/specifications/blob/main/action_file_format.md)
+- [Workspace layout and naming](https://github.com/ClearHeadToDo-Devs/specifications/blob/main/workspace.md)
+- [Process](https://github.com/ClearHeadToDo-Devs/specifications/blob/main/process.md)
 
 ## License
 

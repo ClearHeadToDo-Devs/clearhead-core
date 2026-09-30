@@ -7,7 +7,7 @@ This recipe publishes ClearHead Plans to CalDAV while keeping the integration se
 - Radicale owns its private server storage and serves CalDAV clients.
 - Calendar or task clients communicate with Radicale, not with ClearHead files.
 
-The normative identity, field mapping, recurrence, migration, and reconciliation rules are defined by the [iCalendar Plan projection specification](https://github.com/ClearHeadToDo-Devs/specifications/blob/master/ics_schedule_spec.md). This document only describes one operational composition.
+The normative identity, field mapping, recurrence, migration, and reconciliation rules are defined by the [iCalendar Plan projection specification](https://github.com/ClearHeadToDo-Devs/specifications/blob/main/ics_schedule_spec.md). This document only describes one operational composition.
 
 ## Topology
 
