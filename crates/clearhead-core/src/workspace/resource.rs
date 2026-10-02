@@ -307,6 +307,10 @@ pub fn plan_workspace_read(
                 || relative.ends_with(".md")
                 || (filename.starts_with('.') && relative.ends_with(".json"));
         }
+        // The manifest's workspace_name names an alias-less root objective.
+        if path == "workspace.json" {
+            return true;
+        }
         if let Some(relative) = path.strip_prefix("objectives/") {
             return relative.ends_with(".md")
                 && !relative.split('/').any(|part| part.starts_with('.'));

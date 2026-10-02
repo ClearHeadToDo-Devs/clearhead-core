@@ -449,6 +449,13 @@ fn assemble_objectives(
         })
         .map(|path| PathBuf::from(path.as_str()))
         .collect::<Vec<_>>();
+    // An alias-less root objective takes the workspace's name.
+    let workspace_name = input
+        .workspace_text(Path::new("workspace.json"))
+        .ok()
+        .flatten()
+        .and_then(|text| crate::workspace::parse_workspace_manifest(text).ok())
+        .and_then(|manifest| manifest.workspace_name);
     let mut objectives = Vec::new();
     for path in paths {
         let content = match input.workspace_text(&path) {
@@ -467,7 +474,11 @@ fn assemble_objectives(
             .to_str()
             .and_then(|path| path.strip_prefix("objectives/"))
             .unwrap_or_default();
-        match parse_objective(content, objective_file_name(relative)) {
+        let file_name = match relative {
+            "README.md" => workspace_name.as_deref(),
+            relative => objective_file_name(relative),
+        };
+        match parse_objective(content, file_name) {
             Ok(objective) => objectives.push(objective),
             Err(error) => findings.push(Finding::violation(
                 "unparseable-file",
@@ -981,6 +992,35 @@ mod tests {
         assert_eq!(
             model.objectives_of(root)[0].alias.as_deref(),
             Some("eat-well")
+        );
+    }
+
+    #[test]
+    fn an_alias_less_root_objective_takes_the_workspace_name() {
+        let read = assemble_workspace(&input(
+            "home",
+            &[
+                ("workspace.json", r#"{"workspace_name":"household"}"#),
+                (
+                    "charters/README.md",
+                    "---\nalias: home\nobjectives: [household]\n---\n# Home\n",
+                ),
+                (
+                    "objectives/README.md",
+                    "---\nid: 01a0fb10-0000-7000-8000-0000000000b0\n---\n",
+                ),
+            ],
+            None,
+            &[],
+        ))
+        .unwrap();
+
+        assert_eq!(read.objectives[0].alias.as_deref(), Some("household"));
+        assert!(
+            !read
+                .findings
+                .iter()
+                .any(|f| f.code == "unresolvable-objective")
         );
     }
 
