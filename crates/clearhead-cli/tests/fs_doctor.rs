@@ -69,24 +69,71 @@ fn doctor_reports_clean_on_a_coherent_workspace() {
     let workspace = make_workspace(&[
         (
             "README.md",
-            "---\nid: 01951111-0000-7000-0000-000000000012\nalias: test\nstate: Active\n---\n# Test\n",
+            "---\nid: 01951111-0000-7000-0000-000000000012\nalias: test\nstate: Active\nobjectives: [test]\n---\n# Test\n",
         ),
         ("next.actions", ""),
         (
             "work.md",
-            "---\nid: 01951111-0000-7000-0000-000000000011\nalias: work\nstate: Active\n---\n# Work\n",
+            "---\nid: 01951111-0000-7000-0000-000000000011\nalias: work\nstate: Active\nobjectives: [test]\n---\n# Work\n",
         ),
         (
             "work.actions",
             "[ ] Task one #01951111-0000-7000-0000-000000000010\n",
         ),
     ]);
+    write_root_objective(workspace.path());
 
     let diagnosis = clearhead_cli::filesystem::diagnose_workspace(initialized(workspace.path()))
         .expect("diagnose failed");
     let relevant: Vec<_> = diagnosis.findings.iter().collect();
     assert!(relevant.is_empty(), "unexpected findings: {:?}", relevant);
     assert_eq!(diagnosis.checked_actions, 1);
+}
+
+/// The root objective `clearhead init` writes, aliased `test`.
+fn write_root_objective(root: &Path) {
+    let objectives = root.join(".clearhead/objectives");
+    fs::create_dir_all(&objectives).expect("failed to create objectives");
+    fs::write(
+        objectives.join("README.md"),
+        "---\nid: 01951111-0000-7000-0000-0000000000b0\nalias: test\n---\n# Test\n",
+    )
+    .expect("failed to write objective");
+}
+
+#[test]
+fn doctor_warns_about_a_live_charter_that_names_no_objective() {
+    let workspace = make_workspace(&[
+        (
+            "README.md",
+            "---\nid: 01951111-0000-7000-0000-000000000012\nalias: test\nstate: Active\nobjectives: [test]\n---\n# Test\n",
+        ),
+        ("next.actions", ""),
+        (
+            "aimless.md",
+            "---\nid: 01951111-0000-7000-0000-000000000011\nalias: aimless\nstate: Active\n---\n# Aimless\n",
+        ),
+        (
+            "finished.md",
+            "---\nid: 01951111-0000-7000-0000-000000000013\nalias: finished\nstate: Closed\n---\n# Finished\n",
+        ),
+    ]);
+    write_root_objective(workspace.path());
+
+    let diagnosis = clearhead_cli::filesystem::diagnose_workspace(initialized(workspace.path()))
+        .expect("diagnose failed");
+    let flagged: Vec<_> = diagnosis
+        .findings
+        .iter()
+        .filter(|f| f.code == "charter-without-objective")
+        .map(|f| f.message.as_str())
+        .collect();
+    assert_eq!(
+        flagged.len(),
+        1,
+        "only the live charter is flagged: {flagged:?}"
+    );
+    assert!(flagged[0].contains("'aimless'"), "{}", flagged[0]);
 }
 
 #[test]

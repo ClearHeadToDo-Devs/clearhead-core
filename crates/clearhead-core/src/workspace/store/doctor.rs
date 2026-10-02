@@ -149,6 +149,7 @@ pub fn diagnose(read: &WorkspaceRead, evidence: &DoctorEvidence) -> Diagnosis {
     check_duplicate_uuids(charters, &completed, &mut findings);
     check_dangling_predecessors(charters, &completed, &archived, &mut findings);
     check_charter_alias_collisions(charters, &mut findings);
+    check_charters_name_objectives(charters, &mut findings);
     check_open_actions_under_unresolved_parents(charters, &mut findings);
     findings.extend(state_coherence_findings(charters));
     let known_action_ids = collect_known_action_ids(charters, &completed);
@@ -530,6 +531,38 @@ fn check_dangling_predecessors(
 }
 
 /// Two charters claiming the same alias — resolution becomes last-writer-wins.
+/// A plan without an objective is not yet a plan (platform Decision 43): report
+/// every live charter that names none. Reported, never refused, and only by
+/// doctor, so ordinary commands stay quiet. Closed and cancelled charters are
+/// finished and need none.
+fn check_charters_name_objectives(charters: &[MarkdownCharter], findings: &mut Vec<Finding>) {
+    for charter in charters {
+        if matches!(
+            charter.state,
+            Some(CharterState::Closed | CharterState::Cancelled)
+        ) || charter
+            .objectives
+            .as_ref()
+            .is_some_and(|objectives| !objectives.is_empty())
+        {
+            continue;
+        }
+        let path = charter
+            .md_file
+            .clone()
+            .or_else(|| charter.actions_file.clone())
+            .unwrap_or_else(|| PathBuf::from("<unknown>"));
+        findings.push(Finding::warning(
+            "charter-without-objective",
+            path,
+            format!(
+                "charter '{}' names no objective; add `objectives: [<alias>]` naming a file in objectives/",
+                charter.alias.as_deref().unwrap_or(&charter.title)
+            ),
+        ));
+    }
+}
+
 fn check_charter_alias_collisions(charters: &[MarkdownCharter], findings: &mut Vec<Finding>) {
     let mut by_alias: HashMap<&str, Vec<&MarkdownCharter>> = HashMap::new();
     for charter in charters {

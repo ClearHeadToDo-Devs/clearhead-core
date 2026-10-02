@@ -20,7 +20,7 @@ use crate::workspace::calendar::ics::parse_ics;
 use crate::workspace::charter::{
     CharterIdSource, MarkdownCharter, frontmatter_has_parent_key, implicit_charter, parse_charter,
 };
-use crate::workspace::objective::parse_objective;
+use crate::workspace::objective::{objective_file_name, parse_objective};
 use crate::workspace::resource::{
     MountId, MountInventory, MountReadEvidence, WorkspaceMounts, WorkspacePath,
 };
@@ -463,11 +463,11 @@ fn assemble_objectives(
                 continue;
             }
         };
-        let stem = path
-            .file_stem()
-            .and_then(|stem| stem.to_str())
+        let relative = path
+            .to_str()
+            .and_then(|path| path.strip_prefix("objectives/"))
             .unwrap_or_default();
-        match parse_objective(content, stem) {
+        match parse_objective(content, objective_file_name(relative)) {
             Ok(objective) => objectives.push(objective),
             Err(error) => findings.push(Finding::violation(
                 "unparseable-file",

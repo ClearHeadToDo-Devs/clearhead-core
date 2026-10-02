@@ -9,6 +9,7 @@ use uuid::Uuid;
 
 use super::charter::{charter_frontmatter_id, format_charter, implicit_charter};
 use super::manifest::{WorkspaceManifest, parse_workspace_manifest, render_workspace_manifest};
+use super::objective::format_new_objective;
 use super::resource::{
     Effect, EffectBatch, ExpectedResource, ResourceLocation, ResourcePrecondition,
     ResourceSnapshot, WorkspacePath,
@@ -21,6 +22,7 @@ pub const MANIFEST_PATH: &str = "workspace.json";
 pub const ROOT_README_PATH: &str = "charters/README.md";
 pub const ROOT_ACTIONS_PATH: &str = "charters/next.actions";
 pub const ROOT_SIDECAR_PATH: &str = "charters/.next.json";
+pub const ROOT_OBJECTIVE_PATH: &str = "objectives/README.md";
 
 /// The bootstrap resources as the host found them; `None` means absent.
 #[derive(Clone, Debug, Default)]
@@ -29,6 +31,7 @@ pub struct InitSnapshot {
     pub readme: Option<ResourceSnapshot>,
     pub root_actions: Option<ResourceSnapshot>,
     pub sidecar: Option<ResourceSnapshot>,
+    pub root_objective: Option<ResourceSnapshot>,
 }
 
 /// Host-supplied values, so planning stays deterministic.
@@ -40,6 +43,8 @@ pub struct InitRequest {
     pub workspace_id: Uuid,
     /// Used only when neither root anchor carries an id.
     pub root_id: Uuid,
+    /// Used only when `objectives/README.md` is absent.
+    pub root_objective_id: Uuid,
     /// `created_at` date for a new manifest.
     pub created_at: String,
 }
@@ -72,6 +77,8 @@ pub struct InitPlan {
     /// False when the workspace already had a `workspace_id`.
     pub minted_workspace: bool,
     pub root_id: RootId,
+    /// True when this plan writes `objectives/README.md`.
+    pub created_root_objective: bool,
 }
 
 /// README frontmatter is authoritative, the sidecar mirrors it, and an id is
@@ -147,11 +154,23 @@ pub fn plan_workspace_init(
     let sidecar_id = sidecar.charter.as_ref().and_then(|charter| charter.id);
     let root_id = resolve_root_id(readme_id, sidecar_id, request.root_id);
 
+    // The root objective (specifications/objectives.md): created when
+    // missing, and named by the root charter only when that charter is new
+    // too, since init never edits an existing document.
+    let created_root_objective = snapshot.root_objective.is_none();
+    if created_root_objective {
+        effects.push(write(
+            ROOT_OBJECTIVE_PATH,
+            format_new_objective(request.root_objective_id, &name),
+        )?);
+    }
+
     if let RootId::Resolved(id) = root_id {
         if snapshot.readme.is_none() {
             let root = Charter {
                 id,
                 state: Some(CharterState::New),
+                objectives: Some(vec![name.clone()]),
                 ..implicit_charter(&name)
             };
             effects.push(write(ROOT_README_PATH, format_charter(&root))?);
@@ -166,6 +185,7 @@ pub fn plan_workspace_init(
         (ROOT_ACTIONS_PATH, &snapshot.root_actions),
         (ROOT_README_PATH, &snapshot.readme),
         (ROOT_SIDECAR_PATH, &snapshot.sidecar),
+        (ROOT_OBJECTIVE_PATH, &snapshot.root_objective),
     ]
     .into_iter()
     .map(|(path, found)| {
@@ -187,6 +207,7 @@ pub fn plan_workspace_init(
         manifest,
         minted_workspace,
         root_id,
+        created_root_objective,
     })
 }
 
@@ -217,12 +238,14 @@ mod tests {
     const WORKSPACE: Uuid = Uuid::from_u128(1);
     const ROOT: Uuid = Uuid::from_u128(2);
     const OTHER: Uuid = Uuid::from_u128(3);
+    const OBJECTIVE: Uuid = Uuid::from_u128(4);
 
     fn request() -> InitRequest {
         InitRequest {
             name: "demo".into(),
             workspace_id: WORKSPACE,
             root_id: ROOT,
+            root_objective_id: OBJECTIVE,
             created_at: "2026-09-15".into(),
         }
     }
@@ -288,8 +311,22 @@ mod tests {
                 ROOT_SIDECAR_PATH,
                 ROOT_README_PATH,
                 ROOT_ACTIONS_PATH,
+                ROOT_OBJECTIVE_PATH,
                 MANIFEST_PATH
             ]
+        );
+        assert!(plan.created_root_objective);
+        let objective =
+            crate::workspace::parse_objective(&writes[ROOT_OBJECTIVE_PATH], None).unwrap();
+        assert_eq!(
+            (objective.id, objective.alias.as_deref()),
+            (OBJECTIVE, Some("demo"))
+        );
+        let root = crate::workspace::parse_charter(&writes[ROOT_README_PATH]).unwrap();
+        assert_eq!(
+            root.objectives,
+            Some(vec!["demo".to_string()]),
+            "the new root charter names the new root objective"
         );
         assert!(plan.minted_workspace);
         assert_eq!(plan.root_id, RootId::Resolved(ROOT));
@@ -309,6 +346,30 @@ mod tests {
     }
 
     #[test]
+    fn an_existing_root_charter_gets_a_root_objective_but_is_not_edited() {
+        let first = plan_workspace_init(&InitSnapshot::default(), &request()).unwrap();
+        let first = writes(&first);
+        let snapshot = InitSnapshot {
+            manifest: found(MANIFEST_PATH, &first[MANIFEST_PATH]),
+            readme: found(
+                ROOT_README_PATH,
+                &format!("---\nid: {ROOT}\nalias: demo\n---\n# Demo\n"),
+            ),
+            root_actions: found(ROOT_ACTIONS_PATH, ""),
+            sidecar: found(ROOT_SIDECAR_PATH, &first[ROOT_SIDECAR_PATH]),
+            root_objective: None,
+        };
+
+        let plan = plan_workspace_init(&snapshot, &request()).unwrap();
+
+        assert_eq!(
+            writes(&plan).keys().copied().collect::<Vec<_>>(),
+            [ROOT_OBJECTIVE_PATH]
+        );
+        assert!(plan.created_root_objective);
+    }
+
+    #[test]
     fn complete_workspace_plans_no_writes_and_mints_nothing() {
         let first = plan_workspace_init(&InitSnapshot::default(), &request()).unwrap();
         let first = writes(&first);
@@ -317,10 +378,12 @@ mod tests {
             readme: found(ROOT_README_PATH, &first[ROOT_README_PATH]),
             root_actions: found(ROOT_ACTIONS_PATH, ""),
             sidecar: found(ROOT_SIDECAR_PATH, &first[ROOT_SIDECAR_PATH]),
+            root_objective: found(ROOT_OBJECTIVE_PATH, &first[ROOT_OBJECTIVE_PATH]),
         };
         let fresh_ids = InitRequest {
             workspace_id: OTHER,
             root_id: OTHER,
+            root_objective_id: OTHER,
             ..request()
         };
 

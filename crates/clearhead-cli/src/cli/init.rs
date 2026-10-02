@@ -55,6 +55,7 @@ pub fn run(
         name: default_name,
         workspace_id: uuid::Uuid::now_v7(),
         root_id: uuid::Uuid::now_v7(),
+        root_objective_id: uuid::Uuid::now_v7(),
         created_at: chrono::Local::now().format("%Y-%m-%d").to_string(),
     };
     let plan = clearhead_cli::filesystem::init_workspace(&root, &request)
@@ -139,6 +140,14 @@ fn report(plan: &InitPlan) {
                 name
             );
         }
+    }
+    if plan.created_root_objective && !wrote_readme {
+        // init never edits an existing root charter (specifications/objectives.md,
+        // The Root Objective), so the link is the person's to add.
+        println!(
+            "Created the root objective '{name}'. The existing root charter does not name it yet: \
+             add `objectives: [{name}]` to charters/README.md, and describe the objective in objectives/README.md."
+        );
     }
     match plan.root_id {
         RootId::Resolved(_) => {}

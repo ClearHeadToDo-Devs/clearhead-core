@@ -15,14 +15,18 @@ fn doctor_fix_previews_then_prunes_orphaned_sidecar_state() {
     env.write_actions("inbox.actions", &format!("[ ] Live #{live}\n"));
     env.write_text(
         "charters/inbox.md",
-        "---\nid: 019e0000-0000-7000-8000-000000000013\nalias: inbox\nstate: Active\n---\n# Inbox\n",
+        "---\nid: 019e0000-0000-7000-8000-000000000013\nalias: inbox\nstate: Active\nobjectives: [test]\n---\n# Inbox\n",
     );
     // Engagement requires every ancestor Charter to be Active
     // (specifications/charters.md); declare the root Active too, or
     // `inbox`'s Active state would still be inadmissible beneath it.
     env.write_text(
         "charters/README.md",
-        "---\nid: 019e0000-0000-7000-8000-000000000014\nalias: test\nstate: Active\n---\n# Test\n",
+        "---\nid: 019e0000-0000-7000-8000-000000000014\nalias: test\nstate: Active\nobjectives: [test]\n---\n# Test\n",
+    );
+    env.write_text(
+        "objectives/README.md",
+        "---\nid: 019e0000-0000-7000-8000-0000000000b0\nalias: test\n---\n# Test\n",
     );
     env.write_text(
         "charters/.inbox.json",
@@ -70,7 +74,11 @@ fn doctor_fix_previews_then_removes_an_unowned_calendar_collection() {
     // health; declare it Active since that's orthogonal to this test.
     env.write_text(
         "charters/README.md",
-        "---\nid: 019e0000-0000-7000-8000-000000000013\nalias: test\nstate: Active\n---\n# Test\n",
+        "---\nid: 019e0000-0000-7000-8000-000000000013\nalias: test\nstate: Active\nobjectives: [test]\n---\n# Test\n",
+    );
+    env.write_text(
+        "objectives/README.md",
+        "---\nid: 019e0000-0000-7000-8000-0000000000b0\nalias: test\n---\n# Test\n",
     );
     let collection = env.data_dir.join("plans/surprise");
     fs::create_dir_all(&collection).unwrap();

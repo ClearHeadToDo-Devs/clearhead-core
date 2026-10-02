@@ -80,7 +80,7 @@ pub use mutate_actions::{
     PreparedUpdateOutcome, SidecarResourceState, plan_action_insert, prepare_action_delete,
     prepare_action_insert, prepare_action_update,
 };
-pub use objective::parse_objective;
+pub use objective::{objective_file_name, parse_objective};
 pub use resource::{
     DeliveryError, Effect, EffectBatch, EffectBatchError, ExpectedResource, MountId,
     MountInventory, MountReadEvidence, ReadPlan, ResourceConflict, ResourceLocation,

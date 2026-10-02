@@ -4,7 +4,7 @@
 use std::path::Path;
 
 use clearhead_core::workspace::init::{
-    MANIFEST_PATH, ROOT_ACTIONS_PATH, ROOT_README_PATH, ROOT_SIDECAR_PATH,
+    MANIFEST_PATH, ROOT_ACTIONS_PATH, ROOT_OBJECTIVE_PATH, ROOT_README_PATH, ROOT_SIDECAR_PATH,
 };
 use clearhead_core::workspace::resource::ExpectedResource;
 use clearhead_core::workspace::{InitPlan, InitRequest, InitSnapshot, plan_workspace_init};
@@ -26,6 +26,7 @@ pub fn init_workspace(root: &Path, request: &InitRequest) -> Result<InitPlan, Wo
         readme: read(ROOT_README_PATH)?,
         root_actions: read(ROOT_ACTIONS_PATH)?,
         sidecar: read(ROOT_SIDECAR_PATH)?,
+        root_objective: read(ROOT_OBJECTIVE_PATH)?,
     };
     let plan = plan_workspace_init(&found, request)?;
     deliver(&mounts, &plan.batch)?;

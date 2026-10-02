@@ -78,6 +78,19 @@ fn fresh_init_charter_calendar_sync_stamps_into_the_real_charter() {
         .args(["add", "charter", "Dogfood Operations", "--alias", "dogfood"])
         .assert()
         .success();
+    // Every live charter names an objective (specifications/objectives.md);
+    // the CLI has no flag for it yet, so link the root objective init wrote.
+    let dogfood = env.work_dir.join(".clearhead/charters/dogfood.md");
+    let document = fs::read_to_string(&dogfood).unwrap();
+    fs::write(
+        &dogfood,
+        document.replacen(
+            "alias: dogfood\n",
+            "alias: dogfood\nobjectives: [work]\n",
+            1,
+        ),
+    )
+    .unwrap();
 
     let anchor = (Local::now() + chrono::Duration::minutes(1)).to_rfc3339();
     env.command()

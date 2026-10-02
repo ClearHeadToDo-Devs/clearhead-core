@@ -42,6 +42,7 @@ fn project_and_user_init_produce_the_same_root_shape() {
             "charters/.next.json",
             "charters/README.md",
             "charters/next.actions",
+            "objectives/README.md",
             "workspace.json"
         ]
     );
@@ -153,7 +154,7 @@ fn persisted_name_survives_renaming_the_project_directory() {
         .args(["show", "charter", "alpha"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("alias  alpha"));
+        .stdout(predicate::str::is_match(r"alias\s+alpha").unwrap());
 }
 
 #[test]
