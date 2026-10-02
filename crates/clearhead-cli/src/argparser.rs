@@ -288,6 +288,12 @@ pub enum Verb {
     /// Bounded snapshot: active charters, the unscheduled queue, blockers, and recent completions
     Orient,
 
+    /// Print where each id is stored (file and line), as JSON: ids as arguments or one per line on stdin
+    Locate {
+        /// Full UUIDs, bare or as urn:uuid: IRIs; read from stdin when none are given
+        ids: Vec<String>,
+    },
+
     /// Check workspace coherence: exits 0 clean, 1 warnings, 2 violations
     Doctor {
         /// Emit the diagnosis as JSON for scripting

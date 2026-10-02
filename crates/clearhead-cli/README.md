@@ -116,6 +116,19 @@ clearhead query index agenda
 clearhead query tree
 ```
 
+### Locating results
+
+The graph says what the work is, not where it is stored, so query results
+carry identities and `locate` answers where each one lives: the absolute file
+and 1-based line, one JSON array in input order, across every configured
+workspace. Pipe any `--format ids` output in, or pass ids as arguments; an
+unknown id gets a null location and a warning on stderr.
+
+```bash
+clearhead query index agenda --format ids | clearhead locate
+clearhead locate urn:uuid:01a0faa1-ca17-72a9-8a6b-f05b6bd6dbd3
+```
+
 ## Governed work selection
 
 `clearhead query index unscheduled` is the trusted next-work view; `agenda`

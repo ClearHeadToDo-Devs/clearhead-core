@@ -63,7 +63,7 @@ pub fn assemble_dataset(ctx: &CommandContext) -> anyhow::Result<Vec<Quad>> {
 /// Assemble the host evidence for Core's pure workspace-snapshot projection:
 /// workspace identity plus per-charter / per-action source locations, with
 /// paths canonicalized here at the filesystem boundary.
-fn workspace_snapshot(workspace: &Workspace) -> WorkspaceSnapshot {
+pub(crate) fn workspace_snapshot(workspace: &Workspace) -> WorkspaceSnapshot {
     let root = workspace
         .root
         .canonicalize()

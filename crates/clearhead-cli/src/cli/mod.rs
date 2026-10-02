@@ -5,6 +5,7 @@ pub mod doctor;
 pub mod export;
 pub mod file;
 pub mod init;
+pub mod locate;
 pub mod orient;
 pub mod plan;
 pub mod query;
@@ -985,6 +986,7 @@ fn dispatch(cli: &argparser::Cli, ctx: &CommandContext) -> anyhow::Result<()> {
         },
         Verb::Debug => debug::run(ctx),
         Verb::Orient => orient::run(ctx),
+        Verb::Locate { ids } => locate::run(ctx, ids),
         Verb::Doctor { json, fix, dry_run } => doctor::run(ctx, *json, *fix, *dry_run),
         Verb::Completion { shell } => {
             use clap::CommandFactory;
