@@ -85,6 +85,16 @@ pub struct Objective {
     pub metrics: Option<Vec<Metric>>,
 }
 
+impl Objective {
+    /// Whether `reference` (an entry of a charter's `objectives`) names this
+    /// objective: its alias, full UUID, or a short prefix of at least four hex
+    /// digits, per the reference-syntax spec. Titles are never matched.
+    pub fn is_named_by(&self, reference: &str) -> bool {
+        crate::reference::match_entity_reference(self.id, self.alias.as_deref(), reference)
+            .is_some()
+    }
+}
+
 /// Recurrence rule per RFC 5545 RRULE specification.
 ///
 /// Used by [`Plan`] to prescribe multiple [`Action`]s.
@@ -778,6 +788,17 @@ impl DomainModel {
     /// Construct an empty model.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// The objectives `charter` names, in the order it names them. A
+    /// reference that names no objective is skipped (the loader reports it).
+    pub fn objectives_of(&self, charter: &Charter) -> Vec<&Objective> {
+        charter
+            .objectives
+            .iter()
+            .flatten()
+            .filter_map(|reference| self.objectives.iter().find(|o| o.is_named_by(reference)))
+            .collect()
     }
 
     /// Flatten all plans across all charters.

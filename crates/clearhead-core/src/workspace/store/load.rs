@@ -35,6 +35,9 @@ pub struct Workspace {
     /// takes it as an argument so it stays free of the clock and RNG (I1).
     ephemeral_id: String,
     pub charters: Vec<MarkdownCharter>,
+    /// Objectives from `objectives/`; empty unless the host attaches them
+    /// with [`with_objectives`](Self::with_objectives).
+    pub objectives: Vec<crate::domain::Objective>,
 }
 
 impl Workspace {
@@ -53,7 +56,14 @@ impl Workspace {
             name,
             ephemeral_id,
             charters,
+            objectives: vec![],
         }
+    }
+
+    /// Attach the objectives an assembled read produced.
+    pub fn with_objectives(mut self, objectives: Vec<crate::domain::Objective>) -> Self {
+        self.objectives = objectives;
+        self
     }
 
     /// The workspace's graph id: its durable [`id`](Self::id) when persisted,
@@ -95,7 +105,7 @@ impl From<Workspace> for DomainModel {
         // unioned in here. So the lowering is a straight per-charter flatten.
         let charters = ws.charters.into_iter().map(Charter::from).collect();
         DomainModel {
-            objectives: vec![],
+            objectives: ws.objectives,
             charters,
         }
     }
@@ -105,6 +115,7 @@ impl From<Workspace> for DomainModel {
 /// a [`Finding`] for everything that didn't (or loaded with issues).
 pub struct WorkspaceRead {
     pub charters: Vec<MarkdownCharter>,
+    pub objectives: Vec<crate::domain::Objective>,
     pub findings: Vec<Finding>,
 }
 

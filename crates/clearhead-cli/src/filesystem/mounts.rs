@@ -181,11 +181,16 @@ pub fn read_workspace(workspace_root: &Path) -> Result<WorkspaceRead, WorkspaceE
 
 /// Native load: inventory, read, and surface findings as warnings.
 pub fn load_workspace(workspace_root: &Path) -> Result<Vec<MarkdownCharter>, WorkspaceError> {
+    Ok(read_and_report(workspace_root)?.charters)
+}
+
+/// Assemble the workspace and print its findings as warnings.
+fn read_and_report(workspace_root: &Path) -> Result<WorkspaceRead, WorkspaceError> {
     let read = assemble_native(workspace_root)?;
     for finding in &read.findings {
         eprintln!("warning: [{}] {}", finding.path.display(), finding.message);
     }
-    Ok(read.charters)
+    Ok(read)
 }
 
 /// Discover active `.actions` resources and map them to native paths.
@@ -207,8 +212,7 @@ pub fn list_action_files(workspace_root: &Path) -> Result<Vec<PathBuf>, Workspac
 }
 
 pub fn load_domain_model(workspace_root: &Path) -> Result<DomainModel, WorkspaceError> {
-    let charters = load_workspace(workspace_root)?;
-    Ok(load_workspace_envelope(workspace_root, charters).into())
+    Ok(load_workspace_model(workspace_root)?.into())
 }
 
 pub fn load_workspace_envelope(workspace_root: &Path, charters: Vec<MarkdownCharter>) -> Workspace {
@@ -223,8 +227,8 @@ pub fn load_workspace_envelope(workspace_root: &Path, charters: Vec<MarkdownChar
 }
 
 pub fn load_workspace_model(workspace_root: &Path) -> Result<Workspace, WorkspaceError> {
-    let charters = load_workspace(workspace_root)?;
-    Ok(load_workspace_envelope(workspace_root, charters))
+    let read = read_and_report(workspace_root)?;
+    Ok(load_workspace_envelope(workspace_root, read.charters).with_objectives(read.objectives))
 }
 
 fn assemble_native(workspace_root: &Path) -> Result<WorkspaceRead, WorkspaceError> {

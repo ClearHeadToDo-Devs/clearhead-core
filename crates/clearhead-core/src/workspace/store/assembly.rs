@@ -12,7 +12,7 @@ use super::pathing::{
     charter_collection_from_anchor, document_anchor_for_actions, infer_charter_name_for_workspace,
     infer_parent_charter_name_for_workspace,
 };
-use crate::domain::{Charter, DomainModel};
+use crate::domain::{Charter, DomainModel, Objective};
 use crate::workspace::actions::TrustedDocument;
 use crate::workspace::actions::convert::from_actions_with_charter;
 use crate::workspace::actions::repository::SourcedAction;
@@ -20,6 +20,7 @@ use crate::workspace::calendar::ics::parse_ics;
 use crate::workspace::charter::{
     CharterIdSource, MarkdownCharter, frontmatter_has_parent_key, implicit_charter, parse_charter,
 };
+use crate::workspace::objective::parse_objective;
 use crate::workspace::resource::{
     MountId, MountInventory, MountReadEvidence, WorkspaceMounts, WorkspacePath,
 };
@@ -405,13 +406,83 @@ pub fn assemble_workspace(input: &WorkspaceAssemblyInput) -> Result<WorkspaceRea
     attach_plans(input, &mut charters, &mut findings)?;
     let mut charters: Vec<_> = charters.into_values().collect();
     resolve_predecessor_aliases(&mut charters);
-    Ok(WorkspaceRead { charters, findings })
+    let objectives = assemble_objectives(input, &mut findings);
+    for charter in &charters {
+        for reference in charter.objectives.iter().flatten() {
+            if !objectives
+                .iter()
+                .any(|objective| objective.is_named_by(reference))
+            {
+                findings.push(Finding::warning(
+                    "unresolvable-objective",
+                    charter.md_file.clone().unwrap_or_else(|| PathBuf::from("<unknown>")),
+                    format!(
+                        "charter '{}' names objective '{reference}', which no file in objectives/ declares as its alias or id",
+                        charter.alias.as_deref().unwrap_or(&charter.title)
+                    ),
+                ));
+            }
+        }
+    }
+    Ok(WorkspaceRead {
+        charters,
+        objectives,
+        findings,
+    })
+}
+
+/// Parse every objective under `objectives/`. A file that fails to parse,
+/// including one with no id, is a finding and is skipped. Finding paths keep
+/// the `objectives/` prefix so they cannot be mistaken for charter files.
+fn assemble_objectives(
+    input: &WorkspaceAssemblyInput,
+    findings: &mut Vec<Finding>,
+) -> Vec<Objective> {
+    let paths = input
+        .workspace_files()
+        .filter(|path| {
+            path.as_str()
+                .strip_prefix("objectives/")
+                .is_some_and(|relative| {
+                    relative.ends_with(".md") && !has_hidden_component(relative)
+                })
+        })
+        .map(|path| PathBuf::from(path.as_str()))
+        .collect::<Vec<_>>();
+    let mut objectives = Vec::new();
+    for path in paths {
+        let content = match input.workspace_text(&path) {
+            Ok(Some(content)) => content,
+            Ok(None) => continue,
+            Err(error) => {
+                findings.push(Finding::violation(
+                    "unreadable-file",
+                    &path,
+                    format!("could not decode file as UTF-8: {error}; file skipped"),
+                ));
+                continue;
+            }
+        };
+        let stem = path
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .unwrap_or_default();
+        match parse_objective(content, stem) {
+            Ok(objective) => objectives.push(objective),
+            Err(error) => findings.push(Finding::violation(
+                "unparseable-file",
+                &path,
+                format!("could not load objective: {error}; file skipped"),
+            )),
+        }
+    }
+    objectives
 }
 
 /// Lower a pure assembled read to the domain model.
 pub fn assembled_domain_model(read: WorkspaceRead) -> DomainModel {
     DomainModel {
-        objectives: vec![],
+        objectives: read.objectives,
         charters: read.charters.into_iter().map(Charter::from).collect(),
     }
 }
@@ -867,5 +938,73 @@ mod tests {
             .find(|charter| charter.parent.is_none())
             .unwrap();
         assert_eq!(root.state, None);
+    }
+
+    #[test]
+    fn objectives_are_assembled_and_an_id_less_one_is_a_finding() {
+        let read = assemble_workspace(&input(
+            "home",
+            &[
+                (
+                    "charters/README.md",
+                    "---\nalias: home\nobjectives: [eat-well]\n---\n# Home\n",
+                ),
+                (
+                    "objectives/eat-well.md",
+                    "---\nid: 01a0fb10-0000-7000-8000-0000000000b0\n---\n# Eat well\n",
+                ),
+                ("objectives/no-id.md", "# Daydream\n"),
+                ("objectives/.hidden/skipped.md", "not an objective"),
+            ],
+            None,
+            &[],
+        ))
+        .unwrap();
+
+        assert_eq!(read.objectives.len(), 1);
+        assert_eq!(read.objectives[0].alias.as_deref(), Some("eat-well"));
+        let finding = read
+            .findings
+            .iter()
+            .find(|finding| finding.path == Path::new("objectives/no-id.md"))
+            .expect("an id-less objective is reported");
+        assert!(finding.message.contains("no id"), "{}", finding.message);
+        assert!(
+            !read
+                .findings
+                .iter()
+                .any(|f| f.code == "unresolvable-objective"),
+            "eat-well resolves by its file stem"
+        );
+        let model = assembled_domain_model(read);
+        let root = model.charters.iter().find(|c| c.is_root()).unwrap();
+        assert_eq!(
+            model.objectives_of(root)[0].alias.as_deref(),
+            Some("eat-well")
+        );
+    }
+
+    #[test]
+    fn a_charter_naming_a_missing_objective_is_a_finding() {
+        let read = assemble_workspace(&input(
+            "home",
+            &[(
+                "charters/README.md",
+                "---\nalias: home\nobjectives: [Eat well]\n---\n# Home\n",
+            )],
+            None,
+            &[],
+        ))
+        .unwrap();
+        let finding = read
+            .findings
+            .iter()
+            .find(|f| f.code == "unresolvable-objective")
+            .expect("unknown objective reported");
+        assert!(
+            finding.message.contains("'Eat well'"),
+            "{}",
+            finding.message
+        );
     }
 }

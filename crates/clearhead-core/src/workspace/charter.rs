@@ -565,7 +565,7 @@ pub(crate) fn frontmatter_has_parent_key(content: &str) -> bool {
 ///
 /// The title is the H1 only when it opens the body. Without one (the title
 /// may come from frontmatter instead), the whole body is the description.
-fn extract_title_and_description(body: &str) -> (Option<String>, Option<String>) {
+pub(super) fn extract_title_and_description(body: &str) -> (Option<String>, Option<String>) {
     let title = markdown::headings(body)
         .into_iter()
         .next()

@@ -307,6 +307,10 @@ pub fn plan_workspace_read(
                 || relative.ends_with(".md")
                 || (filename.starts_with('.') && relative.ends_with(".json"));
         }
+        if let Some(relative) = path.strip_prefix("objectives/") {
+            return relative.ends_with(".md")
+                && !relative.split('/').any(|part| part.starts_with('.'));
+        }
         path.strip_prefix("plans/").is_some_and(|relative| {
             relative.ends_with(".ics") && !relative.split('/').any(|part| part.starts_with('.'))
         })
@@ -580,6 +584,27 @@ mod tests {
             plan.external_plans.unwrap().paths(),
             std::slice::from_ref(&external_path)
         );
+    }
+
+    #[test]
+    fn objective_documents_are_read_and_hidden_ones_are_not() {
+        let files = [
+            "objectives/eat-well.md",
+            "objectives/.drafts/idea.md",
+            "objectives/notes.txt",
+        ];
+        let inventory = WorkspaceMounts {
+            workspace: MountInventory {
+                files: WorkspaceInventory::new(
+                    files.map(|file| (path(file), ResourceRevision::new(file))),
+                ),
+                collections: BTreeSet::new(),
+            },
+            external_plans: None,
+        };
+
+        let plan = plan_workspace_read(&inventory);
+        assert_eq!(plan.workspace.paths(), &[path("objectives/eat-well.md")]);
     }
 
     #[test]
