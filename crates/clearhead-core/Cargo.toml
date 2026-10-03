@@ -47,7 +47,7 @@ tree-sitter = "0.26.3"
 # without a sibling tree-sitter-actions checkout. The pinned platform composition
 # and local sibling development override this to the adjacent path via the
 # platform `.cargo/config.toml` `[patch]` table; see the README.
-tree-sitter-actions = { git = "https://github.com/ClearHeadToDo-Devs/tree-sitter-actions.git", rev = "11118987f389df251175d641cc651c89c089674b", version = "0.10.0" }
+tree-sitter-actions = { git = "https://github.com/ClearHeadToDo-Devs/tree-sitter-actions.git", rev = "adfbc3404325ecf740ab624e5d719a3ad814cb0d", version = "0.10.0" }
 pulldown-cmark = { version = "0.13.4", default-features = false }
 regex = { version = "1.13.1", default-features = false, features = ["std", "unicode-perl"] }
 

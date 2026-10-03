@@ -778,7 +778,6 @@ fn dispatch(cli: &argparser::Cli, ctx: &CommandContext) -> anyhow::Result<()> {
                 predecessor,
                 sequential,
                 scheduled_at,
-                duration,
                 dry_run,
             } => action::add_action(
                 ctx,
@@ -794,7 +793,6 @@ fn dispatch(cli: &argparser::Cli, ctx: &CommandContext) -> anyhow::Result<()> {
                 predecessor,
                 *sequential,
                 scheduled_at,
-                *duration,
                 *dry_run,
             ),
             argparser::AddTarget::Charter {
@@ -820,7 +818,6 @@ fn dispatch(cli: &argparser::Cli, ctx: &CommandContext) -> anyhow::Result<()> {
                 priority,
                 state,
                 scheduled_at,
-                duration,
                 description,
                 append_description,
                 context,
@@ -836,7 +833,6 @@ fn dispatch(cli: &argparser::Cli, ctx: &CommandContext) -> anyhow::Result<()> {
                 *priority,
                 *state,
                 scheduled_at,
-                duration,
                 description,
                 append_description,
                 context,

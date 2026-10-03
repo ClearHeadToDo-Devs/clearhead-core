@@ -37,7 +37,6 @@ pub fn add_action(
     predecessor: &[String],
     sequential: bool,
     scheduled_at: &Option<String>,
-    duration: Option<u32>,
     dry_run: bool,
 ) -> anyhow::Result<()> {
     let (actions_path, target_charter) = resolve_acts_target(ctx, charter, file)?;
@@ -55,14 +54,7 @@ pub fn add_action(
         })
         .transpose()?;
 
-    let new_scheduled = scheduled_at
-        .as_deref()
-        .map(|s| {
-            chrono::DateTime::parse_from_rfc3339(s)
-                .map(|dt| dt.with_timezone(&Local))
-                .map_err(|e| anyhow::anyhow!("Invalid --scheduled-at '{}': {}", s, e))
-        })
-        .transpose()?;
+    let new_planned = parse_planned(scheduled_at)?;
 
     let action = Action {
         name: name.to_string(),
@@ -81,8 +73,7 @@ pub fn add_action(
             Some(predecessor_refs(predecessor))
         },
         is_sequential: if sequential { Some(true) } else { None },
-        scheduled_at: new_scheduled,
-        duration,
+        planned: new_planned,
         created_at: Some(Local::now()),
         ..Default::default()
     };
@@ -363,6 +354,19 @@ fn try_close_occurrence(
     Ok(true)
 }
 
+/// Parse `--scheduled-at` as `@` reads it: a start, or a `start/end` block.
+fn parse_planned(
+    scheduled_at: &Option<String>,
+) -> anyhow::Result<Option<clearhead_core::domain::time::Planned>> {
+    scheduled_at
+        .as_deref()
+        .map(|s| {
+            s.parse()
+                .map_err(|e| anyhow::anyhow!("Invalid --scheduled-at '{}': {}", s, e))
+        })
+        .transpose()
+}
+
 /// Reschedule a *projected* recurring occurrence by writing a `RECURRENCE-ID`
 /// override with a new time — the update-path sibling of [`try_close_occurrence`].
 /// A projected occurrence has no line to text-edit, so only reschedule is
@@ -442,7 +446,6 @@ pub fn update_action(
     priority: Option<u32>,
     state: Option<crate::argparser::ActionStateArg>,
     scheduled_at: &Option<String>,
-    duration: &Option<u32>,
     description: &Option<String>,
     append_description: &Option<String>,
     context: &[String],
@@ -452,14 +455,7 @@ pub fn update_action(
     file: &Option<PathBuf>,
     dry_run: bool,
 ) -> anyhow::Result<()> {
-    let new_scheduled = scheduled_at
-        .as_deref()
-        .map(|s| {
-            chrono::DateTime::parse_from_rfc3339(s)
-                .map(|dt| dt.with_timezone(&Local))
-                .map_err(|e| anyhow::anyhow!("Invalid --scheduled-at '{}': {}", s, e))
-        })
-        .transpose()?;
+    let new_planned = parse_planned(scheduled_at)?;
 
     let Some((actions_path, mut open_actions)) =
         find_and_load_open_actions(ctx, file, charter, query)?
@@ -469,13 +465,13 @@ pub fn update_action(
         let other_edits = name.is_some()
             || priority.is_some()
             || state.is_some()
-            || duration.is_some()
             || description.is_some()
             || append_description.is_some()
             || !context.is_empty()
             || !predecessor.is_empty()
             || sequential;
-        if try_reschedule_occurrence(ctx, query, new_scheduled, other_edits, dry_run)? {
+        let new_start = clearhead_core::domain::time::planned_start(new_planned.as_ref());
+        if try_reschedule_occurrence(ctx, query, new_start, other_edits, dry_run)? {
             return Ok(());
         }
         return Err(verb_target_error(ctx, query)?.into());
@@ -511,8 +507,7 @@ pub fn update_action(
             Some(predecessor_refs(predecessor))
         },
         is_sequential: if sequential { Some(true) } else { None },
-        scheduled_at: new_scheduled,
-        duration: *duration,
+        planned: new_planned,
         ..Default::default()
     };
 
@@ -1474,12 +1469,13 @@ fn print_acts_table(ws_actions: &[(Option<&str>, &Action)], multi_ws: bool) {
         let short_id = &short_ids[&action.id];
         let state = format!("{:?}", action.state);
         let scheduled = action
-            .scheduled_at
-            .map(|dt| dt.format("%Y-%m-%d %H:%M").to_string())
+            .planned
+            .map(|p| p.start.at.format("%Y-%m-%d %H:%M").to_string())
             .unwrap_or_else(|| "—".to_string());
         let duration = action
-            .duration
-            .map(|d| format!("{}m", d))
+            .planned
+            .and_then(|p| p.duration())
+            .map(|d| format!("{}m", d.num_minutes()))
             .unwrap_or_else(|| "—".to_string());
 
         let mut row = vec![

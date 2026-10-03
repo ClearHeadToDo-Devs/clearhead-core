@@ -69,8 +69,8 @@ pub struct ActionUpdateSet {
     pub context: Option<Vec<String>>,
     pub alias: Option<String>,
     pub state: Option<ActionState>,
+    /// The do-date as `@` takes it: a start, or `start/end` (Decision 51).
     pub scheduled_at: Option<String>,
-    pub duration: Option<u32>,
 }
 
 impl ActionUpdateSet {
@@ -82,20 +82,17 @@ impl ActionUpdateSet {
             && self.alias.is_none()
             && self.state.is_none()
             && self.scheduled_at.is_none()
-            && self.duration.is_none()
     }
 
-    /// Convert to a core [`ActionUpdate`], parsing the RFC 3339 `scheduled_at`.
+    /// Convert to a core [`ActionUpdate`], parsing `scheduled_at` as `@` reads it.
     fn into_action_update(self) -> Result<ActionUpdate, TransactionError> {
-        let scheduled_at = self
+        let planned = self
             .scheduled_at
             .as_deref()
             .map(|raw| {
-                DateTime::parse_from_rfc3339(raw)
-                    .map(|dt| dt.with_timezone(&Local))
-                    .map_err(|e| {
-                        TransactionError::Request(format!("invalid scheduled_at '{raw}': {e}"))
-                    })
+                raw.parse().map_err(|e| {
+                    TransactionError::Request(format!("invalid scheduled_at '{raw}': {e}"))
+                })
             })
             .transpose()?;
 
@@ -108,8 +105,7 @@ impl ActionUpdateSet {
             is_sequential: None,
             alias: self.alias,
             state: self.state,
-            scheduled_at,
-            duration: self.duration,
+            planned,
         })
     }
 }

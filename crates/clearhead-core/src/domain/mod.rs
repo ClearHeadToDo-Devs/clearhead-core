@@ -614,10 +614,8 @@ pub struct Action {
     pub priority: Option<u32>,
     /// Associated context tags (`+tag` in DSL).
     pub contexts: Option<Vec<String>>,
-    /// Scheduled do-date/time (`@datetime` in DSL).
-    pub scheduled_at: Option<DateTime<Local>>,
-    /// Expected duration in minutes (`D30` in DSL).
-    pub duration: Option<u32>,
+    /// Planned start or block (`@start` or `@start/end` in DSL, Decision 51).
+    pub planned: Option<time::Planned>,
     /// Due window (`:end` or `:start/end` in DSL, Decision 48).
     pub due_date: Option<time::Due>,
     /// Completion timestamp (`%datetime` in DSL).
@@ -651,8 +649,7 @@ impl Default for Action {
             description: None,
             priority: None,
             contexts: None,
-            scheduled_at: None,
-            duration: None,
+            planned: None,
             due_date: None,
             completed_at: None,
             created_at: None,

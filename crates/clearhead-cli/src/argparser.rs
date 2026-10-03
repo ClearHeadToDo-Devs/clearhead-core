@@ -542,13 +542,10 @@ pub enum AddTarget {
         #[arg(long)]
         sequential: bool,
 
-        /// Scheduled datetime (RFC 3339, e.g. "2026-04-28T09:00:00-07:00")
+        /// Do-date as `@` takes it: a start, or a start/end block
+        /// (e.g. "2026-04-28T09:00" or "2026-04-28T09:00/2026-04-28T09:30")
         #[arg(long)]
         scheduled_at: Option<String>,
-
-        /// Duration in minutes
-        #[arg(short, long)]
-        duration: Option<u32>,
 
         /// Preview what would be added without writing
         #[arg(long)]
@@ -627,13 +624,10 @@ pub enum UpdateTarget {
         #[arg(short, long, value_enum)]
         state: Option<ActionStateArg>,
 
-        /// New scheduled datetime (RFC 3339, e.g. "2026-04-01T09:00:00+00:00")
+        /// New do-date as `@` takes it: a start, or a start/end block
+        /// (e.g. "2026-04-01T09:00" or "2026-04-01T09:00/2026-04-01T09:30")
         #[arg(long)]
         scheduled_at: Option<String>,
-
-        /// New duration in minutes
-        #[arg(long)]
-        duration: Option<u32>,
 
         /// New description / note (replaces the existing `$ ... $` inline note)
         #[arg(long, conflicts_with = "append_description")]

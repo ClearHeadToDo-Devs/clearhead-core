@@ -9,7 +9,7 @@
 //! VTODO integration profile for linked one-off and recurring realizations.
 
 use crate::config::PlanComponentKind;
-use crate::domain::time::deadline;
+use crate::domain::time::{deadline, planned_start};
 use crate::domain::{Action, ActionState, Plan, Recurrence};
 use crate::workspace::store::WorkspaceError;
 use chrono::{DateTime, Local, NaiveDate, NaiveDateTime, TimeZone, Utc};
@@ -631,7 +631,7 @@ pub fn render_occurrence_action(
             upsert_event_override(&mut calendar, master_uid, occurrence_key, |event| {
                 if fields.scheduled_at {
                     event.remove_starts();
-                    if let Some(value) = action.scheduled_at {
+                    if let Some(value) = planned_start(action.planned.as_ref()) {
                         event.starts(value.with_timezone(&Utc));
                     }
                 }
@@ -647,7 +647,7 @@ pub fn render_occurrence_action(
             upsert_todo_override(&mut calendar, master_uid, occurrence_key, |todo| {
                 if fields.scheduled_at {
                     todo.remove_starts();
-                    if let Some(value) = action.scheduled_at {
+                    if let Some(value) = planned_start(action.planned.as_ref()) {
                         todo.starts(value.with_timezone(&Utc));
                     }
                 }
@@ -1241,7 +1241,7 @@ pub fn action_to_vtodo(action: &Action) -> Todo {
     if action.state == ActionState::BlockedOrAwaiting {
         todo.add_property("X-CLEARHEAD-STATUS", "blocked");
     }
-    if let Some(scheduled_at) = action.scheduled_at {
+    if let Some(scheduled_at) = planned_start(action.planned.as_ref()) {
         todo.starts(scheduled_at.with_timezone(&Utc));
     }
     if let Some(due_date) = deadline(action.due_date.as_ref()) {
@@ -1542,7 +1542,10 @@ mod tests {
             description: Some("Details".into()),
             priority: Some(3),
             contexts: Some(vec!["home".into(), "focus".into()]),
-            scheduled_at: parse_ics_datetime_token("20260102T120000Z"),
+            planned: crate::domain::time::with_planned_start(
+                None,
+                parse_ics_datetime_token("20260102T120000Z"),
+            ),
             due_date: with_deadline(None, parse_ics_datetime_token("20260102T130000Z")),
             ..Default::default()
         };
@@ -1790,7 +1793,10 @@ mod tests {
             id: Uuid::new_v4(),
             name: name.to_string(),
             state,
-            scheduled_at: Some(Local.with_ymd_and_hms(2026, 6, 1, 9, 0, 0).unwrap()),
+            planned: crate::domain::time::with_planned_start(
+                None,
+                Some(Local.with_ymd_and_hms(2026, 6, 1, 9, 0, 0).unwrap()),
+            ),
             ..Default::default()
         }
     }

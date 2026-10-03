@@ -60,7 +60,7 @@ mod tests {
         Action {
             id: Uuid::new_v4(),
             state,
-            scheduled_at,
+            planned: clearhead_core::domain::time::with_planned_start(None, scheduled_at),
             ..Default::default()
         }
     }
@@ -109,7 +109,7 @@ mod tests {
             id: Uuid::new_v4(),
             name: "Test task".to_string(),
             state: ActionState::NotStarted,
-            scheduled_at: Some(dt),
+            planned: clearhead_core::domain::time::with_planned_start(None, Some(dt)),
             ..Default::default()
         };
         let model = DomainModel {

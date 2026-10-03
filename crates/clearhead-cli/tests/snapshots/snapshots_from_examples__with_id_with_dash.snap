@@ -1,5 +1,5 @@
 ---
-source: tests/snapshots_from_examples.rs
+source: crates/clearhead-cli/tests/snapshots_from_examples.rs
 expression: actions
 ---
 [
@@ -11,8 +11,7 @@ expression: actions
     description: None,
     priority: None,
     contexts: None,
-    scheduled_at: None,
-    duration: None,
+    planned: None,
     due_date: None,
     completed_at: None,
     created_at: None,

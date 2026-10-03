@@ -5,7 +5,7 @@
 //! VTODO field is merged independently against its last-agreed value so a
 //! conflict in one field never blocks safe changes in another.
 
-use crate::domain::time::{deadline, with_deadline};
+use crate::domain::time::{deadline, planned_start, with_deadline, with_planned_start};
 use chrono::{DateTime, Local, Utc};
 use icalendar::{Calendar, CalendarComponent, Component, Event, EventLike, Todo, TodoStatus};
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -370,7 +370,7 @@ pub fn plan_one_off_sync(
             continue;
         }
         let Some(plan_id) = action.plan_id else {
-            if action.scheduled_at.is_none() {
+            if action.planned.is_none() {
                 continue;
             }
             let action_contexts = normalized_contexts(action.contexts.clone());
@@ -379,7 +379,7 @@ pub fn plan_one_off_sync(
                 uid: action.id.to_string(),
                 occurrence_key: None,
                 name: action.name.clone(),
-                scheduled_at: Reconcile::TakeAction(action.scheduled_at),
+                scheduled_at: Reconcile::TakeAction(planned_start(action.planned.as_ref())),
                 due_date: Reconcile::TakeAction(deadline(action.due_date.as_ref())),
                 state: Reconcile::TakeAction(action.state),
                 title: Reconcile::TakeAction(action.name.clone()),
@@ -444,7 +444,7 @@ pub fn plan_one_off_sync(
             occurrence_key: None,
             name: action.name.clone(),
             scheduled_at: reconcile(
-                &action.scheduled_at,
+                &planned_start(action.planned.as_ref()),
                 scheduled_bases.get(&action.id),
                 Some(&resource.plan.dtstart),
             ),
@@ -574,9 +574,9 @@ pub fn plan_recurring_occurrence_sync(
             occurrence_key: Some(slot_key),
             name: action.name.clone(),
             scheduled_at: reconcile(
-                &action.scheduled_at,
+                &planned_start(action.planned.as_ref()),
                 scheduled_base,
-                Some(&calendar.scheduled_at),
+                Some(&planned_start(calendar.planned.as_ref())),
             ),
             due_date: reconcile(
                 &deadline(action.due_date.as_ref()),
@@ -728,9 +728,10 @@ fn apply_report(
         let (push_fields, action_for_calendar) = {
             let mut push_fields = Vec::new();
             let action = &mut workspace.charters[charter_idx].actions[action_idx].action;
+            let mut scheduled_at = planned_start(action.planned.as_ref());
             apply_time_outcome(
                 &entry.scheduled_at,
-                &mut action.scheduled_at,
+                &mut scheduled_at,
                 entry.action_id,
                 SCHEDULED_AT_FIELD,
                 SyncField::ScheduledAt,
@@ -738,6 +739,7 @@ fn apply_report(
                 store,
                 &mut applied,
             )?;
+            action.planned = with_planned_start(action.planned, scheduled_at);
             let mut due_at = deadline(action.due_date.as_ref());
             apply_time_outcome(
                 &entry.due_date,
@@ -1016,7 +1018,7 @@ pub fn prepare_sync(
                 .actions
                 .entry(entry.action_id.to_string())
                 .or_default(),
-            occurrence_snapshot(plan, &slot_key, action.scheduled_at),
+            occurrence_snapshot(plan, &slot_key, planned_start(action.planned.as_ref())),
         );
         dirty_sidecars.insert(actions_file);
         resolved_occurrences.push((
@@ -1066,7 +1068,7 @@ pub fn prepare_sync(
                 ))
             })?;
         let action = &mut workspace.charters[charter_idx].actions[action_idx].action;
-        action.scheduled_at = None;
+        action.planned = None;
         action.due_date = None;
         action.plan_id = None;
         let actions_file = workspace.charters[charter_idx]
@@ -1465,7 +1467,11 @@ pub fn prepare_materialized_occurrence_resolution(
             .or_insert_with(ActionMeta::default);
         freeze_occurrence_link(
             entry,
-            occurrence_snapshot(&plan, &slot_key, archive.action.scheduled_at),
+            occurrence_snapshot(
+                &plan,
+                &slot_key,
+                planned_start(archive.action.planned.as_ref()),
+            ),
         );
     }
     let live = &mut action_resources[live_sidecar];
@@ -1795,7 +1801,11 @@ fn stage_prepared_plan_token(
             });
         }
     }
-    store.stamp(occurrence_id, SCHEDULED_AT_FIELD, &occurrence.scheduled_at)?;
+    store.stamp(
+        occurrence_id,
+        SCHEDULED_AT_FIELD,
+        &planned_start(occurrence.planned.as_ref()),
+    )?;
     store.stamp(occurrence_id, DUE_DATE_FIELD, &occurrence.due_date)?;
     if plan.component_kind == PlanComponentKind::VTodo {
         store.stamp(occurrence_id, STATE_FIELD, &occurrence.state)?;
@@ -1863,7 +1873,7 @@ fn action_from_projection(source: &PlanActionProjection) -> Action {
         description: source.description.clone(),
         priority: source.priority,
         contexts: normalized_contexts(source.contexts.clone()),
-        scheduled_at: source.scheduled_at,
+        planned: with_planned_start(None, source.scheduled_at),
         due_date: with_deadline(None, source.due_date),
         completed_at: (source.state == ActionState::Completed)
             .then_some(source.completed_at)
@@ -1993,7 +2003,7 @@ pub fn render_action_mirror(
                 if let Some(description) = &action.description {
                     event.description(description);
                 }
-                if let Some(value) = action.scheduled_at {
+                if let Some(value) = planned_start(action.planned.as_ref()) {
                     event.starts(value.with_timezone(&Utc));
                 }
                 if let Some(value) = deadline(action.due_date.as_ref()) {
@@ -2042,7 +2052,7 @@ fn patch_event(event: &mut Event, action: &Action, fields: &[SyncField]) {
     let fields: HashSet<_> = fields.iter().copied().collect();
     if fields.contains(&SyncField::ScheduledAt) {
         event.remove_starts();
-        if let Some(value) = action.scheduled_at {
+        if let Some(value) = planned_start(action.planned.as_ref()) {
             event.starts(value.with_timezone(&Utc));
         }
     }
@@ -2058,7 +2068,7 @@ fn patch_todo(todo: &mut Todo, action: &Action, fields: &[SyncField]) {
     let fields: HashSet<_> = fields.iter().copied().collect();
     if fields.contains(&SyncField::ScheduledAt) {
         todo.remove_starts();
-        if let Some(value) = action.scheduled_at {
+        if let Some(value) = planned_start(action.planned.as_ref()) {
             todo.starts(value.with_timezone(&Utc));
         }
     }
@@ -2466,7 +2476,7 @@ mod tests {
             actions: vec![Action {
                 id: action_id,
                 name: "Linked".into(),
-                scheduled_at: Some(t(20)),
+                planned: with_planned_start(None, Some(t(20))),
                 due_date: Some(Due::by(Bound::minute(t(21)))),
                 plan_id: Some(plan_id_from_ics_uid("foreign@example.com")),
                 ..Default::default()
@@ -2563,7 +2573,7 @@ mod tests {
             .expect("a write to the action file");
         let written = crate::workspace::parse_actions(&String::from_utf8(action_bytes).unwrap())
             .expect("action write parses");
-        assert!(written[0].scheduled_at.is_none());
+        assert!(planned_start(written[0].planned.as_ref()).is_none());
         assert!(written[0].due_date.is_none());
         assert!(written[0].plan_id.is_none());
 
@@ -2641,7 +2651,7 @@ mod tests {
                     Action {
                         id: scheduled_id,
                         name: "Scheduled".into(),
-                        scheduled_at: Some(t(20)),
+                        planned: with_planned_start(None, Some(t(20))),
                         priority: Some(2),
                         ..Default::default()
                     },
@@ -2683,7 +2693,7 @@ mod tests {
             id: action_id,
             plan_id: Some(plan.plan.id),
             name: "Foreign".into(),
-            scheduled_at: plan.plan.dtstart,
+            planned: with_planned_start(None, plan.plan.dtstart),
             ..Default::default()
         };
 
@@ -2717,7 +2727,7 @@ mod tests {
             plan_id: Some(plan.plan.id),
             name: "Base title".into(),
             description: Some("Base description".into()),
-            scheduled_at: base_time,
+            planned: with_planned_start(None, base_time),
             due_date: with_deadline(None, base_time),
             state: ActionState::NotStarted,
             priority: Some(5),
@@ -2780,7 +2790,7 @@ mod tests {
             plan_id: Some(plan.plan.id),
             name: "Local title".into(),
             description: Some("Local description".into()),
-            scheduled_at: base_time,
+            planned: with_planned_start(None, base_time),
             due_date: with_deadline(None, base_time),
             state: ActionState::InProgress,
             priority: Some(1),
@@ -2815,7 +2825,7 @@ mod tests {
         let recurring_action = Action {
             plan_id: Some(recurring.plan.id),
             name: "Series".into(),
-            scheduled_at: recurring.plan.dtstart,
+            planned: with_planned_start(None, recurring.plan.dtstart),
             ..Default::default()
         };
         assert!(
@@ -2834,7 +2844,7 @@ mod tests {
             plan_id: Some(recurring.plan.id),
             external_occurrence_key: Some("20260421T100000Z".into()),
             name: "Occurrence".into(),
-            scheduled_at: recurring.plan.dtstart,
+            planned: with_planned_start(None, recurring.plan.dtstart),
             ..Default::default()
         };
         assert!(
@@ -2867,7 +2877,7 @@ mod tests {
         let action = Action {
             id: occurrence_id,
             name: "Series".into(),
-            scheduled_at: Some(slot),
+            planned: with_planned_start(None, Some(slot)),
             plan_id: Some(plan.plan.id),
             external_occurrence_key: Some(key.clone()),
             ..Default::default()
@@ -2905,7 +2915,7 @@ mod tests {
         let action = Action {
             id: occurrence_id,
             name: "Series".into(),
-            scheduled_at: Some(moved),
+            planned: with_planned_start(None, Some(moved)),
             plan_id: Some(plan.plan.id),
             external_occurrence_key: Some(key.clone()),
             ..Default::default()
@@ -2972,7 +2982,7 @@ mod tests {
                 description: source.description,
                 priority: source.priority,
                 contexts: source.contexts,
-                scheduled_at: source.scheduled_at,
+                planned: with_planned_start(None, source.scheduled_at),
                 due_date: with_deadline(None, source.due_date),
                 completed_at: Some(completed_at),
                 ..Action::default()
@@ -3075,7 +3085,7 @@ mod tests {
 
         let occ = &charters[0].actions[0].action;
         assert!(!is_resolved(occ.state));
-        let slot = occ.scheduled_at.unwrap();
+        let slot = planned_start(occ.planned.as_ref()).unwrap();
         assert!(
             slot >= now,
             "the token is the next upcoming slot, never a past one"
@@ -3129,7 +3139,10 @@ mod tests {
         let plan = charters[0].plans[0].clone();
         let slot = token.external_occurrence_key.clone().unwrap();
         let meta = sidecar.actions.get_mut(&key).unwrap();
-        freeze_occurrence_link(meta, occurrence_snapshot(&plan, &slot, token.scheduled_at));
+        freeze_occurrence_link(
+            meta,
+            occurrence_snapshot(&plan, &slot, planned_start(token.planned.as_ref())),
+        );
         assert!(meta.plan.is_none() && meta.occurrence.is_some());
         assert!(
             !link_staged_occurrences(&charters[0], &mut sidecar),
@@ -3180,7 +3193,7 @@ mod tests {
         let mut dirty = HashSet::new();
         ensure_active_occurrences_prepared(&mut charters, &mut store, &mut dirty, &[], t(6))
             .unwrap();
-        let first_slot = charters[0].actions[0].action.scheduled_at.unwrap();
+        let first_slot = planned_start(charters[0].actions[0].action.planned.as_ref()).unwrap();
         charters[0].actions[0].action.state = ActionState::Completed; // resolved by hand
         charters[0].actions.push(SourcedAction {
             action: Action {
@@ -3204,11 +3217,13 @@ mod tests {
         let live_tokens: Vec<_> = charters[0]
             .actions
             .iter()
-            .filter(|sa| sa.action.scheduled_at.is_some() && !is_resolved(sa.action.state))
+            .filter(|sa| {
+                planned_start(sa.action.planned.as_ref()).is_some() && !is_resolved(sa.action.state)
+            })
             .collect();
         assert_eq!(live_tokens.len(), 1, "exactly one live token at any time");
         assert!(
-            live_tokens[0].action.scheduled_at.unwrap() > first_slot,
+            planned_start(live_tokens[0].action.planned.as_ref()).unwrap() > first_slot,
             "advanced forward, not backward"
         );
     }
@@ -3232,7 +3247,7 @@ mod tests {
                     Action {
                         id: token,
                         name: "Weekly Review".into(),
-                        scheduled_at: Some(t(20)),
+                        planned: with_planned_start(None, Some(t(20))),
                         plan_id: Some(plan_id),
                         external_occurrence_key: Some("20260420T170000Z".into()),
                         ..Default::default()
@@ -3246,7 +3261,7 @@ mod tests {
                     Action {
                         id: standalone,
                         name: "buy milk".into(),
-                        scheduled_at: Some(t(21)),
+                        planned: with_planned_start(None, Some(t(21))),
                         ..Default::default()
                     },
                 ],
@@ -3317,7 +3332,7 @@ mod tests {
             root.action.parent_id.is_none(),
             "the occurrence root is a root"
         );
-        let slot = root.action.scheduled_at.unwrap();
+        let slot = planned_start(root.action.planned.as_ref()).unwrap();
         let key = canonical_occurrence_key(slot);
         assert_eq!(
             root.action.id,

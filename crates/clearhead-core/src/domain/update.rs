@@ -58,8 +58,7 @@ pub struct ActionUpdate {
     pub is_sequential: Option<bool>,
     pub alias: Option<String>,
     pub state: Option<ActionState>,
-    pub scheduled_at: Option<DateTime<Local>>,
-    pub duration: Option<u32>,
+    pub planned: Option<crate::domain::time::Planned>,
 }
 
 /// Reject a field update that would drive an action to a terminal state.
@@ -134,11 +133,8 @@ pub fn apply_updates(action: &mut Action, updates: ActionUpdate, now: DateTime<L
             action.completed_at = Some(now);
         }
     }
-    if let Some(scheduled_at) = updates.scheduled_at {
-        action.scheduled_at = Some(scheduled_at);
-    }
-    if let Some(duration) = updates.duration {
-        action.duration = Some(duration);
+    if let Some(planned) = updates.planned {
+        action.planned = Some(planned);
     }
 }
 

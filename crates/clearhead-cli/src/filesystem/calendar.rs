@@ -322,7 +322,7 @@ fn prepare_calendar_sync(
         let calendar_location = linked_locations.get(&action.id).cloned();
         let calendar_deleted = !observed_one_off_plan_ids.contains(&plan_id);
         let action_unscheduled = !newly_linked_ids.contains(&action.id)
-            && action.scheduled_at.is_none()
+            && action.planned.is_none()
             && action.due_date.is_none();
         if calendar_deleted || action_unscheduled {
             let kind = if action_unscheduled {
@@ -378,7 +378,7 @@ fn prepare_calendar_sync(
                 .find(|action| action.id == entry.action_id)
                 .filter(|action| {
                     action.plan_id.is_none()
-                        && action.scheduled_at.is_some()
+                        && action.planned.is_some()
                         && !existing_mirror_ids.contains(&action.id)
                 })
                 .map(|action| action.id)
@@ -1738,7 +1738,9 @@ mod tests {
         let pulled = parse_actions(&std::fs::read_to_string(&actions).unwrap()).unwrap();
         assert_eq!(pulled[0].id, occurrence_id);
         assert_eq!(
-            pulled[0].scheduled_at.unwrap().with_timezone(&chrono::Utc),
+            clearhead_core::domain::time::planned_start(pulled[0].planned.as_ref())
+                .unwrap()
+                .with_timezone(&chrono::Utc),
             calendar_move
         );
 
@@ -1890,7 +1892,7 @@ mod tests {
                 action.contexts.as_deref(),
                 Some(["local".into()].as_slice())
             );
-            assert!(action.scheduled_at.is_none());
+            assert!(clearhead_core::domain::time::planned_start(action.planned.as_ref()).is_none());
             assert!(action.due_date.is_none());
             assert!(!resource.exists(), "deleted Plan must not be recreated");
             let sidecar = parse_sidecar(
@@ -1965,7 +1967,9 @@ mod tests {
             assert!(!resource.exists());
             let parsed = parse_actions(&std::fs::read_to_string(&actions).unwrap()).unwrap();
             assert_eq!(parsed[0].id, action_id);
-            assert!(parsed[0].scheduled_at.is_none());
+            assert!(
+                clearhead_core::domain::time::planned_start(parsed[0].planned.as_ref()).is_none()
+            );
             assert!(parsed[0].due_date.is_none());
             assert_eq!(parsed[0].priority, Some(2));
             let sidecar = parse_sidecar(
@@ -2036,8 +2040,7 @@ mod tests {
             Some(["local".to_string()].as_slice())
         );
         assert_eq!(
-            parsed[0]
-                .scheduled_at
+            clearhead_core::domain::time::planned_start(parsed[0].planned.as_ref())
                 .unwrap()
                 .with_timezone(&chrono::Utc)
                 .format("%Y%m%dT%H%M%SZ")
@@ -2097,8 +2100,7 @@ mod tests {
             Some(["calendar".to_string(), "home".to_string()].as_slice())
         );
         assert_eq!(
-            action
-                .scheduled_at
+            clearhead_core::domain::time::planned_start(action.planned.as_ref())
                 .unwrap()
                 .with_timezone(&chrono::Utc)
                 .format("%Y%m%dT%H%M%SZ")

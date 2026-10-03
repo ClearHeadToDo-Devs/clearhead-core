@@ -112,15 +112,9 @@ fn every_field_fixture_has_the_specified_domain_meaning() {
         Some(["testing".to_string(), "metadata".to_string()].as_slice())
     );
     assert_eq!(action.charter.as_deref(), Some("Conformance-Project"));
-    assert_eq!(
-        action
-            .scheduled_at
-            .unwrap()
-            .format("%Y-%m-%dT%H:%M:%S")
-            .to_string(),
-        "2026-01-01T09:00:00"
-    );
-    assert_eq!(action.duration, Some(60));
+    let planned = action.planned.expect("every_field has a planned block");
+    assert_eq!(planned.to_string(), "2026-01-01T09:00/2026-01-01T10:00");
+    assert_eq!(planned.duration(), Some(chrono::Duration::minutes(60)));
     let due = action.due_date.expect("every_field has a due window");
     assert_eq!(
         due.to_string(),
@@ -141,6 +135,14 @@ fn every_field_fixture_has_the_specified_domain_meaning() {
         "01942db4-0000-7000-8000-000000000001"
     );
     assert!(diagnostics("parse/every_field.actions").is_empty());
+}
+
+#[test]
+fn a_retired_duration_parses_as_its_block() {
+    let actions = parse_actions(&fixture("parse/legacy_duration.actions")).unwrap();
+    let planned = actions[0].planned.expect("legacy_duration has a do-date");
+    assert_eq!(planned.to_string(), "2026-10-03T09:00/2026-10-03T09:15");
+    assert!(!actions[0].to_string().contains(" D15"));
 }
 
 #[test]

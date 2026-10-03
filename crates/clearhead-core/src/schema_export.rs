@@ -33,8 +33,6 @@ pub struct SchemaAction {
     pub contexts: Option<Vec<String>>,
     #[serde(rename = "scheduledDateTime", skip_serializing_if = "Option::is_none")]
     pub scheduled_date_time: Option<String>,
-    #[serde(rename = "durationMinutes", skip_serializing_if = "Option::is_none")]
-    pub duration_minutes: Option<u32>,
     #[serde(rename = "dueDateTime", skip_serializing_if = "Option::is_none")]
     pub due_date_time: Option<String>,
     #[serde(rename = "completedDateTime", skip_serializing_if = "Option::is_none")]
@@ -72,8 +70,7 @@ impl SchemaAction {
             description: action.description.clone(),
             priority: action.priority,
             contexts: action.contexts.clone(),
-            scheduled_date_time: action.scheduled_at.map(|d| d.to_rfc3339()),
-            duration_minutes: action.duration,
+            scheduled_date_time: action.planned.map(|p| p.to_string()),
             due_date_time: action.due_date.map(|d| d.to_string()),
             completed_date_time: action.completed_at.map(|d| d.to_rfc3339()),
             created_date_time: action.created_at.map(|d| d.to_rfc3339()),

@@ -1,7 +1,7 @@
 use super::source::{
     NodeWrapper, SourceMetadata, SourceRange, create_node_wrapper, get_node_text, get_prefixed_text,
 };
-use crate::domain::time::{Due, parse_iso8601_datetime};
+use crate::domain::time::{Due, Planned, parse_iso8601_datetime};
 use crate::domain::{Action, ActionState, PredecessorRef};
 use chrono::{DateTime, Local};
 use std::collections::HashMap;
@@ -145,11 +145,8 @@ impl Action {
         if let Some(contexts) = &self.contexts {
             write!(f, " +{}", contexts.join(","))?;
         }
-        if let Some(scheduled_at) = &self.scheduled_at {
-            write!(f, " @{}", scheduled_at.format("%Y-%m-%dT%H:%M"))?;
-            if let Some(duration) = self.duration {
-                write!(f, " D{}", duration)?;
-            }
+        if let Some(planned) = &self.planned {
+            write!(f, " @{}", planned)?;
         }
         if let Some(due_date) = &self.due_date {
             write!(f, " :{}", due_date)?;
@@ -233,8 +230,7 @@ pub fn parse_action_recursive(
     let mut context_list = None;
     let mut id = None;
     let mut charter = None;
-    let mut do_date_time = None;
-    let mut do_duration = None;
+    let mut planned = None;
     let mut completed_date_time = None;
     let mut created_date_time = None;
     let mut predecessors = Vec::new();
@@ -289,8 +285,7 @@ pub fn parse_action_recursive(
                 }
             }
             "do_date" => {
-                (do_date_time, do_date_range) = parse_date_field(&meta, &node.source);
-                do_duration = parse_duration_field(&meta, &node.source);
+                (planned, do_date_range) = parse_planned_field(&meta, &node.source);
             }
             "due_date" => {
                 (due_date_time, due_date_range) = parse_due_field(&meta, &node.source);
@@ -362,8 +357,7 @@ pub fn parse_action_recursive(
         description,
         priority,
         contexts: context_list,
-        scheduled_at: do_date_time,
-        duration: do_duration,
+        planned,
         due_date: due_date_time,
         completed_at: completed_date_time,
         created_at: created_date_time,
@@ -422,7 +416,7 @@ fn index_tag(
         .push(SourceRange::from_node(node));
 }
 
-/// Parse a date field (do_date, completed_date, created_date) returning both the datetime and source range
+/// Parse a date field (completed_date, created_date) returning both the datetime and source range
 fn parse_date_field(
     node: &tree_sitter::Node,
     source: &str,
@@ -455,11 +449,29 @@ fn parse_due_field(node: &tree_sitter::Node, source: &str) -> (Option<Due>, Opti
     }
 }
 
-/// Parse duration from a do_date node
-fn parse_duration_field(node: &tree_sitter::Node, source: &str) -> Option<u32> {
-    node.child_by_field_name("duration")
+/// Parse the planned block (`@start` or `@start/end`) returning it and its
+/// source range. A retired `D<minutes>` after a lone start becomes the block
+/// it described, so files migrate by formatting (Decision 51).
+fn parse_planned_field(
+    node: &tree_sitter::Node,
+    source: &str,
+) -> (Option<Planned>, Option<SourceRange>) {
+    let bound = |field| {
+        node.child_by_field_name(field)
+            .and_then(|n| get_node_text(&n, source).parse().ok())
+    };
+    let minutes = node
+        .child_by_field_name("duration")
         .and_then(|d| d.child_by_field_name("minutes"))
-        .and_then(|m| get_node_text(&m, source).parse().ok())
+        .and_then(|m| get_node_text(&m, source).parse().ok());
+    let Some(start) = bound("start") else {
+        return (None, None);
+    };
+    let planned = match (bound("end"), minutes) {
+        (None, Some(minutes)) => Planned::from_minutes(start, minutes),
+        (end, _) => Planned { start, end },
+    };
+    (Some(planned), Some(SourceRange::from_node(node)))
 }
 
 /// Parse raw text into a tree-sitter Tree

@@ -296,11 +296,11 @@ fn project_action(qs: &mut QuadSet, action: &Action) -> Result<()> {
         phase_node(&action.state),
     );
 
-    if let Some(dt) = &action.scheduled_at {
+    if let Some(planned) = &action.planned {
         qs.add(
             &subject,
             actions_pred("hasScheduledDateTime"),
-            typed(dt.to_rfc3339(), "dateTime"),
+            typed(planned.start.at.to_rfc3339(), "dateTime"),
         );
     }
     if let Some(due) = &action.due_date {
@@ -310,7 +310,11 @@ fn project_action(qs: &mut QuadSet, action: &Action) -> Result<()> {
             typed(due.end.at.to_rfc3339(), "dateTime"),
         );
     }
-    if let Some(duration) = action.duration {
+    if let Some(duration) = action
+        .planned
+        .and_then(|p| p.duration())
+        .map(|d| d.num_minutes())
+    {
         qs.add(
             &subject,
             actions_pred("hasDurationMinutes"),
@@ -459,7 +463,7 @@ mod tests {
                     priority: Some(1),
                     plan_id: Some(Uuid::parse_str(PLAN).unwrap()),
                     state: ActionState::InProgress,
-                    duration: Some(45),
+                    planned: Some("2026-10-03T09:00/2026-10-03T09:45".parse().unwrap()),
                     ..Default::default()
                 }],
                 ..Default::default()

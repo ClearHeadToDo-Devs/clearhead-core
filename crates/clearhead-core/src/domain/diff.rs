@@ -53,13 +53,9 @@ pub enum ActionFieldChange {
         old: ActionState,
         new: ActionState,
     },
-    ScheduledAt {
-        old: Option<DateTime<Local>>,
-        new: Option<DateTime<Local>>,
-    },
-    Duration {
-        old: Option<u32>,
-        new: Option<u32>,
+    Planned {
+        old: Option<super::time::Planned>,
+        new: Option<super::time::Planned>,
     },
     CompletedAt {
         old: Option<DateTime<Local>>,
@@ -385,16 +381,10 @@ fn compare_actions(old: &Action, new: &Action) -> Vec<ActionFieldChange> {
             new: new.state,
         });
     }
-    if !dates_equal(&old.scheduled_at, &new.scheduled_at) {
-        changes.push(ActionFieldChange::ScheduledAt {
-            old: old.scheduled_at,
-            new: new.scheduled_at,
-        });
-    }
-    if old.duration != new.duration {
-        changes.push(ActionFieldChange::Duration {
-            old: old.duration,
-            new: new.duration,
+    if old.planned != new.planned {
+        changes.push(ActionFieldChange::Planned {
+            old: old.planned,
+            new: new.planned,
         });
     }
     if !dates_equal(&old.completed_at, &new.completed_at) {

@@ -117,10 +117,10 @@ fn compare_action(old: &Action, new: &Action) -> Vec<FieldChange> {
         });
     }
 
-    if old.scheduled_at != new.scheduled_at {
+    if old.planned != new.planned {
         changes.push(FieldChange::DoDate {
-            old: old.scheduled_at.map(|d| d.to_rfc3339()),
-            new: new.scheduled_at.map(|d| d.to_rfc3339()),
+            old: old.planned.map(|p| p.to_string()),
+            new: new.planned.map(|p| p.to_string()),
         });
     }
 

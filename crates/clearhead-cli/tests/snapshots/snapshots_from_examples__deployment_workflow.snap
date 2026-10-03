@@ -1,5 +1,5 @@
 ---
-source: tests/snapshots_from_examples.rs
+source: crates/clearhead-cli/tests/snapshots_from_examples.rs
 expression: actions
 ---
 [
@@ -15,8 +15,7 @@ expression: actions
       "DevOps",
       "Critical",
     ]),
-    scheduled_at: Some("2025-02-15T14:00:00[local-offset]"),
-    duration: Some(30),
+    planned: Some("2025-02-15T14:00/2025-02-15T14:30"),
     due_date: None,
     completed_at: None,
     created_at: None,
@@ -45,8 +44,7 @@ expression: actions
       "Work",
       "Testing",
     ]),
-    scheduled_at: Some("2025-02-15T10:00:00[local-offset]"),
-    duration: Some(90),
+    planned: Some("2025-02-15T10:00/2025-02-15T11:30"),
     due_date: None,
     completed_at: None,
     created_at: None,
@@ -72,8 +70,7 @@ expression: actions
       "Work",
       "CodeReview",
     ]),
-    scheduled_at: Some("2025-02-15T11:00:00[local-offset]"),
-    duration: Some(60),
+    planned: Some("2025-02-15T11:00/2025-02-15T12:00"),
     due_date: None,
     completed_at: None,
     created_at: None,
@@ -98,8 +95,7 @@ expression: actions
     contexts: Some([
       "Work",
     ]),
-    scheduled_at: Some("2025-02-14T17:00:00[local-offset]"),
-    duration: None,
+    planned: Some("2025-02-14T17:00"),
     due_date: None,
     completed_at: None,
     created_at: None,

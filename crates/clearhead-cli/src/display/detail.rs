@@ -22,14 +22,18 @@ pub fn render_action_detail(action: &Action) -> String {
     opt(&mut rows, "charter", action.charter.as_deref());
     opt_uuid(&mut rows, "parent", action.parent_id);
     opt_uuid(&mut rows, "plan", action.plan_id);
-    opt_dt(&mut rows, "scheduled", action.scheduled_at);
+    opt(
+        &mut rows,
+        "scheduled",
+        action.planned.map(|p| p.to_string()).as_deref(),
+    );
     opt(
         &mut rows,
         "due",
         action.due_date.map(|d| d.to_string()).as_deref(),
     );
-    if let Some(dur) = action.duration {
-        rows.push(("duration", format!("{}m", dur)));
+    if let Some(dur) = action.planned.and_then(|p| p.duration()) {
+        rows.push(("duration", format!("{}m", dur.num_minutes())));
     }
     if let Some(p) = action.priority {
         rows.push(("priority", p.to_string()));

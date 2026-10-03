@@ -78,11 +78,10 @@ pub type DocumentCheck = fn(&ParsedDocument) -> Vec<LintDiagnostic>;
 // Check Registries - Indexed by Spec Code
 // ============================================================================
 
-/// Action-level error checks (E001-E007)
+/// Action-level error checks (E003-E007; E001 is retired by Decision 51)
 /// Gaps: E004 (orphaned child), E005 (skipped level), E007 (no state) - parser handles these
 pub const ACTION_ERROR_CHECKS: &[ActionCheck] = &[
-    check_duration_without_do_date, // E001
-    check_empty_context,            // E003
+    check_empty_context, // E003
     // E004, E005 - parser/grammar level
     check_invalid_uuid, // E006
     // E007 - parser level
@@ -124,22 +123,6 @@ pub const DOCUMENT_CHECKS: &[DocumentCheck] = &[
 // Action-Level Checks
 // ============================================================================
 
-/// Check if duration is present without a do-date (E001)
-fn check_duration_without_do_date(
-    action: &Action,
-    metadata: &SourceMetadata,
-) -> Option<LintDiagnostic> {
-    if action.duration.is_some() && action.scheduled_at.is_none() {
-        Some(LintDiagnostic::error(
-            "E001",
-            "Duration requires a do-date to be meaningful (E001).".to_string(),
-            metadata.root,
-        ))
-    } else {
-        None
-    }
-}
-
 /// Placeholder for orphaned child check (E010) - implemented at document level
 fn check_orphaned_child(_action: &Action, _metadata: &SourceMetadata) -> Option<LintDiagnostic> {
     None
@@ -166,25 +149,17 @@ fn check_blocked_without_description(
     }
 }
 
-/// Check if duration is excessive (I010)
+/// Check if the planned block is excessive (I010)
 fn check_excessive_duration(action: &Action, metadata: &SourceMetadata) -> Option<LintDiagnostic> {
-    const MAX_DURATION: u32 = 480; // 8 hours
-    if let Some(duration) = action.duration {
-        if duration > MAX_DURATION {
-            Some(LintDiagnostic::info(
-                "I010",
-                format!(
-                    "Suspiciously long duration ({} minutes). Is this correct? (I010)",
-                    duration
-                ),
-                metadata.do_date.unwrap_or(metadata.root),
-            ))
-        } else {
-            None
-        }
-    } else {
-        None
-    }
+    const MAX_DURATION: i64 = 480; // 8 hours
+    let minutes = action.planned?.duration()?.num_minutes();
+    (minutes > MAX_DURATION).then(|| {
+        LintDiagnostic::info(
+            "I010",
+            format!("Suspiciously long duration ({minutes} minutes). Is this correct? (I010)"),
+            metadata.do_date.unwrap_or(metadata.root),
+        )
+    })
 }
 
 /// Flag duplicated decision records, not citations such as "Decision 41".
@@ -891,84 +866,5 @@ mod tests {
         assert!(results.warnings.iter().any(|d| d.code == "W006"));
         let diag = results.warnings.iter().find(|d| d.code == "W006").unwrap();
         assert_eq!(diag.severity, LintSeverity::Warning);
-    }
-
-    // ========================================================================
-    // New E001/E002 Tests (Duration and Recurrence without Do-Date)
-    // ========================================================================
-
-    #[test]
-    fn test_check_duration_without_do_date() {
-        // Test the function directly since parsing D without @ may not be valid in grammar
-        use crate::workspace::actions::Action;
-        let action = Action {
-            id: uuid::Uuid::parse_str("01942d99-4c27-77f6-9316-107024843939").unwrap(),
-            state: ActionState::NotStarted,
-            name: "Meeting".to_string(),
-            duration: Some(60),
-            ..Default::default()
-        };
-        let metadata = SourceMetadata {
-            root: SourceRange {
-                start_row: 0,
-                start_col: 0,
-                end_row: 0,
-                end_col: 20,
-            },
-            line_range: SourceRange {
-                start_row: 0,
-                start_col: 0,
-                end_row: 0,
-                end_col: 20,
-            },
-            do_date: None,
-            due_date: None,
-            completed_date: None,
-            created_date: None,
-            is_id_generated: false,
-            raw_id: None,
-        };
-
-        let result = check_duration_without_do_date(&action, &metadata);
-        assert!(result.is_some());
-        let diag = result.unwrap();
-        assert_eq!(diag.code, "E001");
-        assert_eq!(diag.severity, LintSeverity::Error);
-    }
-
-    #[test]
-    fn test_check_duration_with_do_date_ok() {
-        use crate::workspace::actions::Action;
-        let action = Action {
-            id: uuid::Uuid::parse_str("01942d99-4c27-77f6-9316-107024843939").unwrap(),
-            state: ActionState::NotStarted,
-            name: "Meeting".to_string(),
-            scheduled_at: Some(Local::now()),
-            duration: Some(60),
-            ..Default::default()
-        };
-        let metadata = SourceMetadata {
-            root: SourceRange {
-                start_row: 0,
-                start_col: 0,
-                end_row: 0,
-                end_col: 20,
-            },
-            line_range: SourceRange {
-                start_row: 0,
-                start_col: 0,
-                end_row: 0,
-                end_col: 20,
-            },
-            do_date: None,
-            due_date: None,
-            completed_date: None,
-            created_date: None,
-            is_id_generated: false,
-            raw_id: None,
-        };
-
-        let result = check_duration_without_do_date(&action, &metadata);
-        assert!(result.is_none());
     }
 }

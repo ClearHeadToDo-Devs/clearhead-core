@@ -1,5 +1,5 @@
 use chrono::{DateTime, Duration, Local, Utc};
-use clearhead_core::domain::time::{Bound, Due};
+use clearhead_core::domain::time::{Bound, Due, Planned};
 use clearhead_core::workspace::{instantiate_template, template_candidates};
 use clearhead_core::{Action, ActionState, PredecessorRef};
 use proptest::prelude::*;
@@ -47,8 +47,10 @@ fn populated_action(id: Uuid, parent_id: Option<Uuid>, seed: u32, index: usize) 
         description: Some(format!("Description {index}")),
         priority: Some((index % 9 + 1) as u32),
         contexts: Some(vec![format!("context-{seed}"), format!("step-{index}")]),
-        scheduled_at: Some(local_timestamp),
-        duration: Some((index + 1) as u32 * 15),
+        planned: Some(Planned::from_minutes(
+            Bound::minute(local_timestamp),
+            (index + 1) as u32 * 15,
+        )),
         due_date: Some(Due::by(Bound::minute(local_timestamp + Duration::days(1)))),
         completed_at: Some(local_timestamp + Duration::hours(2)),
         created_at: Some(local_timestamp - Duration::days(1)),
@@ -123,8 +125,7 @@ fn assert_non_identity_fields_preserved(source: &Action, instance: &Action) {
     assert_eq!(instance.description, source.description);
     assert_eq!(instance.priority, source.priority);
     assert_eq!(instance.contexts, source.contexts);
-    assert_eq!(instance.scheduled_at, source.scheduled_at);
-    assert_eq!(instance.duration, source.duration);
+    assert_eq!(instance.planned, source.planned);
     assert_eq!(instance.due_date, source.due_date);
     assert_eq!(instance.completed_at, source.completed_at);
     assert_eq!(instance.created_at, source.created_at);

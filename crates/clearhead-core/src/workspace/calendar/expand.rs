@@ -1,7 +1,7 @@
 use chrono::{DateTime, Local};
 
 use super::ics::{ICSPlan, OccurrenceOverride, canonical_occurrence_key, occurrence_action_id};
-use crate::domain::time::with_deadline;
+use crate::domain::time::{with_deadline, with_planned_start};
 use crate::workspace::actions::{Action, ActionState};
 
 // ============================================================================
@@ -81,7 +81,7 @@ pub(crate) fn render_occurrence(
             .map_or(ActionState::NotStarted, |task| task.state),
         name: ics_plan.plan.name.clone(),
         description: ics_plan.plan.description.clone(),
-        scheduled_at: Some(slot),
+        planned: with_planned_start(None, Some(slot)),
         due_date: with_deadline(None, schedule_end),
         priority: ics_plan.task_fields.as_ref().and_then(|task| task.priority),
         contexts: ics_plan
@@ -109,7 +109,7 @@ fn apply_override(action: &mut Action, over: &OccurrenceOverride) {
         action.state = state;
     }
     if over.scheduled_at.is_some() {
-        action.scheduled_at = over.scheduled_at;
+        action.planned = with_planned_start(action.planned, over.scheduled_at);
     }
     if over.due_date.is_some() {
         action.due_date = with_deadline(action.due_date, over.due_date);
@@ -411,7 +411,7 @@ mod tests {
         assert_eq!(action.priority, Some(2));
         assert_eq!(action.contexts, Some(vec!["deep".into()]));
         assert_eq!(
-            action.scheduled_at,
+            crate::domain::time::planned_start(action.planned.as_ref()),
             Some(dtstart + chrono::Duration::hours(1))
         );
     }
