@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+### Changed
+- `Action::due_date` is a `domain::time::Due` window (`:end` or `:start/end`, platform Decision 48), not a `DateTime`. Each `Bound` keeps the precision it was written at, so a date-only deadline is written back as a date instead of `T00:00`. `Due::late_from` and `Due::not_before` give the half-open window's instants. Calendar sync sees only the deadline; the window's start is never placed.
+- `parse_iso8601_datetime` moved from `workspace::actions::parser` to `domain::time`.
+
 ## [0.1.0] - 2026-02-01
 
 ### Added

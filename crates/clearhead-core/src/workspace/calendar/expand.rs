@@ -1,6 +1,7 @@
 use chrono::{DateTime, Local};
 
 use super::ics::{ICSPlan, OccurrenceOverride, canonical_occurrence_key, occurrence_action_id};
+use crate::domain::time::with_deadline;
 use crate::workspace::actions::{Action, ActionState};
 
 // ============================================================================
@@ -81,7 +82,7 @@ pub(crate) fn render_occurrence(
         name: ics_plan.plan.name.clone(),
         description: ics_plan.plan.description.clone(),
         scheduled_at: Some(slot),
-        due_date: schedule_end,
+        due_date: with_deadline(None, schedule_end),
         priority: ics_plan.task_fields.as_ref().and_then(|task| task.priority),
         contexts: ics_plan
             .task_fields
@@ -111,7 +112,7 @@ fn apply_override(action: &mut Action, over: &OccurrenceOverride) {
         action.scheduled_at = over.scheduled_at;
     }
     if over.due_date.is_some() {
-        action.due_date = over.due_date;
+        action.due_date = with_deadline(action.due_date, over.due_date);
     }
     action.completed_at = over.completed_at;
     if let Some(title) = &over.title {

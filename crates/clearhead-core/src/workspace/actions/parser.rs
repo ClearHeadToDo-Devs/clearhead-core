@@ -1,6 +1,7 @@
 use super::source::{
     NodeWrapper, SourceMetadata, SourceRange, create_node_wrapper, get_node_text, get_prefixed_text,
 };
+use crate::domain::time::{Due, parse_iso8601_datetime};
 use crate::domain::{Action, ActionState, PredecessorRef};
 use chrono::{DateTime, Local};
 use std::collections::HashMap;
@@ -151,7 +152,7 @@ impl Action {
             }
         }
         if let Some(due_date) = &self.due_date {
-            write!(f, " :{}", due_date.format("%Y-%m-%dT%H:%M"))?;
+            write!(f, " :{}", due_date)?;
         }
         if let Some(created_at) = &self.created_at {
             write!(f, " ^{}", created_at.format("%Y-%m-%dT%H:%M"))?;
@@ -202,38 +203,6 @@ impl fmt::Display for Action {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.fmt_content(f, true)
     }
-}
-
-/// Parse ISO 8601 datetime string to DateTime<Local>
-/// Supports formats: YYYY-MM-DD, YYYY-MM-DDTHH:MM, YYYY-MM-DDTHH:MM:SS
-/// with optional timezone (Z or +/-HH:MM)
-pub fn parse_iso8601_datetime(datetime_str: &str) -> Option<DateTime<Local>> {
-    use chrono::{NaiveDate, NaiveDateTime, NaiveTime, TimeZone};
-
-    let trimmed = datetime_str.trim();
-
-    // Try parsing with timezone first
-    if let Ok(dt) = DateTime::parse_from_rfc3339(trimmed) {
-        return Some(dt.with_timezone(&Local));
-    }
-
-    // Try YYYY-MM-DDTHH:MM:SS format (without timezone)
-    if let Ok(naive_dt) = NaiveDateTime::parse_from_str(trimmed, "%Y-%m-%dT%H:%M:%S") {
-        return Local.from_local_datetime(&naive_dt).earliest();
-    }
-
-    // Try YYYY-MM-DDTHH:MM format (without timezone, no seconds)
-    if let Ok(naive_dt) = NaiveDateTime::parse_from_str(trimmed, "%Y-%m-%dT%H:%M") {
-        return Local.from_local_datetime(&naive_dt).earliest();
-    }
-
-    // Try YYYY-MM-DD format (date only, default to start of day)
-    if let Ok(naive_date) = NaiveDate::parse_from_str(trimmed, "%Y-%m-%d") {
-        let naive_dt = naive_date.and_time(NaiveTime::from_hms_opt(0, 0, 0)?);
-        return Local.from_local_datetime(&naive_dt).earliest();
-    }
-
-    None
 }
 
 /// Recursively parse an action node and all its children into a flat list
@@ -324,7 +293,7 @@ pub fn parse_action_recursive(
                 do_duration = parse_duration_field(&meta, &node.source);
             }
             "due_date" => {
-                (due_date_time, due_date_range) = parse_date_field(&meta, &node.source);
+                (due_date_time, due_date_range) = parse_due_field(&meta, &node.source);
             }
             "completed_date" => {
                 (completed_date_time, completed_date_range) = parse_date_field(&meta, &node.source);
@@ -465,6 +434,24 @@ fn parse_date_field(
         (datetime, range)
     } else {
         (None, None)
+    }
+}
+
+/// Parse the due window (`:end` or `:start/end`) returning it and its source range
+fn parse_due_field(node: &tree_sitter::Node, source: &str) -> (Option<Due>, Option<SourceRange>) {
+    let bound = |field| {
+        node.child_by_field_name(field)
+            .and_then(|n| get_node_text(&n, source).parse().ok())
+    };
+    match bound("end") {
+        Some(end) => (
+            Some(Due {
+                start: bound("start"),
+                end,
+            }),
+            Some(SourceRange::from_node(node)),
+        ),
+        None => (None, None),
     }
 }
 

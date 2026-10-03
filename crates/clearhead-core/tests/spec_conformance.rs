@@ -121,6 +121,13 @@ fn every_field_fixture_has_the_specified_domain_meaning() {
         "2026-01-01T09:00:00"
     );
     assert_eq!(action.duration, Some(60));
+    let due = action.due_date.expect("every_field has a due window");
+    assert_eq!(
+        due.to_string(),
+        "2026-01-01/2026-01-02",
+        "written precision is kept"
+    );
+    assert!(due.start.is_some(), "the window's lower bound is parsed");
     assert_eq!(
         action
             .created_at

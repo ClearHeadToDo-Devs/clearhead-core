@@ -12,6 +12,7 @@
 
 pub mod diff;
 pub mod filter;
+pub mod time;
 pub mod update;
 
 use chrono::{DateTime, Local, Utc};
@@ -619,8 +620,8 @@ pub struct Action {
     pub scheduled_at: Option<DateTime<Local>>,
     /// Expected duration in minutes (`D30` in DSL).
     pub duration: Option<u32>,
-    /// Deadline or due date (`:datetime` in DSL).
-    pub due_date: Option<DateTime<Local>>,
+    /// Due window (`:end` or `:start/end` in DSL, Decision 48).
+    pub due_date: Option<time::Due>,
     /// Completion timestamp (`%datetime` in DSL).
     pub completed_at: Option<DateTime<Local>>,
     /// Creation timestamp (`^datetime` in DSL).

@@ -74,7 +74,7 @@ impl SchemaAction {
             contexts: action.contexts.clone(),
             scheduled_date_time: action.scheduled_at.map(|d| d.to_rfc3339()),
             duration_minutes: action.duration,
-            due_date_time: action.due_date.map(|d| d.to_rfc3339()),
+            due_date_time: action.due_date.map(|d| d.to_string()),
             completed_date_time: action.completed_at.map(|d| d.to_rfc3339()),
             created_date_time: action.created_at.map(|d| d.to_rfc3339()),
             charter: action.charter.clone(),

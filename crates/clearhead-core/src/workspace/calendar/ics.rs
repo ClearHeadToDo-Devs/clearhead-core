@@ -9,6 +9,7 @@
 //! VTODO integration profile for linked one-off and recurring realizations.
 
 use crate::config::PlanComponentKind;
+use crate::domain::time::deadline;
 use crate::domain::{Action, ActionState, Plan, Recurrence};
 use crate::workspace::store::WorkspaceError;
 use chrono::{DateTime, Local, NaiveDate, NaiveDateTime, TimeZone, Utc};
@@ -636,7 +637,7 @@ pub fn render_occurrence_action(
                 }
                 if fields.due_date {
                     event.remove_ends();
-                    if let Some(value) = action.due_date {
+                    if let Some(value) = deadline(action.due_date.as_ref()) {
                         event.ends(value.with_timezone(&Utc));
                     }
                 }
@@ -652,7 +653,7 @@ pub fn render_occurrence_action(
                 }
                 if fields.due_date {
                     todo.remove_due();
-                    if let Some(value) = action.due_date {
+                    if let Some(value) = deadline(action.due_date.as_ref()) {
                         todo.due(value.with_timezone(&Utc));
                     }
                 }
@@ -1243,7 +1244,7 @@ pub fn action_to_vtodo(action: &Action) -> Todo {
     if let Some(scheduled_at) = action.scheduled_at {
         todo.starts(scheduled_at.with_timezone(&Utc));
     }
-    if let Some(due_date) = action.due_date {
+    if let Some(due_date) = deadline(action.due_date.as_ref()) {
         todo.due(due_date.with_timezone(&Utc));
     }
     if let Some(desc) = &action.description {
@@ -1294,6 +1295,7 @@ pub fn actions_to_icalendar(actions: &[Action], open_only: bool) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::time::{Bound, Due, with_deadline};
     use std::io::Write;
     use tempfile::NamedTempFile;
 
@@ -1541,7 +1543,7 @@ mod tests {
             priority: Some(3),
             contexts: Some(vec!["home".into(), "focus".into()]),
             scheduled_at: parse_ics_datetime_token("20260102T120000Z"),
-            due_date: parse_ics_datetime_token("20260102T130000Z"),
+            due_date: with_deadline(None, parse_ics_datetime_token("20260102T130000Z")),
             ..Default::default()
         };
         let schedule_only = render_occurrence_action(
@@ -1860,7 +1862,7 @@ mod tests {
         let due = Local.with_ymd_and_hms(2026, 6, 2, 17, 0, 0).unwrap();
         let mut action = scheduled_action("Write spec", ActionState::InProgress);
         action.description = Some("Describe the simpler projection".into());
-        action.due_date = Some(due);
+        action.due_date = Some(Due::by(Bound::minute(due)));
         action.priority = Some(2);
         action.contexts = Some(vec!["work".into(), "writing".into()]);
 

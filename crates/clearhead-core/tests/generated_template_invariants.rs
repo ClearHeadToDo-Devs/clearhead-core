@@ -1,4 +1,5 @@
 use chrono::{DateTime, Duration, Local, Utc};
+use clearhead_core::domain::time::{Bound, Due};
 use clearhead_core::workspace::{instantiate_template, template_candidates};
 use clearhead_core::{Action, ActionState, PredecessorRef};
 use proptest::prelude::*;
@@ -48,7 +49,7 @@ fn populated_action(id: Uuid, parent_id: Option<Uuid>, seed: u32, index: usize) 
         contexts: Some(vec![format!("context-{seed}"), format!("step-{index}")]),
         scheduled_at: Some(local_timestamp),
         duration: Some((index + 1) as u32 * 15),
-        due_date: Some(local_timestamp + Duration::days(1)),
+        due_date: Some(Due::by(Bound::minute(local_timestamp + Duration::days(1)))),
         completed_at: Some(local_timestamp + Duration::hours(2)),
         created_at: Some(local_timestamp - Duration::days(1)),
         predecessors: Some(vec![PredecessorRef {

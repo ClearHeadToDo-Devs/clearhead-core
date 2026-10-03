@@ -5,6 +5,7 @@
 //! VTODO field is merged independently against its last-agreed value so a
 //! conflict in one field never blocks safe changes in another.
 
+use crate::domain::time::{deadline, with_deadline};
 use chrono::{DateTime, Local, Utc};
 use icalendar::{Calendar, CalendarComponent, Component, Event, EventLike, Todo, TodoStatus};
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -379,7 +380,7 @@ pub fn plan_one_off_sync(
                 occurrence_key: None,
                 name: action.name.clone(),
                 scheduled_at: Reconcile::TakeAction(action.scheduled_at),
-                due_date: Reconcile::TakeAction(action.due_date),
+                due_date: Reconcile::TakeAction(deadline(action.due_date.as_ref())),
                 state: Reconcile::TakeAction(action.state),
                 title: Reconcile::TakeAction(action.name.clone()),
                 description: Reconcile::TakeAction(action.description.clone()),
@@ -448,7 +449,7 @@ pub fn plan_one_off_sync(
                 Some(&resource.plan.dtstart),
             ),
             due_date: reconcile(
-                &action.due_date,
+                &deadline(action.due_date.as_ref()),
                 due_bases.get(&action.id),
                 Some(&resource.schedule_end),
             ),
@@ -578,9 +579,9 @@ pub fn plan_recurring_occurrence_sync(
                 Some(&calendar.scheduled_at),
             ),
             due_date: reconcile(
-                &action.due_date,
+                &deadline(action.due_date.as_ref()),
                 due_bases.get(&occurrence_id),
-                Some(&calendar.due_date),
+                Some(&deadline(calendar.due_date.as_ref())),
             ),
             state,
             title,
@@ -737,9 +738,10 @@ fn apply_report(
                 store,
                 &mut applied,
             )?;
+            let mut due_at = deadline(action.due_date.as_ref());
             apply_time_outcome(
                 &entry.due_date,
-                &mut action.due_date,
+                &mut due_at,
                 entry.action_id,
                 DUE_DATE_FIELD,
                 SyncField::DueDate,
@@ -747,6 +749,7 @@ fn apply_report(
                 store,
                 &mut applied,
             )?;
+            action.due_date = with_deadline(action.due_date, due_at);
             apply_state_outcome(
                 &entry.state,
                 entry.calendar_completed_at,
@@ -1861,7 +1864,7 @@ fn action_from_projection(source: &PlanActionProjection) -> Action {
         priority: source.priority,
         contexts: normalized_contexts(source.contexts.clone()),
         scheduled_at: source.scheduled_at,
-        due_date: source.due_date,
+        due_date: with_deadline(None, source.due_date),
         completed_at: (source.state == ActionState::Completed)
             .then_some(source.completed_at)
             .flatten(),
@@ -1993,7 +1996,7 @@ pub fn render_action_mirror(
                 if let Some(value) = action.scheduled_at {
                     event.starts(value.with_timezone(&Utc));
                 }
-                if let Some(value) = action.due_date {
+                if let Some(value) = deadline(action.due_date.as_ref()) {
                     event.ends(value.with_timezone(&Utc));
                 }
                 calendar.push(event);
@@ -2045,7 +2048,7 @@ fn patch_event(event: &mut Event, action: &Action, fields: &[SyncField]) {
     }
     if fields.contains(&SyncField::DueDate) {
         event.remove_ends();
-        if let Some(value) = action.due_date {
+        if let Some(value) = deadline(action.due_date.as_ref()) {
             event.ends(value.with_timezone(&Utc));
         }
     }
@@ -2061,7 +2064,7 @@ fn patch_todo(todo: &mut Todo, action: &Action, fields: &[SyncField]) {
     }
     if fields.contains(&SyncField::DueDate) {
         todo.remove_due();
-        if let Some(value) = action.due_date {
+        if let Some(value) = deadline(action.due_date.as_ref()) {
             todo.due(value.with_timezone(&Utc));
         }
     }
@@ -2264,6 +2267,7 @@ pub fn prepare_master_rollforwards(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::time::{Bound, Due, with_deadline};
     use chrono::TimeZone;
 
     fn t(day: u32) -> DateTime<Local> {
@@ -2463,7 +2467,7 @@ mod tests {
                 id: action_id,
                 name: "Linked".into(),
                 scheduled_at: Some(t(20)),
-                due_date: Some(t(21)),
+                due_date: Some(Due::by(Bound::minute(t(21)))),
                 plan_id: Some(plan_id_from_ics_uid("foreign@example.com")),
                 ..Default::default()
             }],
@@ -2714,7 +2718,7 @@ mod tests {
             name: "Base title".into(),
             description: Some("Base description".into()),
             scheduled_at: base_time,
-            due_date: base_time,
+            due_date: with_deadline(None, base_time),
             state: ActionState::NotStarted,
             priority: Some(5),
             contexts: Some(vec!["base".into()]),
@@ -2777,7 +2781,7 @@ mod tests {
             name: "Local title".into(),
             description: Some("Local description".into()),
             scheduled_at: base_time,
-            due_date: base_time,
+            due_date: with_deadline(None, base_time),
             state: ActionState::InProgress,
             priority: Some(1),
             contexts: Some(vec!["local".into()]),
@@ -2969,7 +2973,7 @@ mod tests {
                 priority: source.priority,
                 contexts: source.contexts,
                 scheduled_at: source.scheduled_at,
-                due_date: source.due_date,
+                due_date: with_deadline(None, source.due_date),
                 completed_at: Some(completed_at),
                 ..Action::default()
             }

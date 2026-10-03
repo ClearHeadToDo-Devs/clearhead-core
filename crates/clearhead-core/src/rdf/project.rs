@@ -303,11 +303,11 @@ fn project_action(qs: &mut QuadSet, action: &Action) -> Result<()> {
             typed(dt.to_rfc3339(), "dateTime"),
         );
     }
-    if let Some(dt) = &action.due_date {
+    if let Some(due) = &action.due_date {
         qs.add(
             &subject,
             actions_pred("hasDueDateTime"),
-            typed(dt.to_rfc3339(), "dateTime"),
+            typed(due.end.at.to_rfc3339(), "dateTime"),
         );
     }
     if let Some(duration) = action.duration {

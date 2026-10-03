@@ -1,4 +1,5 @@
 use chrono::{DateTime, Duration, Local, NaiveDate, TimeZone};
+use clearhead_core::domain::time::{Bound, Due};
 use clearhead_core::workspace::actions::lint_document;
 use clearhead_core::{
     Action, ActionState, OutputFormat, PredecessorRef, close_subtree, collect_subtree_ids, format,
@@ -209,7 +210,7 @@ fn generated_actions() -> impl Strategy<Value = Vec<Action>> {
                 duration: seed.duration,
                 due_date: seed
                     .due_after_creation
-                    .map(|days| generated_datetime(seed.created_day, days)),
+                    .map(|days| Due::by(Bound::minute(generated_datetime(seed.created_day, days)))),
                 completed_at: seed
                     .completed_after_creation
                     .map(|days| generated_datetime(seed.created_day, days)),

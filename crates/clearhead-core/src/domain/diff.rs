@@ -70,8 +70,8 @@ pub enum ActionFieldChange {
         new: Option<DateTime<Local>>,
     },
     DueDate {
-        old: Option<DateTime<Local>>,
-        new: Option<DateTime<Local>>,
+        old: Option<super::time::Due>,
+        new: Option<super::time::Due>,
     },
 }
 
@@ -409,7 +409,7 @@ fn compare_actions(old: &Action, new: &Action) -> Vec<ActionFieldChange> {
             new: new.created_at,
         });
     }
-    if !dates_equal(&old.due_date, &new.due_date) {
+    if old.due_date != new.due_date {
         changes.push(ActionFieldChange::DueDate {
             old: old.due_date,
             new: new.due_date,
