@@ -60,7 +60,6 @@ impl fmt::Display for Reference {
 ///     name: "Uptime".to_string(),
 ///     description: Some("Percentage of time the service is available".to_string()),
 ///     target: Some("99.9%".to_string()),
-///     review_date: Some("2026-06-01".to_string()),
 /// };
 /// ```
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -68,7 +67,6 @@ pub struct Metric {
     pub name: String,
     pub description: Option<String>,
     pub target: Option<String>,
-    pub review_date: Option<String>,
 }
 
 /// A high-level goal that organizes [`Charter`]s.
