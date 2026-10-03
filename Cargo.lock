@@ -414,6 +414,7 @@ dependencies = [
  "chrono",
  "getrandom 0.3.4",
  "icalendar",
+ "iso8601",
  "jsonschema",
  "oxjsonld",
  "oxrdf",

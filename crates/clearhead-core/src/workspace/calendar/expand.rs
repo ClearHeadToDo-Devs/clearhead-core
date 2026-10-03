@@ -1,7 +1,7 @@
 use chrono::{DateTime, Local};
 
 use super::ics::{ICSPlan, OccurrenceOverride, canonical_occurrence_key, occurrence_action_id};
-use crate::domain::time::{with_deadline, with_planned_start};
+use crate::domain::time::{with_planned_end, with_planned_start};
 use crate::workspace::actions::{Action, ActionState};
 
 // ============================================================================
@@ -81,8 +81,7 @@ pub(crate) fn render_occurrence(
             .map_or(ActionState::NotStarted, |task| task.state),
         name: ics_plan.plan.name.clone(),
         description: ics_plan.plan.description.clone(),
-        planned: with_planned_start(None, Some(slot)),
-        due_date: with_deadline(None, schedule_end),
+        planned: with_planned_end(with_planned_start(None, Some(slot)), schedule_end),
         priority: ics_plan.task_fields.as_ref().and_then(|task| task.priority),
         contexts: ics_plan
             .task_fields
@@ -111,8 +110,8 @@ fn apply_override(action: &mut Action, over: &OccurrenceOverride) {
     if over.scheduled_at.is_some() {
         action.planned = with_planned_start(action.planned, over.scheduled_at);
     }
-    if over.due_date.is_some() {
-        action.due_date = with_deadline(action.due_date, over.due_date);
+    if over.scheduled_end.is_some() {
+        action.planned = with_planned_end(action.planned, over.scheduled_end);
     }
     action.completed_at = over.completed_at;
     if let Some(title) = &over.title {
@@ -368,7 +367,7 @@ mod tests {
             canonical_occurrence_key(dtstart),
             OccurrenceOverride {
                 scheduled_at: Some(dtstart),
-                due_date: None,
+                scheduled_end: None,
                 state: Some(ActionState::Cancelled),
                 completed_at: None,
                 title: None,
@@ -396,7 +395,7 @@ mod tests {
             canonical_occurrence_key(dtstart),
             OccurrenceOverride {
                 scheduled_at: Some(dtstart + chrono::Duration::hours(1)),
-                due_date: None,
+                scheduled_end: None,
                 state: None,
                 completed_at: None,
                 title: None,

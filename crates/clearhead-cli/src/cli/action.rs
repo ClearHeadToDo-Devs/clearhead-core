@@ -424,7 +424,7 @@ fn try_reschedule_occurrence(
         &key,
         &clearhead_core::OccurrenceOp::Reschedule {
             scheduled_at: Some(scheduled_at),
-            due_date: None,
+            scheduled_end: None,
         },
     )?;
     info!(%occurrence.id, %plan_id, "Occurrence rescheduled via deviation");

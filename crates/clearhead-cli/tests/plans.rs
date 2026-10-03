@@ -846,7 +846,10 @@ fn test_sync_calendar_deletion_unschedules_without_recreating_projection() {
     assert!(actions.contains("!7"), "{actions}");
     assert!(actions.contains("+work"), "{actions}");
     assert!(!actions.contains("@2026-04-28"), "{actions}");
-    assert!(!actions.contains(":2026-04-29"), "{actions}");
+    assert!(
+        actions.contains(":2026-04-29T17:00"),
+        "the window is not calendar data: {actions}"
+    );
 }
 
 #[test]

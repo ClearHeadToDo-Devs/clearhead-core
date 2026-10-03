@@ -224,7 +224,7 @@ fn conflict_choice(
 fn render_sync_entry(entry: &SyncEntry) -> String {
     let mut changes = Vec::new();
     render_field("scheduled_at", &entry.scheduled_at, &mut changes);
-    render_field("due_date", &entry.due_date, &mut changes);
+    render_field("scheduled_end", &entry.scheduled_end, &mut changes);
     render_field("state", &entry.state, &mut changes);
     render_field("title", &entry.title, &mut changes);
     render_field("description", &entry.description, &mut changes);

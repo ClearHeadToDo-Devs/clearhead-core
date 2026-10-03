@@ -15,7 +15,10 @@ use uuid::Uuid;
 use crate::workspace::store::WorkspaceError;
 
 pub const SCHEDULED_AT_FIELD: &str = "scheduled_at";
-pub const DUE_DATE_FIELD: &str = "due_date";
+/// The planned block's end as last synced. The key predates Decision 51, when
+/// this side of a component was read as a deadline; it is kept so existing
+/// merge bases stay valid.
+pub const SCHEDULED_END_FIELD: &str = "due_date";
 pub const STATE_FIELD: &str = "state";
 pub const TITLE_FIELD: &str = "title";
 pub const DESCRIPTION_FIELD: &str = "description";

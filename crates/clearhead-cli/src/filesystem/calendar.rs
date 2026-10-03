@@ -321,9 +321,7 @@ fn prepare_calendar_sync(
         }
         let calendar_location = linked_locations.get(&action.id).cloned();
         let calendar_deleted = !observed_one_off_plan_ids.contains(&plan_id);
-        let action_unscheduled = !newly_linked_ids.contains(&action.id)
-            && action.planned.is_none()
-            && action.due_date.is_none();
+        let action_unscheduled = !newly_linked_ids.contains(&action.id) && action.planned.is_none();
         if calendar_deleted || action_unscheduled {
             let kind = if action_unscheduled {
                 SyncLifecycleKind::ActionUnscheduled
@@ -791,7 +789,7 @@ fn action_projection_from_plan(
         id: action_id,
         uid,
         scheduled_at: plan.plan.dtstart,
-        due_date: plan.schedule_end,
+        scheduled_end: plan.schedule_end,
         state: task.map_or(ActionState::NotStarted, |task| task.state),
         title: plan.plan.name.clone(),
         description: plan.plan.description.clone(),
@@ -1893,7 +1891,10 @@ mod tests {
                 Some(["local".into()].as_slice())
             );
             assert!(clearhead_core::domain::time::planned_start(action.planned.as_ref()).is_none());
-            assert!(action.due_date.is_none());
+            assert!(
+                action.due_date.is_some(),
+                "the window is not calendar data and survives the Plan's deletion"
+            );
             assert!(!resource.exists(), "deleted Plan must not be recreated");
             let sidecar = parse_sidecar(
                 &std::fs::read_to_string(actions.parent().unwrap().join(".inbox.json")).unwrap(),

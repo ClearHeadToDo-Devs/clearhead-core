@@ -5,7 +5,7 @@
 //! VTODO field is merged independently against its last-agreed value so a
 //! conflict in one field never blocks safe changes in another.
 
-use crate::domain::time::{deadline, planned_start, with_deadline, with_planned_start};
+use crate::domain::time::{planned_end, planned_start, with_planned_end, with_planned_start};
 use chrono::{DateTime, Local, Utc};
 use icalendar::{Calendar, CalendarComponent, Component, Event, EventLike, Todo, TodoStatus};
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -16,11 +16,12 @@ use super::expand::{next_active_slot, render_occurrence};
 use super::ics::{
     ICSPlan, OccurrenceActionFields, OccurrenceOp, PlanActionProjection, action_to_vtodo,
     canonical_occurrence_key, parse_ics, plan_id_from_ics_uid, render_master_rollforward,
-    render_occurrence_action, render_occurrence_deviation,
+    render_occurrence_action, render_occurrence_deviation, scheduled_end, set_event_end,
+    set_todo_end,
 };
 use super::sync_store::{
-    CONTEXTS_FIELD, DESCRIPTION_FIELD, DUE_DATE_FIELD, MASTER_DTSTART_FIELD, PRIORITY_FIELD,
-    PlansSyncStore, SCHEDULED_AT_FIELD, STATE_FIELD, TITLE_FIELD, UID_FIELD,
+    CONTEXTS_FIELD, DESCRIPTION_FIELD, MASTER_DTSTART_FIELD, PRIORITY_FIELD, PlansSyncStore,
+    SCHEDULED_AT_FIELD, SCHEDULED_END_FIELD, STATE_FIELD, TITLE_FIELD, UID_FIELD,
     serialize_plans_sync_store,
 };
 use crate::config::PlanComponentKind;
@@ -89,7 +90,7 @@ pub fn reconcile<T: PartialEq + Clone>(
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SyncField {
     ScheduledAt,
-    DueDate,
+    ScheduledEnd,
     State,
     Title,
     Description,
@@ -107,7 +108,7 @@ pub struct SyncEntry {
     pub occurrence_key: Option<String>,
     pub name: String,
     pub scheduled_at: Reconcile<Time>,
-    pub due_date: Reconcile<Time>,
+    pub scheduled_end: Reconcile<Time>,
     pub state: Reconcile<ActionState>,
     pub title: Reconcile<String>,
     pub description: Reconcile<Option<String>>,
@@ -121,7 +122,7 @@ impl SyncEntry {
     pub fn outcomes(&self) -> [(SyncField, OutcomeKind); 7] {
         [
             (SyncField::ScheduledAt, kind(&self.scheduled_at)),
-            (SyncField::DueDate, kind(&self.due_date)),
+            (SyncField::ScheduledEnd, kind(&self.scheduled_end)),
             (SyncField::State, kind(&self.state)),
             (SyncField::Title, kind(&self.title)),
             (SyncField::Description, kind(&self.description)),
@@ -257,7 +258,7 @@ impl SyncReport {
                 continue;
             }
             resolve_one(&mut entry.scheduled_at, prefer);
-            resolve_one(&mut entry.due_date, prefer);
+            resolve_one(&mut entry.scheduled_end, prefer);
             resolve_one(&mut entry.state, prefer);
             resolve_one(&mut entry.title, prefer);
             resolve_one(&mut entry.description, prefer);
@@ -346,7 +347,7 @@ pub fn plan_one_off_sync(
     plans: &[ICSPlan],
 ) -> Result<SyncReport, WorkspaceError> {
     let scheduled_bases: HashMap<Uuid, Time> = store.field_bases(SCHEDULED_AT_FIELD)?;
-    let due_bases: HashMap<Uuid, Time> = store.field_bases(DUE_DATE_FIELD)?;
+    let end_bases: HashMap<Uuid, Time> = store.field_bases(SCHEDULED_END_FIELD)?;
     let state_bases: HashMap<Uuid, ActionState> = store.field_bases(STATE_FIELD)?;
     let title_bases: HashMap<Uuid, String> = store.field_bases(TITLE_FIELD)?;
     let description_bases: HashMap<Uuid, Option<String>> = store.field_bases(DESCRIPTION_FIELD)?;
@@ -380,7 +381,7 @@ pub fn plan_one_off_sync(
                 occurrence_key: None,
                 name: action.name.clone(),
                 scheduled_at: Reconcile::TakeAction(planned_start(action.planned.as_ref())),
-                due_date: Reconcile::TakeAction(deadline(action.due_date.as_ref())),
+                scheduled_end: Reconcile::TakeAction(planned_end(action.planned.as_ref())),
                 state: Reconcile::TakeAction(action.state),
                 title: Reconcile::TakeAction(action.name.clone()),
                 description: Reconcile::TakeAction(action.description.clone()),
@@ -448,9 +449,9 @@ pub fn plan_one_off_sync(
                 scheduled_bases.get(&action.id),
                 Some(&resource.plan.dtstart),
             ),
-            due_date: reconcile(
-                &deadline(action.due_date.as_ref()),
-                due_bases.get(&action.id),
+            scheduled_end: reconcile(
+                &planned_end(action.planned.as_ref()),
+                end_bases.get(&action.id),
                 Some(&resource.schedule_end),
             ),
             state,
@@ -479,7 +480,7 @@ pub fn plan_recurring_occurrence_sync(
     plans: &[ICSPlan],
 ) -> Result<SyncReport, WorkspaceError> {
     let scheduled_bases: HashMap<Uuid, Time> = store.field_bases(SCHEDULED_AT_FIELD)?;
-    let due_bases: HashMap<Uuid, Time> = store.field_bases(DUE_DATE_FIELD)?;
+    let end_bases: HashMap<Uuid, Time> = store.field_bases(SCHEDULED_END_FIELD)?;
     let state_bases: HashMap<Uuid, ActionState> = store.field_bases(STATE_FIELD)?;
     let title_bases: HashMap<Uuid, String> = store.field_bases(TITLE_FIELD)?;
     let description_bases: HashMap<Uuid, Option<String>> = store.field_bases(DESCRIPTION_FIELD)?;
@@ -578,10 +579,10 @@ pub fn plan_recurring_occurrence_sync(
                 scheduled_base,
                 Some(&planned_start(calendar.planned.as_ref())),
             ),
-            due_date: reconcile(
-                &deadline(action.due_date.as_ref()),
-                due_bases.get(&occurrence_id),
-                Some(&deadline(calendar.due_date.as_ref())),
+            scheduled_end: reconcile(
+                &planned_end(action.planned.as_ref()),
+                end_bases.get(&occurrence_id),
+                Some(&planned_end(calendar.planned.as_ref())),
             ),
             state,
             title,
@@ -728,7 +729,10 @@ fn apply_report(
         let (push_fields, action_for_calendar) = {
             let mut push_fields = Vec::new();
             let action = &mut workspace.charters[charter_idx].actions[action_idx].action;
+            // Both ends are reconciled as absolute instants, then set together,
+            // so a start the calendar moved never drags an end it left alone.
             let mut scheduled_at = planned_start(action.planned.as_ref());
+            let mut end_at = planned_end(action.planned.as_ref());
             apply_time_outcome(
                 &entry.scheduled_at,
                 &mut scheduled_at,
@@ -739,19 +743,18 @@ fn apply_report(
                 store,
                 &mut applied,
             )?;
-            action.planned = with_planned_start(action.planned, scheduled_at);
-            let mut due_at = deadline(action.due_date.as_ref());
             apply_time_outcome(
-                &entry.due_date,
-                &mut due_at,
+                &entry.scheduled_end,
+                &mut end_at,
                 entry.action_id,
-                DUE_DATE_FIELD,
-                SyncField::DueDate,
+                SCHEDULED_END_FIELD,
+                SyncField::ScheduledEnd,
                 &mut push_fields,
                 store,
                 &mut applied,
             )?;
-            action.due_date = with_deadline(action.due_date, due_at);
+            action.planned =
+                with_planned_end(with_planned_start(action.planned, scheduled_at), end_at);
             apply_state_outcome(
                 &entry.state,
                 entry.calendar_completed_at,
@@ -1069,7 +1072,6 @@ pub fn prepare_sync(
             })?;
         let action = &mut workspace.charters[charter_idx].actions[action_idx].action;
         action.planned = None;
-        action.due_date = None;
         action.plan_id = None;
         let actions_file = workspace.charters[charter_idx]
             .actions_file
@@ -1254,7 +1256,7 @@ pub fn prepare_sync(
                 resource.component_kind,
                 OccurrenceActionFields {
                     scheduled_at: mirror.fields.contains(&SyncField::ScheduledAt),
-                    due_date: mirror.fields.contains(&SyncField::DueDate),
+                    scheduled_end: mirror.fields.contains(&SyncField::ScheduledEnd),
                     state: mirror.fields.contains(&SyncField::State),
                     title: mirror.fields.contains(&SyncField::Title),
                     description: mirror.fields.contains(&SyncField::Description),
@@ -1320,7 +1322,7 @@ pub fn prepare_sync(
                         &workspace.charters[charter_idx].actions[action_idx].action,
                         &[
                             SyncField::ScheduledAt,
-                            SyncField::DueDate,
+                            SyncField::ScheduledEnd,
                             SyncField::State,
                             SyncField::Title,
                             SyncField::Description,
@@ -1806,7 +1808,11 @@ fn stage_prepared_plan_token(
         SCHEDULED_AT_FIELD,
         &planned_start(occurrence.planned.as_ref()),
     )?;
-    store.stamp(occurrence_id, DUE_DATE_FIELD, &occurrence.due_date)?;
+    store.stamp(
+        occurrence_id,
+        SCHEDULED_END_FIELD,
+        &planned_end(occurrence.planned.as_ref()),
+    )?;
     if plan.component_kind == PlanComponentKind::VTodo {
         store.stamp(occurrence_id, STATE_FIELD, &occurrence.state)?;
         store.stamp(occurrence_id, TITLE_FIELD, &occurrence.name)?;
@@ -1873,8 +1879,10 @@ fn action_from_projection(source: &PlanActionProjection) -> Action {
         description: source.description.clone(),
         priority: source.priority,
         contexts: normalized_contexts(source.contexts.clone()),
-        planned: with_planned_start(None, source.scheduled_at),
-        due_date: with_deadline(None, source.due_date),
+        planned: with_planned_end(
+            with_planned_start(None, source.scheduled_at),
+            source.scheduled_end,
+        ),
         completed_at: (source.state == ActionState::Completed)
             .then_some(source.completed_at)
             .flatten(),
@@ -1888,7 +1896,7 @@ fn stamp_projection(
 ) -> Result<(), WorkspaceError> {
     store.stamp(source.id, UID_FIELD, &source.uid)?;
     store.stamp(source.id, SCHEDULED_AT_FIELD, &source.scheduled_at)?;
-    store.stamp(source.id, DUE_DATE_FIELD, &source.due_date)?;
+    store.stamp(source.id, SCHEDULED_END_FIELD, &source.scheduled_end)?;
     store.stamp(source.id, STATE_FIELD, &source.state)?;
     store.stamp(source.id, TITLE_FIELD, &source.title)?;
     store.stamp(source.id, DESCRIPTION_FIELD, &source.description)?;
@@ -2006,9 +2014,7 @@ pub fn render_action_mirror(
                 if let Some(value) = planned_start(action.planned.as_ref()) {
                     event.starts(value.with_timezone(&Utc));
                 }
-                if let Some(value) = deadline(action.due_date.as_ref()) {
-                    event.ends(value.with_timezone(&Utc));
-                }
+                set_event_end(&mut event, planned_end(action.planned.as_ref()));
                 calendar.push(event);
             }
         }
@@ -2056,27 +2062,29 @@ fn patch_event(event: &mut Event, action: &Action, fields: &[SyncField]) {
             event.starts(value.with_timezone(&Utc));
         }
     }
-    if fields.contains(&SyncField::DueDate) {
-        event.remove_ends();
-        if let Some(value) = deadline(action.due_date.as_ref()) {
-            event.ends(value.with_timezone(&Utc));
-        }
+    if fields.contains(&SyncField::ScheduledEnd) {
+        set_event_end(event, planned_end(action.planned.as_ref()));
     }
 }
 
 fn patch_todo(todo: &mut Todo, action: &Action, fields: &[SyncField]) {
     let fields: HashSet<_> = fields.iter().copied().collect();
+    // A VTODO's end is a DURATION from its start, so moving the start alone
+    // rewrites it to keep the calendar's end where it was.
+    let calendar_end = scheduled_end(todo);
     if fields.contains(&SyncField::ScheduledAt) {
         todo.remove_starts();
         if let Some(value) = planned_start(action.planned.as_ref()) {
             todo.starts(value.with_timezone(&Utc));
         }
     }
-    if fields.contains(&SyncField::DueDate) {
-        todo.remove_due();
-        if let Some(value) = deadline(action.due_date.as_ref()) {
-            todo.due(value.with_timezone(&Utc));
-        }
+    let end = if fields.contains(&SyncField::ScheduledEnd) {
+        planned_end(action.planned.as_ref())
+    } else {
+        calendar_end
+    };
+    if fields.contains(&SyncField::ScheduledAt) || fields.contains(&SyncField::ScheduledEnd) {
+        set_todo_end(todo, planned_start(action.planned.as_ref()), end);
     }
     if fields.contains(&SyncField::State) {
         todo.remove_status().remove_property("X-CLEARHEAD-STATUS");
@@ -2277,7 +2285,6 @@ pub fn prepare_master_rollforwards(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::time::{Bound, Due, with_deadline};
     use chrono::TimeZone;
 
     fn t(day: u32) -> DateTime<Local> {
@@ -2313,7 +2320,7 @@ mod tests {
             occurrence_key: None,
             name: "Clash".into(),
             scheduled_at: Reconcile::NoOp,
-            due_date: Reconcile::NoOp,
+            scheduled_end: Reconcile::NoOp,
             state: Reconcile::NoOp,
             title: Reconcile::Conflict {
                 action: "mine".into(),
@@ -2476,8 +2483,7 @@ mod tests {
             actions: vec![Action {
                 id: action_id,
                 name: "Linked".into(),
-                planned: with_planned_start(None, Some(t(20))),
-                due_date: Some(Due::by(Bound::minute(t(21)))),
+                planned: with_planned_end(with_planned_start(None, Some(t(20))), Some(t(21))),
                 plan_id: Some(plan_id_from_ics_uid("foreign@example.com")),
                 ..Default::default()
             }],
@@ -2574,7 +2580,6 @@ mod tests {
         let written = crate::workspace::parse_actions(&String::from_utf8(action_bytes).unwrap())
             .expect("action write parses");
         assert!(planned_start(written[0].planned.as_ref()).is_none());
-        assert!(written[0].due_date.is_none());
         assert!(written[0].plan_id.is_none());
 
         // The store write must no longer key the unlinked action.
@@ -2727,8 +2732,7 @@ mod tests {
             plan_id: Some(plan.plan.id),
             name: "Base title".into(),
             description: Some("Base description".into()),
-            planned: with_planned_start(None, base_time),
-            due_date: with_deadline(None, base_time),
+            planned: with_planned_end(with_planned_start(None, base_time), base_time),
             state: ActionState::NotStarted,
             priority: Some(5),
             contexts: Some(vec!["base".into()]),
@@ -2736,7 +2740,7 @@ mod tests {
         };
         let mut store = PlansSyncStore::new(Path::new("/tmp/plans"));
         store.stamp(id, SCHEDULED_AT_FIELD, &base_time).unwrap();
-        store.stamp(id, DUE_DATE_FIELD, &base_time).unwrap();
+        store.stamp(id, SCHEDULED_END_FIELD, &base_time).unwrap();
         store
             .stamp(id, STATE_FIELD, &ActionState::NotStarted)
             .unwrap();
@@ -2754,7 +2758,7 @@ mod tests {
             .entries
             .remove(0);
         assert!(matches!(entry.scheduled_at, Reconcile::TakeCalendar(_)));
-        assert!(matches!(entry.due_date, Reconcile::TakeCalendar(_)));
+        assert!(matches!(entry.scheduled_end, Reconcile::TakeCalendar(_)));
         assert_eq!(entry.state, Reconcile::TakeCalendar(ActionState::Completed));
         assert_eq!(
             entry.title,
@@ -2790,8 +2794,7 @@ mod tests {
             plan_id: Some(plan.plan.id),
             name: "Local title".into(),
             description: Some("Local description".into()),
-            planned: with_planned_start(None, base_time),
-            due_date: with_deadline(None, base_time),
+            planned: with_planned_end(with_planned_start(None, base_time), base_time),
             state: ActionState::InProgress,
             priority: Some(1),
             contexts: Some(vec!["local".into()]),
@@ -2799,14 +2802,14 @@ mod tests {
         };
         let mut store = PlansSyncStore::new(Path::new("/tmp/plans"));
         store.stamp(id, SCHEDULED_AT_FIELD, &base_time).unwrap();
-        store.stamp(id, DUE_DATE_FIELD, &base_time).unwrap();
+        store.stamp(id, SCHEDULED_END_FIELD, &base_time).unwrap();
 
         let entry = plan_one_off_sync(&model_with(action), &store, &[plan])
             .unwrap()
             .entries
             .remove(0);
         assert!(matches!(entry.scheduled_at, Reconcile::TakeCalendar(_)));
-        assert!(matches!(entry.due_date, Reconcile::TakeCalendar(_)));
+        assert!(matches!(entry.scheduled_end, Reconcile::TakeCalendar(_)));
         assert_eq!(entry.state, Reconcile::NoOp);
         assert_eq!(entry.title, Reconcile::NoOp);
         assert_eq!(entry.description, Reconcile::NoOp);
@@ -2962,7 +2965,7 @@ mod tests {
             id: Uuid::now_v7(),
             uid: "foreign@example.com".to_string(),
             scheduled_at: Some(t(20)),
-            due_date: Some(t(25)),
+            scheduled_end: Some(t(25)),
             state: ActionState::Completed,
             title: "Imported title".to_string(),
             description: Some("Imported description".to_string()),
@@ -2982,8 +2985,10 @@ mod tests {
                 description: source.description,
                 priority: source.priority,
                 contexts: source.contexts,
-                planned: with_planned_start(None, source.scheduled_at),
-                due_date: with_deadline(None, source.due_date),
+                planned: with_planned_end(
+                    with_planned_start(None, source.scheduled_at),
+                    source.scheduled_end
+                ),
                 completed_at: Some(completed_at),
                 ..Action::default()
             }
@@ -2998,7 +3003,7 @@ mod tests {
                     id: Uuid::now_v7(),
                     uid: "foreign@example.com".to_string(),
                     scheduled_at: None,
-                    due_date: None,
+                    scheduled_end: None,
                     state: ActionState::NotStarted,
                     title: "Imported".to_string(),
                     description: None,

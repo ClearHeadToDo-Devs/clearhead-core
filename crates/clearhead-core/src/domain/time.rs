@@ -180,27 +180,6 @@ impl Due {
     }
 }
 
-/// The deadline's first instant, as calendars see a due window: its start is
-/// a constraint and is never placed (Decision 48).
-pub fn deadline(due: Option<&Due>) -> Option<DateTime<Local>> {
-    due.map(|d| d.end.at)
-}
-
-/// Set the deadline from a calendar instant, keeping the window's start, and
-/// the written precision when the instant is unchanged or still a whole day.
-pub fn with_deadline(due: Option<Due>, at: Option<DateTime<Local>>) -> Option<Due> {
-    let at = at?;
-    let start = due.and_then(|d| d.start);
-    let end = match due.map(|d| d.end) {
-        Some(end) if end.at == at => end,
-        Some(end) if end.precision == Precision::Day && at.time() == NaiveTime::MIN => {
-            Bound::day(at)
-        }
-        _ => Bound::minute(at),
-    };
-    Some(Due { start, end })
-}
-
 impl FromStr for Due {
     type Err = String;
 
@@ -296,6 +275,34 @@ pub fn with_planned_start(
     };
     let end = planned.end.map(|end| end.shifted(at - planned.start.at));
     Some(Planned { start, end })
+}
+
+/// Where the planned block ends, as calendars place it: a date end's next
+/// midnight (an all-day `DTEND`), or the time itself.
+pub fn planned_end(planned: Option<&Planned>) -> Option<DateTime<Local>> {
+    planned.and_then(|p| p.end).map(|end| end.end_instant())
+}
+
+/// Set the planned block's end from a calendar instant, keeping the written
+/// precision when the instant is unchanged. A midnight ending a block that
+/// starts on a date is that date range's exclusive end, so the day before is
+/// written. An end needs a start; without one nothing is planned.
+pub fn with_planned_end(planned: Option<Planned>, at: Option<DateTime<Local>>) -> Option<Planned> {
+    let planned = planned?;
+    let end = at.map(|at| match planned.end {
+        Some(end) if end.end_instant() == at => end,
+        _ if planned.start.precision == Precision::Day && at.time() == NaiveTime::MIN => at
+            .date_naive()
+            .pred_opt()
+            .and_then(|day| {
+                Local
+                    .from_local_datetime(&day.and_time(NaiveTime::MIN))
+                    .earliest()
+            })
+            .map_or(Bound::minute(at), Bound::day),
+        _ => Bound::minute(at),
+    });
+    Some(Planned { end, ..planned })
 }
 
 impl FromStr for Planned {
@@ -407,6 +414,26 @@ mod tests {
         );
         let day: Bound = "2026-10-03".parse().unwrap();
         assert_eq!(Planned::from_minutes(day, 60).to_string(), "2026-10-03");
+    }
+
+    #[test]
+    fn a_calendar_end_keeps_the_written_form() {
+        let block = Some(planned("2026-10-03/2026-10-05"));
+        assert_eq!(planned_end(block.as_ref()), Some(at("2026-10-06")));
+        assert_eq!(
+            with_planned_end(block, Some(at("2026-10-07")))
+                .unwrap()
+                .to_string(),
+            "2026-10-03/2026-10-06"
+        );
+        let timed = Some(planned("2026-10-03T09:00"));
+        assert_eq!(
+            with_planned_end(timed, Some(at("2026-10-03T09:30")))
+                .unwrap()
+                .to_string(),
+            "2026-10-03T09:00/2026-10-03T09:30"
+        );
+        assert_eq!(with_planned_end(None, Some(at("2026-10-03T09:30"))), None);
     }
 
     #[test]

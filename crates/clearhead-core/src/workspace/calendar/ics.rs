@@ -9,7 +9,7 @@
 //! VTODO integration profile for linked one-off and recurring realizations.
 
 use crate::config::PlanComponentKind;
-use crate::domain::time::{deadline, planned_start};
+use crate::domain::time::{planned_end, planned_start};
 use crate::domain::{Action, ActionState, Plan, Recurrence};
 use crate::workspace::store::WorkspaceError;
 use chrono::{DateTime, Local, NaiveDate, NaiveDateTime, TimeZone, Utc};
@@ -32,7 +32,7 @@ use uuid::{Uuid, uuid};
 pub struct ICSPlan {
     pub path: PathBuf,
     pub plan: Plan,
-    /// Normalized end/due side of the Plan's schedule interval.
+    /// The end of the Plan's planned block: `DTEND`, or `DTSTART` plus `DURATION`.
     pub schedule_end: Option<DateTime<Local>>,
     /// Task-client fields present only when the observed codec is VTODO.
     pub task_fields: Option<PlanTaskFields>,
@@ -61,7 +61,7 @@ pub struct PlanTaskFields {
 #[derive(Debug, Clone, PartialEq)]
 pub struct OccurrenceOverride {
     pub scheduled_at: Option<DateTime<Local>>,
-    pub due_date: Option<DateTime<Local>>,
+    pub scheduled_end: Option<DateTime<Local>>,
     pub state: Option<ActionState>,
     pub completed_at: Option<DateTime<Local>>,
     pub title: Option<String>,
@@ -167,7 +167,6 @@ pub fn parse_ics(content: &str, logical_path: &Path) -> Result<Vec<ICSPlan>, Wor
         else {
             continue;
         };
-        ics_plan.schedule_end = todo.get_due().and_then(date_perhaps_time_to_local);
         ics_plan.task_fields = Some(PlanTaskFields {
             state: vtodo_state(todo),
             completed_at: todo
@@ -272,7 +271,7 @@ fn component_to_plan<T: Component>(
 
     Some(ICSPlan {
         path: path.to_path_buf(),
-        schedule_end: component.get_end().and_then(date_perhaps_time_to_local),
+        schedule_end: scheduled_end(component),
         task_fields: None,
         component_kind,
         exdates: BTreeSet::new(),
@@ -336,6 +335,45 @@ fn parse_description_directives(desc: &str) -> (Option<String>, Option<String>) 
 
 fn parse_dtstart<T: Component>(component: &T) -> Option<DateTime<Local>> {
     date_perhaps_time_to_local(component.get_start()?)
+}
+
+/// The planned block's end (Decision 51): `DTEND`, or `DTSTART` plus
+/// `DURATION`. A VTODO's `DUE` is a deadline, not a block end, and is not read.
+pub(crate) fn scheduled_end<T: Component>(component: &T) -> Option<DateTime<Local>> {
+    if let Some(end) = component.get_end() {
+        return date_perhaps_time_to_local(end);
+    }
+    let start = component.get_start().and_then(date_perhaps_time_to_local)?;
+    let duration = iso8601::duration(component.property_value("DURATION")?).ok()?;
+    Some(start + chrono::Duration::from_std(duration.into()).ok()?)
+}
+
+/// Write the planned block's end on a VEVENT as `DTEND`.
+pub(crate) fn set_event_end(event: &mut Event, end: Option<DateTime<Local>>) {
+    event.remove_ends();
+    event.remove_property("DURATION");
+    if let Some(end) = end {
+        event.ends(end.with_timezone(&Utc));
+    }
+}
+
+/// Write the planned block's end on a VTODO as a `DURATION` from its start.
+/// RFC 5545 forbids `DURATION` beside `DUE`. ClearHead writes no `DUE`; one
+/// another client wrote is preserved, and the block end then stays local.
+pub(crate) fn set_todo_end(
+    todo: &mut Todo,
+    start: Option<DateTime<Local>>,
+    end: Option<DateTime<Local>>,
+) {
+    todo.remove_property("DURATION");
+    if todo.property_value("DUE").is_some() {
+        return;
+    }
+    if let (Some(start), Some(end)) = (start, end)
+        && end > start
+    {
+        todo.append_property(Property::from(end - start));
+    }
 }
 
 /// Convert every RFC 5545 date form accepted by the parser into ClearHead's
@@ -416,7 +454,7 @@ fn override_from_event(event: &Event) -> Option<(String, OccurrenceOverride)> {
     let slot = parse_ics_datetime_property(recurrence_id, recurrence_id.value())?;
     let over = OccurrenceOverride {
         scheduled_at: event.get_start().and_then(date_perhaps_time_to_local),
-        due_date: event.get_end().and_then(date_perhaps_time_to_local),
+        scheduled_end: scheduled_end(event),
         state: None,
         completed_at: None,
         title: event.get_summary().map(str::to_string),
@@ -438,7 +476,7 @@ fn override_from_todo(todo: &Todo) -> Option<(String, OccurrenceOverride)> {
     let slot = parse_ics_datetime_property(recurrence_id, recurrence_id.value())?;
     let over = OccurrenceOverride {
         scheduled_at: todo.get_start().and_then(date_perhaps_time_to_local),
-        due_date: todo.get_due().and_then(date_perhaps_time_to_local),
+        scheduled_end: scheduled_end(todo),
         state: vtodo_state_if_present(todo),
         completed_at: todo
             .get_completed()
@@ -508,7 +546,7 @@ pub enum OccurrenceOp {
     /// that field on the override, inheriting nothing further from the master.
     Reschedule {
         scheduled_at: Option<DateTime<Local>>,
-        due_date: Option<DateTime<Local>>,
+        scheduled_end: Option<DateTime<Local>>,
     },
 }
 
@@ -542,9 +580,9 @@ pub fn render_occurrence_deviation(
         }
         OccurrenceOp::Reschedule {
             scheduled_at,
-            due_date,
+            scheduled_end,
         } => {
-            let (scheduled_at, due_date) = (*scheduled_at, *due_date);
+            let (scheduled_at, scheduled_end) = (*scheduled_at, *scheduled_end);
             match component_kind {
                 PlanComponentKind::VEvent => {
                     upsert_event_override(&mut calendar, master_uid, occurrence_key, |event| {
@@ -552,10 +590,7 @@ pub fn render_occurrence_deviation(
                         if let Some(value) = scheduled_at {
                             event.starts(value.with_timezone(&Utc));
                         }
-                        event.remove_ends();
-                        if let Some(value) = due_date {
-                            event.ends(value.with_timezone(&Utc));
-                        }
+                        set_event_end(event, scheduled_end);
                     })?;
                 }
                 PlanComponentKind::VTodo => {
@@ -564,10 +599,7 @@ pub fn render_occurrence_deviation(
                         if let Some(value) = scheduled_at {
                             todo.starts(value.with_timezone(&Utc));
                         }
-                        todo.remove_due();
-                        if let Some(value) = due_date {
-                            todo.due(value.with_timezone(&Utc));
-                        }
+                        set_todo_end(todo, scheduled_at, scheduled_end);
                     })?;
                 }
             }
@@ -582,7 +614,7 @@ pub fn render_occurrence_deviation(
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct OccurrenceActionFields {
     pub scheduled_at: bool,
-    pub due_date: bool,
+    pub scheduled_end: bool,
     pub state: bool,
     pub title: bool,
     pub description: bool,
@@ -594,7 +626,7 @@ impl OccurrenceActionFields {
     pub const fn all() -> Self {
         Self {
             scheduled_at: true,
-            due_date: true,
+            scheduled_end: true,
             state: true,
             title: true,
             description: true,
@@ -635,11 +667,8 @@ pub fn render_occurrence_action(
                         event.starts(value.with_timezone(&Utc));
                     }
                 }
-                if fields.due_date {
-                    event.remove_ends();
-                    if let Some(value) = deadline(action.due_date.as_ref()) {
-                        event.ends(value.with_timezone(&Utc));
-                    }
+                if fields.scheduled_end {
+                    set_event_end(event, planned_end(action.planned.as_ref()));
                 }
             })?;
         }
@@ -651,11 +680,12 @@ pub fn render_occurrence_action(
                         todo.starts(value.with_timezone(&Utc));
                     }
                 }
-                if fields.due_date {
-                    todo.remove_due();
-                    if let Some(value) = deadline(action.due_date.as_ref()) {
-                        todo.due(value.with_timezone(&Utc));
-                    }
+                if fields.scheduled_end {
+                    set_todo_end(
+                        todo,
+                        planned_start(action.planned.as_ref()),
+                        planned_end(action.planned.as_ref()),
+                    );
                 }
                 if fields.state {
                     todo.status(action_state_to_todo_status(action.state));
@@ -913,7 +943,7 @@ pub struct PlanActionProjection {
     /// Original RFC 5545 identity. Never rewritten merely to fit Action's UUID.
     pub uid: String,
     pub scheduled_at: Option<DateTime<Local>>,
-    pub due_date: Option<DateTime<Local>>,
+    pub scheduled_end: Option<DateTime<Local>>,
     pub state: ActionState,
     pub title: String,
     pub description: Option<String>,
@@ -976,10 +1006,10 @@ fn populate_plan_component<T: Component + EventLike>(component: &mut T, plan: &P
     }
 }
 
-/// Patch only non-temporal Plan fields during a codec conversion. `DTSTART`,
-/// `DUE`, and `DTEND` are copied from the observed component verbatim so a
-/// codec swap never rewrites the recurrence anchor's value type or `TZID`
-/// frame into UTC.
+/// Patch only non-temporal Plan fields during a codec conversion. `DTSTART`
+/// and `DURATION` are copied from the observed component verbatim so a codec
+/// swap never rewrites the recurrence anchor's value type or `TZID` frame into
+/// UTC.
 fn patch_plan_component_text<T: Component>(component: &mut T, plan: &Plan) {
     component.remove_property("SUMMARY").summary(&plan.name);
     component.remove_property("RRULE");
@@ -1177,14 +1207,9 @@ fn copy_component(
     }
 }
 
-fn renamed_property(source: &Property, key: &str) -> Property {
-    let mut target = Property::new(key, source.value());
-    for parameter in source.params().values() {
-        target.add_parameter(parameter.key(), parameter.value());
-    }
-    target
-}
-
+/// A VTODO's block end is its `DURATION`, which a VEVENT also accepts. Its
+/// `DUE` is a deadline with no VEVENT equivalent, so it is not carried over:
+/// a deadline never becomes a block end (Decision 51).
 fn todo_as_event(source: &Todo) -> Event {
     let mut target = Event::new();
     copy_component(
@@ -1192,17 +1217,17 @@ fn todo_as_event(source: &Todo) -> Event {
         &mut target,
         &["DUE", "STATUS", "COMPLETED", "PERCENT-COMPLETE"],
     );
-    if let Some(due) = source.properties().get("DUE") {
-        target.append_property(renamed_property(due, "DTEND"));
-    }
     target
 }
 
+/// A VTODO cannot carry `DTEND`, so a VEVENT's end becomes a `DURATION` from
+/// its start.
 fn event_as_todo(source: &Event) -> Todo {
     let mut target = Todo::new();
     copy_component(source, &mut target, &["DTEND"]);
-    if let Some(end) = source.properties().get("DTEND") {
-        target.append_property(renamed_property(end, "DUE"));
+    if source.properties().contains_key("DTEND") {
+        let start = source.get_start().and_then(date_perhaps_time_to_local);
+        set_todo_end(&mut target, start, scheduled_end(source));
     }
     target
 }
@@ -1229,8 +1254,9 @@ fn action_state_to_todo_status(state: ActionState) -> TodoStatus {
 
 /// Convert one [`Action`] to a standalone VTODO projection.
 ///
-/// The Action UUID is the VTODO UID. VTODO needs no DTSTART, so unscheduled and
-/// due-only actions retain a complete calendar representation.
+/// The Action UUID is the VTODO UID. VTODO needs no DTSTART, so an unscheduled
+/// action still has a calendar representation; its window is not synchronized
+/// (Decision 51), so no `DUE` is written.
 /// Recurrence remains exclusively a [`Plan`] concern and is never emitted here.
 pub fn action_to_vtodo(action: &Action) -> Todo {
     let mut todo = Todo::new();
@@ -1244,9 +1270,11 @@ pub fn action_to_vtodo(action: &Action) -> Todo {
     if let Some(scheduled_at) = planned_start(action.planned.as_ref()) {
         todo.starts(scheduled_at.with_timezone(&Utc));
     }
-    if let Some(due_date) = deadline(action.due_date.as_ref()) {
-        todo.due(due_date.with_timezone(&Utc));
-    }
+    set_todo_end(
+        &mut todo,
+        planned_start(action.planned.as_ref()),
+        planned_end(action.planned.as_ref()),
+    );
     if let Some(desc) = &action.description {
         todo.description(desc);
     }
@@ -1295,7 +1323,7 @@ pub fn actions_to_icalendar(actions: &[Action], open_only: bool) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::time::{Bound, Due, with_deadline};
+    use crate::domain::time::{Bound, Due};
     use std::io::Write;
     use tempfile::NamedTempFile;
 
@@ -1511,7 +1539,7 @@ mod tests {
             key,
             &OccurrenceOp::Reschedule {
                 scheduled_at: Some(moved),
-                due_date: None,
+                scheduled_end: None,
             },
         )
         .unwrap();
@@ -1542,11 +1570,13 @@ mod tests {
             description: Some("Details".into()),
             priority: Some(3),
             contexts: Some(vec!["home".into(), "focus".into()]),
-            planned: crate::domain::time::with_planned_start(
-                None,
-                parse_ics_datetime_token("20260102T120000Z"),
+            planned: crate::domain::time::with_planned_end(
+                crate::domain::time::with_planned_start(
+                    None,
+                    parse_ics_datetime_token("20260102T120000Z"),
+                ),
+                parse_ics_datetime_token("20260102T130000Z"),
             ),
-            due_date: with_deadline(None, parse_ics_datetime_token("20260102T130000Z")),
             ..Default::default()
         };
         let schedule_only = render_occurrence_action(
@@ -1577,7 +1607,8 @@ mod tests {
         assert!(rendered.contains(&format!("RECURRENCE-ID:{key}")));
         assert_eq!(rendered.matches(&format!("UID:{uid}")).count(), 2);
         assert!(rendered.contains("DTSTART:20260102T120000Z"));
-        assert!(rendered.contains("DUE:20260102T130000Z"));
+        assert!(rendered.contains("DURATION:PT3600S"));
+        assert!(!rendered.contains("DUE:"));
         assert!(rendered.contains("STATUS:IN-PROCESS"));
         assert!(rendered.contains("SUMMARY:Moved"));
         assert!(rendered.contains("DESCRIPTION:Details"));
@@ -1637,7 +1668,7 @@ mod tests {
             key,
             &OccurrenceOp::Reschedule {
                 scheduled_at: Some(moved),
-                due_date: Some(end),
+                scheduled_end: Some(end),
             },
         )
         .unwrap();
@@ -1648,7 +1679,7 @@ mod tests {
         assert!(plans[0].exdates.contains(key));
         let override_ = plans[0].overrides.get(key).unwrap();
         assert_eq!(override_.scheduled_at, Some(moved));
-        assert_eq!(override_.due_date, Some(end));
+        assert_eq!(override_.scheduled_end, Some(end));
         let raw = std::fs::read_to_string(f.path()).unwrap();
         assert_eq!(raw.matches("BEGIN:VEVENT").count(), 2);
         assert!(!raw.contains("BEGIN:VTODO"));
@@ -1760,7 +1791,10 @@ mod tests {
             override_.scheduled_at.unwrap().with_timezone(&Utc).hour(),
             11
         );
-        assert_eq!(override_.due_date.unwrap().with_timezone(&Utc).hour(), 12);
+        assert_eq!(
+            override_.scheduled_end.unwrap().with_timezone(&Utc).hour(),
+            12
+        );
         // A schedule-only VEVENT override carries no task lifecycle at all;
         // the occurrence inherits the master's state instead of defaulting.
         assert!(override_.state.is_none());
@@ -1833,7 +1867,10 @@ mod tests {
             plans[0].plan.dtstart.unwrap().with_timezone(&Utc).hour(),
             14
         );
-        assert!(plans[0].schedule_end.is_some());
+        assert!(
+            plans[0].schedule_end.is_none(),
+            "a VTODO's DUE is a deadline, not read"
+        );
         assert!(task.completed_at.is_some());
 
         assert!(plans[0].plan.recurrence.is_none());
@@ -1869,6 +1906,11 @@ mod tests {
         let mut action = scheduled_action("Write spec", ActionState::InProgress);
         action.description = Some("Describe the simpler projection".into());
         action.due_date = Some(Due::by(Bound::minute(due)));
+        let start = crate::domain::time::planned_start(action.planned.as_ref());
+        action.planned = crate::domain::time::with_planned_end(
+            action.planned,
+            start.map(|s| s + chrono::Duration::minutes(90)),
+        );
         action.priority = Some(2);
         action.contexts = Some(vec!["work".into(), "writing".into()]);
 
@@ -1878,7 +1920,8 @@ mod tests {
         assert!(todo.contains("DESCRIPTION:Describe the simpler projection"));
         assert!(todo.contains("STATUS:IN-PROCESS"));
         assert!(todo.contains("DTSTART"));
-        assert!(todo.contains("DUE"));
+        assert!(todo.contains("DURATION:PT5400S"), "the block's end: {todo}");
+        assert!(!todo.contains("DUE"), "the window is not synchronized");
         assert!(todo.contains("PRIORITY:2"));
         assert!(todo.contains("CATEGORIES:work"));
         assert!(todo.contains("CATEGORIES:writing"));
@@ -2010,7 +2053,7 @@ mod tests {
 
     #[test]
     fn codec_conversion_moves_master_and_overrides_as_one_identity() {
-        let source = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VTODO\r\nUID:weekly@example.com\r\nSUMMARY:Old\r\nDTSTART:20260810T143000Z\r\nDUE:20260810T153000Z\r\nRRULE:FREQ=WEEKLY\r\nEND:VTODO\r\nBEGIN:VTODO\r\nUID:weekly@example.com\r\nSUMMARY:Old\r\nRECURRENCE-ID:20260817T143000Z\r\nDTSTART:20260817T163000Z\r\nDUE:20260817T173000Z\r\nSTATUS:COMPLETED\r\nX-VENDOR-KEEP:yes\r\nBEGIN:VALARM\r\nACTION:DISPLAY\r\nTRIGGER:-PT15M\r\nDESCRIPTION:Reminder\r\nEND:VALARM\r\nEND:VTODO\r\nEND:VCALENDAR\r\n";
+        let source = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VTODO\r\nUID:weekly@example.com\r\nSUMMARY:Old\r\nDTSTART:20260810T143000Z\r\nDURATION:PT1H\r\nRRULE:FREQ=WEEKLY\r\nEND:VTODO\r\nBEGIN:VTODO\r\nUID:weekly@example.com\r\nSUMMARY:Old\r\nRECURRENCE-ID:20260817T143000Z\r\nDTSTART:20260817T163000Z\r\nDURATION:PT1H\r\nSTATUS:COMPLETED\r\nX-VENDOR-KEEP:yes\r\nBEGIN:VALARM\r\nACTION:DISPLAY\r\nTRIGGER:-PT15M\r\nDESCRIPTION:Reminder\r\nEND:VALARM\r\nEND:VTODO\r\nEND:VCALENDAR\r\n";
         let plan = parse_ics(source, Path::new("weekly.ics")).unwrap()[0]
             .plan
             .clone();
@@ -2022,7 +2065,11 @@ mod tests {
         assert_eq!(rendered.matches("BEGIN:VEVENT").count(), 2);
         assert!(!rendered.contains("BEGIN:VTODO"));
         assert!(rendered.contains("RECURRENCE-ID:20260817T143000Z"));
-        assert!(rendered.contains("DTEND:20260817T173000Z"));
+        assert_eq!(
+            rendered.matches("DURATION:PT1H").count(),
+            2,
+            "the block end moves verbatim"
+        );
         assert!(!rendered.contains("STATUS:COMPLETED"));
         assert!(rendered.contains("X-VENDOR-KEEP:yes"));
         assert!(rendered.contains("BEGIN:VALARM"));
@@ -2034,7 +2081,7 @@ mod tests {
 
     #[test]
     fn codec_conversion_preserves_temporal_value_types_and_frames() {
-        let source = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VTODO\r\nUID:tzid@example.com\r\nSUMMARY:Wall clock\r\nDTSTART;TZID=America/New_York:20260420T100000\r\nDUE;VALUE=DATE:20260421\r\nRRULE:FREQ=WEEKLY\r\nEND:VTODO\r\nEND:VCALENDAR\r\n";
+        let source = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VTODO\r\nUID:tzid@example.com\r\nSUMMARY:Wall clock\r\nDTSTART;TZID=America/New_York:20260420T100000\r\nDURATION:PT1H\r\nRRULE:FREQ=WEEKLY\r\nEND:VTODO\r\nEND:VCALENDAR\r\n";
         let plan = parse_ics(source, Path::new("tzid.ics")).unwrap()[0]
             .plan
             .clone();
@@ -2045,7 +2092,7 @@ mod tests {
 
         assert!(rendered.contains("BEGIN:VEVENT"));
         assert!(rendered.contains("DTSTART;TZID=America/New_York:20260420T100000"));
-        assert!(rendered.contains("DTEND;VALUE=DATE:20260421"));
+        assert!(rendered.contains("DURATION:PT1H"));
         assert!(!rendered.contains("DTSTART:20260420T140000Z"));
 
         let back = render_plan_resource_with_component(
@@ -2057,7 +2104,39 @@ mod tests {
         )
         .unwrap();
         assert!(back.contains("DTSTART;TZID=America/New_York:20260420T100000"));
-        assert!(back.contains("DUE;VALUE=DATE:20260421"));
+        assert!(back.contains("DURATION:PT1H"));
+    }
+
+    #[test]
+    fn codec_conversion_never_turns_a_deadline_into_a_block_end() {
+        let todo = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VTODO\r\nUID:due@example.com\r\nSUMMARY:Task\r\nDTSTART:20260420T140000Z\r\nDUE:20260421T170000Z\r\nRRULE:FREQ=WEEKLY\r\nEND:VTODO\r\nEND:VCALENDAR\r\n";
+        let plan = parse_ics(todo, Path::new("due.ics")).unwrap()[0]
+            .plan
+            .clone();
+        let event =
+            render_plan_resource_with_component(Some(todo), &plan, PlanComponentKind::VEvent)
+                .unwrap();
+        assert!(
+            !event.contains("DUE"),
+            "a deadline has no VEVENT form: {event}"
+        );
+        assert!(
+            !event.contains("DTEND"),
+            "and is never a block end: {event}"
+        );
+
+        let event = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:block@example.com\r\nSUMMARY:Block\r\nDTSTART:20260420T140000Z\r\nDTEND:20260420T150000Z\r\nRRULE:FREQ=WEEKLY\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+        let plan = parse_ics(event, Path::new("block.ics")).unwrap()[0]
+            .plan
+            .clone();
+        let todo =
+            render_plan_resource_with_component(Some(event), &plan, PlanComponentKind::VTodo)
+                .unwrap();
+        assert!(
+            todo.contains("DURATION:PT3600S"),
+            "a VTODO carries the end as DURATION: {todo}"
+        );
+        assert!(!todo.contains("DTEND") && !todo.contains("DUE"));
     }
 
     #[test]
