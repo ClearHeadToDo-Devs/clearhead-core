@@ -698,3 +698,23 @@ fn archive_closed_sweeps_terminal_charters_but_leaves_active_ones() {
     assert!(!env.data_dir.join("charters/done.md").exists());
     assert!(env.data_dir.join("charters/live.md").exists());
 }
+
+#[test]
+fn read_charters_lists_the_same_tree_when_piped() {
+    // A command's output does not change with where it goes: piped, the
+    // default is the terminal's tree, one line per charter, not documents.
+    let env = TestEnv::new();
+    env.write_text(
+        "charters/my-charter.md",
+        &format!("{CHARTER_MD}\nA long body that belongs to the document.\n"),
+    );
+    env.write_actions("my-charter.actions", "[ ] Open work\n");
+
+    let output = env.command().args(["read", "charters"]).assert().success();
+    let stdout = String::from_utf8_lossy(&output.get_output().stdout);
+    assert!(stdout.contains("My Charter"), "{stdout}");
+    assert!(stdout.contains("/my-charter"), "{stdout}");
+    assert!(stdout.contains("(1 open)"), "{stdout}");
+    assert!(!stdout.contains("---"), "no frontmatter: {stdout}");
+    assert!(!stdout.contains("long body"), "no document body: {stdout}");
+}

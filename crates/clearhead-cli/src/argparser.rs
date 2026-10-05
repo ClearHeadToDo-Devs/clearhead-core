@@ -378,7 +378,7 @@ pub enum ReadTarget {
     /// List all discovered charters
     Charters {
         /// Output mode: table forces table, jsonld emits JSON-LD, ids prints one UUID per line.
-        /// Default: tree in a terminal, markdown when piped.
+        /// json carries each charter's document. Default: the charter tree, piped or not.
         #[arg(short, long, value_enum)]
         format: Option<OutputMode>,
 

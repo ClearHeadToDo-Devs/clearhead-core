@@ -19,7 +19,7 @@ sees it will take it for the real one:
 - `--format ids` skips the charter;
 - RDF output (JSON-LD reads, `export`, `query`) represents the charter as a
   blank node, RDF's own term for a thing with no stable identity;
-- human and markdown views (`show`, piped `read charters`, `orient`) omit the
+- human views (`show`, `read charters`, `orient`) omit the
   id or say it is not declared.
 
 The rule is applied from `CharterIdSource`, recorded once at load; no surface

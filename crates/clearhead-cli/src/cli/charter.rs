@@ -1,7 +1,6 @@
 use anyhow::Context;
 use chrono::Local;
 use std::collections::HashSet;
-use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 
 use tracing::info;
@@ -175,26 +174,12 @@ pub fn read_charters(
             print_charter_table(&workspaces, multi_ws);
         }
         None => {
-            if std::io::stdout().is_terminal() {
-                // TTY: charter hierarchy tree with open action counts.
-                for (ws_name, model, _) in &models {
-                    if multi_ws {
-                        println!("▸ {}", ws_name);
-                    }
-                    print!("{}", crate::display::render_charter_tree(model));
+            // The charter tree with open action counts, wherever stdout goes.
+            for (ws_name, model, _) in &models {
+                if multi_ws {
+                    println!("▸ {}", ws_name);
                 }
-            } else {
-                // Pipe/redirect: markdown — native file format for charters.
-                for (_, model, unpublished) in &models {
-                    for charter in &model.charters {
-                        let markdown = if unpublished.contains(&charter.id) {
-                            clearhead_core::workspace::format_charter_without_id(charter)
-                        } else {
-                            clearhead_core::format_charter(charter)
-                        };
-                        println!("{markdown}");
-                    }
-                }
+                print!("{}", crate::display::render_charter_tree(model));
             }
         }
     }
