@@ -248,7 +248,7 @@ pub fn construct_triples(store: &Store, sparql: &str) -> anyhow::Result<Vec<Trip
 /// reaches every workspace named graph).
 pub fn expand_where_clause(where_clause: &str) -> String {
     format!(
-        "PREFIX app: <https://clearhead.us/vocab/app/v1#>\n\
+        "PREFIX app: <https://clearhead.dev/vocab/app/v1#>\n\
          PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\n\
          PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>\n\
          PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>\n\

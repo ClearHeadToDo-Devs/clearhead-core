@@ -332,7 +332,7 @@ fn read_charters_hides_undeclared_ids_in_ids_and_jsonld() {
         .expect("id-less charter node");
     assert!(two["@id"].as_str().unwrap().starts_with("_:"), "{two}");
     assert_eq!(
-        two["https://clearhead.us/vocab/app/v1#partOf"][0]["@id"],
+        two["https://clearhead.dev/vocab/app/v1#partOf"][0]["@id"],
         format!("urn:uuid:{declared}"),
         "the blank node keeps its place in the hierarchy"
     );
@@ -341,7 +341,7 @@ fn read_charters_hides_undeclared_ids_in_ids_and_jsonld() {
         .find(|node| node["@id"] == format!("urn:uuid:{action_id}"))
         .expect("child action projected");
     assert_eq!(
-        action["https://clearhead.us/vocab/app/v1#partOf"][0]["@id"],
+        action["https://clearhead.dev/vocab/app/v1#partOf"][0]["@id"],
         two["@id"]
     );
 

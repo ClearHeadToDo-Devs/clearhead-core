@@ -3,7 +3,7 @@
 # bound ?parent identifies another row in this same result. The CLI attaches
 # each row's data_root, against which source_file (app:file) resolves.
 
-PREFIX app: <https://clearhead.us/vocab/app/v1#>
+PREFIX app: <https://clearhead.dev/vocab/app/v1#>
 PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
 
 SELECT ?id ?parent ?name ?kind ?status ?priority ?source_file ?source_line WHERE {

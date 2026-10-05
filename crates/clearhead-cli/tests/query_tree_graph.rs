@@ -83,7 +83,7 @@ fn graph_reconstructs_hierarchical_containment() {
         &["query", "graph", "dependencies", "--format", "turtle"],
     );
     let child_in_container =
-        format!("<urn:uuid:{B}> <https://clearhead.us/vocab/app/v1#partOf> <urn:uuid:{A}>");
+        format!("<urn:uuid:{B}> <https://clearhead.dev/vocab/app/v1#partOf> <urn:uuid:{A}>");
     assert!(triples.contains(&child_in_container), "{triples}");
     assert_eq!(
         triples.matches("#partOf>").count(),

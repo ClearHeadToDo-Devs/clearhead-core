@@ -44,7 +44,7 @@ fn query_list_json_reflects_project_dropin_shadowing() {
     let env = TestEnv::new();
     env.write_text(
         ".clearhead/queries/open-actions.sparql",
-        "PREFIX app: <https://clearhead.us/vocab/app/v1#>\nSELECT ?x WHERE { ?x a app:Action }\n",
+        "PREFIX app: <https://clearhead.dev/vocab/app/v1#>\nSELECT ?x WHERE { ?x a app:Action }\n",
     );
 
     let assert = env.command().args(["query", "list"]).assert().success();

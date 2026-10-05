@@ -8,7 +8,7 @@
 #   Results here may indicate missing charter membership or import artifacts.
 # =============================================================================
 
-PREFIX app: <https://clearhead.us/vocab/app/v1#>
+PREFIX app: <https://clearhead.dev/vocab/app/v1#>
 PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
 
 SELECT ?name ?state ?source_file ?source_line WHERE {

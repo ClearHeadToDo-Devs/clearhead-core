@@ -69,7 +69,7 @@ fn raw_select_emits_sparql_results_json_over_the_canonical_dataset() {
     let env = seed();
     let doc = raw_srj(
         &env,
-        "PREFIX app: <https://clearhead.us/vocab/app/v1#>\n\
+        "PREFIX app: <https://clearhead.dev/vocab/app/v1#>\n\
          PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\n\
          SELECT ?name WHERE { ?action a app:Action ; rdfs:label ?name . } ORDER BY ?name",
         &["--format", "json"],
@@ -98,7 +98,7 @@ fn union_default_graph_and_explicit_graph_both_find_workspace_data() {
     // Without GRAPH the query already matches (union default graph)…
     let union_doc = raw_srj(
         &env,
-        "PREFIX app: <https://clearhead.us/vocab/app/v1#>\n\
+        "PREFIX app: <https://clearhead.dev/vocab/app/v1#>\n\
          SELECT (COUNT(?a) AS ?n) WHERE { ?a a app:Action }",
         &[],
     );
@@ -106,7 +106,7 @@ fn union_default_graph_and_explicit_graph_both_find_workspace_data() {
     // …and GRAPH ?g enumerates the workspace's stable named graph.
     let graph_doc = raw_srj(
         &env,
-        "PREFIX app: <https://clearhead.us/vocab/app/v1#>\n\
+        "PREFIX app: <https://clearhead.dev/vocab/app/v1#>\n\
          SELECT DISTINCT ?g WHERE { GRAPH ?g { ?a a app:Action } }",
         &[],
     );
@@ -125,7 +125,7 @@ fn locations_are_published_relative_to_the_data_root() {
     // machine-specific.
     let lines = raw_srj(
         &env,
-        "PREFIX app: <https://clearhead.us/vocab/app/v1#>\n\
+        "PREFIX app: <https://clearhead.dev/vocab/app/v1#>\n\
          PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\n\
          SELECT ?file ?line WHERE {\n\
            ?a rdfs:label \"Alpha\" ; app:file ?file ; app:line ?line .\n\
@@ -181,7 +181,7 @@ fn construct_results_serialize_as_turtle() {
         .args([
             "query",
             "raw",
-            "PREFIX app: <https://clearhead.us/vocab/app/v1#>\n\
+            "PREFIX app: <https://clearhead.dev/vocab/app/v1#>\n\
              CONSTRUCT { ?s ?p ?o } WHERE { ?s a app:Action . ?s ?p ?o }",
             "--format",
             "turtle",
@@ -199,7 +199,7 @@ fn construct_results_serialize_as_turtle() {
         "CONSTRUCT emits the action resource: {turtle}"
     );
     assert!(
-        turtle.contains("a <https://clearhead.us/vocab/app/v1#Action>"),
+        turtle.contains("a <https://clearhead.dev/vocab/app/v1#Action>"),
         "Turtle uses the `a` keyword for rdf:type: {turtle}"
     );
 }
@@ -209,11 +209,11 @@ fn ask_results_emit_a_boolean() {
     let env = seed();
     for (query, expected) in [
         (
-            "ASK { ?s a <https://clearhead.us/vocab/app/v1#Action> }",
+            "ASK { ?s a <https://clearhead.dev/vocab/app/v1#Action> }",
             "true",
         ),
         (
-            "ASK { ?s a <https://clearhead.us/vocab/app/v1#Nonexistent> }",
+            "ASK { ?s a <https://clearhead.dev/vocab/app/v1#Nonexistent> }",
             "false",
         ),
     ] {
@@ -230,7 +230,7 @@ fn ask_results_emit_a_boolean() {
 #[test]
 fn piped_output_is_byte_deterministic() {
     let env = seed();
-    let query = "PREFIX app: <https://clearhead.us/vocab/app/v1#>\n\
+    let query = "PREFIX app: <https://clearhead.dev/vocab/app/v1#>\n\
                  PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\n\
                  SELECT ?name WHERE { ?a a app:Action ; rdfs:label ?name . } ORDER BY ?name";
     let first = env
@@ -261,7 +261,7 @@ fn named_runs_a_project_saved_query() {
     );
     env.write_text(
         ".clearhead/queries/mine.sparql",
-        "PREFIX app: <https://clearhead.us/vocab/app/v1#>\n\
+        "PREFIX app: <https://clearhead.dev/vocab/app/v1#>\n\
          PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\n\
          SELECT ?name WHERE { ?a a app:Action ; rdfs:label ?name . } ORDER BY ?name",
     );
@@ -456,7 +456,7 @@ fn empty_workspace_yields_empty_standard_results() {
         .args([
             "query",
             "raw",
-            "PREFIX app: <https://clearhead.us/vocab/app/v1#>\n\
+            "PREFIX app: <https://clearhead.dev/vocab/app/v1#>\n\
              SELECT ?a WHERE { ?a a app:Action }",
         ])
         .output()
@@ -481,7 +481,7 @@ fn a_closed_downstream_pipe_is_not_an_error() {
     cmd.args([
         "query",
         "raw",
-        "PREFIX app: <https://clearhead.us/vocab/app/v1#>\n\
+        "PREFIX app: <https://clearhead.dev/vocab/app/v1#>\n\
          SELECT ?a WHERE { ?a a app:Action }",
     ])
     .stdout(Stdio::piped());

@@ -19,6 +19,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 - `Action::created_at` and `completed_at` are `Option<domain::time::Bound>` (Decision 52): `^` and `%` are kept as written, so `format` no longer rewrites a written offset into local time, a date into `T00:00`, or drops seconds. Times the host stamps or imports are `Bound::minute` of the local instant, written as before; `.at()` gives the instant. The canonical JSON and `app:closed`/`dcterms:created` carry the written form.
 
+- `rdf::app::APP_NS` is `https://clearhead.dev/vocab/app/v1#` (platform Decision 49); saved queries declaring the old `app:` IRI must update it.
+
 ### Removed
 - The v4 projection (`rdf::project_domain`, `rdf::serialize_domain`), the `ws:` workspace-snapshot layer (`rdf::project_workspace_snapshot`, `rdf::WorkspaceSnapshot`) and the v4 namespace constants and fixtures (platform `retire-v4`). The application graph (`rdf::app`) is the only projection; the serializers declare only its prefixes.
 - `Metric::review_date`: reviewing a metric is an action (specifications, 2026-10-03). Frontmatter that still has `review_date` loads unchanged; the key is ignored.

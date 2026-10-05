@@ -22,7 +22,7 @@ use crate::domain::{Action, ActionState, Charter, CharterState, DomainModel, Obj
 use crate::reference::match_entity_reference;
 use crate::workspace::store::Workspace;
 
-pub const APP_NS: &str = "https://clearhead.us/vocab/app/v1#";
+pub const APP_NS: &str = "https://clearhead.dev/vocab/app/v1#";
 const SKOS_NS: &str = "http://www.w3.org/2004/02/skos/core#";
 
 /// Names every context node (ontology.md, Context terms).

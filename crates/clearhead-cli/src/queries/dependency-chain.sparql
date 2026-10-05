@@ -9,7 +9,7 @@
 #   Read as: "?name cannot start until ?depends_on is done."
 # =============================================================================
 
-PREFIX app: <https://clearhead.us/vocab/app/v1#>
+PREFIX app: <https://clearhead.dev/vocab/app/v1#>
 PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
 
 SELECT ?name ?depends_on ?dep_state WHERE {
