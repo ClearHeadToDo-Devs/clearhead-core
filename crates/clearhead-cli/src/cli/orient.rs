@@ -85,7 +85,19 @@ fn published_id(charter: &clearhead_core::MarkdownCharter) -> Option<String> {
 }
 
 pub fn build(ctx: &CommandContext) -> anyhow::Result<Orient> {
-    let charters = clearhead_cli::filesystem::load_workspace(&ctx.data_dir).context("orient")?;
+    // Load once: the native sections and the unscheduled query read the same
+    // snapshot. A `--workspace` filter can leave the primary out of the
+    // query's set; only then is it loaded on its own.
+    let workspaces = crate::query::dataset::load_workspaces(ctx).context("orient")?;
+    let unfiltered_primary;
+    let charters = match workspaces.iter().find(|ws| ws.root == ctx.data_dir) {
+        Some(primary) => &primary.charters,
+        None => {
+            unfiltered_primary =
+                clearhead_cli::filesystem::load_workspace(&ctx.data_dir).context("orient")?;
+            &unfiltered_primary
+        }
+    };
     let charter_root = clearhead_cli::filesystem::charter_root(&ctx.data_dir);
 
     let active_charters = Bounded::take(
@@ -103,7 +115,7 @@ pub fn build(ctx: &CommandContext) -> anyhow::Result<Orient> {
 
     let mut blockers = Vec::new();
     let mut completions = Vec::new();
-    for charter in &charters {
+    for charter in charters {
         if charter.state == Some(CharterState::Blocked) {
             blockers.push(BlockerEntry::Charter {
                 id: published_id(charter),
@@ -147,20 +159,28 @@ pub fn build(ctx: &CommandContext) -> anyhow::Result<Orient> {
 
     Ok(Orient {
         active_charters,
-        unscheduled: unscheduled_rows(ctx)?,
+        unscheduled: unscheduled_rows(ctx, workspaces)?,
         blockers: Bounded::take(blockers, SECTION_LIMIT),
         recent_completions,
     })
 }
 
 #[cfg(feature = "sparql")]
-fn unscheduled_rows(ctx: &CommandContext) -> anyhow::Result<Bounded<Value>> {
-    let nodes = crate::query::sparql::index::nodes_for(ctx, "unscheduled")?;
+fn unscheduled_rows(
+    ctx: &CommandContext,
+    workspaces: Vec<clearhead_core::workspace::store::Workspace>,
+) -> anyhow::Result<Bounded<Value>> {
+    let dataset = crate::query::dataset::project_dataset(ctx, workspaces)?;
+    let store = crate::query::sparql::store_from(&dataset)?;
+    let nodes = crate::query::sparql::index::nodes_for(ctx, &store, "unscheduled")?;
     Ok(Bounded::take(nodes, SECTION_LIMIT))
 }
 
 #[cfg(not(feature = "sparql"))]
-fn unscheduled_rows(_ctx: &CommandContext) -> anyhow::Result<Bounded<Value>> {
+fn unscheduled_rows(
+    _ctx: &CommandContext,
+    _workspaces: Vec<clearhead_core::workspace::store::Workspace>,
+) -> anyhow::Result<Bounded<Value>> {
     // This build has no query engine; every other section is native and
     // still meaningful, so orient degrades rather than failing outright.
     Ok(Bounded {

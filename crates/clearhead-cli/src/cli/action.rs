@@ -815,10 +815,21 @@ pub fn read_actions_cmd(
 ) -> anyhow::Result<()> {
     let charter_acts_file: Option<PathBuf> = if let Some(query) = charter_filter {
         let (mc, ws_root) = resolve_charter_across_workspaces(ctx, query)?;
-        let rel = mc.actions_file.as_ref().ok_or_else(|| {
-            anyhow::anyhow!("Charter '{}' has no associated actions file", mc.title)
-        })?;
         let root = clearhead_cli::filesystem::charter_root(&ws_root);
+        // A quarantined actions file leaves the loaded charter without one;
+        // derive its anchor so the read refuses with the real reason.
+        let rel = mc
+            .actions_file
+            .clone()
+            .or_else(|| {
+                mc.md_file
+                    .as_deref()
+                    .and_then(clearhead_core::workspace::actions_anchor_for_document)
+                    .filter(|rel| root.join(rel).exists())
+            })
+            .ok_or_else(|| {
+                anyhow::anyhow!("Charter '{}' has no associated actions file", mc.title)
+            })?;
         Some(root.join(rel))
     } else {
         None
@@ -1391,8 +1402,9 @@ fn same_actions_file(charter_root: &Path, actions_file: &Path, target: &Path) ->
 }
 
 /// Collect actions for the `read` command via the workspace loader — the same
-/// journal recovery, sidecar hydration, and load-finding warnings every other
-/// command gets. `.completed.actions` files fall outside the loader's domain
+/// journal recovery and sidecar hydration every other command gets; a named
+/// `file` that the load quarantined is an error rather than an empty listing.
+/// `.completed.actions` files fall outside the loader's domain
 /// model by design (they're a closed-action archive, not live workspace state,
 /// see `discover_action_files`), so those are still read directly per matching
 /// file when `open_only` is false.
@@ -1402,7 +1414,14 @@ fn collect_all_actions(
     open_only: bool,
 ) -> anyhow::Result<Vec<Action>> {
     let charter_root = clearhead_cli::filesystem::charter_root(&ctx.data_dir);
-    let charters = clearhead_cli::filesystem::load_workspace(&ctx.data_dir)?;
+    let charters = match file {
+        Some(target) => {
+            let read = clearhead_cli::filesystem::read_workspace(&ctx.data_dir)?;
+            refuse_quarantined_target(&charter_root, &read.findings, target)?;
+            read.charters
+        }
+        None => clearhead_cli::filesystem::load_workspace(&ctx.data_dir)?,
+    };
 
     let matches = |mc: &clearhead_core::MarkdownCharter| match (file, &mc.actions_file) {
         (Some(target), Some(actions_file)) => {
@@ -1436,6 +1455,29 @@ fn collect_all_actions(
         }
     }
     Ok(result)
+}
+
+/// Fail when the file the caller named was skipped by the load. Unscoped reads
+/// show what they can see; a named target that cannot be read is an error,
+/// with the loader's reason and where to look next.
+fn refuse_quarantined_target(
+    charter_root: &Path,
+    findings: &[clearhead_core::workspace::Finding],
+    target: &Path,
+) -> anyhow::Result<()> {
+    let quarantined = findings.iter().find(|finding| {
+        finding.severity == clearhead_core::workspace::FindingSeverity::Violation
+            && same_actions_file(charter_root, &finding.path, target)
+    });
+    match quarantined {
+        Some(finding) => anyhow::bail!(
+            "cannot read {}: {}\nhint: `clearhead lint file {}` lists every issue",
+            finding.path.display(),
+            finding.message,
+            target.display()
+        ),
+        None => Ok(()),
+    }
 }
 
 fn is_open_action(action: &Action) -> bool {

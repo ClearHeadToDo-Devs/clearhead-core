@@ -60,8 +60,13 @@ use crate::stdout::{write_stdout, write_stdout_line};
 /// in-memory store. The store holds exactly the published quad set — nothing
 /// else is ever loaded into it — and is dropped with the command.
 pub fn build_store(ctx: &CommandContext) -> anyhow::Result<Store> {
+    store_from(&crate::query::dataset::assemble_dataset(ctx)?)
+}
+
+/// Load an already assembled dataset into a fresh in-memory store.
+pub fn store_from(quads: &[oxrdf::Quad]) -> anyhow::Result<Store> {
     let store = Store::new().context("create in-memory SPARQL store")?;
-    for quad in &crate::query::dataset::assemble_dataset(ctx)? {
+    for quad in quads {
         store
             .insert(quad)
             .context("insert quad into ephemeral store")?;

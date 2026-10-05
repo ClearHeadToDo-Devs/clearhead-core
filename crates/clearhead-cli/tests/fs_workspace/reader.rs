@@ -41,7 +41,7 @@ fn corrupt_sidecar_is_a_finding_not_a_load_failure() {
 }
 
 #[test]
-fn syntax_errors_surface_as_a_warning_finding() {
+fn syntax_errors_surface_as_a_violation_finding() {
     use clearhead_core::workspace::FindingSeverity;
 
     let workspace = make_workspace(&[(
@@ -57,7 +57,11 @@ fn syntax_errors_surface_as_a_warning_finding() {
         .iter()
         .find(|f| f.code == "syntax-errors")
         .expect("recoverable syntax issues should be reported as a finding");
-    assert_eq!(finding.severity, FindingSeverity::Warning);
+    assert_eq!(
+        finding.severity,
+        FindingSeverity::Violation,
+        "a quarantined file hides data, so it is a violation"
+    );
     assert_eq!(finding.path, Path::new("work.actions"));
     assert!(
         finding.message.contains("file quarantined"),

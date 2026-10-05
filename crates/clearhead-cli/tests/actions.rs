@@ -794,15 +794,15 @@ fn test_read_acts_skips_hidden_directories() {
         .stdout(predicate::str::contains("Hidden task").not());
 }
 
+const MALFORMED_ACTIONS: &str = "not valid actions syntax !!!\n[ ] Do not misattach me\n";
+
 #[test]
-fn test_read_acts_file_quarantines_malformed_semantics() {
-    // Relaxed parsing still diagnoses the source, but recovered field/UUID
-    // attachment is not trustworthy enough to enter semantic command output.
+fn test_read_acts_file_refuses_a_quarantined_target() {
+    // Recovered field/UUID attachment is not trustworthy enough to enter
+    // semantic output. The caller named this file, so its quarantine is the
+    // command's own failure: exit non-zero with the reason and a next step.
     let env = TestEnv::new();
-    env.write_text(
-        "charters/malformed.actions",
-        "not valid actions syntax !!!\n[ ] Do not misattach me\n",
-    );
+    env.write_text("charters/malformed.actions", MALFORMED_ACTIONS);
     let path = env.data_dir.join("charters").join("malformed.actions");
     env.command()
         .arg("read")
@@ -810,9 +810,53 @@ fn test_read_acts_file_quarantines_malformed_semantics() {
         .arg("--file")
         .arg(&path)
         .assert()
-        .success()
-        .stderr(predicate::str::contains("file quarantined"))
+        .failure()
+        .stderr(predicate::str::contains("cannot read malformed.actions"))
+        .stderr(predicate::str::contains("parser issue(s); first at line 1"))
+        .stderr(predicate::str::contains("clearhead lint file"))
+        .stderr(predicate::str::contains("workspace violation").not())
         .stdout(predicate::str::contains("Do not misattach me").not());
+}
+
+#[test]
+fn test_read_acts_charter_refuses_a_quarantined_target() {
+    let env = TestEnv::new();
+    env.write_text("charters/malformed.actions", MALFORMED_ACTIONS);
+    env.write_text("charters/malformed.md", "# Malformed\n");
+    env.command()
+        .arg("read")
+        .arg("actions")
+        .arg("--charter")
+        .arg("malformed")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("cannot read malformed.actions"));
+}
+
+#[test]
+fn test_read_acts_unscoped_shows_what_it_can_and_notes_the_violation() {
+    let env = TestEnv::new();
+    env.write_text("charters/malformed.actions", MALFORMED_ACTIONS);
+    env.write_actions("inbox.actions", "[ ] Visible task");
+    let output = env
+        .command()
+        .arg("read")
+        .arg("actions")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Visible task"))
+        .stdout(predicate::str::contains("Do not misattach me").not())
+        .get_output()
+        .clone();
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert_eq!(
+        stderr.lines().collect::<Vec<_>>(),
+        [format!(
+            "warning: 1 workspace violation in {} (some data may be hidden); run `clearhead doctor` there",
+            env.data_dir.display()
+        )],
+        "one notice line, nothing else"
+    );
 }
 
 #[test]

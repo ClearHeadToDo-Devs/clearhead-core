@@ -22,26 +22,40 @@ use crate::cli::CommandContext;
 /// durable manifest identity — an identity-less workspace's ephemeral graph
 /// name is intentionally unstable, see `Workspace::ephemeral_id`).
 ///
-/// The primary workspace contributes the configured context hierarchy; additional workspaces warn and are skipped on error so
-/// one bad workspace never blocks the others.
+/// The primary workspace contributes the configured context hierarchy.
 pub fn assemble_dataset(ctx: &CommandContext) -> anyhow::Result<Vec<Quad>> {
+    project_dataset(ctx, load_workspaces(ctx)?)
+}
+
+/// Load every selected workspace once. The primary must load; additional
+/// workspaces warn and are skipped on error so one bad workspace never blocks
+/// the others.
+pub fn load_workspaces(ctx: &CommandContext) -> anyhow::Result<Vec<Workspace>> {
+    let mut workspaces = Vec::new();
+    for (_name, path) in ctx.workspace_dirs() {
+        match clearhead_cli::filesystem::load_workspace_model(&path) {
+            Ok(workspace) => workspaces.push(workspace),
+            Err(error) if path == ctx.data_dir => {
+                return Err(error).context("Failed to load workspace");
+            }
+            Err(error) => tracing::warn!("Skipping workspace '{}': {error}", path.display()),
+        }
+    }
+    Ok(workspaces)
+}
+
+/// Project already loaded workspaces into the merged canonical dataset.
+pub fn project_dataset(
+    ctx: &CommandContext,
+    workspaces: Vec<Workspace>,
+) -> anyhow::Result<Vec<Quad>> {
     let config = ctx.workspace_config();
     let mut quads = Vec::new();
     let mut unpublished = HashSet::new();
 
-    for (_name, path) in ctx.workspace_dirs() {
-        let is_primary = path == ctx.data_dir;
-        let workspace = match clearhead_cli::filesystem::load_workspace_model(&path) {
-            Ok(workspace) => workspace,
-            Err(error) if is_primary => {
-                return Err(error).context("Failed to load workspace");
-            }
-            Err(error) => {
-                tracing::warn!("Skipping workspace '{}': {error}", path.display());
-                continue;
-            }
-        };
-
+    for workspace in workspaces {
+        let is_primary = workspace.root == ctx.data_dir;
+        let path = workspace.root.clone();
         let graph = rdf::workspace_graph_name(&workspace.effective_id());
         let snapshot = workspace_snapshot(&workspace);
         unpublished.extend(workspace.unpublished_charter_ids());

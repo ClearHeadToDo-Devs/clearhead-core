@@ -133,7 +133,7 @@ pub fn assemble_workspace(input: &WorkspaceAssemblyInput) -> Result<WorkspaceRea
                         )
                     })
                     .unwrap_or_else(|| "parser integrity issue; file quarantined".to_string());
-                findings.push(Finding::warning("syntax-errors", &relative, summary));
+                findings.push(Finding::violation("syntax-errors", &relative, summary));
                 continue;
             }
         };

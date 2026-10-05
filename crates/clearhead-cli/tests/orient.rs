@@ -124,3 +124,20 @@ fn orient_renders_human_readable_at_a_terminal_shape() {
         );
     }
 }
+
+#[test]
+fn orient_loads_the_workspace_once() {
+    // Every load notes a violation once, so one notice line means one load:
+    // every section reads the same snapshot.
+    let env = TestEnv::new();
+    env.write_actions("work.actions", "[ ] Something\n");
+    env.write_text("charters/broken.actions", "not valid actions syntax !!!\n");
+
+    let assert = env.command().arg("orient").assert().success();
+    let stderr = String::from_utf8(assert.get_output().stderr.clone()).unwrap();
+    assert_eq!(
+        stderr.matches("workspace violation").count(),
+        1,
+        "stderr: {stderr}"
+    );
+}

@@ -12,8 +12,8 @@ use clearhead_core::workspace::resource::{
     WorkspaceSnapshot,
 };
 use clearhead_core::workspace::{
-    MarkdownCharter, Workspace, WorkspaceAssemblyInput, WorkspaceError, WorkspaceRead,
-    assemble_workspace, plan_workspace_read,
+    Finding, FindingSeverity, MarkdownCharter, Workspace, WorkspaceAssemblyInput, WorkspaceError,
+    WorkspaceRead, assemble_workspace, plan_workspace_read,
 };
 
 /// Physical roots resolved by the native adapter.
@@ -179,18 +179,40 @@ pub fn read_workspace(workspace_root: &Path) -> Result<WorkspaceRead, WorkspaceE
     assemble_native(workspace_root)
 }
 
-/// Native load: inventory, read, and surface findings as warnings.
+/// Native load: inventory, read, and flag violations in one line.
 pub fn load_workspace(workspace_root: &Path) -> Result<Vec<MarkdownCharter>, WorkspaceError> {
     Ok(read_and_report(workspace_root)?.charters)
 }
 
-/// Assemble the workspace and print its findings as warnings.
+/// Assemble the workspace and print a one-line notice when it has violations.
+///
+/// A command shows what it can see; `doctor` names what is wrong. Warnings
+/// stay silent here, but a violation may hide data from the command's output,
+/// so the reader is pointed at `doctor` once.
 fn read_and_report(workspace_root: &Path) -> Result<WorkspaceRead, WorkspaceError> {
     let read = assemble_native(workspace_root)?;
-    for finding in &read.findings {
-        eprintln!("warning: [{}] {}", finding.path.display(), finding.message);
+    if let Some(notice) = violation_notice(workspace_root, &read.findings) {
+        eprintln!("{notice}");
     }
     Ok(read)
+}
+
+fn violation_notice(workspace_root: &Path, findings: &[Finding]) -> Option<String> {
+    let count = findings
+        .iter()
+        .filter(|finding| finding.severity == FindingSeverity::Violation)
+        .count();
+    let noun = if count == 1 {
+        "violation"
+    } else {
+        "violations"
+    };
+    (count > 0).then(|| {
+        format!(
+            "warning: {count} workspace {noun} in {} (some data may be hidden); run `clearhead doctor` there",
+            workspace_root.display()
+        )
+    })
 }
 
 /// Discover active `.actions` resources and map them to native paths.
@@ -372,6 +394,27 @@ fn metadata_revision(metadata: &std::fs::Metadata) -> ResourceRevision {
 mod tests {
     use super::*;
     use clearhead_core::workspace::plan_workspace_read;
+
+    #[test]
+    fn warnings_alone_give_no_notice() {
+        let findings = [Finding::warning("charter-document-without-id", "a.md", "")];
+        assert_eq!(violation_notice(Path::new("/ws"), &findings), None);
+    }
+
+    #[test]
+    fn violations_give_one_notice_naming_the_workspace() {
+        let findings = [
+            Finding::violation("syntax-errors", "a.actions", ""),
+            Finding::warning("charter-document-without-id", "a.md", ""),
+            Finding::violation("unparseable-file", "b.ics", ""),
+        ];
+        assert_eq!(
+            violation_notice(Path::new("/ws"), &findings).as_deref(),
+            Some(
+                "warning: 2 workspace violations in /ws (some data may be hidden); run `clearhead doctor` there"
+            )
+        );
+    }
 
     #[test]
     fn resolves_project_and_loose_plans_as_distinct_mounts() {
