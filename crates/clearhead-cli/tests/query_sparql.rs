@@ -69,9 +69,9 @@ fn raw_select_emits_sparql_results_json_over_the_canonical_dataset() {
     let env = seed();
     let doc = raw_srj(
         &env,
-        "PREFIX actions: <https://clearhead.us/vocab/actions/v4#>\n\
+        "PREFIX app: <https://clearhead.us/vocab/app/v1#>\n\
          PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\n\
-         SELECT ?name WHERE { ?action a actions:Action ; rdfs:label ?name . } ORDER BY ?name",
+         SELECT ?name WHERE { ?action a app:Action ; rdfs:label ?name . } ORDER BY ?name",
         &["--format", "json"],
     );
     assert_eq!(doc["head"]["vars"], serde_json::json!(["name"]));
@@ -98,16 +98,16 @@ fn union_default_graph_and_explicit_graph_both_find_workspace_data() {
     // Without GRAPH the query already matches (union default graph)…
     let union_doc = raw_srj(
         &env,
-        "PREFIX actions: <https://clearhead.us/vocab/actions/v4#>\n\
-         SELECT (COUNT(?a) AS ?n) WHERE { ?a a actions:Action }",
+        "PREFIX app: <https://clearhead.us/vocab/app/v1#>\n\
+         SELECT (COUNT(?a) AS ?n) WHERE { ?a a app:Action }",
         &[],
     );
     assert_eq!(binding_values(&union_doc, "n"), vec!["2"]);
     // …and GRAPH ?g enumerates the workspace's stable named graph.
     let graph_doc = raw_srj(
         &env,
-        "PREFIX actions: <https://clearhead.us/vocab/actions/v4#>\n\
-         SELECT DISTINCT ?g WHERE { GRAPH ?g { ?a a actions:Action } }",
+        "PREFIX app: <https://clearhead.us/vocab/app/v1#>\n\
+         SELECT DISTINCT ?g WHERE { GRAPH ?g { ?a a app:Action } }",
         &[],
     );
     assert_eq!(
@@ -118,40 +118,35 @@ fn union_default_graph_and_explicit_graph_both_find_workspace_data() {
 }
 
 #[test]
-fn workspace_snapshot_layer_is_published_for_editor_integration() {
+fn locations_are_published_relative_to_the_data_root() {
     let env = seed();
-    let doc = raw_srj(
-        &env,
-        "PREFIX ws: <https://clearhead.us/vocab/workspace/v1#>\n\
-         PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\n\
-         SELECT ?label ?root WHERE { ?ws a ws:Workspace ; rdfs:label ?label ; ws:root ?root . }",
-        &[],
-    );
-    assert_eq!(binding_values(&doc, "label"), vec!["testws"]);
-    let root = &binding_values(&doc, "root")[0];
-    assert!(
-        root.ends_with("data/clearhead"),
-        "ws:root is the canonicalized workspace root: {root}"
-    );
-
-    // Per-action provenance: quickfix/jump-to-source facts. hasSourceFile is
-    // relative to the workspace's ws:charterRoot (the index contract), so a
-    // consumer resolves it without machine-specific absolute paths.
+    // Where an action is kept (ontology.md rule 3): app:file is relative to
+    // the data root, and the graph names no root, so it holds nothing
+    // machine-specific.
     let lines = raw_srj(
         &env,
-        "PREFIX ws: <https://clearhead.us/vocab/workspace/v1#>\n\
+        "PREFIX app: <https://clearhead.us/vocab/app/v1#>\n\
          PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\n\
          SELECT ?file ?line WHERE {\n\
-           ?a rdfs:label \"Alpha\" ; ws:hasSourceFile ?file ; ws:hasSourceLine ?line .\n\
+           ?a rdfs:label \"Alpha\" ; app:file ?file ; app:line ?line .\n\
          }",
         &[],
     );
     assert_eq!(
         binding_values(&lines, "file"),
-        vec!["work.actions"],
-        "hasSourceFile is the charter-root-relative source path"
+        vec!["charters/work.actions"]
     );
     assert_eq!(binding_values(&lines, "line"), vec!["1"]);
+    let roots = raw_srj(
+        &env,
+        "SELECT ?o WHERE { ?s ?p ?o . FILTER(isLiteral(?o) && STRSTARTS(STR(?o), \"/\")) }",
+        &[],
+    );
+    assert_eq!(
+        binding_values(&roots, "o"),
+        Vec::<String>::new(),
+        "no absolute paths"
+    );
 }
 
 #[test]
@@ -163,7 +158,7 @@ fn raw_where_uses_the_clause() {
             "query",
             "raw",
             "--where",
-            "?action a actions:Action ; rdfs:label ?name",
+            "?action a app:Action ; rdfs:label ?name",
         ])
         .output()
         .expect("run clearhead query raw --where");
@@ -186,8 +181,8 @@ fn construct_results_serialize_as_turtle() {
         .args([
             "query",
             "raw",
-            "PREFIX actions: <https://clearhead.us/vocab/actions/v4#>\n\
-             CONSTRUCT { ?s ?p ?o } WHERE { ?s a actions:Action . ?s ?p ?o }",
+            "PREFIX app: <https://clearhead.us/vocab/app/v1#>\n\
+             CONSTRUCT { ?s ?p ?o } WHERE { ?s a app:Action . ?s ?p ?o }",
             "--format",
             "turtle",
         ])
@@ -204,7 +199,7 @@ fn construct_results_serialize_as_turtle() {
         "CONSTRUCT emits the action resource: {turtle}"
     );
     assert!(
-        turtle.contains("a <https://clearhead.us/vocab/actions/v4#Action>"),
+        turtle.contains("a <https://clearhead.us/vocab/app/v1#Action>"),
         "Turtle uses the `a` keyword for rdf:type: {turtle}"
     );
 }
@@ -214,11 +209,11 @@ fn ask_results_emit_a_boolean() {
     let env = seed();
     for (query, expected) in [
         (
-            "ASK { ?s a <https://clearhead.us/vocab/actions/v4#Action> }",
+            "ASK { ?s a <https://clearhead.us/vocab/app/v1#Action> }",
             "true",
         ),
         (
-            "ASK { ?s a <https://clearhead.us/vocab/actions/v4#Nonexistent> }",
+            "ASK { ?s a <https://clearhead.us/vocab/app/v1#Nonexistent> }",
             "false",
         ),
     ] {
@@ -235,9 +230,9 @@ fn ask_results_emit_a_boolean() {
 #[test]
 fn piped_output_is_byte_deterministic() {
     let env = seed();
-    let query = "PREFIX actions: <https://clearhead.us/vocab/actions/v4#>\n\
+    let query = "PREFIX app: <https://clearhead.us/vocab/app/v1#>\n\
                  PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\n\
-                 SELECT ?name WHERE { ?a a actions:Action ; rdfs:label ?name . } ORDER BY ?name";
+                 SELECT ?name WHERE { ?a a app:Action ; rdfs:label ?name . } ORDER BY ?name";
     let first = env
         .std_command()
         .args(["query", "raw", query])
@@ -266,9 +261,9 @@ fn named_runs_a_project_saved_query() {
     );
     env.write_text(
         ".clearhead/queries/mine.sparql",
-        "PREFIX actions: <https://clearhead.us/vocab/actions/v4#>\n\
+        "PREFIX app: <https://clearhead.us/vocab/app/v1#>\n\
          PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\n\
-         SELECT ?name WHERE { ?a a actions:Action ; rdfs:label ?name . } ORDER BY ?name",
+         SELECT ?name WHERE { ?a a app:Action ; rdfs:label ?name . } ORDER BY ?name",
     );
 
     let output = env
@@ -291,7 +286,7 @@ fn named_runs_a_built_in_query() {
     let env = seed();
     let output = env
         .std_command()
-        .args(["query", "named", "all-plans", "--format", "json"])
+        .args(["query", "named", "open-actions", "--format", "json"])
         .output()
         .expect("run clearhead query named");
     assert!(
@@ -299,14 +294,15 @@ fn named_runs_a_built_in_query() {
         "built-in named failed: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    // A complete standard SPARQL Results document (no plans here → no rows).
-    let _doc: Value = serde_json::from_slice(&output.stdout).expect("SRJ");
+    let doc: Value = serde_json::from_slice(&output.stdout).expect("SRJ");
+    assert_eq!(binding_values(&doc, "name"), vec!["Alpha", "Beta"]);
 }
 
 #[test]
 fn named_overdue_binds_cutoff_to_now_and_matches_past_due() {
-    // `?CUTOFF_DATE` is bound to the current instant at run time, so an action
-    // due in the past is reported overdue and one due far in the future is not.
+    // `?NOW` is bound to the current instant at run time, so an action late
+    // (app:lateFrom) in the past is reported overdue and one far in the future
+    // is not.
     // Proves the view-variable substitution binds a real, correctly-typed
     // datetime — not just that the query parses.
     let env = TestEnv::new();
@@ -460,8 +456,8 @@ fn empty_workspace_yields_empty_standard_results() {
         .args([
             "query",
             "raw",
-            "PREFIX actions: <https://clearhead.us/vocab/actions/v4#>\n\
-             SELECT ?a WHERE { ?a a actions:Action }",
+            "PREFIX app: <https://clearhead.us/vocab/app/v1#>\n\
+             SELECT ?a WHERE { ?a a app:Action }",
         ])
         .output()
         .expect("run clearhead query raw");
@@ -485,8 +481,8 @@ fn a_closed_downstream_pipe_is_not_an_error() {
     cmd.args([
         "query",
         "raw",
-        "PREFIX actions: <https://clearhead.us/vocab/actions/v4#>\n\
-         SELECT ?a WHERE { ?a a actions:Action }",
+        "PREFIX app: <https://clearhead.us/vocab/app/v1#>\n\
+         SELECT ?a WHERE { ?a a app:Action }",
     ])
     .stdout(Stdio::piped());
     let mut child = cmd.spawn().expect("spawn clearhead query");

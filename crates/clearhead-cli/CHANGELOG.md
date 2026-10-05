@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
+## 2026-10-04
+
+### Changed
+- **Queries read the application graph** (platform Decision 53). The SPARQL dataset, `export workspace` and every `--format json-ld` read are Core's `app:` projection with derived instants in the local zone; the `ws:` snapshot layer is gone. Every built-in query is rewritten in `app:` terms; a saved query written against v4 must be rewritten too (`query raw --where` declares `app:`).
+- Index and tree rows carry `data_root` (absolute) instead of `charter_root`, and `source_file` is `app:file`, relative to it (`charters/next.actions`). `scheduled_at` and `due_date` are as written; the views filter and sort on `app:plannedFrom` and `app:lateFrom`, the effective deadline, so an inherited deadline counts.
+- `?END_OF_TODAY` and `?END_OF_WEEK` end at the viewer's local midnight, not UTC's.
+- `overdue-tasks` means late: past `app:lateFrom`, not past the deadline's first instant.
+
+### Removed
+- The built-in queries `all-plans`, `all-plans-simple` and `plans-with-contexts`, and `read plans --format json-ld` (which now fails with the reason): the application graph does not define recurrence yet. `read plans` lists plans as before.
+
 ## 2026-01-25
 
 ### Added

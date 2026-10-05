@@ -19,17 +19,11 @@ use serde_json::{Value, json};
 
 use oxigraph::store::Store;
 
-use super::{Row, build_store, select_rows};
+use super::{DataRoots, Row, attach_data_roots, build_located_store, select_rows};
 use crate::argparser::QueryFormat;
 use crate::cli::CommandContext;
 use crate::stdout::{write_stdout, write_stdout_line};
 
-// The index `@context` IRIs. These are a client-facing wire contract, not Core
-// domain semantics, so the presentation layer owns them.
-const ACTIONS_NS: &str = "https://clearhead.us/vocab/actions/v4#";
-const WORKSPACE_NS: &str = "https://clearhead.us/vocab/workspace/v1#";
-const CCO_NS: &str = "https://www.commoncoreontologies.org/";
-const BFO_NS: &str = "http://purl.obolibrary.org/obo/";
 const XSD_NS: &str = "http://www.w3.org/2001/XMLSchema#";
 
 /// Identity, display, and locator terms every index entry must carry. Sort keys
@@ -41,7 +35,7 @@ const INDEX_REQUIRED: &[&str] = &[
     "status",
     "source_file",
     "source_line",
-    "charter_root",
+    "data_root",
 ];
 
 /// Run a named index view: resolve the query, bind `?TARGET_ACTION` when a
@@ -73,20 +67,19 @@ pub fn run(
     // `?owner` binding — a SPARQL comment, so it is a no-op unless replaced. A
     // resolved `--charter` (already validated and wrapped as `<urn:uuid:…>` by
     // the caller) becomes a semi-join that also matches sub-charters via
-    // `hasSubCharter*`, requiring `?owner` bound so an action with no
+    // `app:partOf*`, requiring `?owner` bound so an action with no
     // resolvable owner never passes a charter scope silently.
     let sparql = match charter {
         Some(charter_iri) => sparql.replace(
             "#CHARTER_FILTER#",
-            &format!(
-                "FILTER(BOUND(?owner) && EXISTS {{ {charter_iri} actions:hasSubCharter* ?owner }})"
-            ),
+            &format!("FILTER(BOUND(?owner) && EXISTS {{ ?owner app:partOf* {charter_iri} }})"),
         ),
         None => sparql,
     };
 
-    let store = build_store(ctx)?;
-    let rows = select_rows(&store, &sparql)?;
+    let (store, data_roots) = build_located_store(ctx)?;
+    let mut rows = select_rows(&store, &sparql)?;
+    attach_data_roots(&mut rows, &data_roots);
     let doc = frame_index(&rows)
         .map_err(|e| anyhow!("Query result does not satisfy the index contract: {e}"))?;
     let nodes = doc["@graph"]
@@ -109,11 +102,17 @@ pub fn run(
 /// nodes directly rather than printing them — the data half of [`run`], for
 /// a caller (such as `orient`) that composes the rows into a larger
 /// document instead of rendering them on their own.
-pub fn nodes_for(ctx: &CommandContext, store: &Store, name: &str) -> anyhow::Result<Vec<Value>> {
+pub fn nodes_for(
+    ctx: &CommandContext,
+    store: &Store,
+    data_roots: &DataRoots,
+    name: &str,
+) -> anyhow::Result<Vec<Value>> {
     let sparql =
         super::registry::resolve_family(ctx, "index", name, super::registry::BUILT_IN_INDEX)
             .ok_or_else(|| anyhow!("No index query named '{name}'"))?;
-    let rows = select_rows(store, &sparql)?;
+    let mut rows = select_rows(store, &sparql)?;
+    attach_data_roots(&mut rows, data_roots);
     let doc = frame_index(&rows)
         .map_err(|e| anyhow!("Query result does not satisfy the index contract: {e}"))?;
     Ok(doc["@graph"].as_array().cloned().unwrap_or_default())
@@ -157,33 +156,32 @@ fn validate_contract(rows: &[Row]) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// The index shape's `@context`: exactly the terms the contract emits. `id`
-/// aliases `@id` so simple clients never see an `@`-key; `status` values are
-/// bare enum terms typed `@vocab`; `charter_root` is deliberately unmapped
-/// join-context, dropped on JSON-LD expansion but usable by direct readers.
+/// The index shape's `@context`: exactly the terms the contract emits, in the
+/// application vocabulary. `id` aliases `@id` so simple clients never see an
+/// `@`-key; `status` values are bare enum terms typed `@vocab`; the dates are
+/// as written (a date or a date-time), so they carry no type coercion;
+/// `data_root` is deliberately unmapped join-context, dropped on JSON-LD
+/// expansion but usable by direct readers (the graph names no root).
 fn index_context() -> Value {
     json!({
         "@version": 1.1,
-        "actions": ACTIONS_NS,
-        "bfo": BFO_NS,
-        "cco": CCO_NS,
-        "ws": WORKSPACE_NS,
+        "app": clearhead_core::rdf::app::APP_NS,
         "rdfs": "http://www.w3.org/2000/01/rdf-schema#",
         "xsd": XSD_NS,
         "id": "@id",
         "name": "rdfs:label",
-        "status": { "@id": "cco:ont00001868", "@type": "@vocab" },
-        "NotStarted": "actions:NotStarted",
-        "InProgress": "actions:InProgress",
-        "Completed": "actions:Completed",
-        "Blocked": "actions:Blocked",
-        "Cancelled": "actions:Cancelled",
-        "source_file": "ws:hasSourceFile",
-        "source_line": { "@id": "ws:hasSourceLine", "@type": "xsd:integer" },
-        "priority": { "@id": "actions:hasPriority", "@type": "xsd:integer" },
-        "scheduled_at": { "@id": "actions:hasScheduledDateTime", "@type": "xsd:dateTime" },
-        "due_date": { "@id": "actions:hasDueDateTime", "@type": "xsd:dateTime" },
-        "parent": { "@id": "bfo:BFO_0000050", "@type": "@id" }
+        "status": { "@id": "app:state", "@type": "@vocab" },
+        "NotStarted": "app:NotStarted",
+        "InProgress": "app:InProgress",
+        "Completed": "app:Completed",
+        "Blocked": "app:Blocked",
+        "Cancelled": "app:Cancelled",
+        "source_file": "app:file",
+        "source_line": { "@id": "app:line", "@type": "xsd:integer" },
+        "priority": { "@id": "app:priority", "@type": "xsd:integer" },
+        "scheduled_at": "app:plannedStart",
+        "due_date": "app:due",
+        "parent": { "@id": "app:partOf", "@type": "@id" }
     })
 }
 
@@ -269,7 +267,7 @@ mod tests {
             ("status".into(), "NotStarted".into()),
             ("source_file".into(), "charters/demo/next.actions".into()),
             ("source_line".into(), "3".into()),
-            ("charter_root".into(), "/workspace/.clearhead".into()),
+            ("data_root".into(), "/workspace/.clearhead".into()),
         ])
     }
 

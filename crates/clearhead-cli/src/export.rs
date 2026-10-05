@@ -3,8 +3,9 @@ use clearhead_core::{Action, ActionState, DomainModel};
 use std::collections::HashSet;
 use uuid::Uuid;
 
-/// Serialize a domain model to flat JSON-LD through Core's canonical RDF
-/// projection — the same one dataset that backs every RDF serialization.
+/// Serialize a domain model to flat JSON-LD through Core's application-graph
+/// projection — the same one that backs every RDF serialization, with derived
+/// instants in the local zone.
 ///
 /// Read commands reach this for `--output jsonld` over a *filtered* subset, so
 /// the data is published into the transient named graph rather than a specific
@@ -13,10 +14,17 @@ use uuid::Uuid;
 /// `unpublished` (see `Workspace::unpublished_charter_ids`) become blank nodes.
 pub fn serialize_domain_to_jsonld(
     model: &DomainModel,
+    locations: &rdf::app::Locations,
     unpublished: &HashSet<Uuid>,
 ) -> Result<String, String> {
-    let quads = rdf::project_domain(model, None, rdf::transient_graph_name())
-        .map_err(|error| error.to_string())?;
+    let quads = rdf::app::project_app(
+        model,
+        locations,
+        None,
+        &chrono::Local,
+        rdf::transient_graph_name(),
+    )
+    .map_err(|error| error.to_string())?;
     let quads = rdf::anonymize_charters(quads, unpublished);
     rdf::serialize(&quads, RdfFormat::JsonLd).map_err(|error| error.to_string())
 }

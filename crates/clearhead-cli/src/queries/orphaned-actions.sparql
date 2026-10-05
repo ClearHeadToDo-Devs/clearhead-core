@@ -4,28 +4,20 @@
 # Purpose: Actions not referenced by any charter and with no parent action
 # Returns: name, state
 # Notes:
-#   Well-formed actions are either:
-#     (a) linked from a charter via bfo:BFO_0000051 (hasPart), or
-#     (b) children of another action via bfo:BFO_0000050 (partOf).
+#   Every well-formed action is app:partOf its parent action or its charter.
 #   Results here may indicate missing charter membership or import artifacts.
 # =============================================================================
 
-PREFIX actions: <https://clearhead.us/vocab/actions/v4#>
-PREFIX cco: <https://www.commoncoreontologies.org/>
-PREFIX bfo: <http://purl.obolibrary.org/obo/>
+PREFIX app: <https://clearhead.us/vocab/app/v1#>
 PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
-PREFIX ws: <https://clearhead.us/vocab/workspace/v1#>
 
 SELECT ?name ?state ?source_file ?source_line WHERE {
-    ?action a actions:Action ;
+    ?action a app:Action ;
          rdfs:label ?name ;
-         cco:ont00001868 ?raw_state .
-
+         app:state ?raw_state .
     BIND(STRAFTER(STR(?raw_state), "#") AS ?state)
-
-    FILTER NOT EXISTS { ?charter a actions:Charter ; bfo:BFO_0000051 ?action . }
-    FILTER NOT EXISTS { ?action bfo:BFO_0000050 ?parent . }
-    OPTIONAL { ?action ws:hasSourceFile ?source_file }
-    OPTIONAL { ?action ws:hasSourceLine ?source_line }
+    FILTER NOT EXISTS { ?action app:partOf ?whole }
+    OPTIONAL { ?action app:file ?source_file }
+    OPTIONAL { ?action app:line ?source_line }
 }
 ORDER BY ?name

@@ -46,11 +46,6 @@ pub const BUILT_IN: &[(&str, &str)] = &[
         "actions-by-phase",
         include_str!("../../queries/actions-by-phase.sparql"),
     ),
-    ("all-plans", include_str!("../../queries/all-plans.sparql")),
-    (
-        "all-plans-simple",
-        include_str!("../../queries/all-plans-simple.sparql"),
-    ),
     (
         "completion-velocity",
         include_str!("../../queries/completion-velocity.sparql"),
@@ -74,10 +69,6 @@ pub const BUILT_IN: &[(&str, &str)] = &[
     (
         "open-actions",
         include_str!("../../queries/open-actions.sparql"),
-    ),
-    (
-        "plans-with-contexts",
-        include_str!("../../queries/plans-with-contexts.sparql"),
     ),
 ];
 

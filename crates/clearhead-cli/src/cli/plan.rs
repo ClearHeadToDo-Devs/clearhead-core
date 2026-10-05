@@ -1,6 +1,5 @@
 use anyhow::Context;
 use chrono::{DateTime, Local};
-use std::collections::HashSet;
 use std::fs;
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
@@ -189,12 +188,10 @@ pub fn read_plans(
     }
 
     match format {
-        Some(argparser::OutputMode::JsonLd) => {
-            let (model, unpublished) = model_containing_plans(ctx, &plans)?;
-            let jsonld = clearhead_cli::serialize_domain_to_jsonld(&model, &unpublished)
-                .map_err(|e| anyhow::anyhow!("Failed to serialize JSON-LD: {e}"))?;
-            println!("{}", jsonld);
-        }
+        Some(argparser::OutputMode::JsonLd) => anyhow::bail!(
+            "plans have no JSON-LD yet: the application graph does not define recurrence \
+             (specifications ontology.md, Recurrence); use --format json"
+        ),
         Some(argparser::OutputMode::Json) => {
             // Plans have no canonical actions-schema shape yet; emit plain
             // structured JSON of the domain plans until a plan schema exists.
@@ -245,56 +242,6 @@ fn print_plans_table(plans: &[(String, clearhead_core::Plan)]) {
         ]);
     }
     println!("{}", table);
-}
-
-/// Build the smallest truthful graph model containing the selected plans.
-/// Workspace-backed plans retain their real charter identities; `--file` plans
-/// that are not in the workspace receive a deterministic synthetic charter.
-fn model_containing_plans(
-    ctx: &CommandContext,
-    plans: &[(String, clearhead_core::Plan)],
-) -> anyhow::Result<(clearhead_core::DomainModel, HashSet<uuid::Uuid>)> {
-    use std::collections::BTreeMap;
-
-    let selected: HashSet<_> = plans.iter().map(|(_, plan)| plan.id).collect();
-    let workspace = ctx.load_workspace_model()?;
-    let mut unpublished: HashSet<_> = workspace.unpublished_charter_ids().collect();
-    let mut model = clearhead_core::DomainModel::from(workspace);
-    model.objectives.clear();
-    for charter in &mut model.charters {
-        charter.actions.clear();
-        charter.plans.retain(|plan| selected.contains(&plan.id));
-    }
-    model.charters.retain(|charter| !charter.plans.is_empty());
-
-    let represented: HashSet<_> = model
-        .charters
-        .iter()
-        .flat_map(|charter| charter.plans.iter().map(|plan| plan.id))
-        .collect();
-    let mut unmatched: BTreeMap<String, Vec<clearhead_core::Plan>> = BTreeMap::new();
-    for (charter_name, plan) in plans {
-        if !represented.contains(&plan.id) {
-            unmatched
-                .entry(charter_name.clone())
-                .or_default()
-                .push(plan.clone());
-        }
-    }
-    // Plans outside any loaded charter get a stand-in charter whose name-hashed
-    // id is a join key only, so it is unpublished too.
-    for (charter_name, plans) in unmatched {
-        let id = uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_URL, charter_name.as_bytes());
-        unpublished.insert(id);
-        model.charters.push(clearhead_core::Charter {
-            id,
-            title: charter_name.clone(),
-            alias: Some(charter_name),
-            plans,
-            ..Default::default()
-        });
-    }
-    Ok((model, unpublished))
 }
 
 pub fn show_plan(

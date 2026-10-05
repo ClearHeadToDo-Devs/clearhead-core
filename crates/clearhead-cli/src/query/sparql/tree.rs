@@ -12,7 +12,7 @@ use std::io::IsTerminal;
 use anyhow::anyhow;
 use serde_json::Value;
 
-use super::{Row, build_store, select_rows};
+use super::{Row, attach_data_roots, build_located_store, select_rows};
 use crate::argparser::QueryFormat;
 use crate::cli::CommandContext;
 use crate::stdout::{write_stdout, write_stdout_line};
@@ -36,8 +36,9 @@ pub fn run(
             )
         })?;
 
-    let store = build_store(ctx)?;
-    let rows = select_rows(&store, &sparql)?;
+    let (store, data_roots) = build_located_store(ctx)?;
+    let mut rows = select_rows(&store, &sparql)?;
+    attach_data_roots(&mut rows, &data_roots);
     let tree = frame_tree(&rows)
         .map_err(|e| anyhow!("Query result does not satisfy the tree contract: {e}"))?;
 

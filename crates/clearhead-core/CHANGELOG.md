@@ -7,8 +7,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 ## [Unreleased]
 
 ### Added
-- `rdf::app::project_app`: the application graph (`app:` vocabulary, specifications `ontology.md`, Decision 45), projected from a `DomainModel`, host-supplied `app::Locations` (`Locations::of(&Workspace)`), the workspace config and the viewer's zone. Written times are as written; `notBefore`, `lateFrom` and `durationMinutes` are derived in the zone. The graph fixture's `expected-app.ttl` is its conformance test. It sits beside the v4 projection until the CLI's queries move to it.
+- `rdf::app::project_app`: the application graph (`app:` vocabulary, specifications `ontology.md`, Decision 45), projected from a `DomainModel`, host-supplied `app::Locations` (`Locations::of(&Workspace)`), the workspace config and the viewer's zone. Written times are as written; `notBefore`, `lateFrom` and `durationMinutes` are derived in the zone. The graph fixture's `expected-app.ttl` is its conformance test. The CLI's queries read it; the v4 projection remains only until `retire-v4`.
 - `Bound::xsd`, `Bound::end_instant_in`, `Planned::duration_in`: the as-written XSD form and zone-aware instants.
+- `app:plannedFrom`, the planned start's instant in the viewer's zone, so queries compare `@` without reading the written value. The Turtle, TriG and JSON-LD serializers declare the `app:` and `skos:` prefixes.
 - `WorkspaceRead::objective_files` and `Workspace::objective_files`: each objective's data-root-relative file. `Workspace::with_objectives` takes them.
 
 ### Changed

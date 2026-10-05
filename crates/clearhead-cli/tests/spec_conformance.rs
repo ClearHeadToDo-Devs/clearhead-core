@@ -111,7 +111,7 @@ fn validator_rejects_a_row_missing_required_id() {
         "status": "NotStarted",
         "source_file": "x.actions",
         "source_line": 1,
-        "charter_root": "/tmp/.clearhead/charters",
+        "data_root": "/tmp/.clearhead",
         "surprise": true
     }]);
     assert!(

@@ -41,7 +41,8 @@ pub mod tree;
 use std::io::IsTerminal;
 
 use anyhow::{Context as _, anyhow};
-use chrono::Utc;
+use chrono::{Local, SecondsFormat, Utc};
+use clearhead_core::domain::time::resolve_local;
 use oxigraph::io::{JsonLdProfileSet, RdfFormat, RdfSerializer};
 use oxigraph::model::{Term, Triple};
 use oxigraph::sparql::results::{QueryResultsFormat, QueryResultsSerializer};
@@ -60,7 +61,32 @@ use crate::stdout::{write_stdout, write_stdout_line};
 /// in-memory store. The store holds exactly the published quad set — nothing
 /// else is ever loaded into it — and is dropped with the command.
 pub fn build_store(ctx: &CommandContext) -> anyhow::Result<Store> {
-    store_from(&crate::query::dataset::assemble_dataset(ctx)?)
+    Ok(build_located_store(ctx)?.0)
+}
+
+/// [`build_store`], with each entity's data root for the families whose rows
+/// locate an entity (`data_root`, rule 3).
+pub fn build_located_store(ctx: &CommandContext) -> anyhow::Result<(Store, DataRoots)> {
+    let dataset = crate::query::dataset::assemble_dataset(ctx)?;
+    Ok((store_from(&dataset.quads)?, dataset.data_roots))
+}
+
+/// Each entity's absolute data root, keyed by its id.
+pub type DataRoots = std::collections::HashMap<uuid::Uuid, std::path::PathBuf>;
+
+/// Attach each row's `data_root`, found by its `id`. A row whose id is not a
+/// located entity is left as it is; the family's contract decides whether
+/// that is an error.
+pub(super) fn attach_data_roots(rows: &mut [Row], data_roots: &DataRoots) {
+    for row in rows {
+        let root = row
+            .get("id")
+            .and_then(|id| uuid::Uuid::parse_str(id.trim_start_matches("urn:uuid:")).ok())
+            .and_then(|id| data_roots.get(&id));
+        if let Some(root) = root {
+            row.insert("data_root".into(), root.to_string_lossy().into_owned());
+        }
+    }
 }
 
 /// Load an already assembled dataset into a fresh in-memory store.
@@ -98,11 +124,15 @@ fn datetime_literal(value: &str) -> String {
 fn bind_time_vars(sparql: &str) -> String {
     let now = Utc::now();
     let instant = datetime_literal(&now.format("%Y-%m-%dT%H:%M:%SZ").to_string());
-    let end_of_today = datetime_literal(&format!("{}T23:59:59Z", now.format("%Y-%m-%d")));
-    let end_of_week = datetime_literal(&format!(
-        "{}T23:59:59Z",
-        (now + chrono::Duration::days(7)).format("%Y-%m-%d")
-    ));
+    // Days end at the viewer's midnight, the zone the derived instants use:
+    // the end of a day is the first instant of the next (exclusive).
+    let midnight_after = |days: i64| {
+        let day = Local::now().date_naive() + chrono::Duration::days(days);
+        let at = resolve_local(day.and_time(chrono::NaiveTime::MIN), &Local);
+        datetime_literal(&at.to_rfc3339_opts(SecondsFormat::Secs, true))
+    };
+    let end_of_today = midnight_after(1);
+    let end_of_week = midnight_after(8);
     sparql
         .replace("?NOW", &instant)
         .replace("?CUTOFF_DATE", &instant)
@@ -218,14 +248,12 @@ pub fn construct_triples(store: &Store, sparql: &str) -> anyhow::Result<Vec<Trip
 /// reaches every workspace named graph).
 pub fn expand_where_clause(where_clause: &str) -> String {
     format!(
-        "PREFIX actions: <https://clearhead.us/vocab/actions/v4#>\n\
-         PREFIX cco: <https://www.commoncoreontologies.org/>\n\
-         PREFIX bfo: <http://purl.obolibrary.org/obo/>\n\
+        "PREFIX app: <https://clearhead.us/vocab/app/v1#>\n\
          PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\n\
          PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>\n\
          PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>\n\
          PREFIX skos: <http://www.w3.org/2004/02/skos/core#>\n\
-         PREFIX ws: <https://clearhead.us/vocab/workspace/v1#>\n\
+         PREFIX dcterms: <http://purl.org/dc/terms/>\n\
          SELECT * WHERE {{ GRAPH ?g {{ {where_clause} }} }}"
     )
 }
@@ -427,8 +455,7 @@ pub fn run_raw(
     emit(execute(&store, &full_query)?, format)
 }
 
-/// The action status individuals (`cco:ont00001868` objects) a `--status`
-/// filter may name.
+/// The action states (`app:state` values) a `--status` filter may name.
 const STATUS_TERMS: &[&str] = &[
     "NotStarted",
     "InProgress",
@@ -438,13 +465,13 @@ const STATUS_TERMS: &[&str] = &[
 ];
 
 /// The `?STATUS_FILTER` replacement for a `--status` value: a validated
-/// `actions:` status IRI. An `actions:` prefix is optional; anything outside
+/// `app:` state IRI. An `app:` prefix is optional; anything outside
 /// the known set is rejected rather than interpolated, so nothing untrusted
 /// reaches the query.
 fn status_filter_iri(status: &str) -> anyhow::Result<String> {
-    let local = status.strip_prefix("actions:").unwrap_or(status);
+    let local = status.strip_prefix("app:").unwrap_or(status);
     if STATUS_TERMS.contains(&local) {
-        Ok(format!("<{ACTIONS_STATUS_NS}{local}>"))
+        Ok(format!("<{}{local}>", clearhead_core::rdf::app::APP_NS))
     } else {
         anyhow::bail!(
             "unknown --status '{status}'; expected one of: {}",
@@ -452,8 +479,6 @@ fn status_filter_iri(status: &str) -> anyhow::Result<String> {
         )
     }
 }
-
-const ACTIONS_STATUS_NS: &str = "https://clearhead.us/vocab/actions/v4#";
 
 /// Run `query named` in-process when the name resolves in the flat registry —
 /// a project or user drop-in, or a built-in ([`registry::resolve_flat`]). When
@@ -484,7 +509,7 @@ mod tests {
     #[test]
     fn where_clause_expands_to_complete_standard_sparql() {
         let expanded = expand_where_clause("?s rdfs:label ?name");
-        assert!(expanded.starts_with("PREFIX actions:"), "{expanded}");
+        assert!(expanded.starts_with("PREFIX app:"), "{expanded}");
         assert!(
             expanded.contains("SELECT * WHERE { GRAPH ?g { ?s rdfs:label ?name } }"),
             "{expanded}"

@@ -331,25 +331,17 @@ fn read_charters_hides_undeclared_ids_in_ids_and_jsonld() {
         })
         .expect("id-less charter node");
     assert!(two["@id"].as_str().unwrap().starts_with("_:"), "{two}");
-    assert!(
-        two.get("https://clearhead.us/vocab/actions/v4#hasUUID")
-            .is_none(),
-        "{two}"
-    );
-    let one = graph
-        .iter()
-        .find(|node| node["@id"] == format!("urn:uuid:{declared}"))
-        .unwrap();
     assert_eq!(
-        one["https://clearhead.us/vocab/actions/v4#hasSubCharter"][0]["@id"],
-        two["@id"]
+        two["https://clearhead.us/vocab/app/v1#partOf"][0]["@id"],
+        format!("urn:uuid:{declared}"),
+        "the blank node keeps its place in the hierarchy"
     );
     let action = graph
         .iter()
         .find(|node| node["@id"] == format!("urn:uuid:{action_id}"))
         .expect("child action projected");
     assert_eq!(
-        action["http://purl.obolibrary.org/obo/BFO_0000050"][0]["@id"],
+        action["https://clearhead.us/vocab/app/v1#partOf"][0]["@id"],
         two["@id"]
     );
 
@@ -381,11 +373,6 @@ fn read_charters_hides_undeclared_ids_in_ids_and_jsonld() {
         })
         .unwrap();
     assert!(minted_two["@id"].as_str().unwrap().starts_with("_:"));
-    assert!(
-        minted_two
-            .get("https://clearhead.us/vocab/actions/v4#hasUUID")
-            .is_none()
-    );
 }
 
 #[test]

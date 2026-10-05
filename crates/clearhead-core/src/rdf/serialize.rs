@@ -60,6 +60,8 @@ pub enum RdfFormat {
 /// JSON-LD `@context`). N-Quads has no prefix mechanism and always spells IRIs
 /// in full. Kept in sync with the namespace constants the projection emits.
 const VOCAB_PREFIXES: &[(&str, &str)] = &[
+    ("app", super::app::APP_NS),
+    ("skos", "http://www.w3.org/2004/02/skos/core#"),
     ("actions", ACTIONS_NS),
     ("cco", CCO_NS),
     ("bfo", BFO_NS),

@@ -171,8 +171,9 @@ fn unscheduled_rows(
     workspaces: Vec<clearhead_core::workspace::store::Workspace>,
 ) -> anyhow::Result<Bounded<Value>> {
     let dataset = crate::query::dataset::project_dataset(ctx, workspaces)?;
-    let store = crate::query::sparql::store_from(&dataset)?;
-    let nodes = crate::query::sparql::index::nodes_for(ctx, &store, "unscheduled")?;
+    let store = crate::query::sparql::store_from(&dataset.quads)?;
+    let nodes =
+        crate::query::sparql::index::nodes_for(ctx, &store, &dataset.data_roots, "unscheduled")?;
     Ok(Bounded::take(nodes, SECTION_LIMIT))
 }
 

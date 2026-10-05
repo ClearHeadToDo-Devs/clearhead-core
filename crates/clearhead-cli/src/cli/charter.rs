@@ -125,7 +125,13 @@ pub fn read_charters(
     }
 
     // Charters without a document-declared id must not publish their id.
-    let models: Vec<(String, clearhead_core::DomainModel, HashSet<uuid::Uuid>)> = workspaces
+    type Projected = (
+        String,
+        clearhead_core::DomainModel,
+        clearhead_core::rdf::app::Locations,
+        HashSet<uuid::Uuid>,
+    );
+    let models: Vec<Projected> = workspaces
         .into_iter()
         .map(|(name, root, charters)| {
             let anonymous = charters
@@ -133,14 +139,15 @@ pub fn read_charters(
                 .filter(|charter| charter.id_source != CharterIdSource::Document)
                 .map(|charter| charter.id)
                 .collect();
-            let mut model: clearhead_core::DomainModel =
-                clearhead_cli::filesystem::load_workspace_envelope(&root, charters).into();
+            let workspace = clearhead_cli::filesystem::load_workspace_envelope(&root, charters);
+            let locations = clearhead_core::rdf::app::Locations::of(&workspace);
+            let mut model: clearhead_core::DomainModel = workspace.into();
             model
                 .charters
                 .retain(|charter| keep(&charter.alias, &charter.description));
-            (name, model, anonymous)
+            (name, model, locations, anonymous)
         })
-        .filter(|(_, model, _)| !model.charters.is_empty())
+        .filter(|(_, model, _, _)| !model.charters.is_empty())
         .collect();
 
     if models.is_empty() {
@@ -151,14 +158,18 @@ pub fn read_charters(
     match format {
         Some(argparser::OutputMode::Json) => unreachable!("JSON is printed from source charters"),
         Some(argparser::OutputMode::JsonLd) => {
-            for (_, model, without_declared_id) in &models {
-                let jsonld = clearhead_cli::serialize_domain_to_jsonld(model, without_declared_id)
-                    .map_err(|e| anyhow::anyhow!("Failed to serialize JSON-LD: {e}"))?;
+            for (_, model, locations, without_declared_id) in &models {
+                let jsonld = clearhead_cli::serialize_domain_to_jsonld(
+                    model,
+                    locations,
+                    without_declared_id,
+                )
+                .map_err(|e| anyhow::anyhow!("Failed to serialize JSON-LD: {e}"))?;
                 println!("{}", jsonld);
             }
         }
         Some(argparser::OutputMode::Ids) => {
-            for (_, model, without_declared_id) in &models {
+            for (_, model, _, without_declared_id) in &models {
                 for charter in &model.charters {
                     if !without_declared_id.contains(&charter.id) {
                         println!("{}", charter.id);
@@ -169,13 +180,13 @@ pub fn read_charters(
         Some(argparser::OutputMode::Table) => {
             let workspaces: Vec<(String, Vec<Charter>)> = models
                 .into_iter()
-                .map(|(n, m, _)| (n, m.charters))
+                .map(|(n, m, _, _)| (n, m.charters))
                 .collect();
             print_charter_table(&workspaces, multi_ws);
         }
         None => {
             // The charter tree with open action counts, wherever stdout goes.
-            for (ws_name, model, _) in &models {
+            for (ws_name, model, _, _) in &models {
                 if multi_ws {
                     println!("▸ {}", ws_name);
                 }

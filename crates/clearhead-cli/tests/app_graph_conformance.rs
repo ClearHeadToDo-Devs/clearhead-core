@@ -95,8 +95,11 @@ fn the_fixture_workspace_projects_to_expected_app_ttl() {
 
 #[test]
 fn written_values_do_not_depend_on_the_viewers_zone() {
-    let is_derived =
-        |triple: &String| triple.contains("#notBefore>") || triple.contains("#lateFrom>");
+    let is_derived = |triple: &String| {
+        ["#notBefore>", "#lateFrom>", "#plannedFrom>"]
+            .iter()
+            .any(|term| triple.contains(term))
+    };
     let written = |set: &BTreeSet<String>| -> BTreeSet<String> {
         set.iter().filter(|t| !is_derived(t)).cloned().collect()
     };

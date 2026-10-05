@@ -28,7 +28,7 @@ pub fn workspace(
         RdfExportFormat::Jsonld => RdfFormat::JsonLd,
         RdfExportFormat::Turtle => RdfFormat::Turtle,
     };
-    let quads = crate::query::dataset::assemble_dataset(ctx)?;
+    let quads = crate::query::dataset::assemble_dataset(ctx)?.quads;
     let text = rdf::serialize(&quads, rdf_format)
         .map_err(|e| anyhow!("Failed to serialize the workspace dataset: {e}"))?;
     match output {

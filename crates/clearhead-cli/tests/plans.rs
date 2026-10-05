@@ -169,7 +169,7 @@ fn test_read_plans_shows_recurring_vtodo() {
 }
 
 #[test]
-fn test_read_plans_honors_ids_and_jsonld_formats() {
+fn test_read_plans_honors_ids_and_refuses_jsonld_until_recurrence_is_specified() {
     let env = TestEnv::new();
     env.write_plan_ics("inbox", "root.ics", &["My Plan"]);
 
@@ -184,19 +184,19 @@ fn test_read_plans_honors_ids_and_jsonld_formats() {
     assert_eq!(id.len(), 36, "{ids}");
     assert!(uuid::Uuid::parse_str(id).is_ok(), "{ids}");
 
-    let json = env
+    // The application graph does not define recurrence yet, so a JSON-LD
+    // document would silently lack the plans: the command fails with why and
+    // what to use instead.
+    let jsonld = env
         .command()
         .args(["read", "plans", "--format", "json-ld"])
         .output()
         .unwrap();
-    assert!(json.status.success());
-    // Core's rdf module owns the semantic shape; here we only prove the plumbing
-    // emits valid flat JSON-LD (an @context + @graph) that names the plan.
-    let value: serde_json::Value = serde_json::from_slice(&json.stdout).unwrap();
-    assert!(value.get("@context").is_some(), "expected an @context");
-    assert!(value.get("@graph").and_then(|g| g.as_array()).is_some());
-    let doc = String::from_utf8_lossy(&json.stdout);
-    assert!(doc.contains("My Plan"), "{doc}");
+    assert!(!jsonld.status.success());
+    assert!(jsonld.stdout.is_empty());
+    let stderr = String::from_utf8_lossy(&jsonld.stderr);
+    assert!(stderr.contains("does not define recurrence"), "{stderr}");
+    assert!(stderr.contains("--format json"), "{stderr}");
 }
 
 #[test]

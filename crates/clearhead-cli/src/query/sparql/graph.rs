@@ -21,11 +21,7 @@ use crate::stdout::{write_stdout, write_stdout_line};
 
 const RDF_NS: &str = "http://www.w3.org/1999/02/22-rdf-syntax-ns#";
 const RDFS_NS: &str = "http://www.w3.org/2000/01/rdf-schema#";
-const ACTIONS_NS: &str = "https://clearhead.us/vocab/actions/v4#";
-const CCO_NS: &str = "https://www.commoncoreontologies.org/";
-const BFO_NS: &str = "http://purl.obolibrary.org/obo/";
-const CCO_IS_SUCCESSOR_OF: &str = "ont00001775";
-const CCO_STATUS_PROP: &str = "ont00001868";
+use clearhead_core::rdf::app::APP_NS;
 
 /// Run a named graph view: resolve, execute the CONSTRUCT, render.
 pub fn run(
@@ -104,16 +100,17 @@ struct Relation {
 /// Project an RDF graph into deterministic Graphviz DOT.
 ///
 /// Typed subjects become nodes; object relations between them become edges;
-/// literal label/status/priority triples become node attributes. The `action
-/// is-successor-of predecessor` assertion is reversed for display so work flows
-/// prerequisite → dependent.
+/// literal label/status/priority triples become node attributes. Upward
+/// assertions are reversed for display: `action app:waitsOn predecessor` so work
+/// flows prerequisite → dependent, and `part app:partOf whole` so a whole
+/// points at what it contains.
 fn frame_dot(triples: &[Triple]) -> String {
     let rdf_type = format!("{RDF_NS}type");
     let rdfs_label = format!("{RDFS_NS}label");
-    let status_predicate = format!("{CCO_NS}{CCO_STATUS_PROP}");
-    let priority_predicate = format!("{ACTIONS_NS}hasPriority");
-    let predecessor_predicate = format!("{CCO_NS}{CCO_IS_SUCCESSOR_OF}");
-    let has_part_predicate = format!("{BFO_NS}BFO_0000051");
+    let status_predicate = format!("{APP_NS}state");
+    let priority_predicate = format!("{APP_NS}priority");
+    let predecessor_predicate = format!("{APP_NS}waitsOn");
+    let part_of_predicate = format!("{APP_NS}partOf");
 
     let mut entities: BTreeMap<String, Entity> = BTreeMap::new();
     for triple in triples {
@@ -169,7 +166,7 @@ fn frame_dot(triples: &[Triple]) -> String {
         if predicate == rdf_type || predicate == status_predicate {
             continue;
         }
-        let (from, to) = if predicate == predecessor_predicate {
+        let (from, to) = if predicate == predecessor_predicate || predicate == part_of_predicate {
             (object, subject)
         } else {
             (subject, object)
@@ -182,7 +179,7 @@ fn frame_dot(triples: &[Triple]) -> String {
 
     let edge_attributes = |_, edge: petgraph::graph::EdgeReference<'_, Relation>| {
         let predicate = edge.weight().predicate.as_str();
-        if predicate == has_part_predicate {
+        if predicate == part_of_predicate {
             "style=\"dashed\",color=\"#6b7280\",label=\"contains\"".to_string()
         } else if predicate == predecessor_predicate {
             "color=\"#60a5fa\",penwidth=\"2\"".to_string()
@@ -274,7 +271,7 @@ mod tests {
             triple(
                 s,
                 &format!("{RDF_NS}type"),
-                Term::NamedNode(NamedNode::new(format!("{ACTIONS_NS}Action")).unwrap()),
+                Term::NamedNode(NamedNode::new(format!("{APP_NS}Action")).unwrap()),
             ),
             triple(
                 s,

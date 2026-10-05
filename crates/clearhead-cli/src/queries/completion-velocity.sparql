@@ -8,18 +8,16 @@
 #   For date-range filtering, add: FILTER(?completion_date >= ... && ... <= ...)
 # =============================================================================
 
-PREFIX actions: <https://clearhead.us/vocab/actions/v4#>
-PREFIX cco: <https://www.commoncoreontologies.org/>
+PREFIX app: <https://clearhead.us/vocab/app/v1#>
 PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
 
 SELECT ?context (COUNT(?action) AS ?completed_count) WHERE {
-    ?action a actions:Action ;
-         cco:ont00001868 actions:Completed ;
-         actions:hasCompletedDateTime ?completion_date .
-
+    ?action a app:Action ;
+         app:state app:Completed ;
+         app:closed ?completion_date .
     OPTIONAL {
-        ?action actions:requiresContext ?ctx .
-        ?ctx actions:hasContextIdentifier ?raw_context .
+        ?action app:context ?ctx .
+        ?ctx rdfs:label ?raw_context .
     }
     BIND(COALESCE(?raw_context, "(none)") AS ?context)
 }

@@ -52,14 +52,14 @@ fn trig_is_the_default_and_preserves_the_named_graph() {
         "the action resource is present: {text}"
     );
     assert!(
-        text.contains("@prefix actions:"),
+        text.contains("@prefix app:"),
         "vocabulary prefixes are declared: {text}"
     );
-    // The workspace-snapshot layer is published too (same dataset the query
-    // layer evaluates).
+    // Where each action is kept is part of the graph (rule 3), the same
+    // dataset the query layer evaluates.
     assert!(
-        text.contains("ws:hasSourceLine") || text.contains("hasSourceLine"),
-        "snapshot provenance is part of the export: {text}"
+        text.contains("app:line"),
+        "locations are part of the export: {text}"
     );
 }
 
@@ -97,21 +97,18 @@ fn turtle_is_graph_only_by_contract() {
     let env = seed();
     let output = export(&env, &["--format", "turtle"]);
     let text = String::from_utf8(output.stdout).expect("utf8 turtle");
-    // Turtle is a graph syntax: no TriG graph blocks headed by the workspace
-    // graph label. (The workspace *entity* IRI still appears — as data —
-    // because the ws:Workspace node names the same IRI; Core's own tests cover
-    // graph-label elision.)
+    // Turtle is a graph syntax: the workspace graph's name is not in it.
     assert!(
-        !text.contains("GRAPH ") && !text.contains(" graph "),
-        "Turtle emits no dataset graph blocks: {text}"
+        !text.contains(WS_GRAPH),
+        "Turtle emits no dataset graph: {text}"
     );
     assert!(
-        text.contains("a actions:Action"),
+        text.contains("a app:Action"),
         "the triples survive with prefixed vocabulary: {text}"
     );
     assert!(
-        text.contains("ws:hasSourceLine"),
-        "the ws: prefix compacts snapshot vocabulary: {text}"
+        text.contains("app:line"),
+        "the app: prefix compacts every term: {text}"
     );
 }
 
@@ -146,9 +143,10 @@ fn output_file_matches_stdout_and_stdout_stays_empty() {
 }
 
 #[test]
-fn empty_workspace_with_identity_exports_a_deterministic_snapshot_node() {
-    // Zero charters/actions: the dataset is just the workspace-snapshot node.
-    // With durable manifest identity the bytes are stable across runs.
+fn empty_workspace_with_identity_exports_its_root_charter_deterministically() {
+    // No files: the dataset is the implicit root charter, New and a blank node
+    // (its id is ephemeral). With durable manifest identity the bytes are
+    // stable across runs.
     let env = TestEnv::new();
     env.write_text(
         "workspace.json",
@@ -159,15 +157,16 @@ fn empty_workspace_with_identity_exports_a_deterministic_snapshot_node() {
     assert_eq!(first.stdout, second.stdout, "deterministic bytes");
     let text = String::from_utf8(first.stdout).expect("utf8");
     assert!(
-        text.contains(WS_GRAPH),
-        "the workspace node is exported under its stable graph: {text}"
+        text.lines()
+            .all(|line| line.ends_with(&format!("<{WS_GRAPH}> ."))),
+        "every statement is in the workspace's stable graph: {text}"
     );
     assert!(
-        text.contains("vocab/workspace/v1#Workspace"),
-        "the ws:Workspace node survives an empty domain: {text}"
+        text.contains("_:") && text.contains("vocab/app/v1#Charter"),
+        "the root charter is a blank node: {text}"
     );
     assert!(
-        !text.contains("vocab/actions/v4#Action"),
+        !text.contains("vocab/app/v1#Action"),
         "no actions, no Action statements: {text}"
     );
 }

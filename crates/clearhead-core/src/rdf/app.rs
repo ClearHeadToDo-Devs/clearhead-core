@@ -305,6 +305,11 @@ where
 
     if let Some(planned) = &action.planned {
         out.add(&subject, app("plannedStart"), written(&planned.start));
+        out.add(
+            &subject,
+            app("plannedFrom"),
+            instant(planned.start.at_in(zone)),
+        );
         if let Some(end) = &planned.end {
             out.add(&subject, app("plannedEnd"), written(end));
         }

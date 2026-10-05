@@ -4,27 +4,25 @@
 # Purpose: Filter Actions by execution status
 # Parameters:
 #   ?STATUS_FILTER — pass via --status flag:
-#     actions:NotStarted | actions:InProgress | actions:Completed |
-#     actions:BlockedOrAwaiting | actions:Cancelled
+#     NotStarted | InProgress | Blocked | Completed | Cancelled
+#     (an app: prefix is optional)
 # Returns: name, state, scheduled_at, completion_date
 # =============================================================================
 
-PREFIX actions: <https://clearhead.us/vocab/actions/v4#>
-PREFIX cco: <https://www.commoncoreontologies.org/>
+PREFIX app: <https://clearhead.us/vocab/app/v1#>
 PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
-PREFIX ws: <https://clearhead.us/vocab/workspace/v1#>
 
 SELECT ?name ?state ?scheduled_at ?completion_date ?source_file ?source_line WHERE {
-    ?action a actions:Action ;
+    ?action a app:Action ;
          rdfs:label ?name ;
-         cco:ont00001868 ?raw_state .
+         app:state ?raw_state .
 
     FILTER(?raw_state = ?STATUS_FILTER)
     BIND(STRAFTER(STR(?raw_state), "#") AS ?state)
 
-    OPTIONAL { ?action actions:hasScheduledDateTime ?scheduled_at }
-    OPTIONAL { ?action actions:hasCompletedDateTime ?completion_date }
-    OPTIONAL { ?action ws:hasSourceFile ?source_file }
-    OPTIONAL { ?action ws:hasSourceLine ?source_line }
+    OPTIONAL { ?action app:plannedStart ?scheduled_at }
+    OPTIONAL { ?action app:closed ?completion_date }
+    OPTIONAL { ?action app:file ?source_file }
+    OPTIONAL { ?action app:line ?source_line }
 }
 ORDER BY ?name

@@ -1,33 +1,29 @@
 # =============================================================================
 # Query: Overdue Actions
 # =============================================================================
-# Purpose: Open actions past their due date
+# Purpose: Open actions that are late: their effective deadline
+#          (app:lateFrom, a date's following midnight or a time itself,
+#          inherited from an ancestor when they have none) has passed
 # Parameters:
-#   ?CUTOFF_DATE — injected as current UTC datetime at query time
+#   ?NOW — injected as the current instant at query time
 # Returns: name, due_date, scheduled_at, state, priority
 # =============================================================================
 
-PREFIX actions: <https://clearhead.us/vocab/actions/v4#>
-PREFIX cco: <https://www.commoncoreontologies.org/>
+PREFIX app: <https://clearhead.us/vocab/app/v1#>
 PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
-PREFIX ws: <https://clearhead.us/vocab/workspace/v1#>
-PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
 
 SELECT ?name ?due_date ?scheduled_at ?state ?priority ?source_file ?source_line WHERE {
-    VALUES ?cutoff { ?CUTOFF_DATE }
-
-    ?action a actions:Action ;
+    ?action a app:Action ;
          rdfs:label ?name ;
-         cco:ont00001868 ?raw_state ;
-         actions:hasDueDateTime ?due_date .
-
-    FILTER(?raw_state != actions:Completed && ?raw_state != actions:Cancelled)
-    FILTER(?due_date <= ?cutoff)
+         app:state ?raw_state ;
+         app:lateFrom ?late_from .
+    FILTER(?raw_state != app:Completed && ?raw_state != app:Cancelled)
+    FILTER(?late_from <= ?NOW)
     BIND(STRAFTER(STR(?raw_state), "#") AS ?state)
-
-    OPTIONAL { ?action actions:hasScheduledDateTime ?scheduled_at }
-    OPTIONAL { ?action actions:hasPriority ?priority }
-    OPTIONAL { ?action ws:hasSourceFile ?source_file }
-    OPTIONAL { ?action ws:hasSourceLine ?source_line }
+    OPTIONAL { ?action app:due ?due_date }
+    OPTIONAL { ?action app:plannedStart ?scheduled_at }
+    OPTIONAL { ?action app:priority ?priority }
+    OPTIONAL { ?action app:file ?source_file }
+    OPTIONAL { ?action app:line ?source_line }
 }
-ORDER BY ?priority ?due_date
+ORDER BY ?priority ?late_from

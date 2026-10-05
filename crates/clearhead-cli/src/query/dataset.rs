@@ -1,19 +1,29 @@
 //! Whole-workspace RDF dataset assembly — the one load→project path behind
 //! `clearhead export workspace` and the `sparql` feature's ephemeral store.
 //!
-//! Every quad comes from Core's canonical projection: [`rdf::project_domain`]
-//! for domain semantics, [`rdf::project_workspace_snapshot`] for the `ws:`
-//! workspace-snapshot layer built from host-supplied filesystem evidence. This
-//! module only orchestrates workspace loading and merges the per-graph results
-//! into one canonical set — nothing here builds an RDF term.
+//! Every quad comes from Core's application-graph projection
+//! ([`app::project_app`], specifications `ontology.md`), with host-supplied
+//! locations and the viewer's zone (the local zone). This module only
+//! orchestrates workspace loading and merges the per-graph results into one
+//! canonical set — nothing here builds an RDF term.
 
 use anyhow::{Context as _, anyhow};
-use clearhead_core::rdf::{self, WorkspaceSnapshot};
+use chrono::Local;
+use clearhead_core::rdf::{self, app};
 use clearhead_core::workspace::store::Workspace;
 use oxrdf::Quad;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
+use uuid::Uuid;
 
 use crate::cli::CommandContext;
+
+/// The merged dataset, and each entity's absolute data root. The graph names
+/// no root (rule 3), so a row that locates an entity gets it from here.
+pub struct Dataset {
+    pub quads: Vec<Quad>,
+    pub data_roots: HashMap<Uuid, PathBuf>,
+}
 
 /// Load every selected workspace and return the merged canonical dataset: one
 /// `urn:clearhead:workspace:<uuid>` named graph per workspace, with charters
@@ -23,7 +33,7 @@ use crate::cli::CommandContext;
 /// name is intentionally unstable, see `Workspace::ephemeral_id`).
 ///
 /// The primary workspace contributes the configured context hierarchy.
-pub fn assemble_dataset(ctx: &CommandContext) -> anyhow::Result<Vec<Quad>> {
+pub fn assemble_dataset(ctx: &CommandContext) -> anyhow::Result<Dataset> {
     project_dataset(ctx, load_workspaces(ctx)?)
 }
 
@@ -48,77 +58,37 @@ pub fn load_workspaces(ctx: &CommandContext) -> anyhow::Result<Vec<Workspace>> {
 pub fn project_dataset(
     ctx: &CommandContext,
     workspaces: Vec<Workspace>,
-) -> anyhow::Result<Vec<Quad>> {
+) -> anyhow::Result<Dataset> {
     let config = ctx.workspace_config();
     let mut quads = Vec::new();
     let mut unpublished = HashSet::new();
+    let mut data_roots = HashMap::new();
 
     for workspace in workspaces {
         let is_primary = workspace.root == ctx.data_dir;
         let path = workspace.root.clone();
+        let data_root = clearhead_cli::filesystem::workspace_data_root(&path);
+        let data_root = data_root.canonicalize().unwrap_or(data_root);
         let graph = rdf::workspace_graph_name(&workspace.effective_id());
-        let snapshot = workspace_snapshot(&workspace);
+        let locations = app::Locations::of(&workspace);
+        data_roots.extend(locations.files.keys().map(|id| (*id, data_root.clone())));
         unpublished.extend(workspace.unpublished_charter_ids());
         let model = clearhead_core::DomainModel::from(workspace);
         quads.extend(
-            rdf::project_domain(&model, is_primary.then_some(&config), graph.clone())
-                .map_err(|e| anyhow!("Failed to project workspace '{}': {e}", path.display()))?,
-        );
-        quads.extend(
-            rdf::project_workspace_snapshot(&snapshot, graph)
-                .map_err(|e| anyhow!("Failed to project workspace snapshot: {e}"))?,
+            app::project_app(
+                &model,
+                &locations,
+                is_primary.then_some(&config),
+                &Local,
+                graph,
+            )
+            .map_err(|e| anyhow!("Failed to project workspace '{}': {e}", path.display()))?,
         );
     }
 
     rdf::canonicalize(&mut quads);
-    Ok(rdf::anonymize_charters(quads, &unpublished))
-}
-
-/// Assemble the host evidence for Core's pure workspace-snapshot projection:
-/// workspace identity plus per-charter / per-action source locations, with
-/// paths canonicalized here at the filesystem boundary.
-pub(crate) fn workspace_snapshot(workspace: &Workspace) -> WorkspaceSnapshot {
-    let root = workspace
-        .root
-        .canonicalize()
-        .unwrap_or_else(|_| workspace.root.clone());
-    WorkspaceSnapshot {
-        workspace_id: workspace.effective_id(),
-        workspace_name: workspace.effective_name(),
-        root: root.to_string_lossy().into_owned(),
-        charter_root: clearhead_cli::filesystem::charter_root(&root)
-            .to_string_lossy()
-            .into_owned(),
-        charter_files: workspace
-            .charters
-            .iter()
-            .filter_map(|charter| {
-                charter
-                    .md_file
-                    .as_deref()
-                    .map(|p| (charter.id, p.to_string_lossy().into_owned()))
-            })
-            .collect(),
-        action_sources: workspace
-            .charters
-            .iter()
-            .flat_map(|charter| {
-                let source_file = charter
-                    .actions_file
-                    .as_deref()
-                    .map(|p| p.to_string_lossy().into_owned())
-                    .unwrap_or_default();
-                charter.actions.iter().filter_map(move |sourced| {
-                    sourced.source_metadata.as_ref().map(|meta| {
-                        (
-                            sourced.action.id,
-                            source_file.clone(),
-                            // Published lines are 1-based; tree-sitter rows are 0-based.
-                            meta.root.start_row as u32 + 1,
-                        )
-                    })
-                })
-            })
-            .collect(),
-    }
+    Ok(Dataset {
+        quads: rdf::anonymize_charters(quads, &unpublished),
+        data_roots,
+    })
 }

@@ -5,19 +5,17 @@
 # Returns: name, state, priority, due_date
 # =============================================================================
 
-PREFIX actions: <https://clearhead.us/vocab/actions/v4#>
-PREFIX cco: <https://www.commoncoreontologies.org/>
+PREFIX app: <https://clearhead.us/vocab/app/v1#>
 PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
 
 SELECT ?name ?state ?priority ?due_date WHERE {
-    ?action a actions:Action ;
+    ?action a app:Action ;
          rdfs:label ?name ;
-         cco:ont00001868 ?raw_state .
-
-    FILTER(?raw_state != actions:Completed && ?raw_state != actions:Cancelled)
+         app:state ?raw_state .
+    FILTER(?raw_state != app:Completed && ?raw_state != app:Cancelled)
     BIND(STRAFTER(STR(?raw_state), "#") AS ?state)
-
-    OPTIONAL { ?action actions:hasPriority ?priority }
-    OPTIONAL { ?action actions:hasDueDateTime ?due_date }
+    OPTIONAL { ?action app:priority ?priority }
+    OPTIONAL { ?action app:due ?due_date }
+    OPTIONAL { ?action app:lateFrom ?late_from }
 }
-ORDER BY ?priority ?due_date ?name
+ORDER BY ?priority ?late_from ?name

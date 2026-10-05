@@ -1,7 +1,7 @@
 //! The `tree` and `graph` families, in-process (`sparql` feature). Both source
-//! containment from Core's canonical upward `part_of`: the tree nests actions
-//! under their charter and parent action; the graph re-expresses that as
-//! hierarchical `has_part`. Asserted against the CLI's own contract (no graphd),
+//! containment from the application graph's upward `app:partOf`: the tree nests
+//! actions under their charter and parent action; the graph keeps the edge and
+//! its DOT projection draws it downward as `contains`. Asserted against the CLI's own contract (no graphd),
 //! so they survive graphd's retirement.
 
 #![cfg(feature = "sparql")]
@@ -75,19 +75,21 @@ fn tree_nests_actions_under_their_charter() {
 #[test]
 fn graph_reconstructs_hierarchical_containment() {
     let env = seed();
-    // Turtle CONSTRUCT output re-expresses part_of as has_part (BFO_0000051):
-    // the charter directly contains the top-level action, which contains the
-    // sub-action — hierarchical, not flat.
-    let turtle = stdout(
+    // The CONSTRUCT keeps the graph's upward app:partOf: the sub-action is part
+    // of its parent action, which is part of the charter — hierarchical, not
+    // flat (the child is not directly part of the charter).
+    let triples = stdout(
         &env,
         &["query", "graph", "dependencies", "--format", "turtle"],
     );
-    assert!(
-        turtle.contains("BFO_0000051"),
-        "containment edge present: {turtle}"
+    let child_in_container =
+        format!("<urn:uuid:{B}> <https://clearhead.us/vocab/app/v1#partOf> <urn:uuid:{A}>");
+    assert!(triples.contains(&child_in_container), "{triples}");
+    assert_eq!(
+        triples.matches("#partOf>").count(),
+        2,
+        "one part-of per part: {triples}"
     );
-    assert!(turtle.contains("Container"), "{turtle}");
-    assert!(turtle.contains("Child"), "{turtle}");
 
     // DOT renders those as two distinct `contains` edges (charter->Container,
     // Container->Child), proving the hierarchy rather than a flat fan-out.

@@ -5,89 +5,64 @@
 # it is actionable *now*:
 #   - owning Charter and every ancestor Charter are Active
 #   - open or in-progress (blocked belongs to the weekly horizon)
-#   - first in its dependency chain: no open predecessor, at this action or
-#     any ancestor — a blocked parent blocks every descendant beneath it
+#   - first in its dependency chain: nothing it waits on is still open
+#     (app:waitsOn: its predecessors, the sibling before it under ~, and
+#     every ancestor's waits)
 #   - the lowest open child: parents with open work below are containers,
 #     you act on the leaf
-#   - scheduled or due on or before end of today (includes overdue);
-#     undated items never appear regardless of priority
-# Sorted by priority (unset sorts last), then due, scheduled, name.
-# Context relevance (+tags) is deferred until the context-parameter story
-# exists.
+#   - planned or late by the end of today (includes overdue), comparing the
+#     derived instants app:plannedFrom and app:lateFrom (the effective
+#     deadline, so an inherited one counts); undated items never appear
+# Sorted by state (in progress first), priority (unset last), then the
+# deadline, the planned start and name.
 # Parameters:
-#   ?END_OF_TODAY — injected as today at 23:59:59 UTC
-# Returns: index contract columns (id, name, status, source_file, source_line,
-#          charter_root) + priority/scheduled_at/due_date sort keys,
-#          parent/parent_name edge (denormalized, unset for root actions)
-#          per specifications/query_output.md
+#   ?END_OF_TODAY — the viewer's next midnight, the first instant of tomorrow
+# Returns: index contract columns plus priority, scheduled_at and due_date
+#          (as written), parent and parent_name
 # =============================================================================
 
-PREFIX actions: <https://clearhead.us/vocab/actions/v4#>
-PREFIX bfo: <http://purl.obolibrary.org/obo/>
-PREFIX cco: <https://www.commoncoreontologies.org/>
+PREFIX app: <https://clearhead.us/vocab/app/v1#>
 PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
-PREFIX ws: <https://clearhead.us/vocab/workspace/v1#>
-PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
 
-SELECT (?action AS ?id) ?name ?status ?source_file ?source_line ?charter_root ?priority ?scheduled_at ?due_date ?parent ?parent_name WHERE {
-    GRAPH ?g {
-        ?action a actions:Action ;
-             rdfs:label ?name ;
-             cco:ont00001868 ?raw_state ;
-             ws:hasSourceFile ?source_file ;
-             ws:hasSourceLine ?source_line .
-        ?workspace_node a ws:Workspace ;
-                        ws:charterRoot ?charter_root .
-        FILTER(?raw_state = actions:NotStarted || ?raw_state = actions:InProgress)
-
-        # Admission is governed by the owning Charter and its full ancestry.
-        {
-            ?action bfo:BFO_0000050+ ?owner .
-            ?owner a actions:Charter .
-        }
-        UNION
-        {
-            ?plan cco:ont00001942 ?action ;
-                  bfo:BFO_0000050 ?owner .
-            ?owner a actions:Charter .
-        }
-        ?owner actions:hasCharterState actions:CharterActive .
-        FILTER NOT EXISTS {
-            ?ancestor actions:hasSubCharter+ ?owner ;
-                      actions:hasCharterState ?ancestor_state .
-            FILTER(?ancestor_state != actions:CharterActive)
-        }
-
-        OPTIONAL { ?action actions:hasScheduledDateTime ?scheduled_at }
-        OPTIONAL { ?action actions:hasDueDateTime ?due_date }
-        OPTIONAL { ?action actions:hasPriority ?priority }
-        # The denormalized parent edge is a parent *action*, not the charter a
-        # top-level action is contained by (matching tree/work-map, and the
-        # "unset for root actions" contract).
-        OPTIONAL { ?action bfo:BFO_0000050 ?parent . ?parent a actions:Action ; rdfs:label ?parent_name }
-
-        # First in the dependency chain: no predecessor still open, at this
-        # action or any ancestor (bfo:BFO_0000050* = part-of, zero-or-more,
-        # includes ?action itself at zero hops).
-        FILTER NOT EXISTS {
-            ?action bfo:BFO_0000050* ?gated .
-            ?gated cco:ont00001775 ?predecessor .
-            ?predecessor cco:ont00001868 ?pred_state .
-            FILTER(?pred_state != actions:Completed && ?pred_state != actions:Cancelled)
-        }
-
-        # Act on the lowest open child: hide parents with open work below.
-        FILTER NOT EXISTS {
-            ?child bfo:BFO_0000050 ?action ;
-                   cco:ont00001868 ?child_state .
-            FILTER(?child_state != actions:Completed && ?child_state != actions:Cancelled)
-        }
+SELECT (?action AS ?id) ?name ?status ?source_file ?source_line ?priority ?scheduled_at ?due_date ?parent ?parent_name WHERE {
+    ?action a app:Action ;
+         rdfs:label ?name ;
+         app:state ?raw_state ;
+         app:file ?source_file ;
+         app:line ?source_line .
+    FILTER(?raw_state = app:NotStarted || ?raw_state = app:InProgress)
+    # The owning Charter: the one its top-level action is part of.
+    ?action app:partOf* ?top .
+    ?top a app:Action ; app:partOf ?owner .
+    ?owner a app:Charter ; app:state app:Active .
+    FILTER NOT EXISTS {
+        ?owner app:partOf+ ?ancestor .
+        ?ancestor app:state ?ancestor_state .
+        FILTER(?ancestor_state != app:Active)
     }
-    BIND(STRAFTER(STR(?raw_state), "#") AS ?status)
-    BIND(IF(?raw_state = actions:InProgress, 0, 1) AS ?state_rank)
+    #CHARTER_FILTER#
+    OPTIONAL { ?action app:plannedStart ?scheduled_at ; app:plannedFrom ?planned_from }
+    OPTIONAL { ?action app:due ?due_date }
+    OPTIONAL { ?action app:lateFrom ?late_from }
+    OPTIONAL { ?action app:priority ?priority }
+    # The denormalized parent edge is a parent *action*, not the charter a
+    # top-level action is part of ("unset for root actions").
+    OPTIONAL { ?action app:partOf ?parent . ?parent a app:Action ; rdfs:label ?parent_name }
+    FILTER NOT EXISTS {
+        ?action app:waitsOn ?predecessor .
+        ?predecessor app:state ?pred_state .
+        FILTER(?pred_state != app:Completed && ?pred_state != app:Cancelled)
+    }
+    FILTER NOT EXISTS {
+        ?child app:partOf ?action ;
+               app:state ?child_state .
+        FILTER(?child_state != app:Completed && ?child_state != app:Cancelled)
+    }
     FILTER(
-        (BOUND(?scheduled_at) && ?scheduled_at <= ?END_OF_TODAY) ||
-        (BOUND(?due_date) && ?due_date <= ?END_OF_TODAY)
+        (BOUND(?planned_from) && ?planned_from < ?END_OF_TODAY) ||
+        (BOUND(?late_from) && ?late_from <= ?END_OF_TODAY)
     )
+    BIND(STRAFTER(STR(?raw_state), "#") AS ?status)
+    BIND(IF(?raw_state = app:InProgress, 0, 1) AS ?state_rank)
 }
-ORDER BY ?state_rank ASC(COALESCE(?priority, 99)) ?due_date ?scheduled_at ?name
+ORDER BY ?state_rank ASC(COALESCE(?priority, 99)) ?late_from ?planned_from ?name

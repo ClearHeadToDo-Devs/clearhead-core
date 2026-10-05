@@ -91,17 +91,18 @@ fn index_locations(ctx: &CommandContext) -> anyhow::Result<HashMap<Uuid, Found>>
                 continue;
             }
         };
-        let snapshot = crate::query::dataset::workspace_snapshot(&workspace);
-        let charter_root = PathBuf::from(&snapshot.charter_root);
-        for (id, file) in snapshot.charter_files {
-            index
-                .entry(id)
-                .or_insert(("charter", charter_root.join(file), 1));
-        }
-        for (id, file, line) in snapshot.action_sources {
-            index
-                .entry(id)
-                .or_insert(("action", charter_root.join(file), line));
+        let data_root = clearhead_cli::filesystem::workspace_data_root(&path);
+        let data_root = data_root.canonicalize().unwrap_or(data_root);
+        let locations = clearhead_core::rdf::app::Locations::of(&workspace);
+        for (id, file) in &locations.files {
+            let found = match locations.lines.get(id) {
+                Some(line) => ("action", data_root.join(file), *line),
+                None if workspace.objective_files.contains_key(id) => {
+                    ("objective", data_root.join(file), 1)
+                }
+                None => ("charter", data_root.join(file), 1),
+            };
+            index.entry(*id).or_insert(found);
         }
     }
     Ok(index)
