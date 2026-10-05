@@ -152,7 +152,7 @@ fn sidecar_does_not_overwrite_dsl_created() {
         .created_at
         .expect("created_at should be set from DSL ^ date");
     assert_eq!(
-        created.format("%Y").to_string(),
+        created.at().format("%Y").to_string(),
         "2024",
         "DSL ^ date (2024) must win over sidecar date (2020)"
     );

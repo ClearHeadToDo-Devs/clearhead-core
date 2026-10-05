@@ -13,7 +13,7 @@ expression: actions
     contexts: None,
     planned: None,
     due_date: None,
-    completed_at: Some("2025-01-19T16:45:00[local-offset]"),
+    completed_at: Some("2025-01-19T16:45"),
     created_at: None,
     predecessors: None,
     charter: None,

@@ -465,7 +465,7 @@ fn check_future_creation_date(
     metadata: &SourceMetadata,
 ) -> Option<LintDiagnostic> {
     action.created_at.and_then(|created| {
-        if created > Local::now() {
+        if created.at() > Local::now() {
             Some(LintDiagnostic::warning(
                 "W005",
                 "Creation date cannot be in the future (W005).".to_string(),
@@ -483,11 +483,13 @@ fn check_completion_before_creation(
     metadata: &SourceMetadata,
 ) -> Option<LintDiagnostic> {
     match (action.created_at, action.completed_at) {
-        (Some(created), Some(completed)) if completed < created => Some(LintDiagnostic::warning(
-            "W006",
-            "Completion date cannot be before creation date (W006).".to_string(),
-            metadata.completed_date.unwrap_or(metadata.root),
-        )),
+        (Some(created), Some(completed)) if completed.at() < created.at() => {
+            Some(LintDiagnostic::warning(
+                "W006",
+                "Completion date cannot be before creation date (W006).".to_string(),
+                metadata.completed_date.unwrap_or(metadata.root),
+            ))
+        }
         _ => None,
     }
 }

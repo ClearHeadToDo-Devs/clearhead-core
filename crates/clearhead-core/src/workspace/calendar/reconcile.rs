@@ -557,7 +557,7 @@ pub fn plan_recurring_occurrence_sync(
                         contexts_bases.get(&occurrence_id),
                         Some(&normalized_contexts(calendar.contexts.clone())),
                     ),
-                    calendar.completed_at,
+                    calendar.completed_at.map(|completed| completed.at()),
                 )
             } else {
                 (
@@ -1885,7 +1885,8 @@ fn action_from_projection(source: &PlanActionProjection) -> Action {
         ),
         completed_at: (source.state == ActionState::Completed)
             .then_some(source.completed_at)
-            .flatten(),
+            .flatten()
+            .map(crate::domain::time::Bound::minute),
         ..Action::default()
     }
 }
@@ -1981,7 +1982,7 @@ fn apply_state_outcome(
         // ClearHead sync field. Preserve the client's timestamp when present;
         // never invent one merely because sync happened now.
         action.completed_at = if action.state == ActionState::Completed {
-            calendar_completed_at
+            calendar_completed_at.map(crate::domain::time::Bound::minute)
         } else {
             None
         };
@@ -2102,7 +2103,7 @@ fn patch_todo(todo: &mut Todo, action: &Action, fields: &[SyncField]) {
         if action.state == ActionState::Completed
             && let Some(value) = action.completed_at
         {
-            todo.completed(value.with_timezone(&Utc));
+            todo.completed(value.at().with_timezone(&Utc));
         }
     }
     if fields.contains(&SyncField::Title) {
@@ -2989,7 +2990,7 @@ mod tests {
                     with_planned_start(None, source.scheduled_at),
                     source.scheduled_end
                 ),
-                completed_at: Some(completed_at),
+                completed_at: Some(crate::domain::time::Bound::minute(completed_at)),
                 ..Action::default()
             }
         );

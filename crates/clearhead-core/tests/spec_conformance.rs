@@ -126,6 +126,7 @@ fn every_field_fixture_has_the_specified_domain_meaning() {
         action
             .created_at
             .unwrap()
+            .at()
             .format("%Y-%m-%dT%H:%M:%S")
             .to_string(),
         "2026-01-03T12:00:00"

@@ -695,7 +695,7 @@ pub fn render_occurrence_action(
                     }
                     todo.remove_completed();
                     if let Some(value) = action.completed_at {
-                        todo.completed(value.with_timezone(&Utc));
+                        todo.completed(value.at().with_timezone(&Utc));
                     }
                 }
                 if fields.title {
@@ -1281,7 +1281,7 @@ pub fn action_to_vtodo(action: &Action) -> Todo {
     if action.state == ActionState::Completed
         && let Some(completed_at) = action.completed_at
     {
-        todo.completed(completed_at.with_timezone(&Utc));
+        todo.completed(completed_at.at().with_timezone(&Utc));
     }
     if let Some(priority) = action.priority {
         todo.priority(priority);
@@ -1940,7 +1940,7 @@ mod tests {
     fn action_to_vtodo_maps_completion() {
         let completed_at = Local.with_ymd_and_hms(2026, 6, 1, 10, 0, 0).unwrap();
         let mut action = scheduled_action("Done", ActionState::Completed);
-        action.completed_at = Some(completed_at);
+        action.completed_at = Some(crate::domain::time::Bound::minute(completed_at));
         let todo = action_to_vtodo(&action).to_string();
         assert!(todo.contains("STATUS:COMPLETED"));
         assert!(todo.contains("COMPLETED:"));

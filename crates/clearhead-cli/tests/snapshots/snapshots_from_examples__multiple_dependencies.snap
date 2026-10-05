@@ -18,7 +18,7 @@ expression: actions
     planned: Some("2025-02-15T14:00/2025-02-15T14:30"),
     due_date: None,
     completed_at: None,
-    created_at: Some("2026-01-24T17:48:00[local-offset]"),
+    created_at: Some("2026-01-24T17:48"),
     predecessors: Some([
       PredecessorRef(
         raw_ref: "[predecessor_ref]",
@@ -47,7 +47,7 @@ expression: actions
     planned: Some("2025-02-15T10:00/2025-02-15T11:30"),
     due_date: None,
     completed_at: None,
-    created_at: Some("2026-01-24T17:48:00[local-offset]"),
+    created_at: Some("2026-01-24T17:48"),
     predecessors: Some([
       PredecessorRef(
         raw_ref: "[predecessor_ref]",
@@ -73,7 +73,7 @@ expression: actions
     planned: Some("2025-02-15T11:00/2025-02-15T12:00"),
     due_date: None,
     completed_at: None,
-    created_at: Some("2026-01-24T17:48:00[local-offset]"),
+    created_at: Some("2026-01-24T17:48"),
     predecessors: Some([
       PredecessorRef(
         raw_ref: "[predecessor_ref]",
@@ -98,7 +98,7 @@ expression: actions
     planned: Some("2025-02-14T17:00"),
     due_date: None,
     completed_at: None,
-    created_at: Some("2026-01-24T17:48:00[local-offset]"),
+    created_at: Some("2026-01-24T17:48"),
     predecessors: None,
     charter: Some("Release Management"),
     alias: None,

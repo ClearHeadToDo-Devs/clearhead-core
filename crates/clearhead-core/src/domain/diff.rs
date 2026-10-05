@@ -58,12 +58,12 @@ pub enum ActionFieldChange {
         new: Option<super::time::Planned>,
     },
     CompletedAt {
-        old: Option<DateTime<Local>>,
-        new: Option<DateTime<Local>>,
+        old: Option<super::time::Bound>,
+        new: Option<super::time::Bound>,
     },
     CreatedAt {
-        old: Option<DateTime<Local>>,
-        new: Option<DateTime<Local>>,
+        old: Option<super::time::Bound>,
+        new: Option<super::time::Bound>,
     },
     DueDate {
         old: Option<super::time::Due>,
@@ -387,13 +387,13 @@ fn compare_actions(old: &Action, new: &Action) -> Vec<ActionFieldChange> {
             new: new.planned,
         });
     }
-    if !dates_equal(&old.completed_at, &new.completed_at) {
+    if old.completed_at != new.completed_at {
         changes.push(ActionFieldChange::CompletedAt {
             old: old.completed_at,
             new: new.completed_at,
         });
     }
-    if !dates_equal(&old.created_at, &new.created_at) {
+    if old.created_at != new.created_at {
         changes.push(ActionFieldChange::CreatedAt {
             old: old.created_at,
             new: new.created_at,
@@ -410,9 +410,8 @@ fn compare_actions(old: &Action, new: &Action) -> Vec<ActionFieldChange> {
 
 /// Compare two optional DateTimes at minute precision.
 ///
-/// The .actions text format uses `%Y-%m-%dT%H:%M` (minute precision), so
-/// timestamps that differ only in seconds or sub-seconds are semantically
-/// identical after a format/parse round-trip.
+/// Plan start times are instants, written at minute precision, so timestamps
+/// that differ only in seconds or sub-seconds are the same after a round trip.
 fn dates_equal(a: &Option<DateTime<Local>>, b: &Option<DateTime<Local>>) -> bool {
     match (a, b) {
         (None, None) => true,

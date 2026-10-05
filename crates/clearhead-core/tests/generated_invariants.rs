@@ -216,8 +216,8 @@ fn generated_actions() -> impl Strategy<Value = Vec<Action>> {
                     .map(|days| Due::by(Bound::minute(generated_datetime(seed.created_day, days)))),
                 completed_at: seed
                     .completed_after_creation
-                    .map(|days| generated_datetime(seed.created_day, days)),
-                created_at: Some(created_at),
+                    .map(|days| Bound::minute(generated_datetime(seed.created_day, days))),
+                created_at: Some(Bound::minute(created_at)),
                 predecessors: (!predecessors.is_empty()).then_some(predecessors),
                 charter: seed.charter,
                 alias: seed.alias,
@@ -357,7 +357,7 @@ proptest! {
                 id: parent_id,
                 name: "parent".to_string(),
                 state: if parent_closed { closed_state } else { ActionState::NotStarted },
-                completed_at: parent_closed.then_some(completed_at),
+                completed_at: parent_closed.then_some(Bound::minute(completed_at)),
                 ..Action::default()
             },
             Action {
@@ -365,7 +365,7 @@ proptest! {
                 parent_id: Some(parent_id),
                 name: "child".to_string(),
                 state: if child_closed { closed_state } else { ActionState::NotStarted },
-                completed_at: child_closed.then_some(completed_at),
+                completed_at: child_closed.then_some(Bound::minute(completed_at)),
                 ..Action::default()
             },
         ];
@@ -418,7 +418,7 @@ proptest! {
         for action in &closed {
             let original = &original_by_id[&action.id];
             prop_assert_eq!(action.state, closing_state);
-            prop_assert_eq!(action.completed_at, Some(closed_at));
+            prop_assert_eq!(action.completed_at, Some(Bound::minute(closed_at)));
             if action.id == root.id {
                 prop_assert_eq!(action.parent_id, None);
             } else {
@@ -426,7 +426,7 @@ proptest! {
             }
             let mut expected = original.clone();
             expected.state = closing_state;
-            expected.completed_at = Some(closed_at);
+            expected.completed_at = Some(Bound::minute(closed_at));
             if action.id == root.id {
                 expected.parent_id = None;
             }

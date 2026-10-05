@@ -158,7 +158,7 @@ pub fn hydrate_actions_map(
             .unwrap_or_else(|| action.id.to_string());
         if let Some(meta) = actions_meta.get(&key) {
             if action.created_at.is_none() {
-                action.created_at = meta.created;
+                action.created_at = meta.created.map(crate::domain::time::Bound::minute);
             }
             if action.plan_id.is_none()
                 && let Some(link) = &meta.plan
@@ -416,7 +416,10 @@ mod tests {
         );
 
         hydrate_actions(&mut actions, &meta);
-        assert_eq!(actions[0].action.created_at, Some(created));
+        assert_eq!(
+            actions[0].action.created_at,
+            Some(crate::domain::time::Bound::minute(created))
+        );
     }
 
     #[test]
@@ -464,7 +467,7 @@ mod tests {
         let sidecar_created = dsl_created - chrono::Duration::hours(1);
         let mut actions = vec![make_sourced(Action {
             id,
-            created_at: Some(dsl_created),
+            created_at: Some(crate::domain::time::Bound::minute(dsl_created)),
             ..Default::default()
         })];
         let mut meta = CharterMetadata::default();
@@ -477,7 +480,10 @@ mod tests {
         );
 
         hydrate_actions(&mut actions, &meta);
-        assert_eq!(actions[0].action.created_at, Some(dsl_created));
+        assert_eq!(
+            actions[0].action.created_at,
+            Some(crate::domain::time::Bound::minute(dsl_created))
+        );
     }
 
     #[test]

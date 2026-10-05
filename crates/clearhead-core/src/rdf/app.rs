@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use std::fmt::Display;
 use std::path::Path;
 
-use chrono::{DateTime, Local, SecondsFormat, TimeZone};
+use chrono::{DateTime, SecondsFormat, TimeZone};
 use oxrdf::{GraphName, NamedNode, Quad, Term};
 use uuid::Uuid;
 
@@ -339,10 +339,10 @@ where
         out.add(&subject, app("lateFrom"), instant(late));
     }
     if let Some(closed) = &action.completed_at {
-        out.add(&subject, app("closed"), written_instant(closed));
+        out.add(&subject, app("closed"), written(closed));
     }
     if let Some(created) = &action.created_at {
-        out.add(&subject, dcterms("created"), written_instant(created));
+        out.add(&subject, dcterms("created"), written(created));
     }
 
     for predecessor in action.depends_on() {
@@ -364,15 +364,6 @@ where
 fn written(bound: &Bound) -> Term {
     let (value, xsd_type) = bound.xsd();
     typed(value, xsd_type)
-}
-
-/// A completion or creation time, still held as a local instant: written as
-/// its local time without an offset. A written offset is not yet kept here.
-fn written_instant(at: &DateTime<Local>) -> Term {
-    typed(
-        at.naive_local().format("%Y-%m-%dT%H:%M:%S").to_string(),
-        "dateTime",
-    )
 }
 
 /// A derived instant, with the viewer zone's offset (`Z` for UTC).

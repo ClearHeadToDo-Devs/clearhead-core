@@ -200,7 +200,7 @@ pub fn compute_inlay_hints(
 
             // Completed Date Hint
             if let (Some(dt), Some(range)) = (action.completed_at, metadata.completed_date) {
-                let diff = now.signed_duration_since(dt);
+                let diff = now.signed_duration_since(dt.at());
                 let label = format!(" (done {}d ago)", diff.num_days());
 
                 let lsp_range = source_range_to_lsp_range(range);

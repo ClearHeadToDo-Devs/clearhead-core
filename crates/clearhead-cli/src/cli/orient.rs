@@ -142,7 +142,7 @@ pub fn build(ctx: &CommandContext) -> anyhow::Result<Orient> {
             completions.push(action);
         }
     }
-    completions.sort_by_key(|action| std::cmp::Reverse(action.completed_at));
+    completions.sort_by_key(|action| std::cmp::Reverse(action.completed_at.map(|when| when.at())));
 
     let recent_completions = Bounded::take(
         completions
@@ -151,7 +151,7 @@ pub fn build(ctx: &CommandContext) -> anyhow::Result<Orient> {
                 id: canonical_id(action.id),
                 name: action.name,
                 state: action.state,
-                completed_at: action.completed_at.map(|when| when.to_rfc3339()),
+                completed_at: action.completed_at.map(|when| when.at().to_rfc3339()),
             })
             .collect(),
         SECTION_LIMIT,

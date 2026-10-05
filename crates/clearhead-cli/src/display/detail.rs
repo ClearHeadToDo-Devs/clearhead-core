@@ -46,8 +46,12 @@ pub fn render_action_detail(action: &Action) -> String {
     if action.is_sequential == Some(true) {
         rows.push(("sequential", "yes".to_string()));
     }
-    opt_dt(&mut rows, "created", action.created_at);
-    opt_dt(&mut rows, "completed", action.completed_at);
+    opt_dt(&mut rows, "created", action.created_at.map(|at| at.at()));
+    opt_dt(
+        &mut rows,
+        "completed",
+        action.completed_at.map(|at| at.at()),
+    );
 
     let mut out = title_block(&action.name);
     out.push('\n');

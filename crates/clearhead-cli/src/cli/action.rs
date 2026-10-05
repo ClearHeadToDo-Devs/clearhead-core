@@ -74,7 +74,7 @@ pub fn add_action(
         },
         is_sequential: if sequential { Some(true) } else { None },
         planned: new_planned,
-        created_at: Some(Local::now()),
+        created_at: Some(clearhead_core::domain::time::Bound::minute(Local::now())),
         ..Default::default()
     };
 

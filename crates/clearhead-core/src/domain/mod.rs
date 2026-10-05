@@ -619,9 +619,9 @@ pub struct Action {
     /// Due window (`:end` or `:start/end` in DSL, Decision 48).
     pub due_date: Option<time::Due>,
     /// Completion timestamp (`%datetime` in DSL).
-    pub completed_at: Option<DateTime<Local>>,
+    pub completed_at: Option<time::Bound>,
     /// Creation timestamp (`^datetime` in DSL).
-    pub created_at: Option<DateTime<Local>>,
+    pub created_at: Option<time::Bound>,
     /// Predecessor references (`<ref` in DSL). Raw text + resolved UUID.
     /// Use [`Action::depends_on`] for resolved UUIDs.
     pub predecessors: Option<Vec<PredecessorRef>>,
@@ -722,7 +722,7 @@ pub fn close_subtree(
         .map(|a| {
             let mut closed = a.clone();
             closed.state = closing_state;
-            closed.completed_at = Some(now);
+            closed.completed_at = Some(time::Bound::minute(now));
             if !closed
                 .parent_id
                 .is_some_and(|parent| subtree_ids.contains(&parent))

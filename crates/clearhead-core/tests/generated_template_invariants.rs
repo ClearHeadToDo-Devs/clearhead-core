@@ -52,8 +52,8 @@ fn populated_action(id: Uuid, parent_id: Option<Uuid>, seed: u32, index: usize) 
             (index + 1) as u32 * 15,
         )),
         due_date: Some(Due::by(Bound::minute(local_timestamp + Duration::days(1)))),
-        completed_at: Some(local_timestamp + Duration::hours(2)),
-        created_at: Some(local_timestamp - Duration::days(1)),
+        completed_at: Some(Bound::minute(local_timestamp + Duration::hours(2))),
+        created_at: Some(Bound::minute(local_timestamp - Duration::days(1))),
         predecessors: Some(vec![PredecessorRef {
             raw_ref: format!("predecessor-{index}"),
             resolved_uuid: Some(predecessor_id),

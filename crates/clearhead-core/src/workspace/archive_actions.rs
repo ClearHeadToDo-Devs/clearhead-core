@@ -73,7 +73,7 @@ pub fn plan_action_archive(
                 archived.parent_id = None;
             }
             if archived.completed_at.is_none() {
-                archived.completed_at = Some(archived_at);
+                archived.completed_at = Some(crate::domain::time::Bound::minute(archived_at));
             }
             archived_actions.push(archived);
         } else {
@@ -439,7 +439,7 @@ mod tests {
         let root = action("done root", ActionState::Completed, None);
         let mut child = action("cancelled child", ActionState::Cancelled, Some(root.id));
         let existing_date = Local.with_ymd_and_hms(2026, 7, 1, 9, 0, 0).unwrap();
-        child.completed_at = Some(existing_date);
+        child.completed_at = Some(crate::domain::time::Bound::minute(existing_date));
         let open = action("still open", ActionState::NotStarted, None);
         let existing = action("older", ActionState::Completed, None);
         let archived_at = Local.with_ymd_and_hms(2026, 7, 31, 10, 30, 0).unwrap();
@@ -450,8 +450,14 @@ mod tests {
         );
         assert_eq!(plan.archived_count, 2);
         assert_eq!(plan.active_actions[0].id, open.id);
-        assert_eq!(plan.completed_actions[1].completed_at, Some(archived_at));
-        assert_eq!(plan.completed_actions[2].completed_at, Some(existing_date));
+        assert_eq!(
+            plan.completed_actions[1].completed_at,
+            Some(crate::domain::time::Bound::minute(archived_at))
+        );
+        assert_eq!(
+            plan.completed_actions[2].completed_at,
+            Some(crate::domain::time::Bound::minute(existing_date))
+        );
     }
 
     #[test]
@@ -590,12 +596,12 @@ mod tests {
     fn reopen_resets_whole_subtree_to_not_started_and_clears_completion() {
         let root = {
             let mut r = action("done root", ActionState::Completed, None);
-            r.completed_at = Some(Local::now());
+            r.completed_at = Some(crate::domain::time::Bound::minute(Local::now()));
             r
         };
         let child = {
             let mut c = action("done child", ActionState::Cancelled, Some(root.id));
-            c.completed_at = Some(Local::now());
+            c.completed_at = Some(crate::domain::time::Bound::minute(Local::now()));
             c
         };
         let reopened = crate::domain::reopen_subtree(&[root.clone(), child.clone()], root.id);
@@ -615,7 +621,7 @@ mod tests {
     fn reopen_preparation_moves_subtree_from_completed_to_active() {
         let root = {
             let mut r = action("done", ActionState::Completed, None);
-            r.completed_at = Some(Local::now());
+            r.completed_at = Some(crate::domain::time::Bound::minute(Local::now()));
             r
         };
         let (batch, outcome) = prepare_reopen_action_subtree(

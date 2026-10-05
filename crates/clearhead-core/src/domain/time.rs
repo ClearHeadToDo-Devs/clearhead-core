@@ -229,6 +229,20 @@ impl fmt::Display for Bound {
     }
 }
 
+impl Serialize for Bound {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.collect_str(self)
+    }
+}
+
+impl<'de> Deserialize<'de> for Bound {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        String::deserialize(deserializer)?
+            .parse()
+            .map_err(serde::de::Error::custom)
+    }
+}
+
 /// The due window (`:` in the DSL): a deadline, optionally with a lower bound.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Due {

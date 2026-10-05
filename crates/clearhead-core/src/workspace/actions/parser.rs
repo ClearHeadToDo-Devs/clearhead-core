@@ -1,9 +1,8 @@
 use super::source::{
     NodeWrapper, SourceMetadata, SourceRange, create_node_wrapper, get_node_text, get_prefixed_text,
 };
-use crate::domain::time::{Due, Planned, parse_iso8601_datetime};
+use crate::domain::time::{Bound, Due, Planned};
 use crate::domain::{Action, ActionState, PredecessorRef};
-use chrono::{DateTime, Local};
 use std::collections::HashMap;
 use std::fmt;
 use tree_sitter::Tree;
@@ -152,10 +151,10 @@ impl Action {
             write!(f, " :{}", due_date)?;
         }
         if let Some(created_at) = &self.created_at {
-            write!(f, " ^{}", created_at.format("%Y-%m-%dT%H:%M"))?;
+            write!(f, " ^{created_at}")?;
         }
         if let Some(completed_at) = &self.completed_at {
-            write!(f, " %{}", completed_at.format("%Y-%m-%dT%H:%M"))?;
+            write!(f, " %{completed_at}")?;
         }
         if let Some(predecessors) = &self.predecessors {
             for pred in predecessors {
@@ -416,14 +415,14 @@ fn index_tag(
         .push(SourceRange::from_node(node));
 }
 
-/// Parse a date field (completed_date, created_date) returning both the datetime and source range
+/// Parse a date field (completed_date, created_date), as written, returning
+/// it and its source range
 fn parse_date_field(
     node: &tree_sitter::Node,
     source: &str,
-) -> (Option<DateTime<Local>>, Option<SourceRange>) {
+) -> (Option<Bound>, Option<SourceRange>) {
     if let Some(datetime_node) = node.child_by_field_name("datetime") {
-        let datetime_str = get_node_text(&datetime_node, source);
-        let datetime = parse_iso8601_datetime(&datetime_str);
+        let datetime = get_node_text(&datetime_node, source).parse().ok();
         let range = Some(SourceRange::from_node(node));
         (datetime, range)
     } else {
@@ -735,6 +734,20 @@ mod tests {
         let rendered = parsed[0].to_string();
         let reparsed = parse_actions(&rendered);
         assert_eq!(reparsed[0].description, parsed[0].description);
+    }
+
+    #[test]
+    fn created_and_closed_times_are_written_back_as_written() {
+        // Decision 52: an offset, a bare date and seconds survive; nothing is
+        // rewritten into the formatting machine's local time.
+        for line in [
+            "[x] Offset written %2026-09-30T18:00+02:00 #01951111-0000-7000-8000-000000000001",
+            "[x] Date only %2026-09-30 #01951111-0000-7000-8000-000000000002",
+            "[ ] Seconds ^2026-09-01T09:15:30 #01951111-0000-7000-8000-000000000003",
+            "[x] Both ^2026-09-01T09:15Z %2026-09-02T10:00 #01951111-0000-7000-8000-000000000004",
+        ] {
+            assert_eq!(parse_actions(line)[0].to_string(), line);
+        }
     }
 
     #[test]

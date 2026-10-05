@@ -126,8 +126,8 @@ fn compare_action(old: &Action, new: &Action) -> Vec<FieldChange> {
 
     if old.completed_at != new.completed_at {
         changes.push(FieldChange::CompletedDate {
-            old: old.completed_at.map(|d| d.to_rfc3339()),
-            new: new.completed_at.map(|d| d.to_rfc3339()),
+            old: old.completed_at.map(|d| d.to_string()),
+            new: new.completed_at.map(|d| d.to_string()),
         });
     }
 

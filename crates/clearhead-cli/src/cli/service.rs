@@ -53,7 +53,7 @@ pub fn sync_events(
         } else {
             let timestamp = action
                 .created_at
-                .map(|dt| dt.with_timezone(&chrono::Utc))
+                .map(|created| created.at().with_timezone(&chrono::Utc))
                 .unwrap_or_else(chrono::Utc::now);
 
             let record = TelemetryRecord::with_timestamp(

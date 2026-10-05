@@ -130,7 +130,7 @@ pub fn apply_updates(action: &mut Action, updates: ActionUpdate, now: DateTime<L
         action.state = state;
         // If completing, set completed_at
         if state == ActionState::Completed && action.completed_at.is_none() {
-            action.completed_at = Some(now);
+            action.completed_at = Some(super::time::Bound::minute(now));
         }
     }
     if let Some(planned) = updates.planned {
@@ -212,12 +212,18 @@ mod tests {
 
         let mut fresh = make_action("Fresh", None);
         apply_updates(&mut fresh, complete(), now);
-        assert_eq!(fresh.completed_at, Some(now));
+        assert_eq!(
+            fresh.completed_at,
+            Some(crate::domain::time::Bound::minute(now))
+        );
 
         let mut dated = make_action("Dated", None);
-        dated.completed_at = Some(earlier);
+        dated.completed_at = Some(crate::domain::time::Bound::minute(earlier));
         apply_updates(&mut dated, complete(), now);
-        assert_eq!(dated.completed_at, Some(earlier));
+        assert_eq!(
+            dated.completed_at,
+            Some(crate::domain::time::Bound::minute(earlier))
+        );
     }
 
     #[test]

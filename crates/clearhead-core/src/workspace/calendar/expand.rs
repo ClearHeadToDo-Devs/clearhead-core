@@ -113,7 +113,7 @@ fn apply_override(action: &mut Action, over: &OccurrenceOverride) {
     if over.scheduled_end.is_some() {
         action.planned = with_planned_end(action.planned, over.scheduled_end);
     }
-    action.completed_at = over.completed_at;
+    action.completed_at = over.completed_at.map(crate::domain::time::Bound::minute);
     if let Some(title) = &over.title {
         action.name = title.clone();
     }
