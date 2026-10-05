@@ -90,6 +90,8 @@ insta = { version = "1.45.1", features = ["filters", "redactions", "ron"] }
 # Local schema validation for the spec-conformance suite; no HTTP/file
 # reference resolution or its async stack.
 jsonschema = { version = "0.18", default-features = false }
+# Reads the graph fixture's expected Turtle (same version as Core's).
+oxttl = "0.2.3"
 predicates = "3.0"
 ron = "0.8"
 tempfile = "3.8"

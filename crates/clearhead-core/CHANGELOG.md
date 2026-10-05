@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+### Added
+- `rdf::app::project_app`: the application graph (`app:` vocabulary, specifications `ontology.md`, Decision 45), projected from a `DomainModel`, host-supplied `app::Locations` (`Locations::of(&Workspace)`), the workspace config and the viewer's zone. Written times are as written; `notBefore`, `lateFrom` and `durationMinutes` are derived in the zone. The graph fixture's `expected-app.ttl` is its conformance test. It sits beside the v4 projection until the CLI's queries move to it.
+- `Bound::xsd`, `Bound::end_instant_in`, `Planned::duration_in`: the as-written XSD form and zone-aware instants.
+- `WorkspaceRead::objective_files` and `Workspace::objective_files`: each objective's data-root-relative file. `Workspace::with_objectives` takes them.
+
 ### Changed
 - `Action::due_date` is a `domain::time::Due` window (`:end` or `:start/end`, platform Decision 48), not a `DateTime`. Each `Bound` keeps the precision it was written at, so a date-only deadline is written back as a date instead of `T00:00`. `Due::late_from` and `Due::not_before` give the half-open window's instants. Calendar sync sees only the deadline; the window's start is never placed.
 - `parse_iso8601_datetime` moved from `workspace::actions::parser` to `domain::time`.

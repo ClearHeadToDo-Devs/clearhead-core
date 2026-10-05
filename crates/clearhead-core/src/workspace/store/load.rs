@@ -10,7 +10,9 @@
 use super::findings::Finding;
 use crate::domain::{Charter, DomainModel};
 use crate::workspace::charter::MarkdownCharter;
+use std::collections::HashMap;
 use std::path::PathBuf;
+use uuid::Uuid;
 
 /// The complete filesystem representation of a workspace.
 ///
@@ -38,6 +40,8 @@ pub struct Workspace {
     /// Objectives from `objectives/`; empty unless the host attaches them
     /// with [`with_objectives`](Self::with_objectives).
     pub objectives: Vec<crate::domain::Objective>,
+    /// Each objective's file, relative to the data root (`objectives/…`).
+    pub objective_files: HashMap<Uuid, PathBuf>,
 }
 
 impl Workspace {
@@ -57,12 +61,18 @@ impl Workspace {
             ephemeral_id,
             charters,
             objectives: vec![],
+            objective_files: HashMap::new(),
         }
     }
 
     /// Attach the objectives an assembled read produced.
-    pub fn with_objectives(mut self, objectives: Vec<crate::domain::Objective>) -> Self {
+    pub fn with_objectives(
+        mut self,
+        objectives: Vec<crate::domain::Objective>,
+        objective_files: HashMap<Uuid, PathBuf>,
+    ) -> Self {
         self.objectives = objectives;
+        self.objective_files = objective_files;
         self
     }
 
@@ -116,6 +126,8 @@ impl From<Workspace> for DomainModel {
 pub struct WorkspaceRead {
     pub charters: Vec<MarkdownCharter>,
     pub objectives: Vec<crate::domain::Objective>,
+    /// Each objective's file, relative to the data root (`objectives/…`).
+    pub objective_files: HashMap<Uuid, PathBuf>,
     pub findings: Vec<Finding>,
 }
 

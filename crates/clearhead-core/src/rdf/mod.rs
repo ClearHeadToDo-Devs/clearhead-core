@@ -23,6 +23,7 @@
 //! `specifications/ontology.md` and the `ontology/v4` artifacts.
 
 pub mod anonymize;
+pub mod app;
 pub mod project;
 pub mod serialize;
 pub mod snapshot;

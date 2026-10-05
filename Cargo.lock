@@ -389,6 +389,7 @@ dependencies = [
  "jsonschema",
  "oxigraph",
  "oxrdf",
+ "oxttl",
  "petgraph",
  "predicates",
  "ron 0.8.1",

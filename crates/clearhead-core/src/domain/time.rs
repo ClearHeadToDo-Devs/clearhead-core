@@ -100,9 +100,32 @@ impl Bound {
     /// Where a range ending at this bound ends: a date's following midnight,
     /// or the time itself.
     pub fn end_instant(&self) -> DateTime<Local> {
+        self.end_instant_in(&Local)
+    }
+
+    /// [`end_instant`](Self::end_instant) in `zone`.
+    pub fn end_instant_in<Tz: TimeZone>(&self, zone: &Tz) -> DateTime<Tz> {
         match self.precision {
-            Precision::Day => resolve_local(self.local + Duration::days(1), &Local),
-            Precision::Minute | Precision::Second => self.at(),
+            Precision::Day => resolve_local(self.local + Duration::days(1), zone),
+            Precision::Minute | Precision::Second => self.at_in(zone),
+        }
+    }
+
+    /// The bound as an XSD literal, as written (ontology.md, Time): a date is
+    /// an `xsd:date`; a time an `xsd:dateTime` with seconds, and its offset
+    /// only if one was written. Returns the lexical form and the XSD type.
+    pub fn xsd(&self) -> (String, &'static str) {
+        match self.precision {
+            Precision::Day => (self.local.format("%Y-%m-%d").to_string(), "date"),
+            Precision::Minute | Precision::Second => {
+                let offset = match self.offset {
+                    Some(offset) if offset.local_minus_utc() == 0 => "Z".to_string(),
+                    Some(offset) => offset.to_string(),
+                    None => String::new(),
+                };
+                let time = self.local.format("%Y-%m-%dT%H:%M:%S");
+                (format!("{time}{offset}"), "dateTime")
+            }
         }
     }
 
@@ -299,7 +322,14 @@ impl Planned {
 
     /// The block's length; a start alone has none.
     pub fn duration(&self) -> Option<Duration> {
-        self.end.map(|end| end.end_instant() - self.start.at())
+        self.duration_in(&Local)
+    }
+
+    /// [`duration`](Self::duration) in `zone`, where a block that crosses a
+    /// clock change has its elapsed length.
+    pub fn duration_in<Tz: TimeZone>(&self, zone: &Tz) -> Option<Duration> {
+        self.end
+            .map(|end| end.end_instant_in(zone) - self.start.at_in(zone))
     }
 
     /// Whether the block ends at or before it starts.
@@ -573,6 +603,38 @@ mod tests {
         );
         let fixed: Bound = "2026-10-05T17:00+02:00".parse().unwrap();
         assert_eq!(fixed.at_in(&LA).to_rfc3339(), "2026-10-05T08:00:00-07:00");
+    }
+
+    #[test]
+    fn a_bound_is_written_to_xsd_as_written() {
+        let xsd = |s: &str| s.parse::<Bound>().unwrap().xsd();
+        assert_eq!(xsd("2026-10-03"), ("2026-10-03".into(), "date"));
+        assert_eq!(
+            xsd("2026-10-03T09:00"),
+            ("2026-10-03T09:00:00".into(), "dateTime")
+        );
+        assert_eq!(
+            xsd("2026-10-03T09:00+02:00"),
+            ("2026-10-03T09:00:00+02:00".into(), "dateTime")
+        );
+        assert_eq!(
+            xsd("2026-10-03T09:00Z"),
+            ("2026-10-03T09:00:00Z".into(), "dateTime")
+        );
+    }
+
+    #[test]
+    fn a_block_across_the_clock_change_has_its_elapsed_length() {
+        let night = planned("2025-11-01T23:00/2025-11-02T03:00");
+        assert_eq!(night.duration_in(&LA), Some(Duration::hours(5)));
+        assert_eq!(night.duration_in(&chrono::Utc), Some(Duration::hours(4)));
+        assert_eq!(
+            due("2026-10-04")
+                .end
+                .end_instant_in(&chrono::Utc)
+                .to_rfc3339(),
+            "2026-10-05T00:00:00+00:00"
+        );
     }
 
     #[test]

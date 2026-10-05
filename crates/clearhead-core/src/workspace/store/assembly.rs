@@ -406,7 +406,14 @@ pub fn assemble_workspace(input: &WorkspaceAssemblyInput) -> Result<WorkspaceRea
     attach_plans(input, &mut charters, &mut findings)?;
     let mut charters: Vec<_> = charters.into_values().collect();
     resolve_predecessor_aliases(&mut charters);
-    let objectives = assemble_objectives(input, &mut findings);
+    let (objectives, objective_files): (Vec<_>, HashMap<_, _>) =
+        assemble_objectives(input, &mut findings)
+            .into_iter()
+            .map(|(objective, path)| {
+                let id = objective.id;
+                (objective, (id, path))
+            })
+            .unzip();
     for charter in &charters {
         for reference in charter.objectives.iter().flatten() {
             if !objectives
@@ -427,6 +434,7 @@ pub fn assemble_workspace(input: &WorkspaceAssemblyInput) -> Result<WorkspaceRea
     Ok(WorkspaceRead {
         charters,
         objectives,
+        objective_files,
         findings,
     })
 }
@@ -437,7 +445,7 @@ pub fn assemble_workspace(input: &WorkspaceAssemblyInput) -> Result<WorkspaceRea
 fn assemble_objectives(
     input: &WorkspaceAssemblyInput,
     findings: &mut Vec<Finding>,
-) -> Vec<Objective> {
+) -> Vec<(Objective, PathBuf)> {
     let paths = input
         .workspace_files()
         .filter(|path| {
@@ -479,7 +487,7 @@ fn assemble_objectives(
             relative => objective_file_name(relative),
         };
         match parse_objective(content, file_name) {
-            Ok(objective) => objectives.push(objective),
+            Ok(objective) => objectives.push((objective, path.clone())),
             Err(error) => findings.push(Finding::violation(
                 "unparseable-file",
                 &path,

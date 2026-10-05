@@ -250,7 +250,8 @@ pub fn load_workspace_envelope(workspace_root: &Path, charters: Vec<MarkdownChar
 
 pub fn load_workspace_model(workspace_root: &Path) -> Result<Workspace, WorkspaceError> {
     let read = read_and_report(workspace_root)?;
-    Ok(load_workspace_envelope(workspace_root, read.charters).with_objectives(read.objectives))
+    Ok(load_workspace_envelope(workspace_root, read.charters)
+        .with_objectives(read.objectives, read.objective_files))
 }
 
 fn assemble_native(workspace_root: &Path) -> Result<WorkspaceRead, WorkspaceError> {
