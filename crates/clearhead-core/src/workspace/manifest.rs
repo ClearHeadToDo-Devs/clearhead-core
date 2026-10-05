@@ -14,7 +14,7 @@
 use serde::{Deserialize, Serialize};
 
 /// Published schema for `workspace.json`, stamped on write so editors validate.
-pub const WORKSPACE_SCHEMA_URL: &str = "https://raw.githubusercontent.com/ClearHeadToDo-Devs/specifications/v0.1.0/schemas/workspace.schema.json";
+pub const WORKSPACE_SCHEMA_URL: &str = "https://clearhead.dev/schemas/v0.2.0/workspace.schema.json";
 
 /// The identity facts that name a workspace and its RDF named graph.
 ///
