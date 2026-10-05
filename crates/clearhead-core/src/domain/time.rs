@@ -6,41 +6,36 @@
 //! planned block (`@`) read their bounds the same way; they differ only in
 //! which side a single value is: the deadline for `:`, the start for `@`.
 
-use chrono::{DateTime, Duration, Local, NaiveTime, TimeZone};
+use chrono::{
+    DateTime, Duration, FixedOffset, Local, LocalResult, NaiveDate, NaiveDateTime, NaiveTime,
+    Offset, TimeZone, Timelike,
+};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt;
 use std::str::FromStr;
 
-/// Parse ISO 8601 datetime string to DateTime<Local>
-/// Supports formats: YYYY-MM-DD, YYYY-MM-DDTHH:MM, YYYY-MM-DDTHH:MM:SS
-/// with optional timezone (Z or +/-HH:MM)
+/// Parse an ISO 8601 date or date-time, with an optional offset, to its
+/// instant in the local zone (see [`Bound`] for the forms and how a local
+/// time resolves).
 pub fn parse_iso8601_datetime(datetime_str: &str) -> Option<DateTime<Local>> {
-    use chrono::{NaiveDate, NaiveDateTime, NaiveTime, TimeZone};
+    datetime_str.parse::<Bound>().ok().map(|bound| bound.at())
+}
 
-    let trimmed = datetime_str.trim();
-
-    // Try parsing with timezone first
-    if let Ok(dt) = DateTime::parse_from_rfc3339(trimmed) {
-        return Some(dt.with_timezone(&Local));
+/// Resolve a local date and time in `zone` as RFC 5545 §3.3.5 does
+/// (Decision 52): a time that occurs twice is its first occurrence, and one
+/// that does not occur is read with the offset in effect before the gap.
+pub fn resolve_local<Tz: TimeZone>(local: NaiveDateTime, zone: &Tz) -> DateTime<Tz> {
+    match zone.from_local_datetime(&local) {
+        LocalResult::Single(at) | LocalResult::Ambiguous(at, _) => at,
+        LocalResult::None => {
+            // A day earlier is safely before the gap, whatever the zone.
+            let before = zone
+                .offset_from_utc_datetime(&(local - Duration::days(1)))
+                .fix();
+            let utc = local - Duration::seconds(before.local_minus_utc().into());
+            zone.from_utc_datetime(&utc)
+        }
     }
-
-    // Try YYYY-MM-DDTHH:MM:SS format (without timezone)
-    if let Ok(naive_dt) = NaiveDateTime::parse_from_str(trimmed, "%Y-%m-%dT%H:%M:%S") {
-        return Local.from_local_datetime(&naive_dt).earliest();
-    }
-
-    // Try YYYY-MM-DDTHH:MM format (without timezone, no seconds)
-    if let Ok(naive_dt) = NaiveDateTime::parse_from_str(trimmed, "%Y-%m-%dT%H:%M") {
-        return Local.from_local_datetime(&naive_dt).earliest();
-    }
-
-    // Try YYYY-MM-DD format (date only, default to start of day)
-    if let Ok(naive_date) = NaiveDate::parse_from_str(trimmed, "%Y-%m-%d") {
-        let naive_dt = naive_date.and_time(NaiveTime::from_hms_opt(0, 0, 0)?);
-        return Local.from_local_datetime(&naive_dt).earliest();
-    }
-
-    None
 }
 
 /// The unit a bound was written to. Only a day changes what a bound means;
@@ -52,26 +47,53 @@ pub enum Precision {
     Second,
 }
 
-/// A date or date-time as written.
+/// A date or date-time as written (Decision 52): the text is the truth, and
+/// an instant is resolved from it only when asked, in the viewer's zone.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Bound {
-    /// The bound's first instant: a date's midnight, or the time itself.
-    pub at: DateTime<Local>,
+    /// The written date and time; a date's is its midnight.
+    pub local: NaiveDateTime,
+    /// The offset the file wrote, if any. A date never has one.
+    pub offset: Option<FixedOffset>,
     pub precision: Precision,
 }
 
 impl Bound {
+    /// The local date of `at`, written as a date.
     pub fn day(at: DateTime<Local>) -> Self {
         Self {
-            at,
+            local: at.date_naive().and_time(NaiveTime::MIN),
+            offset: None,
             precision: Precision::Day,
         }
     }
 
+    /// The local time of `at` to the minute, written without an offset.
     pub fn minute(at: DateTime<Local>) -> Self {
+        let local = at.naive_local();
         Self {
-            at,
+            local: local
+                .with_second(0)
+                .and_then(|t| t.with_nanosecond(0))
+                .unwrap_or(local),
+            offset: None,
             precision: Precision::Minute,
+        }
+    }
+
+    /// The bound's first instant in the local zone: a date's midnight, or the
+    /// time itself.
+    pub fn at(&self) -> DateTime<Local> {
+        self.at_in(&Local)
+    }
+
+    /// The bound's first instant in `zone`.
+    pub fn at_in<Tz: TimeZone>(&self, zone: &Tz) -> DateTime<Tz> {
+        match self.offset {
+            Some(offset) => (self.local - Duration::seconds(offset.local_minus_utc().into()))
+                .and_utc()
+                .with_timezone(zone),
+            None => resolve_local(self.local, zone),
         }
     }
 
@@ -79,26 +101,19 @@ impl Bound {
     /// or the time itself.
     pub fn end_instant(&self) -> DateTime<Local> {
         match self.precision {
-            Precision::Day => self
-                .at
-                .date_naive()
-                .succ_opt()
-                .and_then(|d| {
-                    Local
-                        .from_local_datetime(&d.and_time(NaiveTime::MIN))
-                        .earliest()
-                })
-                .unwrap_or(self.at + Duration::days(1)),
-            Precision::Minute | Precision::Second => self.at,
+            Precision::Day => resolve_local(self.local + Duration::days(1), &Local),
+            Precision::Minute | Precision::Second => self.at(),
         }
     }
 
-    /// The same bound moved by `delta`, keeping its written precision.
+    /// The same bound moved by `delta` of elapsed time, written in its own
+    /// frame and precision.
     fn shifted(self, delta: Duration) -> Self {
-        Self {
-            at: self.at + delta,
-            ..self
-        }
+        let local = match self.offset {
+            Some(_) => self.local + delta,
+            None => (self.at() + delta).naive_local(),
+        };
+        Self { local, ..self }
     }
 }
 
@@ -126,14 +141,50 @@ fn written_precision(s: &str) -> Precision {
     }
 }
 
+/// Split a written offset (`Z`, `+hh:mm`, `-hh:mm`) from a date-time.
+fn split_offset(s: &str) -> Result<(&str, Option<FixedOffset>), String> {
+    let Some((_, time)) = s.split_once('T') else {
+        return Ok((s, None));
+    };
+    if let Some(local) = s.strip_suffix('Z') {
+        return Ok((
+            local,
+            Some(FixedOffset::east_opt(0).expect("zero is a valid offset")),
+        ));
+    }
+    match time.rfind(['+', '-']) {
+        Some(at) => {
+            let split = s.len() - time.len() + at;
+            let offset = s[split..]
+                .parse()
+                .map_err(|_| format!("invalid offset: {}", &s[split..]))?;
+            Ok((&s[..split], Some(offset)))
+        }
+        None => Ok((s, None)),
+    }
+}
+
+fn parse_local(s: &str) -> Option<NaiveDateTime> {
+    ["%Y-%m-%dT%H:%M:%S%.f", "%Y-%m-%dT%H:%M"]
+        .iter()
+        .find_map(|pattern| NaiveDateTime::parse_from_str(s, pattern).ok())
+        .and_then(|local| local.with_nanosecond(0))
+        .or_else(|| {
+            NaiveDate::parse_from_str(s, "%Y-%m-%d")
+                .ok()
+                .map(|date| date.and_time(NaiveTime::MIN))
+        })
+}
+
 impl FromStr for Bound {
     type Err = String;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let s = s.trim();
-        let at = parse_iso8601_datetime(s).ok_or_else(|| format!("invalid date/time: {s}"))?;
+        let (local, offset) = split_offset(s)?;
         Ok(Self {
-            at,
+            local: parse_local(local).ok_or_else(|| format!("invalid date/time: {s}"))?,
+            offset,
             precision: written_precision(s),
         })
     }
@@ -146,7 +197,12 @@ impl fmt::Display for Bound {
             Precision::Minute => "%Y-%m-%dT%H:%M",
             Precision::Second => "%Y-%m-%dT%H:%M:%S",
         };
-        write!(f, "{}", self.at.format(pattern))
+        write!(f, "{}", self.local.format(pattern))?;
+        match self.offset {
+            Some(offset) if offset.local_minus_utc() == 0 => write!(f, "Z"),
+            Some(offset) => write!(f, "{offset}"),
+            None => Ok(()),
+        }
     }
 }
 
@@ -165,7 +221,7 @@ impl Due {
 
     /// The first instant the action may be worked, if the window has a start.
     pub fn not_before(&self) -> Option<DateTime<Local>> {
-        self.start.map(|b| b.at)
+        self.start.map(|b| b.at())
     }
 
     /// The first instant the action is late.
@@ -243,7 +299,7 @@ impl Planned {
 
     /// The block's length; a start alone has none.
     pub fn duration(&self) -> Option<Duration> {
-        self.end.map(|end| end.end_instant() - self.start.at)
+        self.end.map(|end| end.end_instant() - self.start.at())
     }
 
     /// Whether the block ends at or before it starts.
@@ -254,7 +310,7 @@ impl Planned {
 
 /// The planned start's instant, as calendars place it.
 pub fn planned_start(planned: Option<&Planned>) -> Option<DateTime<Local>> {
-    planned.map(|p| p.start.at)
+    planned.map(|p| p.start.at())
 }
 
 /// Move the planned start to a calendar instant, keeping the block's length
@@ -269,11 +325,11 @@ pub fn with_planned_start(
         return Some(Planned::at(Bound::minute(at)));
     };
     let start = match planned.start {
-        start if start.at == at => start,
+        start if start.at() == at => start,
         start if start.precision == Precision::Day && at.time() == NaiveTime::MIN => Bound::day(at),
         _ => Bound::minute(at),
     };
-    let end = planned.end.map(|end| end.shifted(at - planned.start.at));
+    let end = planned.end.map(|end| end.shifted(at - planned.start.at()));
     Some(Planned { start, end })
 }
 
@@ -378,7 +434,7 @@ mod tests {
     #[test]
     fn a_single_planned_value_is_the_start() {
         let p = planned("2026-10-03T09:00");
-        assert_eq!(p.start.at, at("2026-10-03T09:00"));
+        assert_eq!(p.start.at(), at("2026-10-03T09:00"));
         assert_eq!(p.end, None);
         assert_eq!(p.duration(), None);
     }
@@ -459,6 +515,64 @@ mod tests {
     fn a_window_that_opens_after_it_closes_is_empty() {
         assert!(due("2026-12-15/2026-11-01").is_empty());
         assert!(!due("2026-10-05/2026-10-05").is_empty());
+    }
+
+    #[test]
+    fn a_written_offset_is_kept_and_names_its_instant() {
+        for written in [
+            "2026-10-05T17:00+02:00",
+            "2026-10-05T17:00:00-05:00",
+            "2026-10-05T17:00Z",
+        ] {
+            assert_eq!(due(written).to_string(), written);
+        }
+        assert_eq!(
+            due("2026-10-05T17:00+02:00").late_from(),
+            at("2026-10-05T15:00:00Z")
+        );
+    }
+
+    #[test]
+    fn a_date_has_no_offset() {
+        assert!("2026-10-05+02:00".parse::<Bound>().is_err());
+    }
+
+    #[test]
+    fn a_local_time_round_trips_even_when_it_occurs_twice() {
+        // 01:30 on 2025-11-02 occurs twice in US zones; the text is the truth.
+        let written = "2025-11-01T12:00/2025-11-02T01:30";
+        assert_eq!(planned(written).to_string(), written);
+        assert_eq!(planned(written), planned(&planned(written).to_string()));
+    }
+
+    use chrono_tz::America::Los_Angeles as LA;
+
+    fn local(s: &str) -> NaiveDateTime {
+        NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M").unwrap()
+    }
+
+    #[test]
+    fn a_time_that_occurs_twice_is_its_first_occurrence() {
+        let at = resolve_local(local("2025-11-02T01:30"), &LA);
+        assert_eq!(at.to_rfc3339(), "2025-11-02T01:30:00-07:00");
+    }
+
+    #[test]
+    fn a_time_that_does_not_occur_takes_the_offset_before_the_gap() {
+        let at = resolve_local(local("2026-03-08T02:30"), &LA);
+        assert_eq!(at.to_rfc3339(), "2026-03-08T03:30:00-07:00");
+    }
+
+    #[test]
+    fn a_floating_bound_resolves_in_the_viewers_zone() {
+        let bound: Bound = "2026-10-05T17:00".parse().unwrap();
+        assert_eq!(bound.at_in(&LA).to_rfc3339(), "2026-10-05T17:00:00-07:00");
+        assert_eq!(
+            bound.at_in(&chrono_tz::Europe::Berlin).to_rfc3339(),
+            "2026-10-05T17:00:00+02:00"
+        );
+        let fixed: Bound = "2026-10-05T17:00+02:00".parse().unwrap();
+        assert_eq!(fixed.at_in(&LA).to_rfc3339(), "2026-10-05T08:00:00-07:00");
     }
 
     #[test]

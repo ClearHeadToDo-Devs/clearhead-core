@@ -70,6 +70,7 @@ features = [
 getrandom = { version = "0.3", features = ["wasm_js"] }
 
 [dev-dependencies]
+chrono-tz = "0.10"
 proptest = "1.7"
 ron = "0.8"
 tempfile = "3.8"

@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 28f52ff93f3d6dd8959b338a40ecdf5ecd416b9ef795e7c19ac28ac764aa297d # shrinks to actions = [Action { id: 00000000-0000-0000-0000-000000000001, parent_id: None, state: NotStarted, name: "a", description: None, priority: None, contexts: None, planned: Some(Planned { start: Bound { at: 2025-11-01T12:00:00-07:00, precision: Minute }, end: Some(Bound { at: 2025-11-02T01:00:00-07:00, precision: Minute }) }), due_date: None, completed_at: None, created_at: Some(2025-10-05T12:00:00-07:00), predecessors: None, charter: None, alias: None, is_sequential: None, plan_id: None, external_occurrence_key: None }]

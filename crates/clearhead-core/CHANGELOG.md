@@ -9,6 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 ### Changed
 - `Action::due_date` is a `domain::time::Due` window (`:end` or `:start/end`, platform Decision 48), not a `DateTime`. Each `Bound` keeps the precision it was written at, so a date-only deadline is written back as a date instead of `T00:00`. `Due::late_from` and `Due::not_before` give the half-open window's instants. Calendar sync sees only the deadline; the window's start is never placed.
 - `parse_iso8601_datetime` moved from `workspace::actions::parser` to `domain::time`.
+- `Bound` is its written form (platform Decision 52): `local`, the written `offset` if any, and `precision`. The `at` field is now `at()`, resolved in the local zone, or `at_in(zone)`; `resolve_local` resolves a local time as RFC 5545 does (first occurrence when it occurs twice, the offset before the gap when it does not occur). Text round-trips exactly, so a written offset is no longer rewritten as local time, and a time with an offset but no seconds, or in a spring-forward gap, no longer fails to parse and drops its field.
 
 ### Removed
 - `Metric::review_date`: reviewing a metric is an action (specifications, 2026-10-03). Frontmatter that still has `review_date` loads unchanged; the key is ignored.

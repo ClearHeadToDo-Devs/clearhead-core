@@ -173,7 +173,8 @@ pub fn compute_inlay_hints(
     for action in &doc.actions {
         if let Some(metadata) = doc.source_map.get(&action.id) {
             // Do Date Hint
-            if let (Some(dt), Some(range)) = (action.planned.map(|p| p.start.at), metadata.do_date)
+            if let (Some(dt), Some(range)) =
+                (action.planned.map(|p| p.start.at()), metadata.do_date)
             {
                 let diff = dt.signed_duration_since(now);
                 let label = if diff.num_days() > 0 {

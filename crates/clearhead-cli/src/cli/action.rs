@@ -1512,7 +1512,7 @@ fn print_acts_table(ws_actions: &[(Option<&str>, &Action)], multi_ws: bool) {
         let state = format!("{:?}", action.state);
         let scheduled = action
             .planned
-            .map(|p| p.start.at.format("%Y-%m-%d %H:%M").to_string())
+            .map(|p| p.start.at().format("%Y-%m-%d %H:%M").to_string())
             .unwrap_or_else(|| "—".to_string());
         let duration = action
             .planned
