@@ -1,7 +1,7 @@
 //! Serialize the canonical quad projection into RDF text formats.
 //!
-//! Every format is one function of the same `&[Quad]` that [`project_domain`]
-//! produces. There is no second traversal of the domain model and no store: the
+//! Every format is one function of the same `&[Quad]` that
+//! [`project_app`](super::app::project_app) produces. There is no second traversal of the domain model and no store: the
 //! projection decides *what is true*, and this module only decides *how to spell
 //! it*. That is the whole point of the read path — one set of facts, several
 //! serializations of it, JSON-LD included.
@@ -20,10 +20,11 @@
 //! ## Why there is no shape/SHACL validation here
 //!
 //! Emit-side correctness is guaranteed by construction, not by a validation pass.
-//! [`project_domain`] can only build well-typed quads — an Action always gets a
-//! `hasStatus`, a completed Action always carries its completion datetime, and so
-//! on — so a SHACL run over our own output would only re-assert what the
-//! constructor already made unrepresentable otherwise.
+//! The projection can only build well-typed quads — an action always gets an
+//! `app:state`, a planned start always its `app:plannedFrom`, and so on — and
+//! the specification's graph fixture, checked against its shapes, is Core's
+//! conformance test. A SHACL run over our own output would only re-assert what
+//! the constructor already made unrepresentable otherwise.
 //!
 //! The boundary where a shape contract *would* earn its keep is the inverse arrow:
 //! **importing foreign RDF** into the domain model. There we would not trust the
@@ -33,14 +34,9 @@
 //! did graphd), so the validator lives nowhere rather than in database-free Core.
 //! See the `rdf-publication` charter.
 
-use super::{
-    ACTIONS_NS, BFO_NS, CCO_NS, DCTERMS_NS, RDF_NS, RDFS_NS, Result, WORKSPACE_NS, XSD_NS,
-    project_domain,
-};
-use crate::WorkspaceConfig;
-use crate::domain::DomainModel;
+use super::{DCTERMS_NS, RDF_NS, RDFS_NS, Result, XSD_NS};
 use oxjsonld::JsonLdSerializer;
-use oxrdf::{GraphName, Quad, QuadRef, TripleRef};
+use oxrdf::{Quad, QuadRef, TripleRef};
 use oxttl::{NQuadsSerializer, TriGSerializer, TurtleSerializer};
 
 /// The RDF text formats Core can emit from the canonical quad set.
@@ -58,33 +54,15 @@ pub enum RdfFormat {
 
 /// Vocabulary prefixes applied to the prefix-aware syntaxes (TriG, Turtle,
 /// JSON-LD `@context`). N-Quads has no prefix mechanism and always spells IRIs
-/// in full. Kept in sync with the namespace constants the projection emits.
+/// in full. The namespaces the application graph uses.
 const VOCAB_PREFIXES: &[(&str, &str)] = &[
     ("app", super::app::APP_NS),
-    ("skos", "http://www.w3.org/2004/02/skos/core#"),
-    ("actions", ACTIONS_NS),
-    ("cco", CCO_NS),
-    ("bfo", BFO_NS),
     ("rdf", RDF_NS),
     ("rdfs", RDFS_NS),
     ("dcterms", DCTERMS_NS),
+    ("skos", "http://www.w3.org/2004/02/skos/core#"),
     ("xsd", XSD_NS),
-    ("ws", WORKSPACE_NS),
 ];
-
-/// Project `model` and serialize it in one call — the entry point a host uses to
-/// publish a whole workspace. `graph` is the workspace's named graph (from
-/// [`super::workspace_graph_name`]); it is passed in rather than derived because
-/// workspace-UUID discovery is a host/filesystem concern, not Core's.
-pub fn serialize_domain(
-    model: &DomainModel,
-    config: Option<&WorkspaceConfig>,
-    graph: GraphName,
-    format: RdfFormat,
-) -> Result<String> {
-    let quads = project_domain(model, config, graph)?;
-    serialize(&quads, format)
-}
 
 /// Serialize an already-projected canonical quad set into `format`.
 pub fn serialize(quads: &[Quad], format: RdfFormat) -> Result<String> {
@@ -178,7 +156,15 @@ mod tests {
                 ..Default::default()
             }],
         };
-        project_domain(&model, None, workspace_graph_name(WS_UUID)).unwrap()
+        let locations = crate::rdf::app::Locations::default();
+        crate::rdf::app::project_app(
+            &model,
+            &locations,
+            None,
+            &chrono::Utc,
+            workspace_graph_name(WS_UUID),
+        )
+        .unwrap()
     }
 
     /// Parse an N-Quads document back into a canonical, comparable quad set.
@@ -234,9 +220,9 @@ mod tests {
             !ttl.contains(&format!("urn:clearhead:workspace:{WS_UUID}")),
             "Turtle is graph-only and must not spell the graph name"
         );
-        // Prefixed output should compact the actions vocabulary.
+        // Prefixed output should compact the application vocabulary.
         assert!(
-            ttl.contains("@prefix actions:"),
+            ttl.contains("@prefix app:") && ttl.contains("a app:Action"),
             "Turtle should declare prefixes"
         );
     }

@@ -1099,8 +1099,8 @@ Project-level named SPARQL queries.
 .B Query blocked actions with SPARQL
 .EX
     clearhead query raw --where '
-        ?action a actions:Action ;
-                cco:ont00001868 actions:Blocked ;
+        ?action a app:Action ;
+                app:state app:Blocked ;
                 rdfs:label ?name .
     '
 .EE

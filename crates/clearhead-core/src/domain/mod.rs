@@ -71,7 +71,7 @@ pub struct Metric {
 
 /// A high-level goal that organizes [`Charter`]s.
 ///
-/// Maps to `actions:Objective` — the topmost organizational layer.
+/// An `app:Objective` in the application graph — the topmost organizational layer.
 /// Objectives sit above charters in the hierarchy:
 /// [`Objective`] → [`Charter`] → [`Plan`] / [`Action`]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -356,7 +356,7 @@ impl std::fmt::Display for CharterState {
 
 /// Lifecycle state of an [`Action`].
 ///
-/// Maps to `actions:ActionState`. The state inheres in the [`Action`].
+/// An `app:state` value in the application graph. The state inheres in the [`Action`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ActionState {
@@ -504,7 +504,7 @@ impl Plan {
 
 /// A charter — a directive that organizes plans under a shared purpose.
 ///
-/// Maps to `actions:Charter` (subclass of cco:DirectiveInformationContentEntity).
+/// An `app:Charter` in the application graph.
 /// Charters are the highest-level organizational unit for [`Plan`]s.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct Charter {

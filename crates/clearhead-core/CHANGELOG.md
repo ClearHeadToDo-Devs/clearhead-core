@@ -7,7 +7,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 ## [Unreleased]
 
 ### Added
-- `rdf::app::project_app`: the application graph (`app:` vocabulary, specifications `ontology.md`, Decision 45), projected from a `DomainModel`, host-supplied `app::Locations` (`Locations::of(&Workspace)`), the workspace config and the viewer's zone. Written times are as written; `notBefore`, `lateFrom` and `durationMinutes` are derived in the zone. The graph fixture's `expected-app.ttl` is its conformance test. The CLI's queries read it; the v4 projection remains only until `retire-v4`.
+- `rdf::app::project_app`: the application graph (`app:` vocabulary, specifications `ontology.md`, Decision 45), projected from a `DomainModel`, host-supplied `app::Locations` (`Locations::of(&Workspace)`), the workspace config and the viewer's zone. Written times are as written; `notBefore`, `lateFrom` and `durationMinutes` are derived in the zone. The graph fixture's `expected-app.ttl` is its conformance test. The CLI's queries read it.
 - `Bound::xsd`, `Bound::end_instant_in`, `Planned::duration_in`: the as-written XSD form and zone-aware instants.
 - `app:plannedFrom`, the planned start's instant in the viewer's zone, so queries compare `@` without reading the written value. The Turtle, TriG and JSON-LD serializers declare the `app:` and `skos:` prefixes.
 - `WorkspaceRead::objective_files` and `Workspace::objective_files`: each objective's data-root-relative file. `Workspace::with_objectives` takes them.
@@ -18,6 +18,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - `Bound` is its written form (platform Decision 52): `local`, the written `offset` if any, and `precision`. The `at` field is now `at()`, resolved in the local zone, or `at_in(zone)`; `resolve_local` resolves a local time as RFC 5545 does (first occurrence when it occurs twice, the offset before the gap when it does not occur). Text round-trips exactly, so a written offset is no longer rewritten as local time, and a time with an offset but no seconds, or in a spring-forward gap, no longer fails to parse and drops its field.
 
 ### Removed
+- The v4 projection (`rdf::project_domain`, `rdf::serialize_domain`), the `ws:` workspace-snapshot layer (`rdf::project_workspace_snapshot`, `rdf::WorkspaceSnapshot`) and the v4 namespace constants and fixtures (platform `retire-v4`). The application graph (`rdf::app`) is the only projection; the serializers declare only its prefixes.
 - `Metric::review_date`: reviewing a metric is an action (specifications, 2026-10-03). Frontmatter that still has `review_date` loads unchanged; the key is ignored.
 
 ## [0.1.0] - 2026-02-01

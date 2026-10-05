@@ -5,15 +5,15 @@
 //! charter's (clearhead-core docs/DECISIONS.md Decision 1), so every surface
 //! runs its fully assembled dataset through [`anonymize_charters`].
 
-use super::{actions_pred, canonicalize, uuid_node};
+use super::{canonicalize, uuid_node};
 use oxrdf::{BlankNode, NamedOrBlankNode, Quad, Term};
 use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
-/// Rewrite each charter in `ids` to a blank node and drop its `hasUUID`.
+/// Rewrite each charter in `ids` to a blank node.
 ///
-/// Both subjects and objects are rewritten, so edges from other entities and
-/// from the workspace-snapshot layer still join. Run it once over the whole
+/// Both subjects and objects are rewritten, so edges from other entities
+/// still join. Run it once over the whole
 /// dataset: blank labels are dataset-scoped, sequential, and never contain the
 /// UUID they replace.
 pub fn anonymize_charters(quads: Vec<Quad>, ids: &HashSet<Uuid>) -> Vec<Quad> {
@@ -31,14 +31,11 @@ pub fn anonymize_charters(quads: Vec<Quad>, ids: &HashSet<Uuid>) -> Vec<Quad> {
             (uuid_node(id), blank)
         })
         .collect();
-    let has_uuid = actions_pred("hasUUID");
-
     let mut quads: Vec<Quad> = quads
         .into_iter()
-        .filter_map(|quad| {
+        .map(|quad| {
             let subject = match quad.subject {
                 NamedOrBlankNode::NamedNode(node) => match blanks.get(&node) {
-                    Some(_) if quad.predicate == has_uuid => return None,
                     Some(blank) => NamedOrBlankNode::BlankNode(blank.clone()),
                     None => NamedOrBlankNode::NamedNode(node),
                 },
@@ -51,7 +48,7 @@ pub fn anonymize_charters(quads: Vec<Quad>, ids: &HashSet<Uuid>) -> Vec<Quad> {
                 },
                 other => other,
             };
-            Some(Quad::new(subject, quad.predicate, object, quad.graph_name))
+            Quad::new(subject, quad.predicate, object, quad.graph_name)
         })
         .collect();
     canonicalize(&mut quads);
@@ -61,7 +58,8 @@ pub fn anonymize_charters(quads: Vec<Quad>, ids: &HashSet<Uuid>) -> Vec<Quad> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::rdf::{project_domain, transient_graph_name};
+    use crate::rdf::app::{APP_NS, Locations, project_app};
+    use crate::rdf::{ns, transient_graph_name};
     use crate::workspace::implicit_charter;
     use crate::{Action, DomainModel};
 
@@ -81,8 +79,20 @@ mod tests {
         }
     }
 
+    fn projected() -> Vec<Quad> {
+        let locations = Locations::default();
+        project_app(
+            &model(),
+            &locations,
+            None,
+            &chrono::Utc,
+            transient_graph_name(),
+        )
+        .unwrap()
+    }
+
     fn anonymized() -> Vec<Quad> {
-        let quads = project_domain(&model(), None, transient_graph_name()).unwrap();
+        let quads = projected();
         anonymize_charters(quads, &HashSet::from([Uuid::parse_str(HIDDEN).unwrap()]))
     }
 
@@ -95,28 +105,28 @@ mod tests {
     #[test]
     fn edges_to_and_from_the_hidden_charter_still_join() {
         let quads = anonymized();
-        let is_hidden =
-            |subject: &NamedOrBlankNode| matches!(subject, NamedOrBlankNode::BlankNode(_));
         let points_at_hidden = |object: &Term| matches!(object, Term::BlankNode(_));
-        let sub_charter = actions_pred("hasSubCharter");
-        let part_of = crate::rdf::bfo_pred(crate::rdf::BFO_PART_OF);
-        assert!(
-            quads
-                .iter()
-                .any(|q| is_hidden(&q.subject) && q.predicate == sub_charter),
-            "parent edge lost"
+        let part_of = ns(APP_NS, "partOf");
+        let parts: Vec<_> = quads
+            .iter()
+            .filter(|q| q.predicate == part_of && points_at_hidden(&q.object))
+            .collect();
+        assert_eq!(
+            parts.len(),
+            2,
+            "the child charter and the action keep their whole: {parts:?}"
         );
         assert!(
             quads
                 .iter()
-                .any(|q| q.predicate == part_of && points_at_hidden(&q.object)),
-            "action containment lost"
+                .any(|q| matches!(q.subject, NamedOrBlankNode::BlankNode(_))),
+            "the hidden charter keeps its own facts"
         );
     }
 
     #[test]
     fn declared_charters_are_untouched() {
-        let quads = project_domain(&model(), None, transient_graph_name()).unwrap();
+        let quads = projected();
         assert_eq!(anonymize_charters(quads.clone(), &HashSet::new()), quads);
         let child = uuid_node(implicit_charter("child").id);
         assert!(
