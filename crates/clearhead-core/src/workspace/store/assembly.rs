@@ -81,7 +81,8 @@ impl WorkspaceAssemblyInput {
 pub fn assemble_workspace(input: &WorkspaceAssemblyInput) -> Result<WorkspaceRead, WorkspaceError> {
     let root_charter = input.root_charter.as_str();
     let mut findings = read_failure_findings(input);
-    let mut charters: HashMap<String, MarkdownCharter> = HashMap::new();
+    // Ordered by name, so every load returns charters in one order.
+    let mut charters: BTreeMap<String, MarkdownCharter> = BTreeMap::new();
     let mut path_for_name: HashMap<String, PathBuf> = HashMap::new();
     let global_actions = collect_sidecar_actions(input);
 
@@ -570,7 +571,7 @@ fn collect_sidecar_actions(input: &WorkspaceAssemblyInput) -> BTreeMap<String, A
 
 fn attach_plans(
     input: &WorkspaceAssemblyInput,
-    charters: &mut HashMap<String, MarkdownCharter>,
+    charters: &mut BTreeMap<String, MarkdownCharter>,
     findings: &mut Vec<Finding>,
 ) -> Result<(), WorkspaceError> {
     let (inventory, mount) = input.effective_plan_inventory();
@@ -957,6 +958,38 @@ mod tests {
             .find(|charter| charter.parent.is_none())
             .unwrap();
         assert_eq!(root.state, None);
+    }
+
+    #[test]
+    fn charters_load_in_a_stable_order() {
+        let files: Vec<(String, String)> = [
+            "kale", "apple", "zebra", "mango", "fig", "pear", "lime", "date",
+        ]
+        .iter()
+        .map(|name| {
+            (
+                format!("charters/{name}.actions"),
+                format!("[ ] {name} work\n"),
+            )
+        })
+        .collect();
+        let files: Vec<(&str, &str)> = files
+            .iter()
+            .map(|(p, c)| (p.as_str(), c.as_str()))
+            .collect();
+        let order = || {
+            assemble_workspace(&input("home", &files, None, &[]))
+                .unwrap()
+                .charters
+                .into_iter()
+                .map(|charter| charter.title)
+                .collect::<Vec<_>>()
+        };
+        let first = order();
+        assert_eq!(first, order(), "two loads, one order");
+        let mut sorted = first.clone();
+        sorted.sort();
+        assert_eq!(first, sorted, "charters come back sorted by name");
     }
 
     #[test]
