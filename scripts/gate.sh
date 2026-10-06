@@ -40,7 +40,7 @@ step() {
 
 # Oxigraph may only enter through the CLI's optional `sparql` feature.
 no_oxigraph_in_minimal_cli() {
-  if cargo tree -p clearhead_cli --no-default-features -e normal --prefix none | grep -q '^oxigraph '; then
+  if cargo tree -p clearhead --no-default-features -e normal --prefix none | grep -q '^oxigraph '; then
     echo "FAIL: oxigraph appears in the minimal CLI dependency graph"
     return 1
   fi
@@ -49,7 +49,7 @@ no_oxigraph_in_minimal_cli() {
 step "fmt"                              cargo fmt --all --check
 step "clippy"                           cargo clippy --workspace --all-targets --no-deps -- -D warnings
 step "core builds with no default features" cargo check -p clearhead_core --no-default-features
-step "cli builds with no default features"  cargo check -p clearhead_cli --no-default-features
+step "cli builds with no default features"  cargo check -p clearhead --no-default-features
 step "no oxigraph in the minimal cli"   no_oxigraph_in_minimal_cli
 step "wasm dependency gate"             sh scripts/wasm-dependency-gate.sh
 step "pure-core source gate"            sh scripts/pure-core-source-gate.sh
