@@ -44,6 +44,10 @@
 //! `oxrdf` and `oxttl`. SPARQL evaluation and any Oxigraph store deliberately
 //! stay out of this crate (they belong to the optional CLI `sparql` feature).
 
+/// The specification release this crate implements (`[package.metadata.clearhead]
+/// specification` in its Cargo.toml).
+pub const SPECIFICATION: &str = env!("CLEARHEAD_SPECIFICATION");
+
 pub mod workspace;
 
 pub mod config;

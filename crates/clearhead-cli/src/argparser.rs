@@ -1,5 +1,6 @@
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
+use std::sync::LazyLock;
 
 /// CLI argument parser - returns typed structs for ergonomic access
 pub fn parse_cli() -> Cli {
@@ -117,8 +118,17 @@ impl From<ActionStateArg> for clearhead_core::ActionState {
     }
 }
 
+/// `clearhead --version`: this build and the specification release it implements.
+static VERSION: LazyLock<String> = LazyLock::new(|| {
+    format!(
+        "{} (specification {})",
+        env!("CARGO_PKG_VERSION"),
+        clearhead_core::SPECIFICATION
+    )
+});
+
 #[derive(Parser)]
-#[command(version, about, long_about = None)]
+#[command(name = "clearhead", version = VERSION.as_str(), about, long_about = None)]
 pub struct Cli {
     /// Sets a custom config file
     #[arg(short, long, value_name = "FILE")]
