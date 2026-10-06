@@ -44,11 +44,10 @@ thiserror = "2.0"
 topiary-core = { version = "0.7.3", optional = true }
 topiary-tree-sitter-facade = { version = "0.7.3", optional = true }
 tree-sitter = "0.26.3"
-# Consumed from its canonical repository so a standalone Core checkout builds
-# without a sibling tree-sitter-actions checkout. The pinned platform composition
-# and local sibling development override this to the adjacent path via the
-# platform `.cargo/config.toml` `[patch]` table; see the README.
-tree-sitter-actions = { git = "https://github.com/ClearHeadToDo-Devs/tree-sitter-actions.git", rev = "adfbc3404325ecf740ab624e5d719a3ad814cb0d", version = "0.10.0" }
+# From crates.io, as any consumer gets it. To build against a local grammar
+# checkout, pass the override on the command line (see the README):
+#   --config 'patch.crates-io.tree-sitter-actions.path="../tree-sitter-actions"'
+tree-sitter-actions = "0.10.0"
 pulldown-cmark = { version = "0.13.4", default-features = false }
 regex = { version = "1.13.1", default-features = false, features = ["std", "unicode-perl"] }
 

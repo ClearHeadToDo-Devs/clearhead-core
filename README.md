@@ -44,9 +44,17 @@ cargo test  --workspace
 
 Select a single crate with `-p`, e.g. `cargo test -p clearhead_core`.
 
-When developing inside the ClearHead platform super-repo, a `.cargo/config.toml`
-`[patch]` redirects the tree-sitter grammar dependency to the adjacent submodule
-checkout; a standalone clone builds the pinned grammar from Git instead.
+The tree-sitter grammar comes from crates.io at the version in `Cargo.toml`, in
+every checkout, as any consumer gets it. To try an unpublished grammar change,
+point the build at a local checkout for that invocation only:
+
+```bash
+cargo test --workspace \
+  --config 'patch.crates-io.tree-sitter-actions.path="../tree-sitter-actions"'
+```
+
+Publish the grammar and bump the version here before committing; the lockfile
+must name the registry crate, or `--locked` fails in CI.
 
 ## License
 
