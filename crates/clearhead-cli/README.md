@@ -11,27 +11,28 @@ Each [GitHub release](https://github.com/ClearHeadToDo-Devs/clearhead-core/relea
 With [cargo-binstall](https://github.com/cargo-bins/cargo-binstall), which downloads that archive rather than compiling:
 
 ```bash
-cargo binstall clearhead_cli
+cargo binstall clearhead
 ```
 
-Without Rust, as in a container: download the archive and check it against the `.sha256` published beside it. Pin both, so a rebuild installs the same bytes:
+Without Rust, as in a container: download the archive and check it against the `.sha256` published beside it. Pin both, so a rebuild installs the same bytes (`--build-arg CLEARHEAD_VERSION=… --build-arg CLEARHEAD_SHA256=…`):
 
 ```dockerfile
-ARG CLEARHEAD_VERSION=0.3.0
-# From the release's clearhead_cli-x86_64-unknown-linux-gnu.tar.xz.sha256
-ARG CLEARHEAD_SHA256=e5793893427115c449fc4addbf0c42795c902557f1ba09906a1a051bf38a5df7
-RUN curl -sSfL https://github.com/ClearHeadToDo-Devs/clearhead-core/releases/download/v${CLEARHEAD_VERSION}/clearhead_cli-x86_64-unknown-linux-gnu.tar.xz -o /tmp/clearhead.tar.xz \
+# Pass both: a release version and the sum published beside its archive, at
+# .../releases/download/v<version>/clearhead-x86_64-unknown-linux-gnu.tar.xz.sha256
+ARG CLEARHEAD_VERSION
+ARG CLEARHEAD_SHA256
+RUN curl -sSfL https://github.com/ClearHeadToDo-Devs/clearhead-core/releases/download/v${CLEARHEAD_VERSION}/clearhead-x86_64-unknown-linux-gnu.tar.xz -o /tmp/clearhead.tar.xz \
     && echo "${CLEARHEAD_SHA256}  /tmp/clearhead.tar.xz" | sha256sum -c - \
     && tar -xJf /tmp/clearhead.tar.xz -C /usr/local/bin --strip-components=1 \
-        clearhead_cli-x86_64-unknown-linux-gnu/clearhead clearhead_cli-x86_64-unknown-linux-gnu/clearhead-lsp \
+        clearhead-x86_64-unknown-linux-gnu/clearhead clearhead-x86_64-unknown-linux-gnu/clearhead-lsp \
     && rm /tmp/clearhead.tar.xz
 ```
 
 From source, on any platform Rust builds for:
 
 ```bash
-cargo install clearhead_cli
-cargo install clearhead_cli --no-default-features   # without the SPARQL query engine
+cargo install clearhead
+cargo install clearhead --no-default-features   # without the SPARQL query engine
 ```
 
 ## Quick start

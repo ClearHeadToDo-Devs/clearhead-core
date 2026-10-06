@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
+## 0.3.1 - 2026-10-06
+
+### Changed
+- The crate is named `clearhead`, for its command: `cargo binstall clearhead` or `cargo install clearhead`. It was `clearhead_cli` through 0.3.0; the library keeps that name. The release archive is `clearhead-x86_64-unknown-linux-gnu.tar.xz`.
+
 ## 0.3.0 - 2026-10-06
 
 The first release with prebuilt binaries: an x86_64 Linux archive holding `clearhead` and `clearhead-lsp`, installable with `cargo binstall clearhead_cli` or from the GitHub release. It includes every dated entry below since 0.2.1 (2025-12-24). A build without the query engine is a source build: `cargo install clearhead_cli --no-default-features`.

@@ -1,11 +1,18 @@
 [package]
-name = "clearhead_cli"
+# Named for its command, so `cargo install clearhead` installs `clearhead`.
+name = "clearhead"
 description = "A CLI tool and library for working with the clearhead framework"
-version = "0.3.0"
+version = "0.3.1"
 authors = ["Darrion Burgess <darrionburgess@gmail.com>"]
 edition = "2024"
 license = "MIT"
 repository = "https://github.com/ClearHeadToDo-Devs/clearhead-core"
+
+# The library keeps its name: code imports clearhead_cli, and a library named
+# like the `clearhead` binary would collide with it in the docs.
+[lib]
+name = "clearhead_cli"
+path = "src/lib.rs"
 
 [[bin]]
 name = "clearhead"

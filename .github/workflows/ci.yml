@@ -42,8 +42,8 @@ jobs:
       # only ever enter through the optional `sparql` feature.
       - name: Check minimal CLI profile carries no query engine
         run: |
-          cargo check -p clearhead_cli --no-default-features --locked
-          ! cargo tree -p clearhead_cli --no-default-features -e normal --prefix none --locked | grep -q '^oxigraph '
+          cargo check -p clearhead --no-default-features --locked
+          ! cargo tree -p clearhead --no-default-features -e normal --prefix none --locked | grep -q '^oxigraph '
 
       # Core must stay buildable for a WebAssembly host: its portable dependency
       # graph may pull no native-only capability (fs locking/staging, temp files,
