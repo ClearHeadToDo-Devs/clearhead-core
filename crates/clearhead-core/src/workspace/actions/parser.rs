@@ -750,6 +750,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "formatting")] // writes canonical .actions
     #[test]
     fn test_reserved_chars_survive_in_description_and_refs() {
         // Description bodies and predecessor refs are freeform too — a literal

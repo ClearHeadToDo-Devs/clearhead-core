@@ -1,3 +1,6 @@
+// These invariants round-trip through canonical .actions formatting.
+#![cfg(feature = "formatting")]
+
 use chrono::{DateTime, Duration, Local, NaiveDate, TimeZone};
 use clearhead_core::domain::time::{Bound, Due, Planned};
 use clearhead_core::workspace::actions::lint_document;

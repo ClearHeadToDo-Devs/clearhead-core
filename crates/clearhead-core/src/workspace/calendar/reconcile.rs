@@ -2396,6 +2396,7 @@ mod tests {
         assert!(ambiguous.unwrap_err().to_string().contains("more than one"));
     }
 
+    #[cfg(feature = "formatting")] // writes canonical .actions
     #[test]
     fn prepare_sync_persists_plan_link_with_sidecar_precondition() {
         let action_id = Uuid::parse_str("019baaec-00b6-7991-be34-94b6821261b1").unwrap();
@@ -2474,6 +2475,7 @@ mod tests {
         }));
     }
 
+    #[cfg(feature = "formatting")] // writes canonical .actions
     #[test]
     fn prepare_sync_unlinks_action_sidecar_calendar_and_store_in_one_guarded_batch() {
         let action_id = Uuid::parse_str("019baaec-00b6-7991-be34-94b6821261b2").unwrap();
