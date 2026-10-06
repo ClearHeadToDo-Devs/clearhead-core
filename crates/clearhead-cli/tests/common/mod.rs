@@ -125,8 +125,13 @@ fn specification_examples_dir() -> PathBuf {
 /// Read one canonical DSL example from the inert specifications checkout.
 pub fn read_example(filename: &str) -> String {
     let example_path = specification_examples_dir().join(filename);
-    fs::read_to_string(&example_path)
-        .unwrap_or_else(|_| panic!("Failed to read specification example: {}", filename))
+    fs::read_to_string(&example_path).unwrap_or_else(|_| {
+        panic!(
+            "Failed to read specification example {}: set CLEARHEAD_SPEC_DIR to a checkout \
+                 of the specification release clearhead_core declares",
+            example_path.display()
+        )
+    })
 }
 
 pub fn get_examples() -> HashMap<String, String> {

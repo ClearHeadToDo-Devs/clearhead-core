@@ -8,6 +8,11 @@ license = "MIT"
 repository = "https://github.com/ClearHeadToDo-Devs/clearhead-core.git"
 readme = "README.md"
 
+# The specification release this crate implements: CI tests against its
+# published examples, and the platform checks its pinned specification is it.
+[package.metadata.clearhead]
+specification = "v0.2.0"
+
 [features]
 default = ["formatting"]
 # Canonical .actions source formatting. Read-only consumers can disable default

@@ -12,10 +12,10 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      # One repository, one workspace: core, CLI, LSP, and graphd build from a
-      # single checkout with sibling path dependencies. The only out-of-repo
-      # dependency is the tree-sitter grammar, fetched from its canonical Git
-      # repository like any other consumer.
+      # One repository, one workspace: core and the CLI (with the LSP) build
+      # from a single checkout. Everything else is a published release, as any
+      # consumer gets it: the grammar from crates.io, and the specification's
+      # examples from the release Core declares it implements.
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
@@ -54,5 +54,22 @@ jobs:
       - name: WASM dependency gate
         run: sh scripts/wasm-dependency-gate.sh
 
+      - name: Find the specification release Core implements
+        id: spec
+        run: |
+          release=$(cargo metadata --no-deps --locked --format-version 1 |
+            jq -r '.packages[] | select(.name == "clearhead_core") | .metadata.clearhead.specification')
+          echo "release=$release" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout the specification release
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          repository: ClearHeadToDo-Devs/specifications
+          ref: ${{ steps.spec.outputs.release }}
+          path: specifications
+          persist-credentials: false
+
       - name: Test
+        env:
+          CLEARHEAD_SPEC_DIR: ${{ github.workspace }}/specifications
         run: cargo test --workspace --locked
