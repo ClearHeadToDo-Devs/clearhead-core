@@ -6,16 +6,32 @@ Work items live in plain-text `.actions` files that any editor can read and writ
 
 ## Installation
 
+Each [GitHub release](https://github.com/ClearHeadToDo-Devs/clearhead-core/releases) carries a prebuilt x86_64 Linux archive holding `clearhead` and `clearhead-lsp`. It needs glibc 2.34 or later (Debian 12, Ubuntu 22.04, Arch).
+
+With [cargo-binstall](https://github.com/cargo-bins/cargo-binstall), which downloads that archive rather than compiling:
+
 ```bash
-cargo install clearhead
+cargo binstall clearhead_cli
 ```
 
-Or build from source:
+Without Rust, as in a container: download the archive and check it against the `.sha256` published beside it. Pin both, so a rebuild installs the same bytes:
+
+```dockerfile
+ARG CLEARHEAD_VERSION=0.3.0
+# From the release's clearhead_cli-x86_64-unknown-linux-gnu.tar.xz.sha256
+ARG CLEARHEAD_SHA256=e5793893427115c449fc4addbf0c42795c902557f1ba09906a1a051bf38a5df7
+RUN curl -sSfL https://github.com/ClearHeadToDo-Devs/clearhead-core/releases/download/v${CLEARHEAD_VERSION}/clearhead_cli-x86_64-unknown-linux-gnu.tar.xz -o /tmp/clearhead.tar.xz \
+    && echo "${CLEARHEAD_SHA256}  /tmp/clearhead.tar.xz" | sha256sum -c - \
+    && tar -xJf /tmp/clearhead.tar.xz -C /usr/local/bin --strip-components=1 \
+        clearhead_cli-x86_64-unknown-linux-gnu/clearhead clearhead_cli-x86_64-unknown-linux-gnu/clearhead-lsp \
+    && rm /tmp/clearhead.tar.xz
+```
+
+From source, on any platform Rust builds for:
 
 ```bash
-git clone https://github.com/ClearHeadToDo-Devs/clearhead-core
-cd clearhead-core
-cargo build --release -p clearhead_cli
+cargo install clearhead_cli
+cargo install clearhead_cli --no-default-features   # without the SPARQL query engine
 ```
 
 ## Quick start
