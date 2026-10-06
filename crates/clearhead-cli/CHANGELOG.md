@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
+## 0.3.0 - 2026-10-06
+
+The first release with prebuilt binaries: an x86_64 Linux archive holding `clearhead` and `clearhead-lsp`, installable with `cargo binstall clearhead_cli` or from the GitHub release. It includes every dated entry below since 0.2.1 (2025-12-24). A build without the query engine is a source build: `cargo install clearhead_cli --no-default-features`.
+
+### Added
+- `clearhead --version` names the specification release it implements: `clearhead 0.3.0 (specification v0.2.0)` (platform Decision 54).
+
+### Changed
+- The grammar comes from crates.io (`tree-sitter-actions` 0.10.0), as for any consumer.
+
 ## 2026-10-04
 
 ### Changed

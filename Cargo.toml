@@ -15,3 +15,8 @@ members = ["crates/clearhead-core", "crates/clearhead-cli"]
 [workspace.metadata]
 name = "clearhead-rs"
 description = "Rust workspace for the ClearHead platform: a pure domain core (clearhead_core) and one effectful crate (clearhead_cli) holding the filesystem adapter, CLI, and LSP."
+
+# The profile that 'dist' will build with
+[profile.dist]
+inherits = "release"
+lto = "thin"
