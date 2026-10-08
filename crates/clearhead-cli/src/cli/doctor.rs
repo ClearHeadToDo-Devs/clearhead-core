@@ -24,6 +24,10 @@ pub fn run(ctx: &CommandContext, json: bool, fix: bool, dry_run: bool) -> anyhow
             .context("doctor after repair")?;
     }
 
+    diagnosis
+        .findings
+        .extend(ctx.missing_workspace_findings.iter().cloned());
+
     if json {
         println!("{}", serde_json::to_string_pretty(&diagnosis)?);
     } else {
