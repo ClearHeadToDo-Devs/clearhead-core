@@ -37,6 +37,8 @@ pub struct CommandContext {
     pub data_dir: PathBuf,
     pub config_path: PathBuf,
     pub project_root: Option<PathBuf>,
+    additional_workspace_dirs: Vec<PathBuf>,
+    pub missing_workspace_findings: Vec<clearhead_core::workspace::Finding>,
     /// When set, `workspace_dirs()` returns only the workspace whose name
     /// matches (case-insensitive contains). Set via `--workspace <name>`.
     pub workspace_filter: Option<String>,
@@ -67,11 +69,43 @@ impl CommandContext {
         ensure_dir_exists(&data_dir).context("Failed to create data dir")?;
         ensure_dir_exists(&config_dir).context("Failed to create config dir")?;
 
+        // Resolve and check configured entries once for every verb. Missing
+        // entries are stale configuration, never workspaces to initialize.
+        let config_base = project_root
+            .as_ref()
+            .map(|r| r.join(".clearhead"))
+            .or_else(|| config_path.parent().map(Path::to_path_buf))
+            .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+        let resolved = clearhead_cli::environment_reader::resolve_workspace_paths(
+            &config.additional_workspaces,
+            &config_base,
+        );
+        let mut additional_workspace_dirs = Vec::new();
+        let mut missing_workspace_findings = Vec::new();
+        for (entry, path) in config.additional_workspaces.iter().zip(resolved) {
+            if !path.exists() {
+                let message = format!(
+                    "Skipping missing additional_workspaces entry '{entry}' ({}); remove or correct the stale config entry",
+                    path.display()
+                );
+                eprintln!("warning: {message}");
+                missing_workspace_findings.push(clearhead_core::workspace::Finding::warning(
+                    "missing-additional-workspace",
+                    &path,
+                    message,
+                ));
+            } else {
+                additional_workspace_dirs.push(path);
+            }
+        }
+
         Ok(Self {
             config,
             data_dir,
             config_path,
             project_root,
+            additional_workspace_dirs,
+            missing_workspace_findings,
             workspace_filter: cli.workspace.clone(),
         })
     }
@@ -119,11 +153,9 @@ impl CommandContext {
         let primary_name = workspace_name_for_root(&self.data_dir);
         let mut dirs = vec![(primary_name, self.data_dir.clone())];
 
-        let wc = self.workspace_config();
-        for path_str in &wc.additional_workspaces {
-            let path = PathBuf::from(path_str);
-            let name = workspace_name_for_root(&path);
-            dirs.push((name, path));
+        for path in &self.additional_workspace_dirs {
+            let name = workspace_name_for_root(path);
+            dirs.push((name, path.clone()));
         }
 
         if let Some(filter) = &self.workspace_filter {
@@ -156,29 +188,13 @@ impl CommandContext {
     /// Tool-specific `cli_*` fields stay in [`Config`], while shared tag,
     /// expansion, workspace, and Plan-path settings cross the Core boundary.
     pub fn workspace_config(&self) -> clearhead_core::WorkspaceConfig {
-        // Resolve relative additional_workspaces paths against the project
-        // config location (<root>/.clearhead/).  config_path always holds the
-        // global config path even when a project config is active, so we
-        // prefer project_root/.clearhead/ when a project workspace exists.
-        // Fall back to config_path's parent (global config dir) otherwise.
-        let config_base = self
-            .project_root
-            .as_ref()
-            .map(|r| r.join(".clearhead"))
-            .or_else(|| self.config_path.parent().map(|p| p.to_path_buf()))
-            .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
-
-        let resolved_additional = clearhead_cli::environment_reader::resolve_workspace_paths(
-            &self.config.additional_workspaces,
-            &config_base,
-        );
-
         clearhead_core::WorkspaceConfig {
             tag_hierarchies: self.config.tag_hierarchies.clone(),
             expansion_total_instances: self.config.expansion_total_instances,
             plan_component: self.config.plan_component,
-            additional_workspaces: resolved_additional
-                .into_iter()
+            additional_workspaces: self
+                .additional_workspace_dirs
+                .iter()
                 .map(|p| p.to_string_lossy().into_owned())
                 .collect(),
             ..clearhead_core::WorkspaceConfig::default()

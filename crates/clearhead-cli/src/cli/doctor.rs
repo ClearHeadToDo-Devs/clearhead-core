@@ -17,12 +17,18 @@ pub fn run(ctx: &CommandContext, json: bool, fix: bool, dry_run: bool) -> anyhow
 
     if fix {
         repair_unowned_state(ctx, &diagnosis, dry_run)?;
-        if dry_run {
+        if dry_run && ctx.missing_workspace_findings.is_empty() {
             return Ok(());
         }
-        diagnosis = clearhead_cli::filesystem::diagnose_workspace(&ctx.data_dir)
-            .context("doctor after repair")?;
+        if !dry_run {
+            diagnosis = clearhead_cli::filesystem::diagnose_workspace(&ctx.data_dir)
+                .context("doctor after repair")?;
+        }
     }
+
+    diagnosis
+        .findings
+        .extend(ctx.missing_workspace_findings.iter().cloned());
 
     if json {
         println!("{}", serde_json::to_string_pretty(&diagnosis)?);
