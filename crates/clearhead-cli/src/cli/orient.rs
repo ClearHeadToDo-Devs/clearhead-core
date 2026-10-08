@@ -85,24 +85,13 @@ fn published_id(charter: &clearhead_core::MarkdownCharter) -> Option<String> {
 }
 
 pub fn build(ctx: &CommandContext) -> anyhow::Result<Orient> {
-    // Load once: the native sections and the unscheduled query read the same
-    // snapshot. A `--workspace` filter can leave the primary out of the
-    // query's set; only then is it loaded on its own.
+    // Load once: every section uses the same selected workspace snapshot.
     let workspaces = crate::query::dataset::load_workspaces(ctx).context("orient")?;
-    let unfiltered_primary;
-    let charters = match workspaces.iter().find(|ws| ws.root == ctx.data_dir) {
-        Some(primary) => &primary.charters,
-        None => {
-            unfiltered_primary =
-                clearhead_cli::filesystem::load_workspace(&ctx.data_dir).context("orient")?;
-            &unfiltered_primary
-        }
-    };
-    let charter_root = clearhead_cli::filesystem::charter_root(&ctx.data_dir);
 
     let active_charters = Bounded::take(
-        charters
+        workspaces
             .iter()
+            .flat_map(|workspace| &workspace.charters)
             .filter(|charter| charter.state == Some(CharterState::Active))
             .map(|charter| CharterSummary {
                 id: published_id(charter),
@@ -115,31 +104,39 @@ pub fn build(ctx: &CommandContext) -> anyhow::Result<Orient> {
 
     let mut blockers = Vec::new();
     let mut completions = Vec::new();
-    for charter in charters {
-        if charter.state == Some(CharterState::Blocked) {
-            blockers.push(BlockerEntry::Charter {
-                id: published_id(charter),
-                title: charter.title.clone(),
-            });
-        }
-        for sourced in &charter.actions {
-            if sourced.action.state == ActionState::BlockedOrAwaiting {
-                blockers.push(BlockerEntry::Action {
-                    id: canonical_id(sourced.action.id),
-                    name: sourced.action.name.clone(),
-                    charter: charter.title.clone(),
+    for workspace in &workspaces {
+        let charter_root = clearhead_cli::filesystem::charter_root(&workspace.root);
+        for charter in &workspace.charters {
+            if charter.state == Some(CharterState::Blocked) {
+                blockers.push(BlockerEntry::Charter {
+                    id: published_id(charter),
+                    title: charter.title.clone(),
                 });
             }
-        }
+            for sourced in &charter.actions {
+                if sourced.action.state == ActionState::BlockedOrAwaiting {
+                    blockers.push(BlockerEntry::Action {
+                        id: canonical_id(sourced.action.id),
+                        name: sourced.action.name.clone(),
+                        charter: charter.title.clone(),
+                    });
+                }
+            }
 
-        let Some(actions_file) = &charter.actions_file else {
-            continue;
-        };
-        let completed_path = clearhead_cli::filesystem::action_files::completed_actions_path(
-            &charter_root.join(actions_file),
-        );
-        for action in clearhead_cli::filesystem::action_files::read_actions(&completed_path)? {
-            completions.push(action);
+            let Some(actions_file) = &charter.actions_file else {
+                continue;
+            };
+            let completed_path = clearhead_cli::filesystem::action_files::completed_actions_path(
+                &charter_root.join(actions_file),
+            );
+            match clearhead_cli::filesystem::action_files::read_actions(&completed_path) {
+                Ok(actions) => completions.extend(actions),
+                Err(error) if workspace.root == ctx.data_dir => return Err(error.into()),
+                Err(error) => tracing::warn!(
+                    "Skipping completed actions '{}': {error}",
+                    completed_path.display()
+                ),
+            }
         }
     }
     completions.sort_by_key(|action| std::cmp::Reverse(action.completed_at.map(|when| when.at())));
