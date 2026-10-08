@@ -16,6 +16,7 @@ pub mod transact;
 pub mod verb_result;
 
 use anyhow::Context;
+use std::collections::HashSet;
 use std::fs;
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
@@ -82,8 +83,12 @@ impl CommandContext {
         );
         let mut additional_workspace_dirs = Vec::new();
         let mut missing_workspace_findings = Vec::new();
+        let mut seen = HashSet::new();
         for (entry, path) in config.additional_workspaces.iter().zip(resolved) {
-            if !path.exists() {
+            if !seen.insert(path.clone()) {
+                continue;
+            }
+            if !path.is_dir() {
                 let message = format!(
                     "Skipping missing additional_workspaces entry '{entry}' ({}); remove or correct the stale config entry",
                     path.display()

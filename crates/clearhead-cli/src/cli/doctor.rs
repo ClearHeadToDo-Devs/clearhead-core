@@ -17,13 +17,11 @@ pub fn run(ctx: &CommandContext, json: bool, fix: bool, dry_run: bool) -> anyhow
 
     if fix {
         repair_unowned_state(ctx, &diagnosis, dry_run)?;
-        if dry_run && ctx.missing_workspace_findings.is_empty() {
+        if dry_run {
             return Ok(());
         }
-        if !dry_run {
-            diagnosis = clearhead_cli::filesystem::diagnose_workspace(&ctx.data_dir)
-                .context("doctor after repair")?;
-        }
+        diagnosis = clearhead_cli::filesystem::diagnose_workspace(&ctx.data_dir)
+            .context("doctor after repair")?;
     }
 
     diagnosis
