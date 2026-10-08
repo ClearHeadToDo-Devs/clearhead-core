@@ -199,6 +199,41 @@ fn orient_aggregates_every_loaded_workspace() {
 }
 
 #[test]
+fn orient_skips_broken_secondary_completed_file() {
+    for content in [b"not valid actions syntax !!!\n".as_slice(), &[0xff]] {
+        let env = multi_workspace_env();
+        let path = env.work_dir.join("second/charters/alpha.completed.actions");
+        std::fs::write(&path, content).unwrap();
+
+        let result = env
+            .command()
+            .env("RUST_LOG", "warn")
+            .arg("orient")
+            .assert()
+            .success();
+        let value: serde_json::Value = serde_json::from_slice(&result.get_output().stdout).unwrap();
+        assert_eq!(
+            value["active_charters"]["items"].as_array().unwrap().len(),
+            2
+        );
+        assert_eq!(value["blockers"]["items"].as_array().unwrap().len(), 3);
+        let completions = value["recent_completions"]["items"].as_array().unwrap();
+        assert_eq!(completions.len(), 1);
+        assert_eq!(completions[0]["name"], "Primary completion");
+        let stderr = String::from_utf8_lossy(&result.get_output().stderr);
+        assert!(stderr.contains("Skipping completed actions"), "{stderr}");
+        assert!(stderr.contains(&path.display().to_string()), "{stderr}");
+    }
+}
+
+#[test]
+fn orient_fails_on_broken_primary_completed_file() {
+    let env = multi_workspace_env();
+    env.write_actions("alpha.completed.actions", "not valid actions syntax !!!\n");
+    env.command().arg("orient").assert().failure();
+}
+
+#[test]
 fn orient_workspace_filter_applies_to_every_section() {
     let env = multi_workspace_env();
     let result = env
