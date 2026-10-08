@@ -125,6 +125,172 @@ fn orient_renders_human_readable_at_a_terminal_shape() {
     }
 }
 
+fn multi_workspace_env() -> TestEnv {
+    let env = TestEnv::new();
+    env.write_text("charters/alpha.md", ALPHA_MD);
+    env.write_actions(
+        "alpha.actions",
+        "[=] Primary blocker #01951111-0000-7000-0000-0000000000a2\n",
+    );
+    env.write_actions(
+        "alpha.completed.actions",
+        "[x] Primary completion %2026-01-01T09:00 #01951111-0000-7000-0000-0000000000a3\n",
+    );
+
+    let second = env.work_dir.join("second");
+    std::fs::create_dir_all(second.join("charters")).unwrap();
+    for (path, content) in [
+        (
+            "alpha.md",
+            ALPHA_MD
+                .replace("Alpha", "Secondary Alpha")
+                .replace("0000000000a0", "0000000000c0"),
+        ),
+        ("beta.md", BETA_MD.to_owned()),
+        (
+            "alpha.actions",
+            "[=] Secondary blocker #01951111-0000-7000-0000-0000000000b2\n".to_owned(),
+        ),
+        ("beta.actions", String::new()),
+        (
+            "alpha.completed.actions",
+            "[x] Secondary completion %2026-02-01T09:00 #01951111-0000-7000-0000-0000000000b3\n"
+                .to_owned(),
+        ),
+    ] {
+        std::fs::write(second.join("charters").join(path), content).unwrap();
+    }
+    env.write_config(&format!(
+        r#"{{"additional_workspaces":["{}"]}}"#,
+        second.display()
+    ));
+    env
+}
+
+#[test]
+fn orient_aggregates_every_loaded_workspace() {
+    let env = multi_workspace_env();
+    let result = env.command().arg("orient").assert().success();
+    let value: serde_json::Value = serde_json::from_slice(&result.get_output().stdout).unwrap();
+    let titles: Vec<_> = value["active_charters"]["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|item| item["title"].as_str().unwrap())
+        .collect();
+    assert_eq!(titles, ["Alpha", "Secondary Alpha"]);
+    let blockers = value["blockers"]["items"].as_array().unwrap();
+    assert_eq!(blockers.len(), 3);
+    assert!(
+        blockers
+            .iter()
+            .any(|item| item["name"] == "Primary blocker")
+    );
+    assert!(
+        blockers
+            .iter()
+            .any(|item| item["name"] == "Secondary blocker")
+    );
+    assert!(blockers.iter().any(|item| item["title"] == "Beta"));
+    let completions = value["recent_completions"]["items"].as_array().unwrap();
+    assert_eq!(completions.len(), 2);
+    assert_eq!(completions[0]["name"], "Secondary completion");
+    assert_eq!(completions[1]["name"], "Primary completion");
+}
+
+#[test]
+fn orient_workspace_filter_applies_to_every_section() {
+    let env = multi_workspace_env();
+    let result = env
+        .command()
+        .args(["orient", "--workspace", "second"])
+        .assert()
+        .success();
+    let value: serde_json::Value = serde_json::from_slice(&result.get_output().stdout).unwrap();
+    assert_eq!(
+        value["active_charters"]["items"].as_array().unwrap().len(),
+        1
+    );
+    assert_eq!(
+        value["active_charters"]["items"][0]["title"],
+        "Secondary Alpha"
+    );
+    assert_eq!(value["blockers"]["items"].as_array().unwrap().len(), 2);
+    assert_eq!(
+        value["recent_completions"]["items"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(
+        value["recent_completions"]["items"][0]["name"],
+        "Secondary completion"
+    );
+
+    let result = env
+        .command()
+        .args(["orient", "--workspace", "no-such-workspace"])
+        .assert()
+        .success();
+    let value: serde_json::Value = serde_json::from_slice(&result.get_output().stdout).unwrap();
+    for section in [
+        "active_charters",
+        "unscheduled",
+        "blockers",
+        "recent_completions",
+    ] {
+        assert_eq!(value[section]["items"], serde_json::json!([]));
+        assert_eq!(value[section]["omitted"], 0);
+    }
+}
+
+#[test]
+fn orient_bounds_sections_after_combining_workspaces() {
+    let env = TestEnv::new();
+    let second = env.work_dir.join("second");
+    std::fs::create_dir_all(second.join("charters")).unwrap();
+    env.write_config(&format!(
+        r#"{{"additional_workspaces":["{}"]}}"#,
+        second.display()
+    ));
+    for (index, root) in [&env.data_dir, &second].into_iter().enumerate() {
+        std::fs::create_dir_all(root.join("charters")).unwrap();
+        for i in 0..6 {
+            let stem = root.join("charters").join(format!("charter-{i}"));
+            std::fs::write(
+                stem.with_extension("md"),
+                format!("---\nstate: Active\n---\n# Charter {index}-{i}\n"),
+            )
+            .unwrap();
+            std::fs::write(
+                stem.with_extension("actions"),
+                format!("[=] Blocker {index}-{i} #01951111-0000-7000-0000-000000000{index}{i}1\n"),
+            )
+            .unwrap();
+            std::fs::write(
+                stem.with_extension("completed.actions"),
+                format!("[x] Completion {index}-{i} %2026-0{month}-0{day}T09:00 #01951111-0000-7000-0000-000000000{index}{i}2\n", month = index + 1, day = i + 1),
+            )
+            .unwrap();
+        }
+    }
+    let result = env.command().arg("orient").assert().success();
+    let value: serde_json::Value = serde_json::from_slice(&result.get_output().stdout).unwrap();
+    for section in ["active_charters", "blockers", "recent_completions"] {
+        assert_eq!(value[section]["items"].as_array().unwrap().len(), 10);
+        assert_eq!(value[section]["omitted"], 2);
+    }
+    assert_eq!(
+        value["recent_completions"]["items"][0]["name"],
+        "Completion 1-5"
+    );
+    assert_eq!(
+        value["recent_completions"]["items"][9]["name"],
+        "Completion 0-2"
+    );
+}
+
 #[test]
 fn orient_loads_the_workspace_once() {
     // Every load notes a violation once, so one notice line means one load:
