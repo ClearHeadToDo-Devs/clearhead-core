@@ -1,5 +1,6 @@
 ---
 id: 01a0daa5-a2c7-7811-b12f-5ce8283ceb76
+state: Active
 ---
 # Creating the Clearhead CLI
 
