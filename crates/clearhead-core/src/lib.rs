@@ -53,9 +53,12 @@ pub const SPECIFICATION: &str = env!("CLEARHEAD_SPECIFICATION");
 /// for a grammar built before ABI 15, which does not record its version.
 pub fn grammar_version() -> Option<String> {
     let language: tree_sitter::Language = tree_sitter_actions::LANGUAGE.into();
-    language
-        .metadata()
-        .map(|m| format!("v{}.{}.{}", m.major_version, m.minor_version, m.patch_version))
+    language.metadata().map(|m| {
+        format!(
+            "v{}.{}.{}",
+            m.major_version, m.minor_version, m.patch_version
+        )
+    })
 }
 
 pub mod workspace;
