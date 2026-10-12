@@ -48,6 +48,16 @@
 /// specification` in its Cargo.toml).
 pub const SPECIFICATION: &str = env!("CLEARHEAD_SPECIFICATION");
 
+/// The actions grammar release this crate parses with (`metadata.version` in
+/// tree-sitter-actions' `tree-sitter.json`), read from the linked parser. `None`
+/// for a grammar built before ABI 15, which does not record its version.
+pub fn grammar_version() -> Option<String> {
+    let language: tree_sitter::Language = tree_sitter_actions::LANGUAGE.into();
+    language
+        .metadata()
+        .map(|m| format!("v{}.{}.{}", m.major_version, m.minor_version, m.patch_version))
+}
+
 pub mod workspace;
 
 pub mod config;

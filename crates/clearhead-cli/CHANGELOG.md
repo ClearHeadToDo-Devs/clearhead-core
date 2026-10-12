@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
+## Unreleased
+
+### Added
+- `clearhead --version` also names the grammar release it parses with: `clearhead 0.3.1 (specification v0.2.0, grammar v0.10.0)`. `:checkhealth clearhead` compares it with the editor's parser to report drift.
+
 ## 0.3.1 - 2026-10-06
 
 ### Changed

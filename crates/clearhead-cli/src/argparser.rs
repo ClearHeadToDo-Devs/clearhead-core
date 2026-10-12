@@ -118,10 +118,15 @@ impl From<ActionStateArg> for clearhead_core::ActionState {
     }
 }
 
-/// `clearhead --version`: this build and the specification release it implements.
+/// `clearhead --version`: this build, the specification release it implements
+/// and the grammar release it parses with. Editors compare the grammar against
+/// their own parser to detect drift.
 static VERSION: LazyLock<String> = LazyLock::new(|| {
+    let grammar = clearhead_core::grammar_version()
+        .map(|v| format!(", grammar {v}"))
+        .unwrap_or_default();
     format!(
-        "{} (specification {})",
+        "{} (specification {}{grammar})",
         env!("CARGO_PKG_VERSION"),
         clearhead_core::SPECIFICATION
     )

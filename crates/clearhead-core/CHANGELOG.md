@@ -7,6 +7,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 ## [Unreleased]
 
 ### Added
+- `grammar_version()`: the linked tree-sitter-actions release, read from the parser's ABI 15 metadata (`v0.10.0`), beside `SPECIFICATION`.
 - `rdf::app::project_app`: the application graph (`app:` vocabulary, specifications `ontology.md`, Decision 45), projected from a `DomainModel`, host-supplied `app::Locations` (`Locations::of(&Workspace)`), the workspace config and the viewer's zone. Written times are as written; `notBefore`, `lateFrom` and `durationMinutes` are derived in the zone. The graph fixture's `expected-app.ttl` is its conformance test. The CLI's queries read it.
 - `Bound::xsd`, `Bound::end_instant_in`, `Planned::duration_in`: the as-written XSD form and zone-aware instants.
 - `app:plannedFrom`, the planned start's instant in the viewer's zone, so queries compare `@` without reading the written value. The Turtle, TriG and JSON-LD serializers declare the `app:` and `skos:` prefixes.
