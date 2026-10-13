@@ -118,6 +118,75 @@ fn union_default_graph_and_explicit_graph_both_find_workspace_data() {
 }
 
 #[test]
+fn shared_context_matches_once_in_union_and_remains_in_each_workspace_graph() {
+    let env = seed();
+    env.write_actions("work.actions", &format!("[ ] Alpha +human #{A}\n"));
+    let second = env.work_dir.join("second");
+    std::fs::create_dir_all(second.join("charters")).unwrap();
+    const SECOND_WS: &str = "00000000-0000-0000-0000-0000000000bb";
+    std::fs::write(
+        second.join("workspace.json"),
+        format!(r#"{{"workspace_id":"{SECOND_WS}","workspace_name":"second"}}"#),
+    )
+    .unwrap();
+    std::fs::write(
+        second.join("charters/other.actions"),
+        format!("[ ] Beta +human #{B}\n"),
+    )
+    .unwrap();
+    env.write_config(&format!(
+        r#"{{"additional_workspaces":["{}"]}}"#,
+        second.display()
+    ));
+    std::fs::create_dir_all(env.config_dir.join("queries")).unwrap();
+    std::fs::write(
+        env.config_dir.join("queries/for-human.sparql"),
+        "PREFIX app: <https://clearhead.dev/vocab/app/v1#>\n\
+         PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\n\
+         SELECT ?id ?name WHERE {\n\
+           ?id a app:Action ; rdfs:label ?name ; app:state ?state ;\n\
+               app:context/rdfs:label \"human\" .\n\
+           FILTER(?state NOT IN (app:Completed, app:Cancelled))\n\
+         } ORDER BY ?name",
+    )
+    .unwrap();
+    let output = env
+        .std_command()
+        .args(["query", "named", "for-human", "--format", "json"])
+        .output()
+        .expect("run for-human");
+    assert!(
+        output.status.success(),
+        "for-human failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let doc: Value = serde_json::from_slice(&output.stdout).expect("SRJ");
+    assert_eq!(binding_values(&doc, "name"), vec!["Alpha", "Beta"]);
+    assert_eq!(
+        binding_values(&doc, "id"),
+        vec![format!("urn:uuid:{A}"), format!("urn:uuid:{B}")]
+    );
+
+    let graph_doc = raw_srj(
+        &env,
+        "PREFIX app: <https://clearhead.dev/vocab/app/v1#>\n\
+         PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\n\
+         SELECT ?g ?name WHERE { GRAPH ?g {\n\
+           ?id a app:Action ; rdfs:label ?name ; app:context/rdfs:label \"human\" .\n\
+         } } ORDER BY ?name",
+        &[],
+    );
+    assert_eq!(binding_values(&graph_doc, "name"), vec!["Alpha", "Beta"]);
+    assert_eq!(
+        binding_values(&graph_doc, "g"),
+        vec![
+            format!("urn:clearhead:workspace:{WS}"),
+            format!("urn:clearhead:workspace:{SECOND_WS}")
+        ]
+    );
+}
+
+#[test]
 fn locations_are_published_relative_to_the_data_root() {
     let env = seed();
     // Where an action is kept (ontology.md rule 3): app:file is relative to

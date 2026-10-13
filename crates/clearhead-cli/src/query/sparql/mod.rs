@@ -1,6 +1,6 @@
 //! Optional in-process SPARQL evaluation — the CLI's `sparql` feature.
 //!
-//! One-shot, read-only evaluation over exactly the dataset Core publishes:
+//! One-shot, read-only evaluation over the dataset Core publishes:
 //!
 //! ```text
 //! plaintext workspace -> DomainModel -> Core RDF quads -> ephemeral store -> SPARQL
@@ -27,9 +27,10 @@
 //! - dataset assembly: Core's canonical domain projection plus Core's pure
 //!   workspace-snapshot projection, fed host filesystem evidence;
 //! - the union-default-graph convention (triple patterns without an explicit
-//!   `GRAPH` clause match across every workspace named graph — see
-//!   `specifications/ontology.md`), applied only when the query does not
-//!   declare its own `FROM` / `FROM NAMED` dataset;
+//!   `GRAPH` clause match the set union of every workspace named graph — see
+//!   `specifications/ontology.md`). Store assembly copies each quad's triple
+//!   into the default graph, deduplicating shared triples; queries declaring
+//!   their own `FROM` / `FROM NAMED` dataset retain standard SPARQL behavior;
 //! - standard result serializations: SPARQL Results JSON for SELECT/ASK and
 //!   Turtle/JSON-LD for CONSTRUCT/DESCRIBE, plus the human table.
 
@@ -58,8 +59,8 @@ use crate::stdout::{write_stdout, write_stdout_line};
 // ============================================================================
 
 /// Load the canonical workspace dataset (see [`crate::query::dataset`]) into a fresh
-/// in-memory store. The store holds exactly the published quad set — nothing
-/// else is ever loaded into it — and is dropped with the command.
+/// in-memory store. The store holds the published named graphs and their set
+/// union in the default graph, and is dropped with the command.
 pub fn build_store(ctx: &CommandContext) -> anyhow::Result<Store> {
     Ok(build_located_store(ctx)?.0)
 }
@@ -89,13 +90,22 @@ pub(super) fn attach_data_roots(rows: &mut [Row], data_roots: &DataRoots) {
     }
 }
 
-/// Load an already assembled dataset into a fresh in-memory store.
+/// Load an already assembled dataset into a fresh in-memory store, copying
+/// each triple into the default graph to form a deduplicated union.
 pub fn store_from(quads: &[oxrdf::Quad]) -> anyhow::Result<Store> {
     let store = Store::new().context("create in-memory SPARQL store")?;
     for quad in quads {
         store
             .insert(quad)
             .context("insert quad into ephemeral store")?;
+        store
+            .insert(oxrdf::QuadRef::new(
+                quad.subject.as_ref(),
+                quad.predicate.as_ref(),
+                quad.object.as_ref(),
+                oxrdf::GraphNameRef::DefaultGraph,
+            ))
+            .context("insert triple into ephemeral default graph")?;
     }
     Ok(store)
 }
@@ -147,7 +157,8 @@ fn bind_time_vars(sparql: &str) -> String {
 /// Execute one complete standard SPARQL query against the ephemeral store.
 ///
 /// When the query declares no dataset of its own, the default graph is the
-/// union of all named graphs (the documented ClearHead evaluator convention),
+/// set union of all named graphs, populated by [`store_from`] (the documented
+/// ClearHead evaluator convention),
 /// so workspace-agnostic queries work unchanged in single- and multi-workspace
 /// stores. Time-anchor view variables are bound ([`bind_time_vars`]); a query
 /// that mentions none is unchanged.
@@ -155,12 +166,9 @@ fn bind_time_vars(sparql: &str) -> String {
 /// Results stream against the store; keep it alive until [`emit`] returns.
 pub fn execute<'a>(store: &'a Store, sparql: &str) -> anyhow::Result<QueryResults<'a>> {
     let sparql = bind_time_vars(sparql);
-    let mut prepared = SparqlEvaluator::new()
+    let prepared = SparqlEvaluator::new()
         .parse_query(&sparql)
         .map_err(|e| anyhow!("SPARQL parse error: {e}"))?;
-    if prepared.dataset().is_default_dataset() {
-        prepared.dataset_mut().set_default_graph_as_union();
-    }
     prepared
         .on_store(store)
         .execute()
