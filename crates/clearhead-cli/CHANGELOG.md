@@ -6,8 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## Unreleased
 
+## 0.3.2 - 2026-10-14
+
+Source preparation for the shared dev-pod and sandbox-worker binary release. The existing cargo-dist workflow builds the archive; tagging and publication are separate facilitator steps. Core 0.3.1 is included from the local source, without requiring a crates.io publication.
+
 ### Added
-- `clearhead --version` also names the grammar release it parses with: `clearhead 0.3.1 (specification v0.2.0, grammar v0.10.0)`. `:checkhealth clearhead` compares it with the editor's parser to report drift.
+- `clearhead --version` also names the grammar release it parses with: `clearhead 0.3.2 (specification v0.3.0, grammar v0.10.0)`. `:checkhealth clearhead` compares it with the editor's parser to report drift.
+
+### Changed
+- Uses Core 0.3.1, which declares specification v0.3.0; this release adds no new specification semantics.
+
+### Fixed
+- `orient` aggregates selected workspaces instead of reporting only the primary workspace, and warns and skips broken secondary completion files.
+- Commands warn and skip stale configured workspaces at the command boundary. `doctor` preserves its dry-run contract and configured workspaces are deduplicated.
+- SPARQL's default graph is a set across workspaces: shared contexts no longer duplicate union query results, while named workspace graphs remain intact.
+- The gate targets the renamed `clearhead` package.
 
 ## 0.3.1 - 2026-10-06
 
