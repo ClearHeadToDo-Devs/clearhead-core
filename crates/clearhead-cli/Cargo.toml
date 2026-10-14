@@ -2,7 +2,7 @@
 # Named for its command, so `cargo install clearhead` installs `clearhead`.
 name = "clearhead"
 description = "A CLI tool and library for working with the clearhead framework"
-version = "0.3.1"
+version = "0.3.2"
 authors = ["Darrion Burgess <darrionburgess@gmail.com>"]
 edition = "2024"
 license = "MIT"
@@ -38,7 +38,7 @@ spec-conformance = ["sparql"]
 
 [dependencies]
 # Shared domain, workspace, persistence, and configuration services
-clearhead_core = { path = "../clearhead-core", version = "0.3.0", default-features = false, features = ["formatting"] }
+clearhead_core = { path = "../clearhead-core", version = "0.3.1", default-features = false, features = ["formatting"] }
 
 # Absorbed from clearhead-workspace-fs (the native filesystem adapter, now the
 # `filesystem` module) and clearhead-lsp (now the `lsp` module).
