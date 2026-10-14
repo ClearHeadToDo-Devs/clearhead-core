@@ -15,8 +15,7 @@ use std::path::Path;
 ///
 /// Existing file permissions are preserved. New files on Unix use mode 0666
 /// filtered by the process umask. Parent directories are created if they don't
-/// exist. On any error the
-/// original file (if it existed) is untouched.
+/// exist. On any error the original file (if it existed) is untouched.
 pub fn atomic_write(path: &Path, content: impl AsRef<[u8]>) -> io::Result<()> {
     let dir = path.parent().unwrap_or(Path::new("."));
     if !dir.as_os_str().is_empty() {
@@ -33,7 +32,11 @@ pub fn atomic_write(path: &Path, content: impl AsRef<[u8]>) -> io::Result<()> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        builder.permissions(std::fs::Permissions::from_mode(0o666));
+        builder.permissions(
+            permissions
+                .clone()
+                .unwrap_or_else(|| std::fs::Permissions::from_mode(0o666)),
+        );
     }
     let mut tmp = builder.tempfile_in(dir)?;
     tmp.write_all(content.as_ref())?;
