@@ -28,16 +28,18 @@ pub fn atomic_write(path: &Path, content: impl AsRef<[u8]>) -> io::Result<()> {
         Err(error) => return Err(error),
     };
 
-    let mut builder = tempfile::Builder::new();
+    let builder = tempfile::Builder::new();
     #[cfg(unix)]
-    {
+    let builder = {
         use std::os::unix::fs::PermissionsExt;
+        let mut builder = builder;
         builder.permissions(
             permissions
                 .clone()
                 .unwrap_or_else(|| std::fs::Permissions::from_mode(0o666)),
         );
-    }
+        builder
+    };
     let mut tmp = builder.tempfile_in(dir)?;
     tmp.write_all(content.as_ref())?;
     tmp.flush()?;
