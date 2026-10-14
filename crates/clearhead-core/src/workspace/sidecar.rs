@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 /// `charter.id`. Points at `master`; retargeting to a tagged release is
 /// tracked separately (see the schema-source-of-truth decision).
 pub const CHARTER_METADATA_SCHEMA_URL: &str =
-    "https://clearhead.dev/schemas/v0.2.0/charter_metadata.schema.json";
+    "https://clearhead.dev/schemas/v0.3.0/charter_metadata.schema.json";
 
 /// Root of the per-charter sidecar JSON (`.<charter>.json`).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

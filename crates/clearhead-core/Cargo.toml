@@ -11,7 +11,7 @@ readme = "README.md"
 # The specification release this crate implements: CI tests against its
 # published examples, and the platform checks its pinned specification is it.
 [package.metadata.clearhead]
-specification = "v0.2.0"
+specification = "v0.3.0"
 
 [features]
 default = ["formatting"]
