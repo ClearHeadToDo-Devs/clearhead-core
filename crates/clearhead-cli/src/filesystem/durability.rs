@@ -13,7 +13,9 @@ use std::path::Path;
 /// Write `content` to `path` atomically: temp file in the same directory,
 /// fsync, rename, then fsync the directory.
 ///
-/// Parent directories are created if they don't exist. On any error the
+/// Existing file permissions are preserved. New files on Unix use mode 0666
+/// filtered by the process umask. Parent directories are created if they don't
+/// exist. On any error the
 /// original file (if it existed) is untouched.
 pub fn atomic_write(path: &Path, content: impl AsRef<[u8]>) -> io::Result<()> {
     let dir = path.parent().unwrap_or(Path::new("."));
@@ -21,9 +23,26 @@ pub fn atomic_write(path: &Path, content: impl AsRef<[u8]>) -> io::Result<()> {
         std::fs::create_dir_all(dir)?;
     }
 
-    let mut tmp = tempfile::NamedTempFile::new_in(dir)?;
+    let permissions = match std::fs::metadata(path) {
+        Ok(metadata) => Some(metadata.permissions()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+        Err(error) => return Err(error),
+    };
+
+    let mut builder = tempfile::Builder::new();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        builder.permissions(std::fs::Permissions::from_mode(0o666));
+    }
+    let mut tmp = builder.tempfile_in(dir)?;
     tmp.write_all(content.as_ref())?;
     tmp.flush()?;
+    if let Some(permissions) = permissions {
+        // Restore the exact existing permissions after writing (which can clear
+        // special mode bits), before syncing and publishing the replacement.
+        tmp.as_file().set_permissions(permissions)?;
+    }
     tmp.as_file().sync_all()?;
 
     // persist() is an atomic rename; on failure the NamedTempFile is returned

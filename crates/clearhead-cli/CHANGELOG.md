@@ -17,6 +17,7 @@ Source preparation for the shared dev-pod and sandbox-worker binary release. The
 - Uses Core 0.3.1, which declares specification v0.3.0; this release adds no new specification semantics.
 
 ### Fixed
+- Atomic file rewrites preserve existing permissions instead of making files owner-only. New files on Unix use mode 0666 minus the umask, keeping shared workspaces readable.
 - `orient` aggregates selected workspaces instead of reporting only the primary workspace, and warns and skips broken secondary completion files.
 - Commands warn and skip stale configured workspaces at the command boundary. `doctor` preserves its dry-run contract and configured workspaces are deduplicated.
 - SPARQL's default graph is a set across workspaces: shared contexts no longer duplicate union query results, while named workspace graphs remain intact.
