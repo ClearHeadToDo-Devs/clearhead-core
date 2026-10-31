@@ -308,6 +308,21 @@ fn apply_one(
                 close_in_file(file, target, ActionState::Completed, now)
             }
             NormalizedOperation::Cancel { .. } => {
+                let action = file
+                    .active
+                    .iter()
+                    .find(|action| action.id == target)
+                    .expect("target located in this active list");
+                if matches!(
+                    action.state,
+                    ActionState::Completed | ActionState::Cancelled
+                ) {
+                    return Err(VerbError::AlreadyClosed {
+                        id: canonical_id(target),
+                        state: format!("{:?}", action.state),
+                        query: canonical_id(target),
+                    });
+                }
                 close_in_file(file, target, ActionState::Cancelled, now)
             }
         };

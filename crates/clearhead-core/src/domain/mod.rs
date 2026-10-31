@@ -698,17 +698,20 @@ pub fn collect_subtree_ids(actions: &[Action], root_id: Uuid) -> Vec<Uuid> {
     ids
 }
 
-/// Close `root_id` and its full subtree in `actions`: stamp `closing_state` and
-/// `completed_at`, and detach only the closed root from any external parent.
-/// Descendants keep parent links inside the closed subtree so completed archives
-/// preserve the factual checklist structure. Returns the closed subtree
-/// (root first, then descendants in discovery order) for the caller to append
-/// to the `.completed.actions` file — `actions` itself is untouched; removing
-/// the closed ids from the open list is the caller's job.
+/// Close `root_id` and its full subtree in `actions`, detaching only the closed
+/// root from any external parent. Cancellation stamps `Cancelled` and
+/// `completed_at` on open members only: already completed or cancelled members
+/// retain their factual state and timestamp, including an absent timestamp.
+/// Other closing states stamp every member as before.
 ///
-/// `completed_at` is stamped for `closing_state == Cancelled` too: there is no
-/// separate `cancelled_at` field yet (tracked by the action-lifecycle charter,
-/// which this was originally sequenced after). Revisit when that lands.
+/// Traversal includes open descendants beneath terminal members. Descendants
+/// keep parent links inside the closed subtree so archives preserve the factual
+/// checklist structure. Returns the full subtree in source order for the caller
+/// to append to the `.completed.actions` file — `actions` itself is untouched;
+/// removing the closed ids from the open list is the caller's job.
+///
+/// Newly cancelled members use `completed_at` too; there is no separate
+/// `cancelled_at` field.
 pub fn close_subtree(
     actions: &[Action],
     root_id: Uuid,
@@ -721,8 +724,12 @@ pub fn close_subtree(
         .filter(|a| subtree_ids.contains(&a.id))
         .map(|a| {
             let mut closed = a.clone();
-            closed.state = closing_state;
-            closed.completed_at = Some(time::Bound::minute(now));
+            if closing_state != ActionState::Cancelled
+                || !matches!(a.state, ActionState::Completed | ActionState::Cancelled)
+            {
+                closed.state = closing_state;
+                closed.completed_at = Some(time::Bound::minute(now));
+            }
             if !closed
                 .parent_id
                 .is_some_and(|parent| subtree_ids.contains(&parent))
@@ -741,9 +748,8 @@ pub fn close_subtree(
 /// to the active `.actions` file.
 ///
 /// The whole subtree returns `NotStarted`, not each action's pre-completion
-/// state: closing already collapsed the subtree to a single terminal state, so
-/// the original per-action states are gone by the time anything can be
-/// reopened. `NotStarted` is the honest floor, and it keeps a completed line
+/// state: closing does not record the original open states. `NotStarted` is the
+/// honest floor, and it keeps a completed line
 /// from being stranded among open siblings — the malformed shape the
 /// `update --state` terminal guard exists to prevent
 /// ([`crate::disallowed_terminal_update`]).
