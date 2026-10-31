@@ -420,16 +420,24 @@ proptest! {
 
         for action in &closed {
             let original = &original_by_id[&action.id];
-            prop_assert_eq!(action.state, closing_state);
-            prop_assert_eq!(action.completed_at, Some(Bound::minute(closed_at)));
+            let preserve_history = cancelled
+                && matches!(original.state, ActionState::Completed | ActionState::Cancelled);
+            let expected_state = if preserve_history { original.state } else { closing_state };
+            let expected_completed_at = if preserve_history {
+                original.completed_at
+            } else {
+                Some(Bound::minute(closed_at))
+            };
+            prop_assert_eq!(action.state, expected_state);
+            prop_assert_eq!(action.completed_at, expected_completed_at);
             if action.id == root.id {
                 prop_assert_eq!(action.parent_id, None);
             } else {
                 prop_assert_eq!(action.parent_id, original.parent_id);
             }
             let mut expected = original.clone();
-            expected.state = closing_state;
-            expected.completed_at = Some(Bound::minute(closed_at));
+            expected.state = expected_state;
+            expected.completed_at = expected_completed_at;
             if action.id == root.id {
                 expected.parent_id = None;
             }
