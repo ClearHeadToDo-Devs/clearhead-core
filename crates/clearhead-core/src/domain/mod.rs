@@ -374,6 +374,13 @@ pub enum ActionState {
     Cancelled,
 }
 
+impl ActionState {
+    /// Whether the action has been completed or cancelled.
+    pub fn is_terminal(self) -> bool {
+        matches!(self, Self::Completed | Self::Cancelled)
+    }
+}
+
 /// Reference to a predecessor action.
 ///
 /// Carries both the raw text from the DSL (`raw_ref`) and the resolved UUID
@@ -723,7 +730,7 @@ pub fn close_subtree(
         .filter(|a| subtree_ids.contains(&a.id))
         .map(|a| {
             let mut closed = a.clone();
-            if !matches!(a.state, ActionState::Completed | ActionState::Cancelled) {
+            if !a.state.is_terminal() {
                 closed.state = closing_state;
                 closed.completed_at = Some(time::Bound::minute(now));
             }

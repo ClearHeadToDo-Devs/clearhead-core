@@ -1219,9 +1219,8 @@ fn verb_target_error(ctx: &CommandContext, query: &str) -> anyhow::Result<VerbEr
             let Ok(actions) = action_files::read_actions(path) else {
                 continue;
             };
-            if let Some(action) = find_best_match(&actions, query, |a| !is_open_action(a))? {
-                return Ok(VerbError::require_open_action(action, query)
-                    .expect_err("selected action is terminal"));
+            if let Some(action) = find_best_match(&actions, query, is_closed_action)? {
+                return Ok(VerbError::already_closed(action, query));
             }
         }
     }
@@ -1485,17 +1484,11 @@ fn refuse_quarantined_target(
 }
 
 fn is_open_action(action: &Action) -> bool {
-    !matches!(
-        action.state,
-        ActionState::Completed | ActionState::Cancelled
-    )
+    !action.state.is_terminal()
 }
 
 fn is_closed_action(action: &Action) -> bool {
-    matches!(
-        action.state,
-        ActionState::Completed | ActionState::Cancelled
-    )
+    action.state.is_terminal()
 }
 
 fn print_acts_table(ws_actions: &[(Option<&str>, &Action)], multi_ws: bool) {

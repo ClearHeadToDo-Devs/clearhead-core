@@ -82,19 +82,21 @@ pub enum VerbError {
 }
 
 impl VerbError {
+    /// Describe an already-closed target while retaining the original selector.
+    pub fn already_closed(action: &crate::Action, query: &str) -> Self {
+        Self::AlreadyClosed {
+            id: canonical_id(action.id),
+            state: format!("{:?}", action.state),
+            query: query.to_string(),
+        }
+    }
+
     /// Reject a terminal mutation target without rewriting its factual closure.
     /// Shared by ordinary close preparation and transaction execution; `query`
     /// retains the delivery adapter's original selector for errors-as-data.
     pub fn require_open_action(action: &crate::Action, query: &str) -> Result<(), Self> {
-        if matches!(
-            action.state,
-            crate::ActionState::Completed | crate::ActionState::Cancelled
-        ) {
-            Err(Self::AlreadyClosed {
-                id: canonical_id(action.id),
-                state: format!("{:?}", action.state),
-                query: query.to_string(),
-            })
+        if action.state.is_terminal() {
+            Err(Self::already_closed(action, query))
         } else {
             Ok(())
         }
