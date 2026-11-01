@@ -7,6 +7,34 @@ alternatives rejected, and the trade-off accepted.
 
 ---
 
+## Decision 2: Explicit Cascade Closure Preserves Existing Closures
+
+Decided by Darrion on 2026-11-01: “if i complete in a casacding fashion any
+existing closures or cancells stay so if a chid has a closed state dont overwrite
+it.” This extends cancellation's history-preservation rule to completion.
+
+An explicitly requested completion or cancellation cascade closes only open
+members. Already completed or cancelled members retain both their state and
+`completed_at`, including an absent timestamp. Traversal still reaches open
+members below terminal descendants, and archival retains the subtree's internal
+parent links. A terminal target in the active file is rejected as `AlreadyClosed`
+by ordinary verbs and transactions alike, rather than restamping its subtree.
+The terminal-target guard is shared by both paths.
+
+`specifications/process.md`, “On Closure” and “On Child Actions”, separates
+closure from archival, keeps states independently asserted, and permits an
+explicit reviewed batch transition. Preserving an existing closure within that
+batch does not change the specification; no implicit cascade is introduced.
+Reopen behavior is not decided here and remains unchanged.
+
+**Alternative rejected:** replacing all descendant states and timestamps with
+those of the new cascade, which erases factual completion and cancellation
+history.
+
+**Trade-off:** an archived subtree can contain both completed and cancelled
+members, and missing historical timestamps stay missing rather than acquiring
+an invented closure time.
+
 ## Decision 1: Ephemeral Identity Never Leaves the Process
 
 Platform Decision 40 gives a charter with no declared id an ephemeral id,

@@ -308,21 +308,6 @@ fn apply_one(
                 close_in_file(file, target, ActionState::Completed, now)
             }
             NormalizedOperation::Cancel { .. } => {
-                let action = file
-                    .active
-                    .iter()
-                    .find(|action| action.id == target)
-                    .expect("target located in this active list");
-                if matches!(
-                    action.state,
-                    ActionState::Completed | ActionState::Cancelled
-                ) {
-                    return Err(VerbError::AlreadyClosed {
-                        id: canonical_id(target),
-                        state: format!("{:?}", action.state),
-                        query: canonical_id(target),
-                    });
-                }
                 close_in_file(file, target, ActionState::Cancelled, now)
             }
         };
@@ -356,6 +341,12 @@ fn close_in_file(
     closing_state: ActionState,
     now: DateTime<Local>,
 ) -> Result<VerbOutcome, VerbError> {
+    let action = file
+        .active
+        .iter()
+        .find(|action| action.id == target)
+        .expect("target located in this active list");
+    VerbError::require_open_action(action, &canonical_id(target))?;
     let subtree_ids = collect_subtree_ids(&file.active, target);
     let mut closed = close_subtree(&file.active, target, closing_state, now);
     file.active
@@ -534,6 +525,61 @@ mod tests {
             ExpectedResource::Missing,
             ExpectedResource::Missing,
         )])
+    }
+
+    fn assert_rejects_terminal_active_target(
+        state: ActionState,
+        operation: fn(Uuid) -> NormalizedOperation,
+    ) {
+        let target = action("Hand-marked terminal action", state, None);
+        let child = action("Child", ActionState::NotStarted, Some(target.id));
+        let active = vec![target.clone(), child];
+        let mut model = model_of(active.clone(), vec![]);
+
+        let (index, error) = apply_operations(&mut model, &[operation(target.id)], Local::now())
+            .expect_err("terminal active targets must be rejected");
+        assert_eq!(index, 0);
+        assert_eq!(
+            error,
+            VerbError::AlreadyClosed {
+                id: canonical_id(target.id),
+                state: format!("{:?}", target.state),
+                query: canonical_id(target.id),
+            }
+        );
+        let file = &model.files[0];
+        assert_eq!(file.active, active);
+        assert!(file.completed.is_empty());
+        assert!(!file.active_dirty);
+        assert!(!file.completed_dirty);
+    }
+
+    #[test]
+    fn cancel_rejects_completed_target_still_in_active_file() {
+        assert_rejects_terminal_active_target(ActionState::Completed, |target| {
+            NormalizedOperation::Cancel { target }
+        });
+    }
+
+    #[test]
+    fn cancel_rejects_cancelled_target_still_in_active_file() {
+        assert_rejects_terminal_active_target(ActionState::Cancelled, |target| {
+            NormalizedOperation::Cancel { target }
+        });
+    }
+
+    #[test]
+    fn complete_rejects_completed_target_still_in_active_file() {
+        assert_rejects_terminal_active_target(ActionState::Completed, |target| {
+            NormalizedOperation::Complete { target }
+        });
+    }
+
+    #[test]
+    fn complete_rejects_cancelled_target_still_in_active_file() {
+        assert_rejects_terminal_active_target(ActionState::Cancelled, |target| {
+            NormalizedOperation::Complete { target }
+        });
     }
 
     #[test]
