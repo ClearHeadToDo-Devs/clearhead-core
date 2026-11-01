@@ -699,10 +699,9 @@ pub fn collect_subtree_ids(actions: &[Action], root_id: Uuid) -> Vec<Uuid> {
 }
 
 /// Close `root_id` and its full subtree in `actions`, detaching only the closed
-/// root from any external parent. Cancellation stamps `Cancelled` and
-/// `completed_at` on open members only: already completed or cancelled members
-/// retain their factual state and timestamp, including an absent timestamp.
-/// Other closing states stamp every member as before.
+/// root from any external parent. Completion and cancellation stamp the closing
+/// state and `completed_at` on open members only: already completed or cancelled
+/// members retain their factual state and timestamp, including an absent timestamp.
 ///
 /// Traversal includes open descendants beneath terminal members. Descendants
 /// keep parent links inside the closed subtree so archives preserve the factual
@@ -724,9 +723,7 @@ pub fn close_subtree(
         .filter(|a| subtree_ids.contains(&a.id))
         .map(|a| {
             let mut closed = a.clone();
-            if closing_state != ActionState::Cancelled
-                || !matches!(a.state, ActionState::Completed | ActionState::Cancelled)
-            {
+            if !matches!(a.state, ActionState::Completed | ActionState::Cancelled) {
                 closed.state = closing_state;
                 closed.completed_at = Some(time::Bound::minute(now));
             }

@@ -56,7 +56,7 @@ pub enum VerbError {
         query: String,
         candidates: Vec<String>,
     },
-    /// The query resolves, but to an action already in a completed archive —
+    /// The query resolves, but to a terminal action (active or archived) —
     /// an idempotent loop can branch on this as effectively-done.
     AlreadyClosed {
         id: String,
@@ -82,6 +82,24 @@ pub enum VerbError {
 }
 
 impl VerbError {
+    /// Reject a terminal mutation target without rewriting its factual closure.
+    /// Shared by ordinary close preparation and transaction execution; `query`
+    /// retains the delivery adapter's original selector for errors-as-data.
+    pub fn require_open_action(action: &crate::Action, query: &str) -> Result<(), Self> {
+        if matches!(
+            action.state,
+            crate::ActionState::Completed | crate::ActionState::Cancelled
+        ) {
+            Err(Self::AlreadyClosed {
+                id: canonical_id(action.id),
+                state: format!("{:?}", action.state),
+                query: query.to_string(),
+            })
+        } else {
+            Ok(())
+        }
+    }
+
     /// Project a native-adapter failure into the verb taxonomy.
     ///
     /// Only a delivery conflict has a structured kind here; every other

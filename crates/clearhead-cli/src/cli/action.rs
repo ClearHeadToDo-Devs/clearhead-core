@@ -1220,11 +1220,8 @@ fn verb_target_error(ctx: &CommandContext, query: &str) -> anyhow::Result<VerbEr
                 continue;
             };
             if let Some(action) = find_best_match(&actions, query, |a| !is_open_action(a))? {
-                return Ok(VerbError::AlreadyClosed {
-                    id: canonical_id(action.id),
-                    state: format!("{:?}", action.state),
-                    query: query.to_string(),
-                });
+                return Ok(VerbError::require_open_action(action, query)
+                    .expect_err("selected action is terminal"));
             }
         }
     }

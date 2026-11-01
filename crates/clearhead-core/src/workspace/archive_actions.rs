@@ -213,14 +213,8 @@ pub fn prepare_close_action_subtree(
         .iter()
         .find(|action| action.id == action_id)
         .expect("selected action came from active list");
-    if matches!(
-        target.state,
-        ActionState::Completed | ActionState::Cancelled
-    ) {
-        return Err(ActionPrepareError::Domain(format!(
-            "action is already terminal in the active file: {action_id}"
-        )));
-    }
+    crate::VerbError::require_open_action(target, &action_id.to_string())
+        .map_err(|error| ActionPrepareError::Domain(error.to_string()))?;
     let subtree_ids = collect_subtree_ids(&active_actions, action_id);
     if completed_actions
         .iter()
