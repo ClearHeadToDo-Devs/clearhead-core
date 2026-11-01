@@ -420,8 +420,7 @@ proptest! {
 
         for action in &closed {
             let original = &original_by_id[&action.id];
-            let preserve_history = cancelled
-                && matches!(original.state, ActionState::Completed | ActionState::Cancelled);
+            let preserve_history = matches!(original.state, ActionState::Completed | ActionState::Cancelled);
             let expected_state = if preserve_history { original.state } else { closing_state };
             let expected_completed_at = if preserve_history {
                 original.completed_at

@@ -9,7 +9,7 @@ use common::TestEnv;
 use std::collections::HashSet;
 use uuid::Uuid;
 
-fn cancel_mixed_history(transaction: bool) {
+fn close_mixed_history(transaction: bool, closing_state: ActionState) {
     let env = TestEnv::new();
     let states = [
         ActionState::NotStarted,
@@ -79,18 +79,23 @@ fn cancel_mixed_history(transaction: bool) {
     )
     .unwrap();
 
+    let verb = if closing_state == ActionState::Cancelled {
+        "cancel"
+    } else {
+        "complete"
+    };
     if transaction {
         env.command()
             .arg("transact")
             .write_stdin(format!(
-                r#"{{"operations":[{{"op":"cancel-action","target":"urn:uuid:{}"}}]}}"#,
+                r#"{{"operations":[{{"op":"{verb}-action","target":"urn:uuid:{}"}}]}}"#,
                 original[1].id
             ))
             .assert()
             .success();
     } else {
         env.command()
-            .args(["cancel", "action", &original[1].id.to_string(), "--file"])
+            .args([verb, "action", &original[1].id.to_string(), "--file"])
             .arg(&source)
             .assert()
             .success();
@@ -128,7 +133,7 @@ fn cancel_mixed_history(transaction: bool) {
             source.state,
             ActionState::Completed | ActionState::Cancelled
         ) {
-            expected.state = ActionState::Cancelled;
+            expected.state = closing_state;
             expected.completed_at = cancelled_at;
         }
         if source.id == original[1].id {
@@ -140,10 +145,20 @@ fn cancel_mixed_history(transaction: bool) {
 
 #[test]
 fn ordinary_cancel_preserves_closed_child_history() {
-    cancel_mixed_history(false);
+    close_mixed_history(false, ActionState::Cancelled);
 }
 
 #[test]
 fn transaction_cancel_preserves_closed_child_history() {
-    cancel_mixed_history(true);
+    close_mixed_history(true, ActionState::Cancelled);
+}
+
+#[test]
+fn ordinary_complete_preserves_closed_child_history() {
+    close_mixed_history(false, ActionState::Completed);
+}
+
+#[test]
+fn transaction_complete_preserves_closed_child_history() {
+    close_mixed_history(true, ActionState::Completed);
 }
