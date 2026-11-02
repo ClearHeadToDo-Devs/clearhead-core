@@ -4,7 +4,7 @@ use std::path::Path;
 
 use clearhead_cli::filesystem::read_actions;
 use clearhead_cli::filesystem::{
-    close_action_subtree, load_domain_model, resolve_materialized_occurrence, sync_calendar,
+    load_domain_model, resolve_materialized_occurrence, sync_calendar, transition_action,
 };
 use clearhead_core::workspace::calendar::reconcile::occurrence_links;
 use clearhead_core::{ActionSelector, OccurrenceOp, completed_actions_path};
@@ -48,12 +48,13 @@ fn closing_materialized_occurrence_preserves_completed_sidecar_lineage() {
         .find(|a| a.id == occ_id)
         .unwrap();
 
-    close_action_subtree(
+    transition_action(
         root,
         &actions_path,
         &ActionSelector::from(&token),
         clearhead_core::ActionState::Completed,
-        now,
+        false,
+        false,
     )
     .unwrap();
     assert!(

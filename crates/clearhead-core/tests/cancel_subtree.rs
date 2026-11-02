@@ -1,6 +1,8 @@
 use chrono::{Local, TimeZone};
 use clearhead_core::domain::time::Bound;
-use clearhead_core::{Action, ActionState, close_subtree};
+use clearhead_core::{Action, ActionState};
+#[path = "support/lifecycle.rs"]
+mod lifecycle;
 use uuid::Uuid;
 
 #[test]
@@ -48,13 +50,15 @@ fn cancellation_preserves_terminal_history_and_traverses_terminal_nodes() {
         })
         .collect();
     let original = actions.clone();
-    let closed = close_subtree(&actions, actions[1].id, ActionState::Cancelled, now);
+    let closed = lifecycle::cascade(&actions, actions[1].id, ActionState::Cancelled, now);
     assert_eq!(
         actions, original,
         "source must remain immutable, including unrelated actions"
     );
-    assert_eq!(closed.len(), 9);
-    for (actual, source) in closed.iter().zip(&original[1..10]) {
+    assert_eq!(closed.len(), original.len());
+    assert_eq!(closed[0], original[0]);
+    assert_eq!(closed[10], original[10]);
+    for (actual, source) in closed[1..10].iter().zip(&original[1..10]) {
         let mut expected = source.clone();
         if !matches!(
             source.state,
@@ -62,9 +66,6 @@ fn cancellation_preserves_terminal_history_and_traverses_terminal_nodes() {
         ) {
             expected.state = ActionState::Cancelled;
             expected.completed_at = Some(Bound::minute(now));
-        }
-        if source.id == actions[1].id {
-            expected.parent_id = None;
         }
         assert_eq!(actual, &expected);
     }

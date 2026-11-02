@@ -5,13 +5,15 @@ use chrono::{DateTime, Duration, Local, NaiveDate, TimeZone};
 use clearhead_core::domain::time::{Bound, Due, Planned};
 use clearhead_core::workspace::actions::lint_document;
 use clearhead_core::{
-    Action, ActionState, OutputFormat, PredecessorRef, close_subtree, collect_subtree_ids, format,
-    parse_actions, parse_document,
+    Action, ActionState, OutputFormat, PredecessorRef, collect_subtree_ids, format, parse_actions,
+    parse_document,
 };
 use proptest::prelude::*;
 use proptest::test_runner::FileFailurePersistence;
 use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
+#[path = "support/lifecycle.rs"]
+mod lifecycle;
 
 #[derive(Clone, Debug)]
 struct ActionSeed {
@@ -404,7 +406,11 @@ proptest! {
         };
         let closed_at = generated_datetime(4_000, 0);
 
-        let closed = close_subtree(&actions, root.id, closing_state, closed_at);
+        let after = lifecycle::cascade(&actions, root.id, closing_state, closed_at);
+        for action in after.iter().filter(|a| !expected_ids.contains(&a.id)) {
+            prop_assert_eq!(action, &original_by_id[&action.id]);
+        }
+        let closed: Vec<_> = after.into_iter().filter(|a| expected_ids.contains(&a.id)).collect();
         let actual_ids: HashSet<_> = closed.iter().map(|action| action.id).collect();
         let expected_order: Vec<_> = actions
             .iter()
@@ -420,7 +426,8 @@ proptest! {
 
         for action in &closed {
             let original = &original_by_id[&action.id];
-            let preserve_history = matches!(original.state, ActionState::Completed | ActionState::Cancelled);
+            let preserve_history = original.state.is_terminal()
+                && (action.id != root.id || original.state == closing_state);
             let expected_state = if preserve_history { original.state } else { closing_state };
             let expected_completed_at = if preserve_history {
                 original.completed_at
@@ -429,17 +436,10 @@ proptest! {
             };
             prop_assert_eq!(action.state, expected_state);
             prop_assert_eq!(action.completed_at, expected_completed_at);
-            if action.id == root.id {
-                prop_assert_eq!(action.parent_id, None);
-            } else {
-                prop_assert_eq!(action.parent_id, original.parent_id);
-            }
+            prop_assert_eq!(action.parent_id, original.parent_id);
             let mut expected = original.clone();
             expected.state = expected_state;
             expected.completed_at = expected_completed_at;
-            if action.id == root.id {
-                expected.parent_id = None;
-            }
             prop_assert_eq!(action, &expected);
         }
     }

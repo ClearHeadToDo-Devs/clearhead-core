@@ -1,6 +1,5 @@
-use chrono::Local;
 use clearhead_cli::filesystem::read_actions;
-use clearhead_cli::filesystem::{archive_actions, close_action_subtree};
+use clearhead_cli::filesystem::{archive_actions, transition_action};
 use clearhead_core::workspace::WorkspaceError;
 use clearhead_core::{ActionSelector, ActionState, completed_actions_path};
 use uuid::Uuid;
@@ -44,15 +43,19 @@ fn close_changes_selected_line_and_preserves_other_actions() {
     let (temp, source) = setup(
         "[ ] Selected #019f733d-45b2-7f21-bcad-5610887b7230\n> [ ] Child #019f733d-45c2-7dd2-91dc-8631f33c6b77\n[ ] Other #019f733d-45d2-7dd2-91dc-8631f33c6b77\n",
     );
-    let result = close_action_subtree(
+    let result = transition_action(
         temp.path(),
         &source,
         &selector(id, "Selected"),
         ActionState::Completed,
-        Local::now(),
+        false,
+        false,
     )
     .unwrap();
-    assert_eq!(result.closed_count, 1);
+    assert!(matches!(
+        result,
+        clearhead_core::VerbOutcome::Completed { .. }
+    ));
     let actions = read_actions(&source).unwrap();
     assert_eq!(actions.len(), 3);
     assert_eq!(actions[0].state, ActionState::Completed);
@@ -60,7 +63,7 @@ fn close_changes_selected_line_and_preserves_other_actions() {
     assert_eq!(actions[1].state, ActionState::NotStarted);
     assert_eq!(actions[1].parent_id, Some(id));
     assert_eq!(actions[2].name, "Other");
-    assert!(!result.completed_path.exists());
+    assert!(!completed_actions_path(&source).exists());
 }
 
 #[test]
@@ -69,12 +72,13 @@ fn close_reports_already_closed_when_action_is_in_completed_history() {
     let (temp, source) = setup("");
     let completed = completed_actions_path(&source);
     std::fs::write(&completed, format!("[x] Done #{id}\n")).unwrap();
-    let error = close_action_subtree(
+    let error = transition_action(
         temp.path(),
         &source,
         &selector(id, "Done"),
         ActionState::Completed,
-        Local::now(),
+        false,
+        false,
     )
     .unwrap_err();
     assert!(error.to_string().contains("already closed"));
@@ -85,15 +89,19 @@ fn close_reports_already_closed_when_action_is_in_completed_history() {
 fn close_reidentifies_idless_action_by_unique_name() {
     let (temp, source) = setup("[ ] Unique task\n");
     let selected = ActionSelector::from(&read_actions(&source).unwrap()[0]);
-    let result = close_action_subtree(
+    let result = transition_action(
         temp.path(),
         &source,
         &selected,
         ActionState::Completed,
-        Local::now(),
+        false,
+        false,
     )
     .unwrap();
-    assert_eq!(result.closed_count, 1);
+    assert!(matches!(
+        result,
+        clearhead_core::VerbOutcome::Completed { .. }
+    ));
 }
 
 #[test]
