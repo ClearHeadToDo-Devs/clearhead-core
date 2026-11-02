@@ -101,6 +101,28 @@ fn cascade_forces_only_target_and_open_members_and_is_noop_when_done() {
 }
 
 #[test]
+fn both_close_cascades_preserve_matching_target_and_both_closed_member_states() {
+    for (verb, marker) in [("complete", "[x]"), ("cancel", "[_]")] {
+        let env = setup(
+            &format!("{marker} %2026-10-02T11:00"),
+            "[x] %2026-10-03T11:00",
+        );
+        let before = active(&env);
+        run(&env, verb, ROOT, &["--cascade"]);
+        let after = active(&env);
+        assert_eq!(&after[..3], &before[..3]);
+        assert_eq!(after[3].state, after[0].state);
+        assert!(after[3].completed_at.is_some());
+        let path = env.data_dir.join("charters/work.actions");
+        let bytes = fs::read(&path).unwrap();
+        let modified = fs::metadata(&path).unwrap().modified().unwrap();
+        run(&env, verb, ROOT, &["--cascade"]);
+        assert_eq!(fs::read(&path).unwrap(), bytes);
+        assert_eq!(fs::metadata(&path).unwrap().modified().unwrap(), modified);
+    }
+}
+
+#[test]
 fn reopen_cascade_walks_through_open_members_and_noop_writes_nothing() {
     let env = setup("[-]", "[x] %2026-10-02T11:00");
     let before = active(&env);
@@ -175,7 +197,12 @@ fn archive_unarchive_roundtrip_is_lossless_with_sidecars() {
     run(&env, "complete", GRAND, &[]);
     let before = active(&env);
     let metadata = serde_json::json!({"actions": { ROOT: {"created":"2026-10-01T00:00:00Z"}, CLOSED: {"created":"2026-10-02T00:00:00Z"}}});
-    env.write_text("charters/.work.json", &metadata.to_string());
+    let canonical = clearhead_core::workspace::sidecar::render_sidecar(
+        &clearhead_core::workspace::sidecar::parse_sidecar(&metadata.to_string()).unwrap(),
+    )
+    .unwrap();
+    let metadata: Value = serde_json::from_str(&canonical).unwrap();
+    env.write_text("charters/.work.json", &canonical);
     run(&env, "archive", ROOT, &[]);
     assert!(active(&env).is_empty());
     let moved: Value = serde_json::from_slice(
@@ -206,16 +233,18 @@ fn archive_and_unarchive_children_name_root_and_reopen_archived_refuses_cleanly(
         ("reopen", vec![]),
         ("reopen", vec!["--cascade"]),
     ] {
-        let output = env
+        let assertion = env
             .command()
             .args([verb, "action", CHILD])
             .args(flags)
             .assert()
-            .failure()
-            .get_output()
-            .stderr
-            .clone();
-        let text = String::from_utf8(output).unwrap();
+            .failure();
+        let output = assertion.get_output();
+        let text = format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
         assert!(text.contains(ROOT), "{text}");
         if verb == "reopen" {
             assert!(text.contains("unarchive"), "{text}");
@@ -256,6 +285,10 @@ fn archive_charter_sweeps_closed_lines_to_completed_file() {
 fn orient_reads_active_completions_and_releases_successors() {
     let env = TestEnv::new();
     env.write_text(
+        "charters/README.md",
+        "---\nalias: testws\nstate: Active\n---\n# Testws\n",
+    );
+    env.write_text(
         "charters/work.md",
         "---\nid: 01951111-0000-7000-8000-000000000099\nalias: work\nstate: Active\n---\n# Work\n",
     );
@@ -284,7 +317,8 @@ fn orient_reads_active_completions_and_releases_successors() {
             .as_array()
             .unwrap()
             .iter()
-            .any(|a| a["name"] == "Successor")
+            .any(|a| a["name"] == "Successor"),
+        "{value}"
     );
 }
 

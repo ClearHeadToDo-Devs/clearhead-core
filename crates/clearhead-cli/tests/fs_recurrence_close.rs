@@ -56,17 +56,21 @@ fn closing_materialized_occurrence_preserves_completed_sidecar_lineage() {
         now,
     )
     .unwrap();
-    resolve_materialized_occurrence(root, occ_id, &OccurrenceOp::Complete { at: now }, now)
-        .unwrap();
-
-    let completed_path = completed_actions_path(&actions_path);
     assert!(
-        fs::read_to_string(&completed_path)
+        !resolve_materialized_occurrence(root, occ_id, &OccurrenceOp::Complete { at: now }, now)
+            .unwrap(),
+        "the shared close has already resolved the occurrence"
+    );
+
+    assert!(!completed_actions_path(&actions_path).exists());
+    assert!(
+        read_actions(&actions_path)
             .unwrap()
-            .contains(&occ_id.to_string())
+            .iter()
+            .any(|a| a.id == occ_id && a.state == clearhead_core::ActionState::Completed)
     );
     let sidecar: serde_json::Value = serde_json::from_str(
-        &fs::read_to_string(completed_path.with_file_name(".health.completed.json")).unwrap(),
+        &fs::read_to_string(actions_path.with_file_name(".health.json")).unwrap(),
     )
     .unwrap();
     let occurrence = &sidecar["actions"][occ_id.to_string()]["occurrence"];

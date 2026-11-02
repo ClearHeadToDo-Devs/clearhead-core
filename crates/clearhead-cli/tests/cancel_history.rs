@@ -1,4 +1,4 @@
-//! Both delivery paths must archive the same factual mixed-state subtree.
+//! Both delivery paths close one line and preserve all descendant facts.
 mod common;
 
 use chrono::{Local, TimeZone};
@@ -6,7 +6,6 @@ use clearhead_cli::filesystem::read_actions;
 use clearhead_core::domain::time::Bound;
 use clearhead_core::{Action, ActionState, OutputFormat, completed_actions_path, format};
 use common::TestEnv;
-use std::collections::HashSet;
 use uuid::Uuid;
 
 fn close_mixed_history(transaction: bool, closing_state: ActionState) {
@@ -101,43 +100,16 @@ fn close_mixed_history(transaction: bool, closing_state: ActionState) {
             .success();
     }
 
-    assert_eq!(
-        read_actions(&source).unwrap(),
-        vec![original[0].clone(), original[10].clone()]
-    );
-    let history = read_actions(&history_path).unwrap();
-    assert_eq!(
-        history.len(),
-        10,
-        "existing history plus every subtree member exactly once"
-    );
-    let ids: HashSet<_> = history.iter().map(|a| a.id).collect();
-    let expected_ids: HashSet<_> = std::iter::once(existing.id)
-        .chain(original[1..10].iter().map(|a| a.id))
-        .collect();
-    assert_eq!(ids, expected_ids);
-    assert_eq!(
-        history.iter().find(|a| a.id == existing.id).unwrap(),
-        &existing
-    );
-    let cancelled_at = history
-        .iter()
-        .find(|a| a.id == original[1].id)
-        .unwrap()
-        .completed_at;
-    assert!(cancelled_at.is_some());
-    for source in &original[1..10] {
-        let actual = history.iter().find(|a| a.id == source.id).unwrap();
+    let after = read_actions(&source).unwrap();
+    assert_eq!(after.len(), original.len());
+    assert_eq!(read_actions(&history_path).unwrap(), vec![existing]);
+    let closed_at = after[1].completed_at;
+    assert!(closed_at.is_some());
+    for (actual, source) in after.iter().zip(&original) {
         let mut expected = source.clone();
-        if !matches!(
-            source.state,
-            ActionState::Completed | ActionState::Cancelled
-        ) {
-            expected.state = closing_state;
-            expected.completed_at = cancelled_at;
-        }
         if source.id == original[1].id {
-            expected.parent_id = None;
+            expected.state = closing_state;
+            expected.completed_at = closed_at;
         }
         assert_eq!(actual, &expected);
     }

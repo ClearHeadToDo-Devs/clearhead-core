@@ -71,12 +71,16 @@ fn index_ids_feed_transact_verbatim() {
                 .and(predicate::str::contains(format!("urn:uuid:{B}"))),
         );
 
-    // The graph-selected actions were actually acted on: both left the active file.
+    // The graph-selected actions were actually acted on: both closed in place.
     let active =
         clearhead_cli::filesystem::read_actions(&env.data_dir.join("charters/work.actions"))
             .unwrap();
     assert!(
-        active.is_empty(),
-        "both actions should be completed and out of the active file; got {active:?}"
+        active.len() == 2
+            && active
+                .iter()
+                .all(|a| a.state == clearhead_core::ActionState::Completed
+                    && a.completed_at.is_some()),
+        "both actions should be completed in the active file; got {active:?}"
     );
 }

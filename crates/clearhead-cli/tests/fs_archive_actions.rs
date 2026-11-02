@@ -39,7 +39,7 @@ fn archive_updates_active_and_completed_in_one_batch() {
 }
 
 #[test]
-fn close_moves_selected_subtree_and_preserves_other_actions() {
+fn close_changes_selected_line_and_preserves_other_actions() {
     let id: Uuid = "019f733d-45b2-7f21-bcad-5610887b7230".parse().unwrap();
     let (temp, source) = setup(
         "[ ] Selected #019f733d-45b2-7f21-bcad-5610887b7230\n> [ ] Child #019f733d-45c2-7dd2-91dc-8631f33c6b77\n[ ] Other #019f733d-45d2-7dd2-91dc-8631f33c6b77\n",
@@ -52,9 +52,15 @@ fn close_moves_selected_subtree_and_preserves_other_actions() {
         Local::now(),
     )
     .unwrap();
-    assert_eq!(result.closed_count, 2);
-    assert!(std::fs::read_to_string(&source).unwrap().contains("Other"));
-    assert_eq!(read_actions(&result.completed_path).unwrap().len(), 2);
+    assert_eq!(result.closed_count, 1);
+    let actions = read_actions(&source).unwrap();
+    assert_eq!(actions.len(), 3);
+    assert_eq!(actions[0].state, ActionState::Completed);
+    assert!(actions[0].completed_at.is_some());
+    assert_eq!(actions[1].state, ActionState::NotStarted);
+    assert_eq!(actions[1].parent_id, Some(id));
+    assert_eq!(actions[2].name, "Other");
+    assert!(!result.completed_path.exists());
 }
 
 #[test]
@@ -63,15 +69,15 @@ fn close_reports_already_closed_when_action_is_in_completed_history() {
     let (temp, source) = setup("");
     let completed = completed_actions_path(&source);
     std::fs::write(&completed, format!("[x] Done #{id}\n")).unwrap();
-    let result = close_action_subtree(
+    let error = close_action_subtree(
         temp.path(),
         &source,
         &selector(id, "Done"),
         ActionState::Completed,
         Local::now(),
     )
-    .unwrap();
-    assert!(result.already_closed);
+    .unwrap_err();
+    assert!(error.to_string().contains("already closed"));
     assert_eq!(read_actions(&completed).unwrap().len(), 1);
 }
 

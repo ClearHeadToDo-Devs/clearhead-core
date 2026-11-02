@@ -54,10 +54,13 @@ fn stale_workspace_is_skipped_by_action_verbs_and_reported_by_doctor() {
         if id == update_id {
             let line = active.lines().find(|line| line.contains(id)).unwrap();
             assert!(line.contains("!1"), "{line}");
+        } else if id == complete_id {
+            let line = active.lines().find(|line| line.contains(id)).unwrap();
+            assert!(line.starts_with("[x]"), "{line}");
+            assert!(line.contains(" %"), "{line}");
+            assert!(!other.join("next.completed.actions").exists());
         } else {
             assert!(!active.contains(id));
-            let completed = fs::read_to_string(other.join("next.completed.actions")).unwrap();
-            assert_eq!(completed.contains(id), id == complete_id);
         }
         assert!(!env._temp_dir.path().join("missing").exists());
     }
