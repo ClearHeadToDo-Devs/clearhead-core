@@ -338,12 +338,9 @@ fn core_emitted_transaction_result_conforms_to_schema() {
                 VerbOutcome::Updated { id: id.clone() },
                 VerbOutcome::Completed {
                     id: id.clone(),
-                    children: 2,
+                    open_children: vec![canonical_id(uuid::Uuid::now_v7())],
                 },
-                VerbOutcome::Reopened {
-                    id: id.clone(),
-                    children: 1,
-                },
+                VerbOutcome::Reopened { id: id.clone() },
                 VerbOutcome::Added { id: id.clone() },
                 VerbOutcome::Deleted {
                     id: id.clone(),
@@ -358,9 +355,17 @@ fn core_emitted_transaction_result_conforms_to_schema() {
         TransactionOutcome::DryRun {
             operations: vec![VerbOutcome::Cancelled {
                 id: id.clone(),
-                children: 0,
+                open_children: vec![],
             }],
             files: vec!["/ws/charters/work.actions".into()],
+        },
+        TransactionOutcome::Rejected {
+            operation: 0,
+            error: VerbError::Archived {
+                id: id.clone(),
+                root: id.clone(),
+                query: id.clone(),
+            },
         },
         TransactionOutcome::Rejected {
             operation: 1,
