@@ -457,6 +457,20 @@ pub fn expand_cascade(
             .iter()
             .find(|f| f.completed.iter().any(|a| a.id == target))
         {
+            let ids = collect_subtree_ids(&file.completed, target);
+            if state.is_terminal()
+                && file
+                    .completed
+                    .iter()
+                    .any(|a| a.id == target && a.state == state)
+                && file
+                    .completed
+                    .iter()
+                    .filter(|a| ids.contains(&a.id))
+                    .all(|a| a.state.is_terminal())
+            {
+                return Ok(vec![]);
+            }
             return Err(VerbError::Archived {
                 id: canonical_id(target),
                 root: canonical_id(tree_root(&file.completed, target)),

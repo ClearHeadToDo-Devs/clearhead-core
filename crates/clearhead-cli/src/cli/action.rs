@@ -207,7 +207,8 @@ fn close_action_subtree(
     closing_state: ActionState,
     cascade: bool,
 ) -> anyhow::Result<()> {
-    let Some((actions_path, open_actions)) = find_and_load_open_actions(ctx, file, charter, query)?
+    let Some((actions_path, open_actions)) =
+        find_and_load_actions(ctx, file, charter, query, is_open_action, cascade)?
     else {
         // Not a materialized line in any file — it may be a projected recurring
         // occurrence, acted on by writing a deviation to its master rather than
@@ -614,7 +615,7 @@ pub fn reopen_action(
     dry_run: bool,
 ) -> anyhow::Result<()> {
     if let Some((path, actions)) =
-        find_and_load_actions(ctx, file, charter, query, is_closed_action)?
+        find_and_load_actions(ctx, file, charter, query, is_closed_action, false)?
         && let Some(action) = find_source_state_match(&actions, query, is_closed_action)?
     {
         let (outcome, transaction) = clearhead_cli::filesystem::transition_action_result(
@@ -1156,7 +1157,7 @@ fn find_and_load_open_actions(
     charter: &Option<String>,
     query: &str,
 ) -> anyhow::Result<Option<(PathBuf, ActionList)>> {
-    find_and_load_actions(ctx, file, charter, query, is_open_action)
+    find_and_load_actions(ctx, file, charter, query, is_open_action, false)
 }
 
 fn find_and_load_actions(
@@ -1165,9 +1166,10 @@ fn find_and_load_actions(
     charter: &Option<String>,
     query: &str,
     preferred: fn(&Action) -> bool,
+    include_completed: bool,
 ) -> anyhow::Result<Option<(PathBuf, ActionList)>> {
     if let Some(path) = file {
-        let actions = super::load_file_for_mutation(path, "action lifecycle")?;
+        let actions = load_lifecycle_candidates(path, include_completed)?;
         return Ok(Some((path.clone(), actions)));
     }
     if let Some(charter_query) = charter {
@@ -1176,13 +1178,13 @@ fn find_and_load_actions(
             anyhow::anyhow!("Charter '{}' has no associated actions file", mc.title)
         })?;
         let path = clearhead_cli::filesystem::charter_root(&ws_root).join(rel);
-        let actions = super::load_file_for_mutation(&path, "action lifecycle")?;
+        let actions = load_lifecycle_candidates(&path, include_completed)?;
         return Ok(Some((path, actions)));
     }
     // Search every workspace (respects --workspace); primary errors are hard,
     // additional workspaces are skipped on error like all_domain_models.
     for (_, ws_dir) in ctx.workspace_dirs() {
-        match find_act_in_open_files(&ws_dir, query, preferred) {
+        match find_act_in_open_files(&ws_dir, query, preferred, include_completed) {
             Ok(Some(found)) => return Ok(Some(found)),
             Ok(None) => {}
             Err(e) if ws_dir == ctx.data_dir => return Err(e),
@@ -1192,18 +1194,34 @@ fn find_and_load_actions(
     Ok(None)
 }
 
+/// Cascades must resolve archived targets too, so Core can distinguish a
+/// satisfied no-op from a refusal. Keep the active path as the mutation anchor.
+fn load_lifecycle_candidates(path: &Path, include_completed: bool) -> anyhow::Result<ActionList> {
+    let mut actions = super::load_file_for_mutation(path, "action lifecycle")?;
+    if include_completed {
+        actions.extend(action_files::read_actions(
+            &action_files::completed_actions_path(path),
+        )?);
+    }
+    Ok(actions)
+}
+
 /// Scan `.actions` files in the workspace for one containing an action matching
 /// `query`, preferring the verb's source state before diagnosing a wrong state.
 fn find_act_in_open_files(
     data_dir: &Path,
     query: &str,
     preferred: fn(&Action) -> bool,
+    include_completed: bool,
 ) -> anyhow::Result<Option<(PathBuf, ActionList)>> {
     let paths = clearhead_cli::filesystem::list_action_files(data_dir)
         .context("Failed to list workspace")?;
     let mut loaded = Vec::with_capacity(paths.len());
     for path in paths {
-        loaded.push((path.clone(), action_files::read_actions(&path)?));
+        loaded.push((
+            path.clone(),
+            load_lifecycle_candidates(&path, include_completed)?,
+        ));
     }
 
     let candidates: Vec<&Action> = loaded

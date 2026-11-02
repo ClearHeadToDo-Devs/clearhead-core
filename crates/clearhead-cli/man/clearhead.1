@@ -374,7 +374,11 @@ not \fBchildren\fR.
 With \fB\-\-cascade\fR, force the target to Completed and close every open
 descendant, even below closed members. Closed descendants keep state and date;
 a matching target keeps its date, an oppositely closed target gets a new date.
-Nothing to do succeeds without writing.
+Nothing to do succeeds without writing. An archived target already Completed,
+with every member closed, also succeeds without writing, including in
+\fB\-\-dry-run\fR. An archived target in the other closed state or with an
+open member refuses as \fBarchived\fR, naming \fBunarchive\fR and its root.
+Cascades write only the active file.
 .\" --------------------------------------------------------------------
 .SS "cancel \(em mark an action cancelled"
 .PP
@@ -387,7 +391,10 @@ Set only the selected active line to \fBCancelled\fR with a closure date, in
 place. \fB\-\-cascade\fR mirrors complete: force the target to Cancelled and
 cancel open descendants, preserving already closed descendants and a matching
 target's date. Single cancel refuses closed targets; an empty cascade writes
-nothing.
+nothing. As with complete, an archived target already Cancelled with every
+member closed succeeds without writing, including in \fB\-\-dry-run\fR;
+other archived targets refuse as \fBarchived\fR, naming \fBunarchive\fR and
+the root. Cascades write only the active file.
 .PP
 Materialized recurring occurrences resolve in the shared close: closure,
 calendar deviation, frozen Plan link in the line's sidecar, and the next token

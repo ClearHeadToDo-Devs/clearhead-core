@@ -75,11 +75,18 @@ nothing and emit the transaction preview envelope:
 `{"kind":"dry-run","operations":[...],"files":[...]}`. Each operation is a verb
 outcome; a cascade preview lists its individual transitions.
 
+Close cascades (`complete --cascade` and `cancel --cascade`) write only the
+active file. An archived target already in the requested state, with every
+member closed, succeeds without writing (also in `--dry-run`); its preview has
+empty operations and files, just like an active-file no-op. An archived target
+in the other closed state or with an open member refuses, naming `unarchive`
+and its root. Single verbs and `reopen --cascade` still refuse archived targets.
+
 `archive action` and `unarchive action` always emit an envelope:
 `{"kind":"committed","operations":[{"kind":"archived","id":"urn:uuid:...","count":4}],"files":[...]}`.
 Unarchive uses operation kind `unarchived`; previews use top-level kind
 `dry-run` and list the affected files without writing them. A top-level
-`archived` is a reopen-refused error, not a successful move.
+`archived` is an archived-target refusal, not a successful move.
 
 ## Charter identity normalization
 

@@ -225,12 +225,12 @@ pub fn move_action(
     } else {
         (&active.actions, &completed.actions)
     };
-    let id = clearhead_core::workspace::selector::unique_selector_match(source, selector)?
-        .or(clearhead_core::workspace::selector::unique_selector_match(
-            destination,
-            selector,
-        )?)
-        .ok_or_else(|| WorkspaceError::Actions(format!("action not found: {}", selector.name)))?;
+    let id = clearhead_core::workspace::selector::unique_selector_match_pair(
+        source,
+        destination,
+        selector,
+    )?
+    .ok_or_else(|| WorkspaceError::Actions(format!("action not found: {}", selector.name)))?;
     let (batch, outcome) = clearhead_core::workspace::action_lifecycle::prepare_action_move(
         active,
         completed,
@@ -309,14 +309,14 @@ pub fn transition_action_result(
         ce,
     )]);
     let file = &model.files[0];
-    let id = clearhead_core::workspace::selector::unique_selector_match(&file.active, selector)?
-        .or(clearhead_core::workspace::selector::unique_selector_match(
-            &file.completed,
-            selector,
-        )?)
-        .ok_or_else(|| clearhead_core::VerbError::NotFound {
-            query: selector.name.clone(),
-        })?;
+    let id = clearhead_core::workspace::selector::unique_selector_match_pair(
+        &file.active,
+        &file.completed,
+        selector,
+    )?
+    .ok_or_else(|| clearhead_core::VerbError::NotFound {
+        query: selector.name.clone(),
+    })?;
     let operations = if cascade {
         expand_cascade(&model, id, state)?
     } else {
