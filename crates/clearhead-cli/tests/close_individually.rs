@@ -50,6 +50,67 @@ fn active(env: &TestEnv) -> Vec<clearhead_core::Action> {
 }
 
 #[test]
+fn noop_cascade_previews_match_committed_outcome_and_spec_without_writes() {
+    let spec = std::env::var_os("CLEARHEAD_SPEC_DIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| {
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../specifications")
+        });
+    let schema: Value = serde_json::from_slice(
+        &fs::read(spec.join("schemas/transaction_result.schema.json")).unwrap(),
+    )
+    .unwrap();
+    let validator = jsonschema::JSONSchema::compile(&schema).unwrap();
+    for verb in ["complete", "cancel", "reopen"] {
+        let env = setup("[ ]", "[ ]");
+        run(&env, verb, ROOT, &["--cascade"]);
+        // Reopen also needs an all-open tree before the no-op preview.
+        let paths = [
+            "work.actions",
+            "work.completed.actions",
+            ".work.json",
+            ".work.completed.json",
+        ]
+        .map(|name| env.data_dir.join("charters").join(name));
+        let before = paths.each_ref().map(|path| {
+            fs::read(path)
+                .ok()
+                .map(|bytes| (bytes, fs::metadata(path).unwrap().modified().unwrap()))
+        });
+        let preview = run(&env, verb, ROOT, &["--cascade", "--dry-run"]);
+        assert!(validator.is_valid(&preview), "{verb}: {preview}");
+        assert_eq!(preview["kind"], "dry-run");
+        assert_eq!(preview["files"], serde_json::json!([]));
+        let committed = run(&env, verb, ROOT, &["--cascade"]);
+        assert_eq!(preview["operations"], serde_json::json!([committed]));
+        let after = paths.each_ref().map(|path| {
+            fs::read(path)
+                .ok()
+                .map(|bytes| (bytes, fs::metadata(path).unwrap().modified().unwrap()))
+        });
+        assert_eq!(after, before, "{verb} must not write");
+    }
+}
+
+#[test]
+fn unarchive_appends_restored_tree_after_remaining_root() {
+    let env = setup("[ ]", "[ ]");
+    run(&env, "complete", ROOT, &["--cascade"]);
+    let restored = active(&env);
+    let path = env.data_dir.join("charters/work.actions");
+    let mut text = fs::read_to_string(&path).unwrap();
+    text.push_str("[ ] Other root #01951111-0000-7000-8000-000000000005\n");
+    fs::write(&path, text).unwrap();
+    let other = active(&env).last().unwrap().clone();
+    run(&env, "archive", ROOT, &[]);
+    assert_eq!(active(&env), vec![other.clone()]);
+    run(&env, "unarchive", ROOT, &[]);
+    let mut expected = vec![other];
+    expected.extend(restored);
+    assert_eq!(active(&env), expected);
+}
+
+#[test]
 fn single_close_keeps_tree_and_reports_open_descendants() {
     for verb in ["complete", "cancel"] {
         let env = setup("[ ]", "[-]");
