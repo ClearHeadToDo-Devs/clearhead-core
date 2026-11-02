@@ -28,19 +28,16 @@ fn transact_commits_a_mixed_batch_atomically() {
     match transact(temp.path(), request, false).unwrap() {
         TransactionOutcome::Committed { operations, files } => {
             assert_eq!(operations.len(), 2);
-            assert_eq!(files.len(), 2);
+            assert_eq!(files, vec![source.display().to_string()]);
         }
         other => panic!("expected committed, got {other:?}"),
     }
     let active = read_actions(&source).unwrap();
-    assert_eq!(active.len(), 1);
+    assert_eq!(active.len(), 2);
     assert_eq!(active[0].priority, Some(1));
-    assert_eq!(
-        read_actions(&completed_actions_path(&source))
-            .unwrap()
-            .len(),
-        1
-    );
+    assert_eq!(active[1].state, clearhead_core::ActionState::Completed);
+    assert!(active[1].completed_at.is_some());
+    assert!(!completed_actions_path(&source).exists());
     assert!(!temp.path().join("charters/.pending").exists());
 }
 
@@ -80,7 +77,7 @@ fn transact_dry_run_stages_nothing() {
     match transact(temp.path(), request, true).unwrap() {
         TransactionOutcome::DryRun { operations, files } => {
             assert_eq!(operations.len(), 2);
-            assert_eq!(files.len(), 2);
+            assert_eq!(files, vec![source.display().to_string()]);
         }
         other => panic!("expected dry-run, got {other:?}"),
     }

@@ -230,6 +230,7 @@ fn archive_many(
     // flattening destroys) — it is re-homed into the files themselves (`parent:`
     // normalization, handled separately).
     let mut moves: Vec<ArchiveResourceMove> = Vec::new();
+    let mut sweep_preconditions = Vec::new();
     let mut seen_sources = HashSet::new();
     let mut dirs_to_remove: BTreeSet<(usize, PathBuf)> = BTreeSet::new();
 
@@ -286,18 +287,63 @@ fn archive_many(
         };
         validate_archive_candidate(mc, open_count, opts.force).map_err(map_policy_error)?;
 
-        primary_swept += count_actions(&acts_abs)?;
-        completed_swept += count_actions(&completed_abs)?;
+        let mut swept = std::collections::BTreeMap::new();
+        if let Some(path) = &acts_abs {
+            let completed = completed_actions_path(path);
+            let (a, ae) = super::snapshot(&layout.data_root, path)?;
+            let (c, ce) = super::snapshot(&layout.data_root, &completed)?;
+            let (batch, _) = clearhead_core::workspace::action_lifecycle::prepare_action_move(
+                super::action_state(a, ae)?,
+                super::action_state(c, ce)?,
+                super::load_sidecar_state(&layout.data_root, path)?,
+                super::load_sidecar_state(&layout.data_root, &completed)?,
+                None,
+                Default::default(),
+            )
+            .map_err(|e| WorkspaceError::Actions(e.to_string()))?;
+            sweep_preconditions.extend_from_slice(batch.preconditions());
+            for effect in batch.effects() {
+                if let Effect::Write { path, bytes } = effect {
+                    swept.insert(layout.data_root.join(path.path.as_str()), bytes.clone());
+                }
+            }
+        }
+        primary_swept += match acts_abs.as_ref().and_then(|p| swept.get(p)) {
+            Some(bytes) => clearhead_core::parse_actions(
+                std::str::from_utf8(bytes).map_err(|e| WorkspaceError::Parse(e.to_string()))?,
+            )
+            .map_err(WorkspaceError::Actions)?
+            .len(),
+            None => count_actions(&acts_abs)?,
+        };
+        completed_swept += match completed_abs.as_ref().and_then(|p| swept.get(p)) {
+            Some(bytes) => clearhead_core::parse_actions(
+                std::str::from_utf8(bytes).map_err(|e| WorkspaceError::Parse(e.to_string()))?,
+            )
+            .map_err(WorkspaceError::Actions)?
+            .len(),
+            None => count_actions(&completed_abs)?,
+        };
 
         // Compute self-containing destination bytes without mutating live
         // sources. Transformed resources become one durable destination Write
         // plus source Remove; byte-identical resources remain true Move effects.
-        let sidecar_replacement = sidecar_abs
-            .as_ref()
-            .filter(|path| path.exists())
-            .map(|path| crystallized_sidecar(path, mc.id))
-            .transpose()?
-            .flatten();
+        let sidecar_replacement = if let Some(bytes) =
+            sidecar_abs.as_ref().and_then(|p| swept.remove(p))
+        {
+            let mut metadata = clearhead_core::workspace::sidecar::parse_sidecar(
+                std::str::from_utf8(&bytes).map_err(|e| WorkspaceError::Parse(e.to_string()))?,
+            )?;
+            record_charter_id(&mut metadata, mc.id);
+            Some(render_sidecar(&metadata)?.into_bytes())
+        } else {
+            sidecar_abs
+                .as_ref()
+                .filter(|path| path.exists())
+                .map(|path| crystallized_sidecar(path, mc.id))
+                .transpose()?
+                .flatten()
+        };
         let md_replacement = match (&md_abs, mc.parent.as_deref()) {
             (Some(md), Some(parent)) if md.exists() => {
                 match resolve_parent_uuid(parent, all_charters) {
@@ -314,12 +360,21 @@ fn archive_many(
         // Flat, UUID-stemmed destinations. The quartet keys on the charter's own
         // UUID; the sidecar name derives from the actions destination.
         let acts_dest = archive_root.join(format!("{}.actions", mc.id));
-        let quartet: [(Option<PathBuf>, PathBuf, Option<Vec<u8>>); 4] = [
-            (acts_abs, acts_dest.clone(), None),
+        let active_replacement = acts_abs.as_ref().and_then(|p| swept.remove(p));
+        let completed_replacement = completed_abs.as_ref().and_then(|p| swept.remove(p));
+        let completed_sidecar = completed_abs.as_ref().map(|p| sidecar_path(p));
+        let completed_meta_replacement = completed_sidecar.as_ref().and_then(|p| swept.remove(p));
+        let quartet: [(Option<PathBuf>, PathBuf, Option<Vec<u8>>); 5] = [
+            (acts_abs, acts_dest.clone(), active_replacement),
             (
                 completed_abs,
                 archive_root.join(format!("{}.completed.actions", mc.id)),
-                None,
+                completed_replacement,
+            ),
+            (
+                completed_sidecar,
+                sidecar_path(&archive_root.join(format!("{}.completed.actions", mc.id))),
+                completed_meta_replacement,
             ),
             (
                 md_abs,
@@ -332,7 +387,7 @@ fn archive_many(
         // The `.ics` plans are intentionally excluded: the server owns them and
         // they stay on disk. Everything else commits all-or-none.
         for (source, destination, replacement) in quartet {
-            if let Some(source) = source.filter(|path| path.exists())
+            if let Some(source) = source.filter(|path| path.exists() || replacement.is_some())
                 && seen_sources.insert(source.clone())
             {
                 moves.push(ArchiveResourceMove {
@@ -385,6 +440,26 @@ fn archive_many(
     // source and destination revisions immediately before native durable intent.
     // The journal lives in `charters/`, where normal loading recovers it.
     let effects = prepare_move_effects(&layout.data_root, &moves)?;
+    let mut expected = std::collections::BTreeMap::new();
+    for condition in effects.preconditions().iter().chain(&sweep_preconditions) {
+        if let Some(previous) = expected.insert(condition.path.clone(), condition.expected.clone())
+            && previous != condition.expected
+        {
+            return Err(WorkspaceError::Actions(format!(
+                "charter archive snapshot changed: {}",
+                condition.path
+            ))
+            .into());
+        }
+    }
+    let effects = EffectBatch::new(
+        effects.effects().to_vec(),
+        expected
+            .into_iter()
+            .map(|(path, expected)| ResourcePrecondition { path, expected })
+            .collect(),
+    )
+    .map_err(|e| WorkspaceError::Actions(e.to_string()))?;
     deliver_move_effects(&layout.data_root, &effects)?;
 
     // Remove directory-form charter folders deepest-first so a fully archived
@@ -417,7 +492,10 @@ fn prepare_move_effects(
     for resource in moves {
         let source = archive_workspace_path(data_root, &resource.source)?;
         let destination = archive_workspace_path(data_root, &resource.destination)?;
-        let source_revision = required_revision(&data_root.join(source.as_str()))?;
+        let source_expected = expected_resource(&data_root.join(source.as_str()))?;
+        if source_expected == ExpectedResource::Missing && resource.replacement.is_none() {
+            required_revision(&data_root.join(source.as_str()))?;
+        }
         if expected_resource(&data_root.join(destination.as_str()))? != ExpectedResource::Missing {
             return Err(ArchiveCharterError::Workspace(WorkspaceError::Actions(
                 format!("archive destination already exists: {destination}"),
@@ -427,7 +505,7 @@ fn prepare_move_effects(
         let destination = ResourceLocation::workspace(destination);
         preconditions.push(ResourcePrecondition {
             path: source.clone(),
-            expected: ExpectedResource::Revision(source_revision),
+            expected: source_expected.clone(),
         });
         preconditions.push(ResourcePrecondition {
             path: destination.clone(),
@@ -438,7 +516,9 @@ fn prepare_move_effects(
                 path: destination,
                 bytes: bytes.clone(),
             });
-            effects.push(Effect::Remove { path: source });
+            if source_expected != ExpectedResource::Missing {
+                effects.push(Effect::Remove { path: source });
+            }
         } else {
             effects.push(Effect::Move {
                 source,
@@ -873,8 +953,8 @@ mod tests {
         )
         .expect("dry-run should accept a closed charter with no open actions");
 
-        assert_eq!(result.primary_actions_swept, 2);
-        assert_eq!(result.completed_actions_swept, 1);
+        assert_eq!(result.primary_actions_swept, 0);
+        assert_eq!(result.completed_actions_swept, 3);
         assert!(result.was_dry_run);
         assert!(charters_dir.join("done.actions").exists());
         assert!(charters_dir.join("done.completed.actions").exists());
@@ -1120,9 +1200,13 @@ mod tests {
         let archived_sc = sidecar_path(&root.join(format!(".clearhead/archive/{uuid}.actions")));
         let moved =
             std::fs::read_to_string(&archived_sc).expect("sidecar must be moved into archive/");
-        assert!(
-            moved.contains("2024-06-01"),
-            "sidecar-only data must survive the move verbatim:\n{moved}"
+        let completed_meta = read_sidecar(&sidecar_path(
+            &root.join(format!(".clearhead/archive/{uuid}.completed.actions")),
+        ))
+        .unwrap();
+        assert_eq!(
+            serde_json::to_value(&completed_meta.actions[&action_id.to_string()]).unwrap(),
+            serde_json::to_value(&meta.actions[&action_id.to_string()]).unwrap()
         );
         assert!(
             moved.contains(&uuid.to_string()),
@@ -1211,8 +1295,8 @@ mod tests {
             .expect("archive should succeed");
         assert_eq!(result.charter_name, "work");
         assert_eq!(
-            result.primary_actions_swept, 2,
-            "parent + child actions should be swept"
+            result.completed_actions_swept, 2,
+            "parent + child closed actions should be swept into completed stores"
         );
 
         assert!(

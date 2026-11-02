@@ -4,7 +4,7 @@ use std::path::Path;
 
 use clearhead_cli::filesystem::read_actions;
 use clearhead_cli::filesystem::{
-    close_action_subtree, load_domain_model, resolve_materialized_occurrence, sync_calendar,
+    load_domain_model, resolve_materialized_occurrence, sync_calendar, transition_action,
 };
 use clearhead_core::workspace::calendar::reconcile::occurrence_links;
 use clearhead_core::{ActionSelector, OccurrenceOp, completed_actions_path};
@@ -48,25 +48,30 @@ fn closing_materialized_occurrence_preserves_completed_sidecar_lineage() {
         .find(|a| a.id == occ_id)
         .unwrap();
 
-    close_action_subtree(
+    transition_action(
         root,
         &actions_path,
         &ActionSelector::from(&token),
         clearhead_core::ActionState::Completed,
-        now,
+        false,
+        false,
     )
     .unwrap();
-    resolve_materialized_occurrence(root, occ_id, &OccurrenceOp::Complete { at: now }, now)
-        .unwrap();
-
-    let completed_path = completed_actions_path(&actions_path);
     assert!(
-        fs::read_to_string(&completed_path)
+        !resolve_materialized_occurrence(root, occ_id, &OccurrenceOp::Complete { at: now }, now)
+            .unwrap(),
+        "the shared close has already resolved the occurrence"
+    );
+
+    assert!(!completed_actions_path(&actions_path).exists());
+    assert!(
+        read_actions(&actions_path)
             .unwrap()
-            .contains(&occ_id.to_string())
+            .iter()
+            .any(|a| a.id == occ_id && a.state == clearhead_core::ActionState::Completed)
     );
     let sidecar: serde_json::Value = serde_json::from_str(
-        &fs::read_to_string(completed_path.with_file_name(".health.completed.json")).unwrap(),
+        &fs::read_to_string(actions_path.with_file_name(".health.json")).unwrap(),
     )
     .unwrap();
     let occurrence = &sidecar["actions"][occ_id.to_string()]["occurrence"];

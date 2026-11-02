@@ -113,6 +113,13 @@ pub fn build(ctx: &CommandContext) -> anyhow::Result<Orient> {
                     title: charter.title.clone(),
                 });
             }
+            completions.extend(
+                charter
+                    .actions
+                    .iter()
+                    .filter(|a| a.action.state.is_terminal())
+                    .map(|a| a.action.clone()),
+            );
             for sourced in &charter.actions {
                 if sourced.action.state == ActionState::BlockedOrAwaiting {
                     blockers.push(BlockerEntry::Action {

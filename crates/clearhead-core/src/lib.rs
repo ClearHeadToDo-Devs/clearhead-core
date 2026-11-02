@@ -110,7 +110,7 @@ pub use domain::update::{
 #[doc(inline)]
 pub use domain::{
     ActionState, Charter, CharterState, DomainModel, Metric, Objective, Plan, PredecessorRef,
-    Recurrence, WorkspaceCharter, close_subtree, collect_subtree_ids, reopen_subtree,
+    Recurrence, WorkspaceCharter, collect_subtree_ids,
 };
 pub use workspace::{
     PlansSyncStore, Reconcile, SyncEntry, SyncReport, SyncTally, decode_plans_sync_store,

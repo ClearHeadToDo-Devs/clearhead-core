@@ -580,12 +580,7 @@ fn test_complete_command() {
         .arg(uuid)
         .assert()
         .success();
-    let content = fs::read_to_string(
-        env.data_dir
-            .join("charters")
-            .join("inbox.completed.actions"),
-    )
-    .unwrap();
+    let content = fs::read_to_string(env.data_dir.join("charters").join("inbox.actions")).unwrap();
     assert!(content.contains("[x] Task to complete"));
     assert!(content.contains("%")); // Completed date
 }
@@ -600,12 +595,7 @@ fn test_complete_command_by_name() {
         .arg("Unique Task")
         .assert()
         .success();
-    let content = fs::read_to_string(
-        env.data_dir
-            .join("charters")
-            .join("inbox.completed.actions"),
-    )
-    .unwrap();
+    let content = fs::read_to_string(env.data_dir.join("charters").join("inbox.actions")).unwrap();
     assert!(content.contains("[x] Unique Task Name"));
 }
 
@@ -630,17 +620,11 @@ fn test_complete_command_project_root_next_actions_uses_the_reserved_stem() {
         .assert()
         .success();
 
-    // The root anchor's completed history uses the reserved `next` stem
-    // regardless of the project directory name — not the project name, which
-    // used to leave every install's root history split across two files.
-    let completed_path = charters_dir.join("next.completed.actions");
-    assert!(
-        completed_path.exists(),
-        "expected {} to exist",
-        completed_path.display()
-    );
-    let content = fs::read_to_string(&completed_path).unwrap();
+    // Closure stays in the reserved root anchor and creates no archive.
+    assert!(!charters_dir.join("next.completed.actions").exists());
+    let content = fs::read_to_string(&next_path).unwrap();
     assert!(content.contains("[x] Project root task"));
+    assert!(content.contains(" %"));
     assert!(
         !charters_dir
             .join("sample-project.completed.actions")
@@ -677,8 +661,8 @@ fn test_archive_actions_project_root_next_actions_uses_the_reserved_stem() {
     let content = fs::read_to_string(&completed_path).unwrap();
     assert!(content.contains("[x] Already done"));
     assert!(
-        content.contains(" %"),
-        "archival must stamp a missing completion date before moving the action: {content}"
+        !content.contains(" %"),
+        "storage moves must preserve an absent completion date: {content}"
     );
     assert!(
         !charters_dir

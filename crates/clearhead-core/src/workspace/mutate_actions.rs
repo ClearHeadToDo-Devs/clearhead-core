@@ -123,7 +123,7 @@ pub fn prepare_action_update(
 ) -> Result<(EffectBatch, PreparedUpdateOutcome), ActionPrepareError> {
     if let Some(state) = disallowed_terminal_update(&update) {
         return Err(ActionPrepareError::Domain(format!(
-            "cannot set state to {state:?} via update; use complete/cancel, which cascade to the subtree and archive it"
+            "cannot set state to {state:?} via update; use complete/cancel, which close the selected action in place"
         )));
     }
     let mut next = source.actions;

@@ -8,6 +8,7 @@
 //! physical resources and execute the effects Core prepares.
 
 pub mod action_files;
+pub mod action_lifecycle;
 pub mod actions;
 pub mod archive_actions;
 pub mod archive_charter;
@@ -35,11 +36,7 @@ pub use actions::{
     TrustedDocument, diff_actions, format, format_trusted_source, parse_actions,
     parse_actions_with_mode, parse_document, parse_tree, parse_trusted_document, patch_action_list,
 };
-pub use archive_actions::{
-    ActionArchivePlan, PreparedArchiveOutcome, PreparedCloseOutcome, PreparedReopenOutcome,
-    plan_action_archive, prepare_action_archive, prepare_close_action_subtree,
-    prepare_reopen_action_subtree,
-};
+pub use archive_actions::{ActionArchivePlan, PreparedArchiveOutcome, plan_action_archive};
 pub use archive_charter::{
     ArchivePolicyError, archive_charter_name, archive_charter_subtree,
     has_terminal_archive_ancestor, materialize_archive_parent, resolve_archive_parent_uuid,

@@ -1397,22 +1397,32 @@ pub fn prepare_materialized_occurrence_resolution(
     input: MaterializedOccurrencePreparationInput,
 ) -> Result<(EffectBatch, bool), WorkspaceError> {
     require_actions_formatting().map_err(WorkspaceError::Actions)?;
+    let mut input = input;
+    fold_materialized_occurrence_resolution(&mut input)
+}
+
+/// Fold resolution into an already-loaded transaction snapshot.
+pub fn fold_materialized_occurrence_resolution(
+    input: &mut MaterializedOccurrencePreparationInput,
+) -> Result<(EffectBatch, bool), WorkspaceError> {
     let MaterializedOccurrencePreparationInput {
-        mut workspace,
-        mut store,
+        workspace,
+        store,
         occurrence_id,
         operation,
         now,
         plan_resources,
-        mut action_resources,
+        action_resources,
         templates,
-        mut archive,
+        archive,
         observed_resources,
         store_location,
         store_expected,
     } = input;
-    // Closing moved the line to the completed file, but its sidecar entry (and
-    // so its Plan link) still sits in the live sidecar.
+    let occurrence_id = *occurrence_id;
+    let now = *now;
+    // Closing keeps the line in place; find its Plan link in the sidecar of
+    // whichever resource holds the occurrence.
     let occurrence_key = occurrence_id.to_string();
     let linked = action_resources
         .iter()
@@ -1431,13 +1441,13 @@ pub fn prepare_materialized_occurrence_resolution(
             ))
         });
     let Some((live_sidecar, plan_id, slot_key)) = linked else {
-        let batch = EffectBatch::new(Vec::new(), observed_resources)
+        let batch = EffectBatch::new(Vec::new(), observed_resources.clone())
             .map_err(|error| WorkspaceError::Actions(error.to_string()))?;
         return Ok((batch, false));
     };
 
     let mut matched = None;
-    for resource in &plan_resources {
+    for resource in plan_resources.iter() {
         for plan in parse_ics(&resource.source, Path::new(resource.location.path.as_str()))? {
             if plan.plan.id != plan_id {
                 continue;
@@ -1459,9 +1469,9 @@ pub fn prepare_materialized_occurrence_resolution(
         WorkspaceError::Parse(format!("recurring plan {plan_id} has no UID to key on"))
     })?;
     let rendered_plan =
-        render_occurrence_deviation(&plan_resource.source, uid, &slot_key, &operation)?;
+        render_occurrence_deviation(&plan_resource.source, uid, &slot_key, operation)?;
 
-    if let Some(archive) = &mut archive {
+    if let Some(archive) = archive.as_mut() {
         let entry = archive
             .metadata
             .actions
@@ -1478,6 +1488,21 @@ pub fn prepare_materialized_occurrence_resolution(
     }
     let live = &mut action_resources[live_sidecar];
     if let Some(meta) = live.sidecar.actions.get_mut(&occurrence_key) {
+        if archive.is_none() {
+            let action = workspace
+                .charters
+                .iter()
+                .flat_map(|c| &c.actions)
+                .find(|a| a.action.id == occurrence_id);
+            freeze_occurrence_link(
+                meta,
+                occurrence_snapshot(
+                    &plan,
+                    &slot_key,
+                    action.and_then(|a| planned_start(a.action.planned.as_ref())),
+                ),
+            );
+        }
         meta.plan = None;
         if meta.created.is_none() && meta.occurrence.is_none() {
             live.sidecar.actions.remove(&occurrence_key);
@@ -1505,10 +1530,10 @@ pub fn prepare_materialized_occurrence_resolution(
             .cloned()
         && let Some(actions_file) = stage_prepared_plan_token(
             &mut workspace.charters[charter_idx],
-            &mut store,
+            store,
             &workspace_plan,
             floor,
-            &templates,
+            templates,
             now,
         )?
     {
@@ -1517,7 +1542,7 @@ pub fn prepare_materialized_occurrence_resolution(
 
     let mut effects = vec![Effect::Write {
         path: plan_resource.location.clone(),
-        bytes: rendered_plan.into_bytes(),
+        bytes: rendered_plan.clone().into_bytes(),
     }];
     for actions_file in dirty_actions {
         let resource = action_resources
@@ -1556,7 +1581,7 @@ pub fn prepare_materialized_occurrence_resolution(
             bytes: render_sidecar(&resource.sidecar)?.into_bytes(),
         });
     }
-    if let Some(archive) = &archive {
+    if let Some(archive) = archive.as_ref() {
         effects.push(Effect::Write {
             path: archive.sidecar_location.clone(),
             bytes: render_sidecar(&archive.metadata)?.into_bytes(),
@@ -1564,11 +1589,12 @@ pub fn prepare_materialized_occurrence_resolution(
     }
     effects.push(Effect::Write {
         path: store_location.clone(),
-        bytes: serialize_plans_sync_store(&store)?.into_bytes(),
+        bytes: serialize_plans_sync_store(store)?.into_bytes(),
     });
 
     let mut expected_by_location = BTreeMap::new();
     for precondition in observed_resources
+        .clone()
         .into_iter()
         .chain(
             action_resources
@@ -1592,8 +1618,8 @@ pub fn prepare_materialized_occurrence_resolution(
             expected: archive.sidecar_expected.clone(),
         }))
         .chain(std::iter::once(ResourcePrecondition {
-            path: store_location,
-            expected: store_expected,
+            path: store_location.clone(),
+            expected: store_expected.clone(),
         }))
     {
         if let Some(previous) =
@@ -1606,6 +1632,12 @@ pub fn prepare_materialized_occurrence_resolution(
             )));
         }
     }
+    let location = plan_resource.location.clone();
+    plan_resources
+        .iter_mut()
+        .find(|r| r.location == location)
+        .unwrap()
+        .source = rendered_plan;
     let batch = EffectBatch::new(
         effects,
         expected_by_location

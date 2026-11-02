@@ -175,39 +175,40 @@ fn resolve_acts_target(
 // Action lifecycle — complete, cancel, update
 // ============================================================================
 
-/// Mark an open action as completed (moves to `.completed.actions`).
+/// Complete an action in place, optionally cascading through open descendants.
 pub fn complete_action(
     ctx: &CommandContext,
     query: &str,
     charter: &Option<String>,
     file: &Option<PathBuf>,
+    cascade: bool,
     dry_run: bool,
 ) -> anyhow::Result<()> {
-    close_action_subtree(
+    close_action_in_place(
         ctx,
         query,
         charter,
         file,
         dry_run,
         ActionState::Completed,
-        "complete",
+        cascade,
     )
 }
 
 /// Shared body of `complete`/`cancel`: resolve the target identity, then hand
 /// the locked read-plan-apply mutation to core. Only the target state and
 /// message wording differ.
-fn close_action_subtree(
+fn close_action_in_place(
     ctx: &CommandContext,
     query: &str,
     charter: &Option<String>,
     file: &Option<PathBuf>,
     dry_run: bool,
     closing_state: ActionState,
-    verb_present: &str,
+    cascade: bool,
 ) -> anyhow::Result<()> {
-    let Some((actions_path, mut open_actions)) =
-        find_and_load_open_actions(ctx, file, charter, query)?
+    let Some((actions_path, open_actions)) =
+        find_and_load_actions(ctx, file, charter, query, is_open_action, cascade)?
     else {
         // Not a materialized line in any file — it may be a projected recurring
         // occurrence, acted on by writing a deviation to its master rather than
@@ -219,69 +220,24 @@ fn close_action_subtree(
         return Err(verb_target_error(ctx, query)?.into());
     };
 
-    let (action_id, selector) = match find_action_mut(&mut open_actions, query)? {
-        Some(action) => (action.id, clearhead_core::ActionSelector::from(&*action)),
+    let selector = match find_source_state_match(&open_actions, query, is_open_action)? {
+        Some(action) => clearhead_core::ActionSelector::from(action),
         None => return Err(verb_target_error(ctx, query)?.into()),
     };
-
-    let subtree_ids = clearhead_core::collect_subtree_ids(&open_actions, action_id);
-
-    if dry_run {
-        println!(
-            "Would {} action {} and {} child(ren)",
-            verb_present,
-            action_id,
-            subtree_ids.len() - 1,
-        );
-        return Ok(());
-    }
-
     let workspace_root = ctx.workspace_for_file(&actions_path);
-    let result = clearhead_cli::filesystem::close_action_subtree(
+    let (outcome, transaction) = clearhead_cli::filesystem::transition_action_result(
         &workspace_root,
         &actions_path,
         &selector,
         closing_state,
-        Local::now(),
+        cascade,
+        dry_run,
     )?;
-
-    // If the closed line was a materialized recurring occurrence, closing it is only
-    // half the operation: write the completed/skip deviation to its master and stamp
-    // the plan's next token. `resolve_materialized_occurrence` is a no-op (`false`)
-    // for an ordinary action, so this is safe to attempt unconditionally.
-    let occurrence_op = match closing_state {
-        ActionState::Completed => Some(clearhead_core::OccurrenceOp::Complete { at: Local::now() }),
-        ActionState::Cancelled => Some(clearhead_core::OccurrenceOp::Skip),
-        _ => None,
-    };
-    if let Some(op) = occurrence_op
-        && clearhead_cli::filesystem::resolve_materialized_occurrence(
-            &workspace_root,
-            action_id,
-            &op,
-            Local::now(),
-        )?
-    {
-        info!(%action_id, "Recurring occurrence: deviation written to master, next token stamped");
-    }
-
-    let children = if result.already_closed {
-        subtree_ids.len().saturating_sub(1)
+    if dry_run {
+        println!("{}", serde_json::to_string(&transaction)?);
     } else {
-        result.closed_count.saturating_sub(1)
-    };
-    let outcome = match closing_state {
-        ActionState::Cancelled => VerbOutcome::Cancelled {
-            id: canonical_id(action_id),
-            children,
-        },
-        _ => VerbOutcome::Completed {
-            id: canonical_id(action_id),
-            children,
-        },
-    };
-    info!(%action_id, children, "Action subtree closed ({:?})", closing_state);
-    emit(&outcome);
+        emit(&outcome);
+    }
     Ok(())
 }
 
@@ -324,33 +280,38 @@ fn try_close_occurrence(
         other => anyhow::bail!("cannot map state {other:?} to an occurrence operation"),
     };
 
-    if dry_run {
-        let verb = if closing_state == ActionState::Cancelled {
-            "skip"
-        } else {
-            "complete"
-        };
-        println!(
-            "Would {} occurrence {} of plan {}",
-            verb, occurrence.id, plan_id,
-        );
-        return Ok(true);
-    }
-
-    clearhead_cli::filesystem::apply_occurrence_op(&ctx.data_dir, plan_id, &key, &op)?;
+    let files = clearhead_cli::filesystem::apply_occurrence_op_result(
+        &ctx.data_dir,
+        plan_id,
+        &key,
+        &op,
+        dry_run,
+    )?;
 
     let outcome = match closing_state {
         ActionState::Cancelled => VerbOutcome::Cancelled {
             id: canonical_id(occurrence.id),
-            children: 0,
+            open_children: vec![],
         },
         _ => VerbOutcome::Completed {
             id: canonical_id(occurrence.id),
-            children: 0,
+            open_children: vec![],
         },
     };
     info!(%occurrence.id, %plan_id, "Occurrence deviation written ({:?})", closing_state);
-    emit(&outcome);
+    if dry_run {
+        println!(
+            "{}",
+            serde_json::to_string(
+                &clearhead_core::workspace::transaction::TransactionOutcome::DryRun {
+                    operations: vec![outcome],
+                    files,
+                }
+            )?
+        );
+    } else {
+        emit(&outcome);
+    }
     Ok(true)
 }
 
@@ -516,7 +477,7 @@ pub fn update_action(
     if let Some(state) = clearhead_core::disallowed_terminal_update(&update) {
         anyhow::bail!(
             "cannot set state to {state:?} via update; use complete/cancel, \
-             which cascade to the subtree and archive it"
+             which close the selected action in place"
         );
     }
 
@@ -623,74 +584,120 @@ pub fn delete_action(
     anyhow::bail!("No action found matching '{}'", query)
 }
 
-/// Cancel an open action and all its descendants (moves to `.completed.actions` with Cancelled state).
+/// Cancel an action in place, optionally cascading through open descendants.
 pub fn cancel_action(
     ctx: &CommandContext,
     query: &str,
     charter: &Option<String>,
     file: &Option<PathBuf>,
+    cascade: bool,
     dry_run: bool,
 ) -> anyhow::Result<()> {
-    close_action_subtree(
+    close_action_in_place(
         ctx,
         query,
         charter,
         file,
         dry_run,
         ActionState::Cancelled,
-        "cancel",
+        cascade,
     )
 }
 
-/// Reopen a completed action and its subtree — the inverse of `complete`/
-/// `cancel`. Resolves the target in the `.completed.actions` history, then hands
-/// the locked read-plan-apply move back to the active file to core via
-/// clearhead_cli's `filesystem` module.
-///
-/// The whole subtree returns `NotStarted` (child states were collapsed at
-/// completion) and the root returns detached from its old parent (that link was
-/// nulled at completion) — see `reopen_subtree` in core for the rationale.
+/// Reopen in place, optionally expanding a cascade of single transitions.
+/// Archived lines are storage, not reopen targets.
 pub fn reopen_action(
     ctx: &CommandContext,
     query: &str,
     charter: &Option<String>,
     file: &Option<PathBuf>,
+    cascade: bool,
     dry_run: bool,
 ) -> anyhow::Result<()> {
-    let Some((actions_path, completed)) =
-        find_and_load_completed_actions(ctx, file, charter, query)?
-    else {
-        return Err(reopen_target_error(ctx, query)?.into());
-    };
-
-    let (action_id, selector) = match find_best_match(&completed, query, is_closed_action)? {
-        Some(action) => (action.id, clearhead_core::ActionSelector::from(action)),
-        None => return Err(verb_target_error(ctx, query)?.into()),
-    };
-    let subtree_ids = clearhead_core::collect_subtree_ids(&completed, action_id);
-
-    if dry_run {
-        println!(
-            "Would reopen action {} and {} child(ren)",
-            action_id,
-            subtree_ids.len() - 1,
-        );
+    if let Some((path, actions)) =
+        find_and_load_actions(ctx, file, charter, query, is_closed_action, false)?
+        && let Some(action) = find_source_state_match(&actions, query, is_closed_action)?
+    {
+        let (outcome, transaction) = clearhead_cli::filesystem::transition_action_result(
+            &ctx.workspace_for_file(&path),
+            &path,
+            &clearhead_core::ActionSelector::from(action),
+            ActionState::NotStarted,
+            cascade,
+            dry_run,
+        )?;
+        if dry_run {
+            println!("{}", serde_json::to_string(&transaction)?);
+        } else {
+            emit(&outcome);
+        }
         return Ok(());
     }
+    if let Some((_, completed)) = find_and_load_completed_actions(ctx, file, charter, query)?
+        && let Some(action) = find_best_match(&completed, query, |_| true)?
+    {
+        return Err(VerbError::Archived {
+            query: query.to_string(),
+            id: canonical_id(action.id),
+            root: canonical_id(clearhead_core::workspace::transaction::tree_root(
+                &completed, action.id,
+            )),
+        }
+        .into());
+    }
+    Err(reopen_target_error(ctx, query)?.into())
+}
 
-    let workspace_root = ctx.workspace_for_file(&actions_path);
-    let result = clearhead_cli::filesystem::reopen_action_subtree(
-        &workspace_root,
-        &actions_path,
-        &selector,
-    )?;
-    let children = result.reopened_count.saturating_sub(1);
-    let outcome = VerbOutcome::Reopened {
-        id: canonical_id(result.action_id),
-        children,
+/// Move one root tree, without conflating storage with closure.
+pub fn move_action(
+    ctx: &CommandContext,
+    query: &str,
+    charter: &Option<String>,
+    file: &Option<PathBuf>,
+    mode: clearhead_core::workspace::action_lifecycle::MoveMode,
+    dry_run: bool,
+) -> anyhow::Result<()> {
+    let mut found = if mode.unarchive {
+        find_and_load_completed_actions(ctx, file, charter, query)?
+    } else {
+        find_and_load_open_actions(ctx, file, charter, query)?
     };
-    info!(action_id = %result.action_id, children, "Action subtree reopened");
-    emit(&outcome);
+    let has_source_match = match &found {
+        Some((_, actions)) => find_best_match(actions, query, |_| true)?.is_some(),
+        None => false,
+    };
+    if !has_source_match {
+        found = if mode.unarchive {
+            find_and_load_open_actions(ctx, file, charter, query)?
+        } else {
+            find_and_load_completed_actions(ctx, file, charter, query)?
+        };
+    }
+    let Some((path, actions)) = found else {
+        anyhow::bail!("action not found: {query}");
+    };
+    let action = find_best_match(&actions, query, |_| true)?
+        .ok_or_else(|| anyhow::anyhow!("action not found: {query}"))?;
+    let (result, id, files) = clearhead_cli::filesystem::move_action(
+        &ctx.workspace_for_file(&path),
+        &path,
+        &clearhead_core::ActionSelector::from(action),
+        mode,
+        dry_run,
+    )?;
+    let operation = serde_json::json!({
+        "kind": if mode.unarchive { "unarchived" } else { "archived" },
+        "id": canonical_id(id),
+        "count": result.archived_count,
+    });
+    println!(
+        "{}",
+        serde_json::json!({
+            "kind": if dry_run { "dry-run" } else { "committed" },
+            "operations": [operation],
+            "files": files,
+        })
+    );
     Ok(())
 }
 
@@ -1142,7 +1149,7 @@ pub fn archive_actions(
 // ============================================================================
 
 /// Locate the `.actions` file a mutation verb should operate on. `Ok(None)`
-/// means the workspace scan found no open match — the caller builds the typed
+/// means the workspace scan found no match — the caller builds the typed
 /// target error; hard errors (io, parse, unknown charter) stay `Err`.
 fn find_and_load_open_actions(
     ctx: &CommandContext,
@@ -1150,8 +1157,19 @@ fn find_and_load_open_actions(
     charter: &Option<String>,
     query: &str,
 ) -> anyhow::Result<Option<(PathBuf, ActionList)>> {
+    find_and_load_actions(ctx, file, charter, query, is_open_action, false)
+}
+
+fn find_and_load_actions(
+    ctx: &CommandContext,
+    file: &Option<PathBuf>,
+    charter: &Option<String>,
+    query: &str,
+    preferred: fn(&Action) -> bool,
+    include_completed: bool,
+) -> anyhow::Result<Option<(PathBuf, ActionList)>> {
     if let Some(path) = file {
-        let actions = super::load_file_for_mutation(path, "action lifecycle")?;
+        let actions = load_lifecycle_candidates(path, include_completed)?;
         return Ok(Some((path.clone(), actions)));
     }
     if let Some(charter_query) = charter {
@@ -1160,13 +1178,13 @@ fn find_and_load_open_actions(
             anyhow::anyhow!("Charter '{}' has no associated actions file", mc.title)
         })?;
         let path = clearhead_cli::filesystem::charter_root(&ws_root).join(rel);
-        let actions = super::load_file_for_mutation(&path, "action lifecycle")?;
+        let actions = load_lifecycle_candidates(&path, include_completed)?;
         return Ok(Some((path, actions)));
     }
     // Search every workspace (respects --workspace); primary errors are hard,
     // additional workspaces are skipped on error like all_domain_models.
     for (_, ws_dir) in ctx.workspace_dirs() {
-        match find_act_in_open_files(&ws_dir, query) {
+        match find_act_in_open_files(&ws_dir, query, preferred, include_completed) {
             Ok(Some(found)) => return Ok(Some(found)),
             Ok(None) => {}
             Err(e) if ws_dir == ctx.data_dir => return Err(e),
@@ -1176,17 +1194,34 @@ fn find_and_load_open_actions(
     Ok(None)
 }
 
+/// Cascades must resolve archived targets too, so Core can distinguish a
+/// satisfied no-op from a refusal. Keep the active path as the mutation anchor.
+fn load_lifecycle_candidates(path: &Path, include_completed: bool) -> anyhow::Result<ActionList> {
+    let mut actions = super::load_file_for_mutation(path, "action lifecycle")?;
+    if include_completed {
+        actions.extend(action_files::read_actions(
+            &action_files::completed_actions_path(path),
+        )?);
+    }
+    Ok(actions)
+}
+
 /// Scan `.actions` files in the workspace for one containing an action matching
-/// `query`. `Ok(None)` when no file has an open match.
+/// `query`, preferring the verb's source state before diagnosing a wrong state.
 fn find_act_in_open_files(
     data_dir: &Path,
     query: &str,
+    preferred: fn(&Action) -> bool,
+    include_completed: bool,
 ) -> anyhow::Result<Option<(PathBuf, ActionList)>> {
     let paths = clearhead_cli::filesystem::list_action_files(data_dir)
         .context("Failed to list workspace")?;
     let mut loaded = Vec::with_capacity(paths.len());
     for path in paths {
-        loaded.push((path.clone(), action_files::read_actions(&path)?));
+        loaded.push((
+            path.clone(),
+            load_lifecycle_candidates(&path, include_completed)?,
+        ));
     }
 
     let candidates: Vec<&Action> = loaded
@@ -1194,7 +1229,7 @@ fn find_act_in_open_files(
         .flat_map(|(_, actions)| actions.iter())
         .collect();
     let Some(target_id) =
-        find_best_match(&candidates, query, is_open_action)?.map(|action| action.id)
+        find_source_state_match(&candidates, query, preferred)?.map(|action| action.id)
     else {
         return Ok(None);
     };
@@ -1276,6 +1311,21 @@ where
                 filter(action) && action.name.to_lowercase().contains(&query_lower)
             }))
         }
+    }
+}
+
+/// Prefer eligible targets; retain wrong-state matches only for typed errors.
+fn find_source_state_match<'a, T>(
+    actions: &'a [T],
+    query: &str,
+    preferred: fn(&Action) -> bool,
+) -> anyhow::Result<Option<&'a Action>>
+where
+    T: std::borrow::Borrow<Action> + clearhead_core::ReferenceEntity,
+{
+    match find_best_match(actions, query, preferred)? {
+        Some(action) => Ok(Some(action)),
+        None => find_best_match(actions, query, |_| true),
     }
 }
 

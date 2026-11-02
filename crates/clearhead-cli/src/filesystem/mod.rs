@@ -18,11 +18,11 @@ pub use archive_charter::{
 };
 pub use calendar::{
     COLLECTION_DISPLAYNAME_FILE, CalendarObservation, CalendarResource, CalendarSyncPreview,
-    CalendarSyncResult, apply_occurrence_op, delete_plan_file, observe_calendar_resources,
-    plans_sync_store_path, preview_calendar_sync_with_component, read_calendar_resources,
-    read_ics_file, read_plans_sync_store, resolve_materialized_occurrence, sync_calendar,
-    sync_calendar_with_component, sync_master_rollforwards, write_collection_displaynames,
-    write_plan_file,
+    CalendarSyncResult, apply_occurrence_op, apply_occurrence_op_result, delete_plan_file,
+    observe_calendar_resources, plans_sync_store_path, preview_calendar_sync_with_component,
+    read_calendar_resources, read_ics_file, read_plans_sync_store, resolve_materialized_occurrence,
+    sync_calendar, sync_calendar_with_component, sync_master_rollforwards,
+    write_collection_displaynames, write_plan_file,
 };
 pub use discovery::{ManifestSourceType, WorkspaceManifestEntry, collect_workspace_manifest};
 pub use doctor::{
@@ -49,12 +49,11 @@ use clearhead_core::workspace::resource::{
 };
 use clearhead_core::workspace::sidecar::CharterMetadata;
 use clearhead_core::workspace::{
-    ActionResourceState, FileState, PreparedArchiveOutcome, PreparedCloseOutcome,
-    PreparedDeleteOutcome, PreparedInsertOutcome, PreparedReopenOutcome,
-    PreparedTransactionOutcome, PreparedUpdateOutcome, SidecarResourceState, TransactionModel,
-    TransactionRequest, WorkspaceError, completed_actions_path, normalize_request, parse_actions,
-    prepare_action_archive, prepare_action_delete, prepare_action_insert, prepare_action_update,
-    prepare_close_action_subtree, prepare_reopen_action_subtree, prepare_transaction, sidecar_path,
+    ActionResourceState, FileState, PreparedArchiveOutcome, PreparedDeleteOutcome,
+    PreparedInsertOutcome, PreparedTransactionOutcome, PreparedUpdateOutcome, SidecarResourceState,
+    TransactionModel, TransactionRequest, WorkspaceError, completed_actions_path,
+    normalize_request, parse_actions, prepare_action_delete, prepare_action_insert,
+    prepare_action_update, sidecar_path,
 };
 use clearhead_core::{Action, ActionSelector};
 
@@ -84,24 +83,6 @@ pub struct ActionArchiveResult {
     pub archived_count: usize,
     pub source_path: PathBuf,
     pub completed_path: PathBuf,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CloseActionResult {
-    pub action_id: uuid::Uuid,
-    pub closed_count: usize,
-    pub source_path: PathBuf,
-    pub completed_path: PathBuf,
-    pub already_closed: bool,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ReopenActionResult {
-    pub action_id: uuid::Uuid,
-    pub reopened_count: usize,
-    pub source_path: PathBuf,
-    pub completed_path: PathBuf,
-    pub already_open: bool,
 }
 
 pub fn insert_action(
@@ -198,58 +179,218 @@ pub fn archive_actions(
     let completed_path = completed_actions_path(source_path);
     let (active_snapshot, active_expected) = snapshot(data_root, source_path)?;
     let (completed_snapshot, completed_expected) = snapshot(data_root, &completed_path)?;
-    let (batch, outcome) = prepare_action_archive(
+    let active_meta = load_sidecar_state(data_root, source_path)?;
+    let completed_meta = load_sidecar_state(data_root, &completed_path)?;
+    let (batch, outcome) = clearhead_core::workspace::action_lifecycle::prepare_action_move(
         action_state(active_snapshot, active_expected)?,
         action_state(completed_snapshot, completed_expected)?,
-        Local::now(),
+        active_meta,
+        completed_meta,
+        None,
+        clearhead_core::workspace::action_lifecycle::MoveMode::default(),
     )
     .map_err(|error| WorkspaceError::Actions(error.to_string()))?;
     deliver(&mounts, &batch)?;
     Ok(map_archive(data_root, outcome))
 }
 
-pub fn close_action_subtree(
-    workspace_root: &Path,
-    source_path: &Path,
-    selector: &ActionSelector,
-    closing_state: clearhead_core::ActionState,
-    completed_at: chrono::DateTime<Local>,
-) -> Result<CloseActionResult, WorkspaceError> {
-    let mounts = begin_mutation(workspace_root, source_path)?;
-    let data_root = &mounts.workspace;
-    let completed_path = completed_actions_path(source_path);
-    let (active_snapshot, active_expected) = snapshot(data_root, source_path)?;
-    let (completed_snapshot, completed_expected) = snapshot(data_root, &completed_path)?;
-    let (batch, outcome) = prepare_close_action_subtree(
-        action_state(active_snapshot, active_expected)?,
-        action_state(completed_snapshot, completed_expected)?,
-        selector,
-        closing_state,
-        completed_at,
-    )
-    .map_err(|error| WorkspaceError::Actions(error.to_string()))?;
-    deliver(&mounts, &batch)?;
-    Ok(map_close(data_root, outcome))
+fn load_sidecar_state(
+    data_root: &Path,
+    actions_path: &Path,
+) -> Result<SidecarResourceState, WorkspaceError> {
+    let (state, expected) = snapshot(data_root, &sidecar_path(actions_path))?;
+    Ok(SidecarResourceState {
+        path: state.path().clone(),
+        metadata: parse_sidecar_snapshot(&state)?,
+        expected,
+    })
 }
 
-pub fn reopen_action_subtree(
+pub fn move_action(
     workspace_root: &Path,
     source_path: &Path,
     selector: &ActionSelector,
-) -> Result<ReopenActionResult, WorkspaceError> {
+    mode: clearhead_core::workspace::action_lifecycle::MoveMode,
+    dry_run: bool,
+) -> Result<(ActionArchiveResult, uuid::Uuid, Vec<String>), WorkspaceError> {
     let mounts = begin_mutation(workspace_root, source_path)?;
-    let data_root = &mounts.workspace;
+    let root = &mounts.workspace;
     let completed_path = completed_actions_path(source_path);
-    let (active_snapshot, active_expected) = snapshot(data_root, source_path)?;
-    let (completed_snapshot, completed_expected) = snapshot(data_root, &completed_path)?;
-    let (batch, outcome) = prepare_reopen_action_subtree(
-        action_state(active_snapshot, active_expected)?,
-        action_state(completed_snapshot, completed_expected)?,
+    let (a, ae) = snapshot(root, source_path)?;
+    let (c, ce) = snapshot(root, &completed_path)?;
+    let active = action_state(a, ae)?;
+    let completed = action_state(c, ce)?;
+    let (source, destination) = if mode.unarchive {
+        (&completed.actions, &active.actions)
+    } else {
+        (&active.actions, &completed.actions)
+    };
+    let id = clearhead_core::workspace::selector::unique_selector_match_pair(
+        source,
+        destination,
         selector,
+    )?
+    .ok_or_else(|| WorkspaceError::Actions(format!("action not found: {}", selector.name)))?;
+    let (batch, outcome) = clearhead_core::workspace::action_lifecycle::prepare_action_move(
+        active,
+        completed,
+        load_sidecar_state(root, source_path)?,
+        load_sidecar_state(root, &completed_path)?,
+        Some(id),
+        mode,
     )
-    .map_err(|error| WorkspaceError::Actions(error.to_string()))?;
-    deliver(&mounts, &batch)?;
-    Ok(map_reopen(data_root, outcome))
+    .map_err(|e| WorkspaceError::Actions(e.to_string()))?;
+    if !dry_run {
+        deliver(&mounts, &batch)?;
+    }
+    let files = batch
+        .effects()
+        .iter()
+        .flat_map(|effect| match effect {
+            Effect::Write { path, .. } | Effect::Remove { path } => vec![path],
+            Effect::Move {
+                source,
+                destination,
+            } => vec![source, destination],
+        })
+        .map(|path| {
+            mounts
+                .physical_path(path)
+                .map(|path| path.display().to_string())
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok((map_archive(root, outcome), id, files))
+}
+
+/// The ordinary verbs and cascades share the same ordered transaction fold.
+pub fn transition_action(
+    workspace_root: &Path,
+    source_path: &Path,
+    selector: &ActionSelector,
+    state: clearhead_core::ActionState,
+    cascade: bool,
+    dry_run: bool,
+) -> anyhow::Result<clearhead_core::VerbOutcome> {
+    transition_action_result(
+        workspace_root,
+        source_path,
+        selector,
+        state,
+        cascade,
+        dry_run,
+    )
+    .map(|(outcome, _)| outcome)
+}
+
+/// Return the flat verb outcome alongside the full transaction result for previews.
+pub fn transition_action_result(
+    workspace_root: &Path,
+    source_path: &Path,
+    selector: &ActionSelector,
+    state: clearhead_core::ActionState,
+    cascade: bool,
+    dry_run: bool,
+) -> anyhow::Result<(clearhead_core::VerbOutcome, TransactionOutcome)> {
+    use clearhead_core::workspace::transaction::{
+        NormalizedOperation, PreparedTransactionOutcome, expand_cascade,
+    };
+    use clearhead_core::{ActionState, VerbOutcome};
+    let mounts = begin_mutation(workspace_root, source_path)?;
+    let root = &mounts.workspace;
+    let completed_path = completed_actions_path(source_path);
+    let (a, ae) = snapshot(root, source_path)?;
+    let (c, ce) = snapshot(root, &completed_path)?;
+    let model = TransactionModel::new(vec![FileState::new(
+        a.path().clone(),
+        c.path().clone(),
+        parse_snapshot(&a)?,
+        parse_snapshot(&c)?,
+        ae,
+        ce,
+    )]);
+    let file = &model.files[0];
+    let id = clearhead_core::workspace::selector::unique_selector_match_pair(
+        &file.active,
+        &file.completed,
+        selector,
+    )?
+    .ok_or_else(|| clearhead_core::VerbError::NotFound {
+        query: selector.name.clone(),
+    })?;
+    let operations = if cascade {
+        expand_cascade(&model, id, state)?
+    } else {
+        vec![match state {
+            ActionState::Completed => NormalizedOperation::Complete { target: id },
+            ActionState::Cancelled => NormalizedOperation::Cancel { target: id },
+            _ => NormalizedOperation::Reopen { target: id },
+        }]
+    };
+    let now = Local::now();
+    let (batch, result) =
+        prepare_native_transaction(workspace_root, model, &operations, now, dry_run)?;
+    let mut transaction = map_outcome(root, result.clone());
+    let outcomes = match result {
+        PreparedTransactionOutcome::Rejected { error, .. } => return Err(error.into()),
+        PreparedTransactionOutcome::Committed { operations, .. }
+        | PreparedTransactionOutcome::DryRun { operations, .. } => operations,
+    };
+    if !dry_run {
+        deliver(&mounts, &batch)?;
+    }
+    if !cascade {
+        return Ok((
+            outcomes.into_iter().next().expect("single operation"),
+            transaction,
+        ));
+    }
+    let id = clearhead_core::verb_result::canonical_id(id);
+    let outcome = match state {
+        ActionState::Completed => VerbOutcome::Completed {
+            id,
+            open_children: vec![],
+        },
+        ActionState::Cancelled => VerbOutcome::Cancelled {
+            id,
+            open_children: vec![],
+        },
+        _ => VerbOutcome::Reopened { id },
+    };
+    if let TransactionOutcome::DryRun { operations, .. } = &mut transaction
+        && operations.is_empty()
+    {
+        operations.push(outcome.clone());
+    }
+    Ok((outcome, transaction))
+}
+
+fn prepare_native_transaction(
+    workspace_root: &Path,
+    model: TransactionModel,
+    operations: &[clearhead_core::workspace::transaction::NormalizedOperation],
+    now: chrono::DateTime<Local>,
+    dry_run: bool,
+) -> Result<
+    (
+        EffectBatch,
+        clearhead_core::workspace::transaction::PreparedTransactionOutcome,
+    ),
+    WorkspaceError,
+> {
+    let (mut context, inventory) = calendar::occurrence_transaction_input(workspace_root, now)?;
+    let prepared = clearhead_core::workspace::transaction::prepare_transaction_with_occurrences(
+        model,
+        operations,
+        now,
+        dry_run,
+        Some(&mut context),
+    )
+    .map_err(|e| WorkspaceError::Actions(e.to_string()))?;
+    calendar::validate_occurrence_inventory(
+        &NativeWorkspaceMounts::resolve(workspace_root),
+        &inventory,
+    )?;
+    Ok(prepared)
 }
 
 fn action_state(
@@ -444,26 +585,6 @@ fn map_archive(data_root: &Path, outcome: PreparedArchiveOutcome) -> ActionArchi
     }
 }
 
-fn map_close(data_root: &Path, outcome: PreparedCloseOutcome) -> CloseActionResult {
-    CloseActionResult {
-        action_id: outcome.action_id,
-        closed_count: outcome.closed_count,
-        source_path: data_root.join(outcome.source_path.as_str()),
-        completed_path: data_root.join(outcome.completed_path.as_str()),
-        already_closed: outcome.already_closed,
-    }
-}
-
-fn map_reopen(data_root: &Path, outcome: PreparedReopenOutcome) -> ReopenActionResult {
-    ReopenActionResult {
-        action_id: outcome.action_id,
-        reopened_count: outcome.reopened_count,
-        source_path: data_root.join(outcome.source_path.as_str()),
-        completed_path: data_root.join(outcome.completed_path.as_str()),
-        already_open: outcome.already_open,
-    }
-}
-
 fn map_insert(data_root: &Path, outcome: PreparedInsertOutcome) -> InsertActionResult {
     InsertActionResult {
         action_id: outcome.action_id,
@@ -506,8 +627,8 @@ pub fn transact(
     std::fs::create_dir_all(data_root.join("charters"))?;
 
     let model = load_target_files(workspace_root, data_root, &target_ids)?;
-    let (batch, outcome) = prepare_transaction(model, &operations, Local::now(), dry_run)
-        .map_err(|error| WorkspaceError::Actions(error.to_string()))?;
+    let (batch, outcome) =
+        prepare_native_transaction(workspace_root, model, &operations, Local::now(), dry_run)?;
 
     if !batch.is_empty() {
         deliver(&mounts, &batch)?;

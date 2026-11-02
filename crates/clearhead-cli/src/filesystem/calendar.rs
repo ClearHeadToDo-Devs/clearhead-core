@@ -504,7 +504,41 @@ pub fn resolve_materialized_occurrence(
     now: chrono::DateTime<Local>,
 ) -> Result<bool, WorkspaceError> {
     let mounts = NativeWorkspaceMounts::resolve(workspace_root);
+    let (mut input, inventory) = occurrence_transaction_input(workspace_root, now)?;
+    input.occurrence_id = occurrence_id;
+    input.operation = operation.clone();
+    input.archive = materialized_occurrence_archive(&input.workspace, &mounts, occurrence_id)?;
+    let (batch, changed) = prepare_materialized_occurrence_resolution(input)?;
+    if changed {
+        validate_occurrence_inventory(&mounts, &inventory)?;
+        super::deliver(&mounts, &batch)?;
+    }
+    Ok(changed)
+}
 
+pub(super) fn validate_occurrence_inventory(
+    mounts: &NativeWorkspaceMounts,
+    inventory: &clearhead_core::workspace::resource::WorkspaceMounts<MountInventory>,
+) -> Result<(), WorkspaceError> {
+    if mounts.inventory()? != *inventory {
+        return Err(WorkspaceError::Actions(
+            "plans vdir changed while materialized occurrence was being prepared".into(),
+        ));
+    }
+    Ok(())
+}
+
+pub(super) fn occurrence_transaction_input(
+    workspace_root: &Path,
+    now: chrono::DateTime<Local>,
+) -> Result<
+    (
+        MaterializedOccurrencePreparationInput,
+        clearhead_core::workspace::resource::WorkspaceMounts<MountInventory>,
+    ),
+    WorkspaceError,
+> {
+    let mounts = NativeWorkspaceMounts::resolve(workspace_root);
     let inventory = mounts.inventory()?;
     let workspace = crate::filesystem::mounts::load_workspace_model(workspace_root)?;
     let observation = observe_calendar_resources(workspace_root)?;
@@ -523,33 +557,24 @@ pub fn resolve_materialized_occurrence(
     let plan_resources = plan_resource_states(&observation.resources)?;
     let action_resources = sync_action_resources(&workspace, &SyncReport::default(), &mounts)?;
     let templates = sync_plan_templates(&workspace, &mounts.workspace)?;
-    let archive = materialized_occurrence_archive(&workspace, &mounts, occurrence_id)?;
     let observed_resources = sync_read_preconditions(&mounts, &inventory)?;
-    let (batch, changed) =
-        prepare_materialized_occurrence_resolution(MaterializedOccurrencePreparationInput {
+    Ok((
+        MaterializedOccurrencePreparationInput {
             workspace,
             store,
-            occurrence_id,
-            operation: operation.clone(),
+            occurrence_id: Uuid::nil(),
+            operation: OccurrenceOp::Skip,
             now,
             plan_resources,
             action_resources,
             templates,
-            archive,
+            archive: None,
             observed_resources,
             store_location,
             store_expected,
-        })?;
-    if !changed {
-        return Ok(false);
-    }
-    if mounts.inventory()? != inventory {
-        return Err(WorkspaceError::Actions(
-            "workspace or plans vdir changed before occurrence delivery".into(),
-        ));
-    }
-    super::deliver(&mounts, &batch)?;
-    Ok(true)
+        },
+        inventory,
+    ))
 }
 
 fn materialized_occurrence_archive(
@@ -941,6 +966,17 @@ pub fn apply_occurrence_op(
     occurrence_key: &str,
     op: &OccurrenceOp,
 ) -> Result<(), WorkspaceError> {
+    apply_occurrence_op_result(workspace_root, plan_id, occurrence_key, op, false).map(|_| ())
+}
+
+/// Prepare a deviation and report its file, delivering only outside dry-run.
+pub fn apply_occurrence_op_result(
+    workspace_root: &Path,
+    plan_id: Uuid,
+    occurrence_key: &str,
+    op: &OccurrenceOp,
+    dry_run: bool,
+) -> Result<Vec<String>, WorkspaceError> {
     let observation = observe_calendar_resources(workspace_root)?;
     let mut matched: Option<(&CalendarResource, ICSPlan)> = None;
     for resource in &observation.resources {
@@ -986,13 +1022,24 @@ pub fn apply_occurrence_op(
     )
     .map_err(|error| WorkspaceError::Actions(error.to_string()))?;
 
+    let files = vec![
+        observation
+            .mounts
+            .physical_path(&resource.location)?
+            .display()
+            .to_string(),
+    ];
+    if dry_run {
+        return Ok(files);
+    }
     if observation.mounts.inventory()?.workspace != observation.inventory {
         return Err(WorkspaceError::Actions(
             "plans vdir changed before occurrence delivery".into(),
         ));
     }
     crate::filesystem::validate_preconditions(&observation.mounts, effects.preconditions())?;
-    crate::filesystem::execute_effects(&observation.mounts, effects.effects())
+    crate::filesystem::execute_effects(&observation.mounts, effects.effects())?;
+    Ok(files)
 }
 
 /// Normalize foreign recurring-master roll-forwards in one mounted transaction.

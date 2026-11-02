@@ -19,10 +19,10 @@ use chrono::{DateTime, Local};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::domain::collect_subtree_ids;
 use crate::domain::update::{
     ActionUpdate, DescriptionUpdate, apply_updates, disallowed_terminal_update,
 };
-use crate::domain::{close_subtree, collect_subtree_ids};
 use crate::verb_result::{VerbError, VerbOutcome, canonical_id};
 use crate::workspace::actions::format::require_actions_formatting;
 use crate::workspace::actions::{Action, ActionState};
@@ -53,6 +53,9 @@ pub enum Operation {
         target: String,
     },
     CancelAction {
+        target: String,
+    },
+    ReopenAction {
         target: String,
     },
 }
@@ -138,9 +141,24 @@ impl std::error::Error for TransactionError {}
 /// the field edit validated and converted to a core [`ActionUpdate`].
 #[derive(Debug, Clone)]
 pub enum NormalizedOperation {
-    Update { target: Uuid, update: ActionUpdate },
-    Complete { target: Uuid },
-    Cancel { target: Uuid },
+    Update {
+        target: Uuid,
+        update: ActionUpdate,
+    },
+    Complete {
+        target: Uuid,
+    },
+    Cancel {
+        target: Uuid,
+    },
+    Reopen {
+        target: Uuid,
+    },
+    /// Internal cascade operation: force an oppositely closed target only.
+    ForceClose {
+        target: Uuid,
+        state: ActionState,
+    },
 }
 
 impl NormalizedOperation {
@@ -148,7 +166,9 @@ impl NormalizedOperation {
         match self {
             NormalizedOperation::Update { target, .. }
             | NormalizedOperation::Complete { target }
-            | NormalizedOperation::Cancel { target } => *target,
+            | NormalizedOperation::Cancel { target }
+            | NormalizedOperation::Reopen { target }
+            | NormalizedOperation::ForceClose { target, .. } => *target,
         }
     }
 }
@@ -164,7 +184,7 @@ fn normalize_target(raw: &str) -> Result<Uuid, TransactionError> {
 ///
 /// Applies only the state-free guards: a non-empty batch, a well-formed target
 /// per operation, a non-empty `set` with no terminal `state` (terminal
-/// transitions belong to `complete`/`cancel`, which cascade and move files).
+/// transitions belong to `complete`/`cancel`, which close one action in place).
 pub fn normalize_request(
     request: TransactionRequest,
 ) -> Result<Vec<NormalizedOperation>, TransactionError> {
@@ -189,7 +209,7 @@ pub fn normalize_request(
                 if let Some(state) = disallowed_terminal_update(&update) {
                     return Err(TransactionError::Request(format!(
                         "update-action cannot set state to {state:?}; use complete-action / \
-                         cancel-action, which cascade to the subtree and archive it"
+                         cancel-action, which stamp the closure date in place"
                     )));
                 }
                 Ok(NormalizedOperation::Update { target, update })
@@ -198,6 +218,9 @@ pub fn normalize_request(
                 target: normalize_target(&target)?,
             }),
             Operation::CancelAction { target } => Ok(NormalizedOperation::Cancel {
+                target: normalize_target(&target)?,
+            }),
+            Operation::ReopenAction { target } => Ok(NormalizedOperation::Reopen {
                 target: normalize_target(&target)?,
             }),
         })
@@ -298,6 +321,7 @@ fn apply_one(
                     .iter_mut()
                     .find(|action| action.id == target)
                     .expect("target located in this active list");
+                VerbError::require_open_action(action, &canonical_id(target))?;
                 apply_updates(action, update.clone(), now);
                 file.active_dirty = true;
                 Ok(VerbOutcome::Updated {
@@ -310,6 +334,25 @@ fn apply_one(
             NormalizedOperation::Cancel { .. } => {
                 close_in_file(file, target, ActionState::Cancelled, now)
             }
+            NormalizedOperation::ForceClose { state, .. } => {
+                set_closed_in_file(file, target, *state, now)
+            }
+            NormalizedOperation::Reopen { .. } => {
+                let action = file.active.iter_mut().find(|a| a.id == target).unwrap();
+                if !action.state.is_terminal() {
+                    return Err(VerbError::AlreadyOpen {
+                        id: canonical_id(target),
+                        state: format!("{:?}", action.state),
+                        query: canonical_id(target),
+                    });
+                }
+                action.state = ActionState::NotStarted;
+                action.completed_at = None;
+                file.active_dirty = true;
+                Ok(VerbOutcome::Reopened {
+                    id: canonical_id(target),
+                })
+            }
         };
     }
 
@@ -321,6 +364,18 @@ fn apply_one(
         .flat_map(|file| file.completed.iter())
         .find(|action| action.id == target)
     {
+        if matches!(operation, NormalizedOperation::Reopen { .. }) {
+            let file = model
+                .files
+                .iter()
+                .find(|f| f.completed.iter().any(|a| a.id == target))
+                .unwrap();
+            return Err(VerbError::Archived {
+                id: canonical_id(target),
+                root: canonical_id(tree_root(&file.completed, target)),
+                query: canonical_id(target),
+            });
+        }
         return Err(VerbError::AlreadyClosed {
             id: canonical_id(target),
             state: format!("{:?}", action.state),
@@ -333,8 +388,7 @@ fn apply_one(
     })
 }
 
-/// Close `target`'s subtree in one file: cascade-close, move it from active to
-/// completed, and stamp. Mirrors `close_action_subtree`'s in-memory core.
+/// Close one open line in place, preserving every descendant.
 fn close_in_file(
     file: &mut FileState,
     target: Uuid,
@@ -347,21 +401,109 @@ fn close_in_file(
         .find(|action| action.id == target)
         .expect("target located in this active list");
     VerbError::require_open_action(action, &canonical_id(target))?;
-    let subtree_ids = collect_subtree_ids(&file.active, target);
-    let mut closed = close_subtree(&file.active, target, closing_state, now);
-    file.active
-        .retain(|action| !subtree_ids.contains(&action.id));
-    let closed_count = closed.len();
-    file.completed.append(&mut closed);
-    file.active_dirty = true;
-    file.completed_dirty = true;
+    set_closed_in_file(file, target, closing_state, now)
+}
 
+fn set_closed_in_file(
+    file: &mut FileState,
+    target: Uuid,
+    closing_state: ActionState,
+    now: DateTime<Local>,
+) -> Result<VerbOutcome, VerbError> {
+    let action = file.active.iter_mut().find(|a| a.id == target).unwrap();
+    action.state = closing_state;
+    action.completed_at = Some(crate::domain::time::Bound::minute(now));
+    file.active_dirty = true;
+    let ids = collect_subtree_ids(&file.active, target);
+    let open_children = file
+        .active
+        .iter()
+        .filter(|a| a.id != target && ids.contains(&a.id) && !a.state.is_terminal())
+        .map(|a| canonical_id(a.id))
+        .collect();
     let id = canonical_id(target);
-    let children = closed_count.saturating_sub(1);
     Ok(match closing_state {
-        ActionState::Cancelled => VerbOutcome::Cancelled { id, children },
-        _ => VerbOutcome::Completed { id, children },
+        ActionState::Cancelled => VerbOutcome::Cancelled { id, open_children },
+        _ => VerbOutcome::Completed { id, open_children },
     })
+}
+
+/// The structural root of a member in one file.
+pub fn tree_root(actions: &[Action], mut target: Uuid) -> Uuid {
+    while let Some(parent) = actions
+        .iter()
+        .find(|a| a.id == target)
+        .and_then(|a| a.parent_id)
+    {
+        target = parent;
+    }
+    target
+}
+
+/// Expand a cascade in file order, walking through members in any state.
+/// Only the target can be forced from the opposite terminal state.
+pub fn expand_cascade(
+    model: &TransactionModel,
+    target: Uuid,
+    state: ActionState,
+) -> Result<Vec<NormalizedOperation>, VerbError> {
+    let Some(file) = model
+        .files
+        .iter()
+        .find(|f| f.active.iter().any(|a| a.id == target))
+    else {
+        if let Some(file) = model
+            .files
+            .iter()
+            .find(|f| f.completed.iter().any(|a| a.id == target))
+        {
+            let ids = collect_subtree_ids(&file.completed, target);
+            if state.is_terminal()
+                && file
+                    .completed
+                    .iter()
+                    .any(|a| a.id == target && a.state == state)
+                && file
+                    .completed
+                    .iter()
+                    .filter(|a| ids.contains(&a.id))
+                    .all(|a| a.state.is_terminal())
+            {
+                return Ok(vec![]);
+            }
+            return Err(VerbError::Archived {
+                id: canonical_id(target),
+                root: canonical_id(tree_root(&file.completed, target)),
+                query: canonical_id(target),
+            });
+        }
+        return Err(VerbError::NotFound {
+            query: canonical_id(target),
+        });
+    };
+    let ids = collect_subtree_ids(&file.active, target);
+    Ok(file
+        .active
+        .iter()
+        .filter(|a| ids.contains(&a.id))
+        .filter_map(|a| {
+            if state == ActionState::NotStarted {
+                a.state
+                    .is_terminal()
+                    .then_some(NormalizedOperation::Reopen { target: a.id })
+            } else if a.id == target && a.state.is_terminal() && a.state != state {
+                Some(NormalizedOperation::ForceClose { target, state })
+            } else if !a.state.is_terminal() {
+                Some(if state == ActionState::Cancelled {
+                    NormalizedOperation::Cancel { target: a.id }
+                } else {
+                    NormalizedOperation::Complete { target: a.id }
+                })
+            } else {
+                None
+            }
+        })
+        .collect())
 }
 
 // ============================================================================
@@ -408,14 +550,93 @@ pub enum PreparedTransactionOutcome {
 /// Fold a normalized transaction over already-loaded state and render its
 /// speculative resource effects. No filesystem or ambient host path is used.
 pub fn prepare_transaction(
-    mut model: TransactionModel,
+    model: TransactionModel,
     operations: &[NormalizedOperation],
     now: DateTime<Local>,
     dry_run: bool,
 ) -> Result<(EffectBatch, PreparedTransactionOutcome), TransactionError> {
+    prepare_transaction_with_occurrences(model, operations, now, dry_run, None)
+}
+
+/// Close and occurrence resolution share one speculative fold and one delivery.
+pub fn prepare_transaction_with_occurrences(
+    mut model: TransactionModel,
+    operations: &[NormalizedOperation],
+    now: DateTime<Local>,
+    dry_run: bool,
+    mut occurrences: Option<
+        &mut super::calendar::reconcile::MaterializedOccurrencePreparationInput,
+    >,
+) -> Result<(EffectBatch, PreparedTransactionOutcome), TransactionError> {
     require_actions_formatting().map_err(TransactionError::Request)?;
 
-    let outcomes = match apply_operations(&mut model, operations, now) {
+    let mut occurrence_effects = std::collections::BTreeMap::new();
+    let mut occurrence_preconditions = std::collections::BTreeMap::new();
+    let mut folded = Vec::new();
+    let mut failure = None;
+    for (index, operation) in operations.iter().enumerate() {
+        match apply_one(&mut model, operation, now) {
+            Ok(outcome) => folded.push(outcome),
+            Err(error) => {
+                failure = Some((index, error));
+                break;
+            }
+        }
+        if let Some(context) = occurrences.as_deref_mut() {
+            // Keep the loaded, hydrated workspace in step with each single operation.
+            for charter in &mut context.workspace.charters {
+                for sourced in &mut charter.actions {
+                    if let Some(action) = model
+                        .files
+                        .iter()
+                        .flat_map(|f| &f.active)
+                        .find(|a| a.id == sourced.action.id)
+                    {
+                        let plan_id = sourced.action.plan_id;
+                        let key = sourced.action.external_occurrence_key.clone();
+                        sourced.action = action.clone();
+                        sourced.action.plan_id = plan_id;
+                        sourced.action.external_occurrence_key = key;
+                    }
+                }
+            }
+            let op = match operation {
+                NormalizedOperation::Complete { .. } => {
+                    Some(crate::OccurrenceOp::Complete { at: now })
+                }
+                NormalizedOperation::Cancel { .. } => Some(crate::OccurrenceOp::Skip),
+                _ => None,
+            };
+            if let Some(op) = op {
+                context.occurrence_id = operation.target();
+                context.operation = op;
+                let (batch, changed) =
+                    super::calendar::reconcile::fold_materialized_occurrence_resolution(context)
+                        .map_err(|e| TransactionError::Request(e.to_string()))?;
+                if changed {
+                    for effect in batch.effects() {
+                        if let Effect::Write { path, .. } = effect {
+                            occurrence_effects.insert(path.clone(), effect.clone());
+                        }
+                    }
+                    for condition in batch.preconditions() {
+                        occurrence_preconditions.insert(condition.path.clone(), condition.clone());
+                    }
+                    for file in &mut model.files {
+                        if let Some(charter) = context.workspace.charters.iter().find(|c| {
+                            c.actions_file.as_ref().is_some_and(|p| {
+                                format!("charters/{}", p.display()) == file.source_path.as_str()
+                            })
+                        }) {
+                            file.active =
+                                charter.actions.iter().map(|a| a.action.clone()).collect();
+                        }
+                    }
+                }
+            }
+        }
+    }
+    let outcomes = match failure.map_or(Ok(folded), Err) {
         Ok(outcomes) => outcomes,
         Err((operation, error)) => {
             let batch =
@@ -454,8 +675,10 @@ pub fn prepare_transaction(
         ));
     }
 
-    let mut effects = Vec::new();
-    let mut preconditions = Vec::new();
+    let mut effects: Vec<_> = occurrence_effects.into_values().filter(|effect| {
+        !matches!(effect, Effect::Write { path, .. } if model.files.iter().any(|f| ResourceLocation::workspace(f.source_path.clone()) == *path))
+    }).collect();
+    let mut preconditions: Vec<_> = occurrence_preconditions.into_values().collect();
     for file in &model.files {
         if file.active_dirty {
             effects.push(Effect::Write {
@@ -481,6 +704,21 @@ pub fn prepare_transaction(
             expected: file.completed_expected.clone(),
         });
     }
+    let mut expected = std::collections::BTreeMap::new();
+    for condition in preconditions {
+        if let Some(previous) = expected.insert(condition.path.clone(), condition.expected.clone())
+            && previous != condition.expected
+        {
+            return Err(TransactionError::Request(format!(
+                "inconsistent transaction snapshot: {}",
+                condition.path
+            )));
+        }
+    }
+    let preconditions = expected
+        .into_iter()
+        .map(|(path, expected)| ResourcePrecondition { path, expected })
+        .collect();
     let batch = EffectBatch::new(effects, preconditions)
         .map_err(|error| TransactionError::Request(error.to_string()))?;
     Ok((
@@ -643,29 +881,33 @@ mod tests {
         assert!(matches!(outcomes[0], VerbOutcome::Updated { .. }));
         assert!(matches!(outcomes[1], VerbOutcome::Completed { .. }));
 
-        // The rename applied, then the renamed action moved active -> completed.
+        // Rename and closure both apply to the active line.
         let file = &model.files[0];
-        assert!(file.active.is_empty());
-        assert_eq!(file.completed.len(), 1);
-        assert_eq!(file.completed[0].name, "Renamed");
-        assert!(file.active_dirty && file.completed_dirty);
+        assert_eq!(file.active.len(), 1);
+        assert!(file.completed.is_empty());
+        assert_eq!(file.active[0].name, "Renamed");
+        assert_eq!(file.active[0].state, ActionState::Completed);
+        assert!(file.active_dirty && !file.completed_dirty);
     }
 
     #[test]
-    fn completing_a_parent_cascades_to_children() {
+    fn completing_a_parent_reports_but_does_not_close_children() {
         let parent = action("Parent", ActionState::NotStarted, None);
         let child = action("Child", ActionState::NotStarted, Some(parent.id));
-        let mut model = model_of(vec![parent.clone(), child], vec![]);
+        let mut model = model_of(vec![parent.clone(), child.clone()], vec![]);
 
         let ops = vec![NormalizedOperation::Complete { target: parent.id }];
         let outcomes = apply_operations(&mut model, &ops, Local::now()).unwrap();
 
         match &outcomes[0] {
-            VerbOutcome::Completed { children, .. } => assert_eq!(*children, 1),
+            VerbOutcome::Completed { open_children, .. } => {
+                assert_eq!(*open_children, vec![canonical_id(child.id)])
+            }
             other => panic!("expected completed, got {other:?}"),
         }
-        assert!(model.files[0].active.is_empty());
-        assert_eq!(model.files[0].completed.len(), 2);
+        assert_eq!(model.files[0].active.len(), 2);
+        assert_eq!(model.files[0].active[1], child);
+        assert!(model.files[0].completed.is_empty());
     }
 
     #[test]
@@ -719,7 +961,7 @@ mod tests {
         let (batch, outcome) =
             prepare_transaction(model, &operations, Local::now(), false).unwrap();
 
-        assert_eq!(batch.effects().len(), 2);
+        assert_eq!(batch.effects().len(), 1);
         assert_eq!(batch.preconditions().len(), 2);
         assert_eq!(
             batch.preconditions()[0].expected,
@@ -727,7 +969,7 @@ mod tests {
         );
         assert!(matches!(
             outcome,
-            PreparedTransactionOutcome::Committed { files, .. } if files.len() == 2
+            PreparedTransactionOutcome::Committed { files, .. } if files.len() == 1
         ));
     }
 }

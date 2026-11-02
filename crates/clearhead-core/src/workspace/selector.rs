@@ -43,7 +43,7 @@ impl From<&Action> for ActionSelector {
 /// UUID is authoritative. When it misses — an id-less line reparsed to a new
 /// in-memory UUID — a unique alias match wins, then a unique name match.
 /// Ambiguity is rejected rather than silently selecting by file order.
-pub(crate) fn unique_selector_match(
+pub fn unique_selector_match(
     actions: &[Action],
     selector: &ActionSelector,
 ) -> Result<Option<Uuid>, WorkspaceError> {
@@ -81,6 +81,27 @@ pub(crate) fn unique_selector_match(
             .collect(),
         "name",
     )
+}
+
+/// Resolve across a source/destination pair without allowing a fallback in one
+/// file to shadow an authoritative UUID in the other. Fallbacks retain source
+/// precedence and only inspect the destination on a source miss.
+pub fn unique_selector_match_pair(
+    source: &[Action],
+    destination: &[Action],
+    selector: &ActionSelector,
+) -> Result<Option<Uuid>, WorkspaceError> {
+    if source
+        .iter()
+        .chain(destination)
+        .any(|action| action.id == selector.id)
+    {
+        return Ok(Some(selector.id));
+    }
+    match unique_selector_match(source, selector)? {
+        Some(id) => Ok(Some(id)),
+        None => unique_selector_match(destination, selector),
+    }
 }
 
 #[cfg(test)]

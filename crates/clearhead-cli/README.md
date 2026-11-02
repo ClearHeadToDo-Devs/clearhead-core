@@ -47,18 +47,46 @@ clearhead read actions --open-only
 # Complete it
 clearhead complete action "Buy oat milk"
 
-# Changed your mind? Reopen it (moves the whole subtree back, all NotStarted)
+# Changed your mind? Reopen it in place (only this action becomes NotStarted)
+# Archived actions refuse reopen: unarchive their root tree first
 clearhead reopen action "Buy oat milk"
 
 # Jot a timestamped finding into a charter's ## Log (frictionless capture)
 clearhead jot "range reads need a cache keyed on Last-Modified" --charter inbox
 
-# Archive completed actions out of active files
+# Archive whole root trees whose members are all closed out of active files
 clearhead archive actions
+
+# Move one whole closed root tree into history, preserving states and dates
+clearhead archive action "Shopping"
+
+# Move that whole root tree back; --reopen also reopens the root in place
+clearhead unarchive action "Shopping" --reopen
 
 # Show resolved config and workspace layout
 clearhead debug
 ```
+
+### Lifecycle results
+
+When piped, `complete action`, `cancel action`, and `reopen action` emit a flat
+verb outcome for a commit. With `--dry-run` (also with `--cascade`), they write
+nothing and emit the transaction preview envelope:
+`{"kind":"dry-run","operations":[...],"files":[...]}`. Each operation is a verb
+outcome; a cascade preview lists its individual transitions.
+
+Close cascades (`complete --cascade` and `cancel --cascade`) write only the
+active file. An archived target already in the requested state, with every
+member closed, succeeds without writing (also in `--dry-run`); its preview has
+empty operations and files, just like an active-file no-op. An archived target
+in the other closed state or with an open member refuses, naming `unarchive`
+and its root. Single verbs and `reopen --cascade` still refuse archived targets.
+
+`archive action` and `unarchive action` always emit an envelope:
+`{"kind":"committed","operations":[{"kind":"archived","id":"urn:uuid:...","count":4}],"files":[...]}`.
+Unarchive uses operation kind `unarchived`; previews use top-level kind
+`dry-run` and list the affected files without writing them. A top-level
+`archived` is an archived-target refusal, not a successful move.
 
 ## Charter identity normalization
 

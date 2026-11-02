@@ -33,7 +33,9 @@ fn transact_commits_a_batch_from_a_request_file() {
         .stdout(predicate::str::contains(r#""kind":"committed""#));
 
     let remaining = active(&env);
-    assert_eq!(remaining.len(), 1, "Beta completed → out of active");
+    assert_eq!(remaining.len(), 2, "Beta closes in place");
+    assert_eq!(remaining[1].state, clearhead_core::ActionState::Completed);
+    assert!(remaining[1].completed_at.is_some());
     assert_eq!(remaining[0].name, "Alpha");
     assert_eq!(remaining[0].priority, Some(1));
 }
