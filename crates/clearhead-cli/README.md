@@ -67,6 +67,20 @@ clearhead unarchive action "Shopping" --reopen
 clearhead debug
 ```
 
+### Lifecycle results
+
+When piped, `complete action`, `cancel action`, and `reopen action` emit a flat
+verb outcome for a commit. With `--dry-run` (also with `--cascade`), they write
+nothing and emit the transaction preview envelope:
+`{"kind":"dry-run","operations":[...],"files":[...]}`. Each operation is a verb
+outcome; a cascade preview lists its individual transitions.
+
+`archive action` and `unarchive action` always emit an envelope:
+`{"kind":"committed","operations":[{"kind":"archived","id":"urn:uuid:...","count":4}],"files":[...]}`.
+Unarchive uses operation kind `unarchived`; previews use top-level kind
+`dry-run` and list the affected files without writing them. A top-level
+`archived` is a reopen-refused error, not a successful move.
+
 ## Charter identity normalization
 
 `clearhead normalize file path/to/charter.md --write` stamps a missing

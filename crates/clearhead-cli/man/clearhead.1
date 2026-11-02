@@ -438,6 +438,18 @@ This is destructive; prefer \fBcancel\fR for audit-trail preservation.
 .PP
 Remove a recurring Plan resource from the workspace.
 .\" --------------------------------------------------------------------
+.SS "Lifecycle result output"
+When piped, complete, cancel and reopen action commits emit a flat verb outcome.
+With \fB\-\-dry-run\fR, including with \fB\-\-cascade\fR, they write nothing and
+emit a transaction envelope with \fBkind\fR \fBdry-run\fR, an \fBoperations\fR
+array of verb outcomes and a \fBfiles\fR array. Cascade previews list the
+individual transitions.
+.PP
+Archive action and unarchive action emit envelopes with top-level \fBkind\fR
+\fBcommitted\fR (or \fBdry-run\fR for previews), \fBoperations\fR and
+\fBfiles\fR. Their single operation has \fBkind\fR \fBarchived\fR or
+\fBunarchived\fR, \fBid\fR and \fBcount\fR. A top-level \fBarchived\fR
+instead denotes the reopen-refused error.
 .SS "archive \(em move completed work out of active files"
 .PP
 .B clearhead archive actions

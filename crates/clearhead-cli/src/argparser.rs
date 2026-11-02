@@ -1137,9 +1137,12 @@ pub enum ReopenTarget {
 pub enum UnarchiveTarget {
     /// Move a whole archived root tree back; plain unarchive preserves states and dates
     Action {
+        /// UUID, short prefix (at least 4 hex digits), alias, or name of the archived root
         query: String,
+        /// Scope search to a specific charter (name, alias, or UUID)
         #[arg(long)]
         charter: Option<String>,
+        /// Active .actions file whose completed sibling holds the tree; otherwise workspace search
         #[arg(short, long)]
         file: Option<PathBuf>,
         /// Reopen the root after moving it
@@ -1148,6 +1151,7 @@ pub enum UnarchiveTarget {
         /// Reopen closed descendants too (requires --reopen)
         #[arg(long, requires = "reopen")]
         cascade: bool,
+        /// Preview what would be unarchived without writing
         #[arg(long)]
         dry_run: bool,
     },

@@ -224,7 +224,7 @@ fn close_action_subtree(
         None => return Err(verb_target_error(ctx, query)?.into()),
     };
     let workspace_root = ctx.workspace_for_file(&actions_path);
-    let outcome = clearhead_cli::filesystem::transition_action(
+    let (outcome, transaction) = clearhead_cli::filesystem::transition_action_result(
         &workspace_root,
         &actions_path,
         &selector,
@@ -232,7 +232,11 @@ fn close_action_subtree(
         cascade,
         dry_run,
     )?;
-    emit(&outcome);
+    if dry_run {
+        println!("{}", serde_json::to_string(&transaction)?);
+    } else {
+        emit(&outcome);
+    }
     Ok(())
 }
 
@@ -275,20 +279,13 @@ fn try_close_occurrence(
         other => anyhow::bail!("cannot map state {other:?} to an occurrence operation"),
     };
 
-    if dry_run {
-        let verb = if closing_state == ActionState::Cancelled {
-            "skip"
-        } else {
-            "complete"
-        };
-        println!(
-            "Would {} occurrence {} of plan {}",
-            verb, occurrence.id, plan_id,
-        );
-        return Ok(true);
-    }
-
-    clearhead_cli::filesystem::apply_occurrence_op(&ctx.data_dir, plan_id, &key, &op)?;
+    let files = clearhead_cli::filesystem::apply_occurrence_op_result(
+        &ctx.data_dir,
+        plan_id,
+        &key,
+        &op,
+        dry_run,
+    )?;
 
     let outcome = match closing_state {
         ActionState::Cancelled => VerbOutcome::Cancelled {
@@ -301,7 +298,19 @@ fn try_close_occurrence(
         },
     };
     info!(%occurrence.id, %plan_id, "Occurrence deviation written ({:?})", closing_state);
-    emit(&outcome);
+    if dry_run {
+        println!(
+            "{}",
+            serde_json::to_string(
+                &clearhead_core::workspace::transaction::TransactionOutcome::DryRun {
+                    operations: vec![outcome],
+                    files,
+                }
+            )?
+        );
+    } else {
+        emit(&outcome);
+    }
     Ok(true)
 }
 
@@ -608,7 +617,7 @@ pub fn reopen_action(
         find_and_load_actions(ctx, file, charter, query, is_closed_action)?
         && let Some(action) = find_source_state_match(&actions, query, is_closed_action)?
     {
-        let outcome = clearhead_cli::filesystem::transition_action(
+        let (outcome, transaction) = clearhead_cli::filesystem::transition_action_result(
             &ctx.workspace_for_file(&path),
             &path,
             &clearhead_core::ActionSelector::from(action),
@@ -616,7 +625,11 @@ pub fn reopen_action(
             cascade,
             dry_run,
         )?;
-        emit(&outcome);
+        if dry_run {
+            println!("{}", serde_json::to_string(&transaction)?);
+        } else {
+            emit(&outcome);
+        }
         return Ok(());
     }
     if let Some((_, completed)) = find_and_load_completed_actions(ctx, file, charter, query)?
@@ -664,7 +677,7 @@ pub fn move_action(
     };
     let action = find_best_match(&actions, query, |_| true)?
         .ok_or_else(|| anyhow::anyhow!("action not found: {query}"))?;
-    let (result, id) = clearhead_cli::filesystem::move_action(
+    let (result, id, files) = clearhead_cli::filesystem::move_action(
         &ctx.workspace_for_file(&path),
         &path,
         &clearhead_core::ActionSelector::from(action),
@@ -676,15 +689,14 @@ pub fn move_action(
         "id": canonical_id(id),
         "count": result.archived_count,
     });
-    if dry_run {
-        // Match the transaction preview envelope rather than claiming a commit.
-        println!(
-            "{}",
-            serde_json::json!({ "kind": "dry-run", "operations": [operation] })
-        );
-    } else {
-        println!("{operation}");
-    }
+    println!(
+        "{}",
+        serde_json::json!({
+            "kind": if dry_run { "dry-run" } else { "committed" },
+            "operations": [operation],
+            "files": files,
+        })
+    );
     Ok(())
 }
 

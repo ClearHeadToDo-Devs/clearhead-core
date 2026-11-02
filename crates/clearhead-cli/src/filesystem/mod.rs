@@ -18,11 +18,11 @@ pub use archive_charter::{
 };
 pub use calendar::{
     COLLECTION_DISPLAYNAME_FILE, CalendarObservation, CalendarResource, CalendarSyncPreview,
-    CalendarSyncResult, apply_occurrence_op, delete_plan_file, observe_calendar_resources,
-    plans_sync_store_path, preview_calendar_sync_with_component, read_calendar_resources,
-    read_ics_file, read_plans_sync_store, resolve_materialized_occurrence, sync_calendar,
-    sync_calendar_with_component, sync_master_rollforwards, write_collection_displaynames,
-    write_plan_file,
+    CalendarSyncResult, apply_occurrence_op, apply_occurrence_op_result, delete_plan_file,
+    observe_calendar_resources, plans_sync_store_path, preview_calendar_sync_with_component,
+    read_calendar_resources, read_ics_file, read_plans_sync_store, resolve_materialized_occurrence,
+    sync_calendar, sync_calendar_with_component, sync_master_rollforwards,
+    write_collection_displaynames, write_plan_file,
 };
 pub use discovery::{ManifestSourceType, WorkspaceManifestEntry, collect_workspace_manifest};
 pub use doctor::{
@@ -212,7 +212,7 @@ pub fn move_action(
     selector: &ActionSelector,
     mode: clearhead_core::workspace::action_lifecycle::MoveMode,
     dry_run: bool,
-) -> Result<(ActionArchiveResult, uuid::Uuid), WorkspaceError> {
+) -> Result<(ActionArchiveResult, uuid::Uuid, Vec<String>), WorkspaceError> {
     let mounts = begin_mutation(workspace_root, source_path)?;
     let root = &mounts.workspace;
     let completed_path = completed_actions_path(source_path);
@@ -243,7 +243,23 @@ pub fn move_action(
     if !dry_run {
         deliver(&mounts, &batch)?;
     }
-    Ok((map_archive(root, outcome), id))
+    let files = batch
+        .effects()
+        .iter()
+        .flat_map(|effect| match effect {
+            Effect::Write { path, .. } | Effect::Remove { path } => vec![path],
+            Effect::Move {
+                source,
+                destination,
+            } => vec![source, destination],
+        })
+        .map(|path| {
+            mounts
+                .physical_path(path)
+                .map(|path| path.display().to_string())
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok((map_archive(root, outcome), id, files))
 }
 
 /// The ordinary verbs and cascades share the same ordered transaction fold.
@@ -255,6 +271,26 @@ pub fn transition_action(
     cascade: bool,
     dry_run: bool,
 ) -> anyhow::Result<clearhead_core::VerbOutcome> {
+    transition_action_result(
+        workspace_root,
+        source_path,
+        selector,
+        state,
+        cascade,
+        dry_run,
+    )
+    .map(|(outcome, _)| outcome)
+}
+
+/// Return the flat verb outcome alongside the full transaction result for previews.
+pub fn transition_action_result(
+    workspace_root: &Path,
+    source_path: &Path,
+    selector: &ActionSelector,
+    state: clearhead_core::ActionState,
+    cascade: bool,
+    dry_run: bool,
+) -> anyhow::Result<(clearhead_core::VerbOutcome, TransactionOutcome)> {
     use clearhead_core::workspace::transaction::{
         NormalizedOperation, PreparedTransactionOutcome, expand_cascade,
     };
@@ -293,6 +329,7 @@ pub fn transition_action(
     let now = Local::now();
     let (batch, result) =
         prepare_native_transaction(workspace_root, model, &operations, now, dry_run)?;
+    let transaction = map_outcome(root, result.clone());
     let outcomes = match result {
         PreparedTransactionOutcome::Rejected { error, .. } => return Err(error.into()),
         PreparedTransactionOutcome::Committed { operations, .. }
@@ -302,10 +339,13 @@ pub fn transition_action(
         deliver(&mounts, &batch)?;
     }
     if !cascade {
-        return Ok(outcomes.into_iter().next().expect("single operation"));
+        return Ok((
+            outcomes.into_iter().next().expect("single operation"),
+            transaction,
+        ));
     }
     let id = clearhead_core::verb_result::canonical_id(id);
-    Ok(match state {
+    let outcome = match state {
         ActionState::Completed => VerbOutcome::Completed {
             id,
             open_children: vec![],
@@ -315,7 +355,8 @@ pub fn transition_action(
             open_children: vec![],
         },
         _ => VerbOutcome::Reopened { id },
-    })
+    };
+    Ok((outcome, transaction))
 }
 
 fn prepare_native_transaction(

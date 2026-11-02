@@ -966,6 +966,17 @@ pub fn apply_occurrence_op(
     occurrence_key: &str,
     op: &OccurrenceOp,
 ) -> Result<(), WorkspaceError> {
+    apply_occurrence_op_result(workspace_root, plan_id, occurrence_key, op, false).map(|_| ())
+}
+
+/// Prepare a deviation and report its file, delivering only outside dry-run.
+pub fn apply_occurrence_op_result(
+    workspace_root: &Path,
+    plan_id: Uuid,
+    occurrence_key: &str,
+    op: &OccurrenceOp,
+    dry_run: bool,
+) -> Result<Vec<String>, WorkspaceError> {
     let observation = observe_calendar_resources(workspace_root)?;
     let mut matched: Option<(&CalendarResource, ICSPlan)> = None;
     for resource in &observation.resources {
@@ -1011,13 +1022,24 @@ pub fn apply_occurrence_op(
     )
     .map_err(|error| WorkspaceError::Actions(error.to_string()))?;
 
+    let files = vec![
+        observation
+            .mounts
+            .physical_path(&resource.location)?
+            .display()
+            .to_string(),
+    ];
+    if dry_run {
+        return Ok(files);
+    }
     if observation.mounts.inventory()?.workspace != observation.inventory {
         return Err(WorkspaceError::Actions(
             "plans vdir changed before occurrence delivery".into(),
         ));
     }
     crate::filesystem::validate_preconditions(&observation.mounts, effects.preconditions())?;
-    crate::filesystem::execute_effects(&observation.mounts, effects.effects())
+    crate::filesystem::execute_effects(&observation.mounts, effects.effects())?;
+    Ok(files)
 }
 
 /// Normalize foreign recurring-master roll-forwards in one mounted transaction.
