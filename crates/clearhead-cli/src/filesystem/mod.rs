@@ -220,12 +220,16 @@ pub fn move_action(
     let (c, ce) = snapshot(root, &completed_path)?;
     let active = action_state(a, ae)?;
     let completed = action_state(c, ce)?;
-    let source = if mode.unarchive {
-        &completed.actions
+    let (source, destination) = if mode.unarchive {
+        (&completed.actions, &active.actions)
     } else {
-        &active.actions
+        (&active.actions, &completed.actions)
     };
     let id = clearhead_core::workspace::selector::unique_selector_match(source, selector)?
+        .or(clearhead_core::workspace::selector::unique_selector_match(
+            destination,
+            selector,
+        )?)
         .ok_or_else(|| WorkspaceError::Actions(format!("action not found: {}", selector.name)))?;
     let (batch, outcome) = clearhead_core::workspace::action_lifecycle::prepare_action_move(
         active,

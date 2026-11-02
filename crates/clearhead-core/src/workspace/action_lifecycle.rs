@@ -52,11 +52,15 @@ pub fn prepare_action_move(
     };
     let roots: Vec<_> = if let Some(id) = selection {
         let target = source.actions.iter().find(|a| a.id == id).ok_or_else(|| {
-            error(if unarchive {
-                "action is already active or not found"
+            if destination.actions.iter().any(|a| a.id == id) {
+                error(if unarchive {
+                    "action is already active"
+                } else {
+                    "action is already archived"
+                })
             } else {
-                "action is archived or not found"
-            })
+                error(format!("action not found: {id}"))
+            }
         })?;
         let root = tree_root(&source.actions, target.id);
         if root != id {
@@ -108,10 +112,12 @@ pub fn prepare_action_move(
     }
     source.actions.retain(|a| !ids.contains(&a.id));
     destination.actions.extend(moved);
+    let mut metadata_moved = false;
     for id in &ids {
         let key = id.to_string();
         if let Some(entry) = source_meta.metadata.actions.remove(&key) {
             destination_meta.metadata.actions.insert(key, entry);
+            metadata_moved = true;
         }
     }
     let mut effects = Vec::new();
@@ -122,24 +128,28 @@ pub fn prepare_action_move(
                 .map_err(error)?
                 .into_bytes(),
         });
-        effects.push(Effect::Write {
-            path: ResourceLocation::workspace(destination_meta.path.clone()),
-            bytes: render_sidecar(&destination_meta.metadata)
-                .map_err(error)?
-                .into_bytes(),
-        });
+        if metadata_moved {
+            effects.push(Effect::Write {
+                path: ResourceLocation::workspace(destination_meta.path.clone()),
+                bytes: render_sidecar(&destination_meta.metadata)
+                    .map_err(error)?
+                    .into_bytes(),
+            });
+        }
         effects.push(Effect::Write {
             path: ResourceLocation::workspace(source.path.clone()),
             bytes: format(&source.actions, OutputFormat::Actions, None, None)
                 .map_err(error)?
                 .into_bytes(),
         });
-        effects.push(Effect::Write {
-            path: ResourceLocation::workspace(source_meta.path.clone()),
-            bytes: render_sidecar(&source_meta.metadata)
-                .map_err(error)?
-                .into_bytes(),
-        });
+        if metadata_moved {
+            effects.push(Effect::Write {
+                path: ResourceLocation::workspace(source_meta.path.clone()),
+                bytes: render_sidecar(&source_meta.metadata)
+                    .map_err(error)?
+                    .into_bytes(),
+            });
+        }
     }
     let preconditions = vec![
         ResourcePrecondition {

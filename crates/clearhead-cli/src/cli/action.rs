@@ -643,11 +643,22 @@ pub fn move_action(
     mode: clearhead_core::workspace::action_lifecycle::MoveMode,
     dry_run: bool,
 ) -> anyhow::Result<()> {
-    let found = if mode.unarchive {
+    let mut found = if mode.unarchive {
         find_and_load_completed_actions(ctx, file, charter, query)?
     } else {
         find_and_load_open_actions(ctx, file, charter, query)?
     };
+    let has_source_match = match &found {
+        Some((_, actions)) => find_best_match(actions, query, |_| true)?.is_some(),
+        None => false,
+    };
+    if !has_source_match {
+        found = if mode.unarchive {
+            find_and_load_open_actions(ctx, file, charter, query)?
+        } else {
+            find_and_load_completed_actions(ctx, file, charter, query)?
+        };
+    }
     let Some((path, actions)) = found else {
         anyhow::bail!("action not found: {query}");
     };
@@ -660,10 +671,20 @@ pub fn move_action(
         mode,
         dry_run,
     )?;
-    println!(
-        "{}",
-        serde_json::json!({ "kind": if mode.unarchive { "unarchived" } else { "archived" }, "id": canonical_id(id), "count": result.archived_count })
-    );
+    let operation = serde_json::json!({
+        "kind": if mode.unarchive { "unarchived" } else { "archived" },
+        "id": canonical_id(id),
+        "count": result.archived_count,
+    });
+    if dry_run {
+        // Match the transaction preview envelope rather than claiming a commit.
+        println!(
+            "{}",
+            serde_json::json!({ "kind": "dry-run", "operations": [operation] })
+        );
+    } else {
+        println!("{operation}");
+    }
     Ok(())
 }
 

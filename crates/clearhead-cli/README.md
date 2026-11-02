@@ -47,14 +47,21 @@ clearhead read actions --open-only
 # Complete it
 clearhead complete action "Buy oat milk"
 
-# Changed your mind? Reopen it (moves the whole subtree back, all NotStarted)
+# Changed your mind? Reopen it in place (only this action becomes NotStarted)
+# Archived actions refuse reopen: unarchive their root tree first
 clearhead reopen action "Buy oat milk"
 
 # Jot a timestamped finding into a charter's ## Log (frictionless capture)
 clearhead jot "range reads need a cache keyed on Last-Modified" --charter inbox
 
-# Archive completed actions out of active files
+# Archive whole root trees whose members are all closed out of active files
 clearhead archive actions
+
+# Move one whole closed root tree into history, preserving states and dates
+clearhead archive action "Shopping"
+
+# Move that whole root tree back; --reopen also reopens the root in place
+clearhead unarchive action "Shopping" --reopen
 
 # Show resolved config and workspace layout
 clearhead debug
