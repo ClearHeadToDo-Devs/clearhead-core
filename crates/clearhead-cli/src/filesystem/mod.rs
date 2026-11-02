@@ -329,7 +329,7 @@ pub fn transition_action_result(
     let now = Local::now();
     let (batch, result) =
         prepare_native_transaction(workspace_root, model, &operations, now, dry_run)?;
-    let transaction = map_outcome(root, result.clone());
+    let mut transaction = map_outcome(root, result.clone());
     let outcomes = match result {
         PreparedTransactionOutcome::Rejected { error, .. } => return Err(error.into()),
         PreparedTransactionOutcome::Committed { operations, .. }
@@ -356,6 +356,11 @@ pub fn transition_action_result(
         },
         _ => VerbOutcome::Reopened { id },
     };
+    if let TransactionOutcome::DryRun { operations, .. } = &mut transaction
+        && operations.is_empty()
+    {
+        operations.push(outcome.clone());
+    }
     Ok((outcome, transaction))
 }
 

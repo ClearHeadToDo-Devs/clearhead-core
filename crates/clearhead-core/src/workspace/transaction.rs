@@ -184,7 +184,7 @@ fn normalize_target(raw: &str) -> Result<Uuid, TransactionError> {
 ///
 /// Applies only the state-free guards: a non-empty batch, a well-formed target
 /// per operation, a non-empty `set` with no terminal `state` (terminal
-/// transitions belong to `complete`/`cancel`, which cascade and move files).
+/// transitions belong to `complete`/`cancel`, which close one action in place).
 pub fn normalize_request(
     request: TransactionRequest,
 ) -> Result<Vec<NormalizedOperation>, TransactionError> {

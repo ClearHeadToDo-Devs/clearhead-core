@@ -1421,8 +1421,8 @@ pub fn fold_materialized_occurrence_resolution(
     } = input;
     let occurrence_id = *occurrence_id;
     let now = *now;
-    // Closing moved the line to the completed file, but its sidecar entry (and
-    // so its Plan link) still sits in the live sidecar.
+    // Closing keeps the line in place; find its Plan link in the sidecar of
+    // whichever resource holds the occurrence.
     let occurrence_key = occurrence_id.to_string();
     let linked = action_resources
         .iter()

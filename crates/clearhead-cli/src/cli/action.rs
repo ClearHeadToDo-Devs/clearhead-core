@@ -175,7 +175,7 @@ fn resolve_acts_target(
 // Action lifecycle — complete, cancel, update
 // ============================================================================
 
-/// Mark an open action as completed (moves to `.completed.actions`).
+/// Complete an action in place, optionally cascading through open descendants.
 pub fn complete_action(
     ctx: &CommandContext,
     query: &str,
@@ -184,7 +184,7 @@ pub fn complete_action(
     cascade: bool,
     dry_run: bool,
 ) -> anyhow::Result<()> {
-    close_action_subtree(
+    close_action_in_place(
         ctx,
         query,
         charter,
@@ -198,7 +198,7 @@ pub fn complete_action(
 /// Shared body of `complete`/`cancel`: resolve the target identity, then hand
 /// the locked read-plan-apply mutation to core. Only the target state and
 /// message wording differ.
-fn close_action_subtree(
+fn close_action_in_place(
     ctx: &CommandContext,
     query: &str,
     charter: &Option<String>,
@@ -584,7 +584,7 @@ pub fn delete_action(
     anyhow::bail!("No action found matching '{}'", query)
 }
 
-/// Cancel an open action and all its descendants (moves to `.completed.actions` with Cancelled state).
+/// Cancel an action in place, optionally cascading through open descendants.
 pub fn cancel_action(
     ctx: &CommandContext,
     query: &str,
@@ -593,7 +593,7 @@ pub fn cancel_action(
     cascade: bool,
     dry_run: bool,
 ) -> anyhow::Result<()> {
-    close_action_subtree(
+    close_action_in_place(
         ctx,
         query,
         charter,
