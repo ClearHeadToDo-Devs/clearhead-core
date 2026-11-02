@@ -261,6 +261,41 @@ fn storage_moves_distinguish_already_stored_roots_from_missing_ids() {
 }
 
 #[test]
+fn transition_previews_are_enveloped_and_write_nothing() {
+    for verb in ["complete", "cancel", "reopen"] {
+        for cascade in [false, true] {
+            let env = if verb == "reopen" {
+                setup("[x]", "[_]")
+            } else {
+                setup("[ ]", "[-]")
+            };
+            let path = env.data_dir.join("charters/work.actions");
+            let before = fs::read(&path).unwrap();
+            let modified = fs::metadata(&path).unwrap().modified().unwrap();
+            let mut flags = vec!["--dry-run"];
+            if cascade {
+                flags.push("--cascade");
+            }
+            let preview = run(&env, verb, ROOT, &flags);
+            assert_eq!(fs::read(&path).unwrap(), before);
+            assert_eq!(fs::metadata(&path).unwrap().modified().unwrap(), modified);
+            assert_eq!(preview["kind"], "dry-run", "{verb}, cascade={cascade}");
+            assert!(!preview["operations"].as_array().unwrap().is_empty());
+            assert!(
+                preview["files"]
+                    .as_array()
+                    .unwrap()
+                    .contains(&serde_json::json!(path))
+            );
+            flags.remove(0);
+            let committed = run(&env, verb, ROOT, &flags);
+            assert_ne!(preview, committed);
+            assert_eq!(committed["kind"], preview["operations"][0]["kind"]);
+        }
+    }
+}
+
+#[test]
 fn storage_move_dry_runs_are_marked_and_do_not_write() {
     let env = setup("[x]", "[x]");
     run(&env, "complete", GRAND, &[]);
@@ -280,7 +315,11 @@ fn storage_move_dry_runs_are_marked_and_do_not_write() {
         );
         assert_eq!(active(&env), before);
         assert_eq!(fs::read(&completed).ok(), completed_before);
-        run(&env, verb, ROOT, &[]);
+        assert!(!result["files"].as_array().unwrap().is_empty());
+        let committed = run(&env, verb, ROOT, &[]);
+        assert_eq!(committed["kind"], "committed");
+        assert_eq!(committed["operations"], result["operations"]);
+        assert_eq!(committed["files"], result["files"]);
     }
 }
 
