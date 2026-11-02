@@ -30,17 +30,13 @@ pub mod transaction;
 
 // Re-export key types at workspace level
 pub use action_files::{ActionsFile, completed_actions_path};
-pub use action_lifecycle::{prepare_close_action_subtree, prepare_reopen_action_subtree};
 pub use actions::{
     Action, ActionList, ActionState, Diff, IntegrityError, OutputFormat, ParseFailure, ParseMode,
     ParseOutcome, ParsedDocument, RecoveryReport, SourceMetadata, SourceRange, SourcedAction,
     TrustedDocument, diff_actions, format, format_trusted_source, parse_actions,
     parse_actions_with_mode, parse_document, parse_tree, parse_trusted_document, patch_action_list,
 };
-pub use archive_actions::{
-    ActionArchivePlan, PreparedArchiveOutcome, PreparedCloseOutcome, PreparedReopenOutcome,
-    plan_action_archive, prepare_action_archive,
-};
+pub use archive_actions::{ActionArchivePlan, PreparedArchiveOutcome, plan_action_archive};
 pub use archive_charter::{
     ArchivePolicyError, archive_charter_name, archive_charter_subtree,
     has_terminal_archive_ancestor, materialize_archive_parent, resolve_archive_parent_uuid,

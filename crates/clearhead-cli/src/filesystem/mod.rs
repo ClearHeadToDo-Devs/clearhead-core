@@ -50,11 +50,10 @@ use clearhead_core::workspace::resource::{
 use clearhead_core::workspace::sidecar::CharterMetadata;
 use clearhead_core::workspace::{
     ActionResourceState, FileState, PreparedArchiveOutcome, PreparedDeleteOutcome,
-    PreparedInsertOutcome, PreparedReopenOutcome, PreparedTransactionOutcome,
-    PreparedUpdateOutcome, SidecarResourceState, TransactionModel, TransactionRequest,
-    WorkspaceError, completed_actions_path, normalize_request, parse_actions,
-    prepare_action_delete, prepare_action_insert, prepare_action_update,
-    prepare_reopen_action_subtree, sidecar_path,
+    PreparedInsertOutcome, PreparedTransactionOutcome, PreparedUpdateOutcome, SidecarResourceState,
+    TransactionModel, TransactionRequest, WorkspaceError, completed_actions_path,
+    normalize_request, parse_actions, prepare_action_delete, prepare_action_insert,
+    prepare_action_update, sidecar_path,
 };
 use clearhead_core::{Action, ActionSelector};
 
@@ -84,24 +83,6 @@ pub struct ActionArchiveResult {
     pub archived_count: usize,
     pub source_path: PathBuf,
     pub completed_path: PathBuf,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CloseActionResult {
-    pub action_id: uuid::Uuid,
-    pub closed_count: usize,
-    pub source_path: PathBuf,
-    pub completed_path: PathBuf,
-    pub already_closed: bool,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ReopenActionResult {
-    pub action_id: uuid::Uuid,
-    pub reopened_count: usize,
-    pub source_path: PathBuf,
-    pub completed_path: PathBuf,
-    pub already_open: bool,
 }
 
 pub fn insert_action(
@@ -211,80 +192,6 @@ pub fn archive_actions(
     .map_err(|error| WorkspaceError::Actions(error.to_string()))?;
     deliver(&mounts, &batch)?;
     Ok(map_archive(data_root, outcome))
-}
-
-pub fn close_action_subtree(
-    workspace_root: &Path,
-    source_path: &Path,
-    selector: &ActionSelector,
-    closing_state: clearhead_core::ActionState,
-    completed_at: chrono::DateTime<Local>,
-) -> Result<CloseActionResult, WorkspaceError> {
-    let mounts = begin_mutation(workspace_root, source_path)?;
-    let data_root = &mounts.workspace;
-    let completed_path = completed_actions_path(source_path);
-    let (active_snapshot, active_expected) = snapshot(data_root, source_path)?;
-    let (completed_snapshot, completed_expected) = snapshot(data_root, &completed_path)?;
-    use clearhead_core::workspace::transaction::{NormalizedOperation, PreparedTransactionOutcome};
-    let active = parse_snapshot(&active_snapshot)?;
-    let completed = parse_snapshot(&completed_snapshot)?;
-    let id = clearhead_core::workspace::selector::unique_selector_match(&active, selector)?
-        .or(clearhead_core::workspace::selector::unique_selector_match(
-            &completed, selector,
-        )?)
-        .ok_or_else(|| WorkspaceError::Actions("action not found".into()))?;
-    let model = TransactionModel::new(vec![FileState::new(
-        active_snapshot.path().clone(),
-        completed_snapshot.path().clone(),
-        active,
-        completed,
-        active_expected,
-        completed_expected,
-    )]);
-    if !closing_state.is_terminal() {
-        return Err(WorkspaceError::Actions(
-            "close requires a terminal state".into(),
-        ));
-    }
-    let operation = if closing_state == clearhead_core::ActionState::Cancelled {
-        NormalizedOperation::Cancel { target: id }
-    } else {
-        NormalizedOperation::Complete { target: id }
-    };
-    let (batch, result) =
-        prepare_native_transaction(workspace_root, model, &[operation], completed_at, false)?;
-    if let PreparedTransactionOutcome::Rejected { error, .. } = result {
-        return Err(WorkspaceError::Actions(error.to_string()));
-    }
-    deliver(&mounts, &batch)?;
-    Ok(CloseActionResult {
-        action_id: id,
-        closed_count: 1,
-        source_path: source_path.to_path_buf(),
-        completed_path,
-        already_closed: false,
-    })
-}
-
-pub fn reopen_action_subtree(
-    workspace_root: &Path,
-    source_path: &Path,
-    selector: &ActionSelector,
-) -> Result<ReopenActionResult, WorkspaceError> {
-    let mounts = begin_mutation(workspace_root, source_path)?;
-    let data_root = &mounts.workspace;
-    let completed_path = completed_actions_path(source_path);
-    let (active_snapshot, active_expected) = snapshot(data_root, source_path)?;
-    let (completed_snapshot, completed_expected) = snapshot(data_root, &completed_path)?;
-    let (batch, outcome) = prepare_reopen_action_subtree(
-        action_state(active_snapshot, active_expected)?,
-        action_state(completed_snapshot, completed_expected)?,
-        selector,
-        Local::now(),
-    )
-    .map_err(|error| WorkspaceError::Actions(error.to_string()))?;
-    deliver(&mounts, &batch)?;
-    Ok(map_reopen(data_root, outcome))
 }
 
 fn load_sidecar_state(
@@ -625,16 +532,6 @@ fn map_archive(data_root: &Path, outcome: PreparedArchiveOutcome) -> ActionArchi
         archived_count: outcome.archived_count,
         source_path: data_root.join(outcome.source_path.as_str()),
         completed_path: data_root.join(outcome.completed_path.as_str()),
-    }
-}
-
-fn map_reopen(data_root: &Path, outcome: PreparedReopenOutcome) -> ReopenActionResult {
-    ReopenActionResult {
-        action_id: outcome.action_id,
-        reopened_count: outcome.reopened_count,
-        source_path: data_root.join(outcome.source_path.as_str()),
-        completed_path: data_root.join(outcome.completed_path.as_str()),
-        already_open: outcome.already_open,
     }
 }
 

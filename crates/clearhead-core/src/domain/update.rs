@@ -2,8 +2,8 @@
 //!
 //! These describe *how an entity's fields change* — the domain semantics of an
 //! update — as opposed to the CLI orchestration that assembles them from flags.
-//! They live here, next to [`close_subtree`](super::close_subtree) and
-//! [`collect_subtree_ids`](super::collect_subtree_ids), so every client (CLI,
+//! They live here, next to [`collect_subtree_ids`](super::collect_subtree_ids),
+//! so every client (CLI,
 //! LSP, and any other host) shares one home for the rules.
 //!
 //! Relocated from `clearhead_cli::mutations` by the durable-verbs charter

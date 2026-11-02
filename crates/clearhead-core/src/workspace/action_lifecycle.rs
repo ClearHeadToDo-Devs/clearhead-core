@@ -1,108 +1,16 @@
 //! State transitions and root-tree storage moves are separate operations.
-use chrono::{DateTime, Local};
 use uuid::Uuid;
 
-use super::actions::{Action, OutputFormat, format};
-use super::archive_actions::{PreparedArchiveOutcome, PreparedCloseOutcome, PreparedReopenOutcome};
+use super::actions::{OutputFormat, format};
+use super::archive_actions::PreparedArchiveOutcome;
 use super::mutate_actions::{ActionPrepareError, ActionResourceState, SidecarResourceState};
 use super::resource::{Effect, EffectBatch, ResourceLocation, ResourcePrecondition};
-use super::selector::{ActionSelector, unique_selector_match};
 use super::sidecar::render_sidecar;
-use super::transaction::{
-    FileState, NormalizedOperation, TransactionModel, prepare_transaction, tree_root,
-};
+use super::transaction::tree_root;
 use crate::ActionState;
 
 fn error(e: impl std::fmt::Display) -> ActionPrepareError {
     ActionPrepareError::Domain(e.to_string())
-}
-
-pub fn prepare_close_action_subtree(
-    active: ActionResourceState,
-    completed: ActionResourceState,
-    selector: &ActionSelector,
-    state: ActionState,
-    now: DateTime<Local>,
-) -> Result<(EffectBatch, PreparedCloseOutcome), ActionPrepareError> {
-    if !state.is_terminal() {
-        return Err(error("close requires a terminal state"));
-    }
-    let id = select(&active.actions, &completed.actions, selector)?;
-    let source_path = active.path.clone();
-    let completed_path = completed.path.clone();
-    let model = model(active, completed);
-    let op = if state == ActionState::Cancelled {
-        NormalizedOperation::Cancel { target: id }
-    } else {
-        NormalizedOperation::Complete { target: id }
-    };
-    let (batch, result) = prepare_transaction(model, &[op], now, false).map_err(error)?;
-    if let super::transaction::PreparedTransactionOutcome::Rejected { error: e, .. } = result {
-        return Err(error(e));
-    }
-    Ok((
-        batch,
-        PreparedCloseOutcome {
-            action_id: id,
-            closed_count: 1,
-            source_path,
-            completed_path,
-            already_closed: false,
-        },
-    ))
-}
-
-pub fn prepare_reopen_action_subtree(
-    active: ActionResourceState,
-    completed: ActionResourceState,
-    selector: &ActionSelector,
-    now: DateTime<Local>,
-) -> Result<(EffectBatch, PreparedReopenOutcome), ActionPrepareError> {
-    let id = select(&active.actions, &completed.actions, selector)?;
-    let source_path = active.path.clone();
-    let completed_path = completed.path.clone();
-    let (batch, result) = prepare_transaction(
-        model(active, completed),
-        &[NormalizedOperation::Reopen { target: id }],
-        now,
-        false,
-    )
-    .map_err(error)?;
-    if let super::transaction::PreparedTransactionOutcome::Rejected { error: e, .. } = result {
-        return Err(error(e));
-    }
-    Ok((
-        batch,
-        PreparedReopenOutcome {
-            action_id: id,
-            reopened_count: 1,
-            source_path,
-            completed_path,
-            already_open: false,
-        },
-    ))
-}
-
-fn select(
-    active: &[Action],
-    completed: &[Action],
-    selector: &ActionSelector,
-) -> Result<Uuid, ActionPrepareError> {
-    unique_selector_match(active, selector)
-        .map_err(error)?
-        .or(unique_selector_match(completed, selector).map_err(error)?)
-        .ok_or_else(|| error(format!("action not found: {}", selector.id)))
-}
-
-fn model(active: ActionResourceState, completed: ActionResourceState) -> TransactionModel {
-    TransactionModel::new(vec![FileState::new(
-        active.path,
-        completed.path,
-        active.actions,
-        completed.actions,
-        active.expected,
-        completed.expected,
-    )])
 }
 
 /// Move eligible roots, or exactly one selected root. State and dates are facts
