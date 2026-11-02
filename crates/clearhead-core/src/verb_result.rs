@@ -34,12 +34,27 @@ pub fn bare(id: &str) -> &str {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum VerbOutcome {
-    Completed { id: String, children: usize },
-    Cancelled { id: String, children: usize },
-    Reopened { id: String, children: usize },
-    Updated { id: String },
-    Added { id: String },
-    Deleted { id: String, children: usize },
+    Completed {
+        id: String,
+        open_children: Vec<String>,
+    },
+    Cancelled {
+        id: String,
+        open_children: Vec<String>,
+    },
+    Reopened {
+        id: String,
+    },
+    Updated {
+        id: String,
+    },
+    Added {
+        id: String,
+    },
+    Deleted {
+        id: String,
+        children: usize,
+    },
 }
 
 /// A mutation verb that could not apply.
@@ -69,6 +84,12 @@ pub enum VerbError {
     AlreadyOpen {
         id: String,
         state: String,
+        query: String,
+    },
+    /// Reopening history requires an explicit root-tree unarchive first.
+    Archived {
+        id: String,
+        root: String,
         query: String,
     },
     /// The write path's compare-and-swap lost: the resource the verb read to
@@ -147,6 +168,12 @@ impl std::fmt::Display for VerbError {
             VerbError::AlreadyOpen { id, state, .. } => {
                 write!(f, "Action {} is already open ({state})", bare(id))
             }
+            VerbError::Archived { id, root, .. } => write!(
+                f,
+                "Action {} is archived; use unarchive action {}",
+                bare(id),
+                bare(root)
+            ),
             VerbError::Conflict {
                 path,
                 expected,
@@ -176,12 +203,12 @@ mod tests {
         let id = Uuid::parse_str("01951111-0000-7000-8000-000000000001").unwrap();
         let json = serde_json::to_string(&VerbOutcome::Completed {
             id: canonical_id(id),
-            children: 2,
+            open_children: vec![],
         })
         .unwrap();
         assert_eq!(
             json,
-            r#"{"kind":"completed","id":"urn:uuid:01951111-0000-7000-8000-000000000001","children":2}"#
+            r#"{"kind":"completed","id":"urn:uuid:01951111-0000-7000-8000-000000000001","open_children":[]}"#
         );
     }
 

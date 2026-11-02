@@ -8,6 +8,7 @@
 //! physical resources and execute the effects Core prepares.
 
 pub mod action_files;
+pub mod action_lifecycle;
 pub mod actions;
 pub mod archive_actions;
 pub mod archive_charter;
@@ -29,6 +30,7 @@ pub mod transaction;
 
 // Re-export key types at workspace level
 pub use action_files::{ActionsFile, completed_actions_path};
+pub use action_lifecycle::{prepare_close_action_subtree, prepare_reopen_action_subtree};
 pub use actions::{
     Action, ActionList, ActionState, Diff, IntegrityError, OutputFormat, ParseFailure, ParseMode,
     ParseOutcome, ParsedDocument, RecoveryReport, SourceMetadata, SourceRange, SourcedAction,
@@ -37,8 +39,7 @@ pub use actions::{
 };
 pub use archive_actions::{
     ActionArchivePlan, PreparedArchiveOutcome, PreparedCloseOutcome, PreparedReopenOutcome,
-    plan_action_archive, prepare_action_archive, prepare_close_action_subtree,
-    prepare_reopen_action_subtree,
+    plan_action_archive, prepare_action_archive,
 };
 pub use archive_charter::{
     ArchivePolicyError, archive_charter_name, archive_charter_subtree,

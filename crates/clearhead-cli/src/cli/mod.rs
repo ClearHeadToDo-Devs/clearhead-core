@@ -669,6 +669,9 @@ pub fn run() {
                 "{}",
                 serde_json::to_string(&verb_err).expect("verb error serializes")
             );
+            if matches!(verb_err, verb_result::VerbError::Archived { .. }) {
+                eprintln!("{verb_err}");
+            }
             std::process::exit(1);
         }
         if cli.debug > 0 {
@@ -881,8 +884,9 @@ fn dispatch(cli: &argparser::Cli, ctx: &CommandContext) -> anyhow::Result<()> {
                 query,
                 charter,
                 file,
+                cascade,
                 dry_run,
-            } => action::complete_action(ctx, query, charter, file, *dry_run),
+            } => action::complete_action(ctx, query, charter, file, *cascade, *dry_run),
         },
         Verb::Delete { target } => match target {
             argparser::DeleteTarget::Plan {
@@ -950,7 +954,41 @@ fn dispatch(cli: &argparser::Cli, ctx: &CommandContext) -> anyhow::Result<()> {
                 write,
             } => file::patch_file(primary, secondary, *write),
         },
+        Verb::Unarchive { target } => match target {
+            argparser::UnarchiveTarget::Action {
+                query,
+                charter,
+                file,
+                reopen,
+                cascade,
+                dry_run,
+            } => action::move_action(
+                ctx,
+                query,
+                charter,
+                file,
+                clearhead_core::workspace::action_lifecycle::MoveMode {
+                    unarchive: true,
+                    reopen: *reopen,
+                    cascade: *cascade,
+                },
+                *dry_run,
+            ),
+        },
         Verb::Archive { target } => match target {
+            argparser::ArchiveTarget::Action {
+                query,
+                charter,
+                file,
+                dry_run,
+            } => action::move_action(
+                ctx,
+                query,
+                charter,
+                file,
+                clearhead_core::workspace::action_lifecycle::MoveMode::default(),
+                *dry_run,
+            ),
             argparser::ArchiveTarget::Plans {
                 scope,
                 file,
@@ -1021,16 +1059,18 @@ fn dispatch(cli: &argparser::Cli, ctx: &CommandContext) -> anyhow::Result<()> {
                 query,
                 charter,
                 file,
+                cascade,
                 dry_run,
-            } => action::cancel_action(ctx, query, charter, file, *dry_run),
+            } => action::cancel_action(ctx, query, charter, file, *cascade, *dry_run),
         },
         Verb::Reopen { target } => match target {
             argparser::ReopenTarget::Action {
                 query,
                 charter,
                 file,
+                cascade,
                 dry_run,
-            } => action::reopen_action(ctx, query, charter, file, *dry_run),
+            } => action::reopen_action(ctx, query, charter, file, *cascade, *dry_run),
         },
         Verb::Jot {
             text,

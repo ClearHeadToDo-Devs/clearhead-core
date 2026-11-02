@@ -504,7 +504,22 @@ pub fn resolve_materialized_occurrence(
     now: chrono::DateTime<Local>,
 ) -> Result<bool, WorkspaceError> {
     let mounts = NativeWorkspaceMounts::resolve(workspace_root);
+    let mut input = occurrence_transaction_input(workspace_root, now)?;
+    input.occurrence_id = occurrence_id;
+    input.operation = operation.clone();
+    input.archive = materialized_occurrence_archive(&input.workspace, &mounts, occurrence_id)?;
+    let (batch, changed) = prepare_materialized_occurrence_resolution(input)?;
+    if changed {
+        super::deliver(&mounts, &batch)?;
+    }
+    Ok(changed)
+}
 
+pub(super) fn occurrence_transaction_input(
+    workspace_root: &Path,
+    now: chrono::DateTime<Local>,
+) -> Result<MaterializedOccurrencePreparationInput, WorkspaceError> {
+    let mounts = NativeWorkspaceMounts::resolve(workspace_root);
     let inventory = mounts.inventory()?;
     let workspace = crate::filesystem::mounts::load_workspace_model(workspace_root)?;
     let observation = observe_calendar_resources(workspace_root)?;
@@ -523,33 +538,21 @@ pub fn resolve_materialized_occurrence(
     let plan_resources = plan_resource_states(&observation.resources)?;
     let action_resources = sync_action_resources(&workspace, &SyncReport::default(), &mounts)?;
     let templates = sync_plan_templates(&workspace, &mounts.workspace)?;
-    let archive = materialized_occurrence_archive(&workspace, &mounts, occurrence_id)?;
     let observed_resources = sync_read_preconditions(&mounts, &inventory)?;
-    let (batch, changed) =
-        prepare_materialized_occurrence_resolution(MaterializedOccurrencePreparationInput {
-            workspace,
-            store,
-            occurrence_id,
-            operation: operation.clone(),
-            now,
-            plan_resources,
-            action_resources,
-            templates,
-            archive,
-            observed_resources,
-            store_location,
-            store_expected,
-        })?;
-    if !changed {
-        return Ok(false);
-    }
-    if mounts.inventory()? != inventory {
-        return Err(WorkspaceError::Actions(
-            "workspace or plans vdir changed before occurrence delivery".into(),
-        ));
-    }
-    super::deliver(&mounts, &batch)?;
-    Ok(true)
+    Ok(MaterializedOccurrencePreparationInput {
+        workspace,
+        store,
+        occurrence_id: Uuid::nil(),
+        operation: OccurrenceOp::Skip,
+        now,
+        plan_resources,
+        action_resources,
+        templates,
+        archive: None,
+        observed_resources,
+        store_location,
+        store_expected,
+    })
 }
 
 fn materialized_occurrence_archive(

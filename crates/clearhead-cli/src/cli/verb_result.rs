@@ -11,15 +11,21 @@ use std::io::IsTerminal;
 
 fn prose(outcome: &VerbOutcome) -> String {
     match outcome {
-        VerbOutcome::Completed { id, children } => {
-            format!("Completed action {} (+{} children)", bare(id), children)
+        VerbOutcome::Completed { id, open_children } => {
+            format!(
+                "Completed action {} (open descendants: {})",
+                bare(id),
+                open_children.join(", ")
+            )
         }
-        VerbOutcome::Cancelled { id, children } => {
-            format!("Cancelled action {} (+{} children)", bare(id), children)
+        VerbOutcome::Cancelled { id, open_children } => {
+            format!(
+                "Cancelled action {} (open descendants: {})",
+                bare(id),
+                open_children.join(", ")
+            )
         }
-        VerbOutcome::Reopened { id, children } => {
-            format!("Reopened action {} (+{} children)", bare(id), children)
-        }
+        VerbOutcome::Reopened { id } => format!("Reopened action {}", bare(id)),
         VerbOutcome::Updated { id } => format!("Updated action {}", bare(id)),
         VerbOutcome::Added { id } => format!("Added action {}", bare(id)),
         VerbOutcome::Deleted { id, children } => {

@@ -32,6 +32,45 @@ The dependency arrows all point *into* core: the effectful crate depends on
 `crates/` rather than the workspace root — it must not name or "parent" its own
 downstream.
 
+## Closing, reopening, and storing history
+
+Closure is a state change, not a file move:
+
+```bash
+clearhead complete action <id>                 # this line only, in place
+clearhead cancel action <id>                   # this line only, in place
+clearhead complete action <id> --cascade       # target and every open descendant
+clearhead reopen action <id>                   # this active line, date cleared
+clearhead reopen action <id> --cascade         # every closed member, through open ones
+clearhead archive action <root-id>             # whole fully closed root tree
+clearhead archive actions                      # sweep every eligible root tree
+clearhead unarchive action <root-id>            # whole tree, states/dates unchanged
+clearhead unarchive action <root-id> --reopen    # move tree; reopen root only
+clearhead unarchive action <root-id> --reopen --cascade
+```
+
+Single complete/cancel/update refuse a closed target (`already-closed`). A close
+result reports `open_children`, not `children`. A close cascade forces its target
+to the requested state (a matching target keeps its date); descendants already
+closed keep their states and dates. Cancel mirrors complete. Reopen cascades
+preserve open members. A cascade with nothing to do succeeds without writes.
+`transact` folds single `complete-action`, `cancel-action`, `reopen-action`, and
+`update-action` operations in order and commits all their effects together,
+including occurrence deviations, frozen Plan links, and the next token.
+Reopening does not undo an occurrence's deviation.
+
+Only archive/unarchive move lines and their sidecar entries, always by whole
+root tree. Both refuse a child and name its root. Reopen refuses archived lines
+and names `unarchive` and the root. `--cascade` on unarchive requires `--reopen`.
+`archive charter` sweeps eligible closed trees to completed history before
+relocating the charter; `orient` reads closures in both files.
+
+Neovim's `nvim_archive_on_save` is unchanged: when enabled, plain unarchive lasts
+only until the next save if the tree is still fully closed. Use `--reopen` or
+reopen before saving to keep it active. A reopened root with closed children can
+produce W003; closed roots with open children can produce W002. Both remain
+warnings, not closure prohibitions.
+
 ## Building
 
 Members use ordinary sibling path dependencies, so this checkout builds and

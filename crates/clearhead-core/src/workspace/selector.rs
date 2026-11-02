@@ -43,7 +43,7 @@ impl From<&Action> for ActionSelector {
 /// UUID is authoritative. When it misses — an id-less line reparsed to a new
 /// in-memory UUID — a unique alias match wins, then a unique name match.
 /// Ambiguity is rejected rather than silently selecting by file order.
-pub(crate) fn unique_selector_match(
+pub fn unique_selector_match(
     actions: &[Action],
     selector: &ActionSelector,
 ) -> Result<Option<Uuid>, WorkspaceError> {

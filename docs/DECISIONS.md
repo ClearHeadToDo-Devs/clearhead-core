@@ -7,6 +7,42 @@ alternatives rejected, and the trade-off accepted.
 
 ---
 
+## Decision 3: Single Closure in Place; Explicit Cascades Force Their Target
+
+Decided by Darrion on 2026-11-02 (platform Decisions 58 and 59). This amends
+Decision 2: **single** complete/cancel still reject a closed target, but an
+explicit `--cascade` forces its target to the requested terminal state. A target
+already in that state keeps its date; an oppositely closed target receives the
+new state and date. Every open descendant closes, including below closed
+members; closed descendants keep their factual states and dates. Cancel mirrors
+complete. An empty expansion succeeds without writing.
+
+Close and reopen change only the selected active line. Reopen clears its date;
+`reopen --cascade` reopens all closed members and preserves open members.
+Transactions fold these single operations, including `reopen-action`, in order.
+The shared close resolves occurrences only on the open-to-closed transition:
+state, deviation, frozen Plan link in the line's sidecar, and next token commit
+together. Forcing a closed target closed never resolves again; reopen does not
+undo a deviation. Update rejects closed active lines in either delivery path.
+
+Archive and unarchive alone move whole root trees and their sidecar entries,
+without changing states or dates. A single archive requires a fully closed tree;
+the sweep skips ineligible roots. Both forms refuse a child and name its root.
+Reopen refuses archived lines and points to `unarchive` and the root.
+`unarchive --reopen` reopens just the root; adding `--cascade` reopens closed
+members too. `--cascade` alone is a usage error. Charter archival sweeps eligible
+trees into completed history first, and orient reads both active and completed
+closures. Neovim archive-on-save is not changed: a plain unarchive of a still
+closed tree is swept back on save.
+
+**Alternatives rejected:** implicit subtree closure; making a cascade silently
+ignore an oppositely closed target; erasing descendants' historical closure
+facts; treating an archived child as a detached new root.
+
+**Trade-off:** a closed line may remain under an open root indefinitely. W002
+and W003 remain warnings. Explicit storage moves and an optional reopen make
+the behavior composable without adding hidden sweep-exemption state.
+
 ## Decision 2: Explicit Cascade Closure Preserves Existing Closures
 
 Decided by Darrion on 2026-11-01: “if i complete in a casacding fashion any
@@ -25,7 +61,8 @@ The terminal-target guard is shared by both paths.
 closure from archival, keeps states independently asserted, and permits an
 explicit reviewed batch transition. Preserving an existing closure within that
 batch does not change the specification; no implicit cascade is introduced.
-Reopen behavior is not decided here and remains unchanged.
+Reopen behavior was not decided here; Decision 3 supersedes that behavior and
+amends the terminal-target rule specifically for explicit cascades.
 
 **Alternative rejected:** replacing all descendant states and timestamps with
 those of the new cascade, which erases factual completion and cancellation

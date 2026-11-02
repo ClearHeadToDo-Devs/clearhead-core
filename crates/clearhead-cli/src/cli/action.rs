@@ -181,6 +181,7 @@ pub fn complete_action(
     query: &str,
     charter: &Option<String>,
     file: &Option<PathBuf>,
+    cascade: bool,
     dry_run: bool,
 ) -> anyhow::Result<()> {
     close_action_subtree(
@@ -190,7 +191,7 @@ pub fn complete_action(
         file,
         dry_run,
         ActionState::Completed,
-        "complete",
+        cascade,
     )
 }
 
@@ -204,10 +205,9 @@ fn close_action_subtree(
     file: &Option<PathBuf>,
     dry_run: bool,
     closing_state: ActionState,
-    verb_present: &str,
+    cascade: bool,
 ) -> anyhow::Result<()> {
-    let Some((actions_path, mut open_actions)) =
-        find_and_load_open_actions(ctx, file, charter, query)?
+    let Some((actions_path, open_actions)) = find_and_load_open_actions(ctx, file, charter, query)?
     else {
         // Not a materialized line in any file — it may be a projected recurring
         // occurrence, acted on by writing a deviation to its master rather than
@@ -219,68 +219,19 @@ fn close_action_subtree(
         return Err(verb_target_error(ctx, query)?.into());
     };
 
-    let (action_id, selector) = match find_action_mut(&mut open_actions, query)? {
-        Some(action) => (action.id, clearhead_core::ActionSelector::from(&*action)),
+    let selector = match find_best_match(&open_actions, query, |_| true)? {
+        Some(action) => clearhead_core::ActionSelector::from(action),
         None => return Err(verb_target_error(ctx, query)?.into()),
     };
-
-    let subtree_ids = clearhead_core::collect_subtree_ids(&open_actions, action_id);
-
-    if dry_run {
-        println!(
-            "Would {} action {} and {} child(ren)",
-            verb_present,
-            action_id,
-            subtree_ids.len() - 1,
-        );
-        return Ok(());
-    }
-
     let workspace_root = ctx.workspace_for_file(&actions_path);
-    let result = clearhead_cli::filesystem::close_action_subtree(
+    let outcome = clearhead_cli::filesystem::transition_action(
         &workspace_root,
         &actions_path,
         &selector,
         closing_state,
-        Local::now(),
+        cascade,
+        dry_run,
     )?;
-
-    // If the closed line was a materialized recurring occurrence, closing it is only
-    // half the operation: write the completed/skip deviation to its master and stamp
-    // the plan's next token. `resolve_materialized_occurrence` is a no-op (`false`)
-    // for an ordinary action, so this is safe to attempt unconditionally.
-    let occurrence_op = match closing_state {
-        ActionState::Completed => Some(clearhead_core::OccurrenceOp::Complete { at: Local::now() }),
-        ActionState::Cancelled => Some(clearhead_core::OccurrenceOp::Skip),
-        _ => None,
-    };
-    if let Some(op) = occurrence_op
-        && clearhead_cli::filesystem::resolve_materialized_occurrence(
-            &workspace_root,
-            action_id,
-            &op,
-            Local::now(),
-        )?
-    {
-        info!(%action_id, "Recurring occurrence: deviation written to master, next token stamped");
-    }
-
-    let children = if result.already_closed {
-        subtree_ids.len().saturating_sub(1)
-    } else {
-        result.closed_count.saturating_sub(1)
-    };
-    let outcome = match closing_state {
-        ActionState::Cancelled => VerbOutcome::Cancelled {
-            id: canonical_id(action_id),
-            children,
-        },
-        _ => VerbOutcome::Completed {
-            id: canonical_id(action_id),
-            children,
-        },
-    };
-    info!(%action_id, children, "Action subtree closed ({:?})", closing_state);
     emit(&outcome);
     Ok(())
 }
@@ -342,11 +293,11 @@ fn try_close_occurrence(
     let outcome = match closing_state {
         ActionState::Cancelled => VerbOutcome::Cancelled {
             id: canonical_id(occurrence.id),
-            children: 0,
+            open_children: vec![],
         },
         _ => VerbOutcome::Completed {
             id: canonical_id(occurrence.id),
-            children: 0,
+            open_children: vec![],
         },
     };
     info!(%occurrence.id, %plan_id, "Occurrence deviation written ({:?})", closing_state);
@@ -516,7 +467,7 @@ pub fn update_action(
     if let Some(state) = clearhead_core::disallowed_terminal_update(&update) {
         anyhow::bail!(
             "cannot set state to {state:?} via update; use complete/cancel, \
-             which cascade to the subtree and archive it"
+             which close the selected action in place"
         );
     }
 
@@ -629,6 +580,7 @@ pub fn cancel_action(
     query: &str,
     charter: &Option<String>,
     file: &Option<PathBuf>,
+    cascade: bool,
     dry_run: bool,
 ) -> anyhow::Result<()> {
     close_action_subtree(
@@ -638,59 +590,79 @@ pub fn cancel_action(
         file,
         dry_run,
         ActionState::Cancelled,
-        "cancel",
+        cascade,
     )
 }
 
-/// Reopen a completed action and its subtree — the inverse of `complete`/
-/// `cancel`. Resolves the target in the `.completed.actions` history, then hands
-/// the locked read-plan-apply move back to the active file to core via
-/// clearhead_cli's `filesystem` module.
-///
-/// The whole subtree returns `NotStarted` (child states were collapsed at
-/// completion) and the root returns detached from its old parent (that link was
-/// nulled at completion) — see `reopen_subtree` in core for the rationale.
+/// Reopen in place, optionally expanding a cascade of single transitions.
+/// Archived lines are storage, not reopen targets.
 pub fn reopen_action(
     ctx: &CommandContext,
     query: &str,
     charter: &Option<String>,
     file: &Option<PathBuf>,
+    cascade: bool,
     dry_run: bool,
 ) -> anyhow::Result<()> {
-    let Some((actions_path, completed)) =
-        find_and_load_completed_actions(ctx, file, charter, query)?
-    else {
-        return Err(reopen_target_error(ctx, query)?.into());
-    };
-
-    let (action_id, selector) = match find_best_match(&completed, query, is_closed_action)? {
-        Some(action) => (action.id, clearhead_core::ActionSelector::from(action)),
-        None => return Err(verb_target_error(ctx, query)?.into()),
-    };
-    let subtree_ids = clearhead_core::collect_subtree_ids(&completed, action_id);
-
-    if dry_run {
-        println!(
-            "Would reopen action {} and {} child(ren)",
-            action_id,
-            subtree_ids.len() - 1,
-        );
+    if let Some((path, actions)) = find_and_load_open_actions(ctx, file, charter, query)?
+        && let Some(action) = find_best_match(&actions, query, |_| true)?
+    {
+        let outcome = clearhead_cli::filesystem::transition_action(
+            &ctx.workspace_for_file(&path),
+            &path,
+            &clearhead_core::ActionSelector::from(action),
+            ActionState::NotStarted,
+            cascade,
+            dry_run,
+        )?;
+        emit(&outcome);
         return Ok(());
     }
+    if let Some((_, completed)) = find_and_load_completed_actions(ctx, file, charter, query)?
+        && let Some(action) = find_best_match(&completed, query, |_| true)?
+    {
+        return Err(VerbError::Archived {
+            query: query.to_string(),
+            id: canonical_id(action.id),
+            root: canonical_id(clearhead_core::workspace::transaction::tree_root(
+                &completed, action.id,
+            )),
+        }
+        .into());
+    }
+    Err(reopen_target_error(ctx, query)?.into())
+}
 
-    let workspace_root = ctx.workspace_for_file(&actions_path);
-    let result = clearhead_cli::filesystem::reopen_action_subtree(
-        &workspace_root,
-        &actions_path,
-        &selector,
-    )?;
-    let children = result.reopened_count.saturating_sub(1);
-    let outcome = VerbOutcome::Reopened {
-        id: canonical_id(result.action_id),
-        children,
+/// Move one root tree, without conflating storage with closure.
+pub fn move_action(
+    ctx: &CommandContext,
+    query: &str,
+    charter: &Option<String>,
+    file: &Option<PathBuf>,
+    mode: clearhead_core::workspace::action_lifecycle::MoveMode,
+    dry_run: bool,
+) -> anyhow::Result<()> {
+    let found = if mode.unarchive {
+        find_and_load_completed_actions(ctx, file, charter, query)?
+    } else {
+        find_and_load_open_actions(ctx, file, charter, query)?
     };
-    info!(action_id = %result.action_id, children, "Action subtree reopened");
-    emit(&outcome);
+    let Some((path, actions)) = found else {
+        anyhow::bail!("action not found: {query}");
+    };
+    let action = find_best_match(&actions, query, |_| true)?
+        .ok_or_else(|| anyhow::anyhow!("action not found: {query}"))?;
+    let (result, id) = clearhead_cli::filesystem::move_action(
+        &ctx.workspace_for_file(&path),
+        &path,
+        &clearhead_core::ActionSelector::from(action),
+        mode,
+        dry_run,
+    )?;
+    println!(
+        "{}",
+        serde_json::json!({ "kind": if mode.unarchive { "unarchived" } else { "archived" }, "id": canonical_id(id), "count": result.archived_count })
+    );
     Ok(())
 }
 
@@ -1193,8 +1165,7 @@ fn find_act_in_open_files(
         .iter()
         .flat_map(|(_, actions)| actions.iter())
         .collect();
-    let Some(target_id) =
-        find_best_match(&candidates, query, is_open_action)?.map(|action| action.id)
+    let Some(target_id) = find_best_match(&candidates, query, |_| true)?.map(|action| action.id)
     else {
         return Ok(None);
     };

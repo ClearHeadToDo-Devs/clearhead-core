@@ -252,10 +252,16 @@ pub enum Verb {
         target: CancelTarget,
     },
 
-    /// Reopen a completed item (inverse of complete/cancel: moves it back to the active file)
+    /// Reopen a closed action in place (use unarchive for stored history)
     Reopen {
         #[command(subcommand)]
         target: ReopenTarget,
+    },
+
+    /// Move an archived root tree back to the active file
+    Unarchive {
+        #[command(subcommand)]
+        target: UnarchiveTarget,
     },
 
     /// Jot a timestamped finding into a charter's `## Log` (frictionless capture)
@@ -716,7 +722,7 @@ pub enum CompleteTarget {
         dry_run: bool,
     },
 
-    /// Mark an action as completed
+    /// Complete one active action in place; report open descendants without moving lines
     Action {
         /// UUID, short prefix (at least 4 hex digits), alias, or name of the action
         query: String,
@@ -728,6 +734,10 @@ pub enum CompleteTarget {
         /// File containing the .actions file (sidecar is derived). If not provided, workspace search.
         #[arg(short, long)]
         file: Option<PathBuf>,
+
+        /// Force target to Completed and close open descendants; closed descendants and a matching target keep dates. Nothing to do writes nothing
+        #[arg(long)]
+        cascade: bool,
 
         /// Preview what would be completed without writing
         #[arg(long)]
@@ -947,6 +957,16 @@ pub enum PatchTarget {
 
 #[derive(Subcommand)]
 pub enum ArchiveTarget {
+    /// Move one fully closed root tree to completed history without changing state
+    Action {
+        query: String,
+        #[arg(long)]
+        charter: Option<String>,
+        #[arg(short, long)]
+        file: Option<PathBuf>,
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// Explain that externally-owned schedules are not archived.
     ///
     /// Use `delete plan` for an explicit schedule deletion and manage generated
@@ -964,7 +984,7 @@ pub enum ArchiveTarget {
         dry_run: bool,
     },
 
-    /// Move completed/cancelled actions from `.actions` to `.completed.actions`. Workspace-wide by default.
+    /// Move fully closed root trees and sidecars to `.completed.actions`; ineligible trees stay. Workspace-wide by default.
     Actions {
         /// Domain path to scope: "health", "health/exercise", etc. Workspace-wide if omitted.
         scope: Option<String>,
@@ -1074,6 +1094,10 @@ pub enum CancelTarget {
         #[arg(short, long)]
         file: Option<PathBuf>,
 
+        /// Force target to Cancelled and cancel open descendants; closed descendants and a matching target keep dates. Nothing to do writes nothing
+        #[arg(long)]
+        cascade: bool,
+
         /// Preview what would be cancelled without writing
         #[arg(long)]
         dry_run: bool,
@@ -1086,20 +1110,44 @@ pub enum CancelTarget {
 
 #[derive(Subcommand)]
 pub enum ReopenTarget {
-    /// Reopen a completed action and its subtree (all set back to NotStarted)
+    /// Reopen one closed action in the active file (NotStarted, date cleared)
     Action {
-        /// UUID, short prefix (at least 4 hex digits), alias, or name of the completed action
+        /// UUID, short prefix (at least 4 hex digits), alias, or name of the closed active action
         query: String,
 
         /// Scope search to a specific charter (name, alias, or UUID). Makes resolution deterministic when names collide across charters.
         #[arg(long)]
         charter: Option<String>,
 
-        /// File containing the .actions file (the completed sidecar is derived). If not provided, workspace search.
+        /// Active .actions file; archived lines refuse and name unarchive and their root. Otherwise workspace search.
         #[arg(short, long)]
         file: Option<PathBuf>,
 
+        /// Reopen every closed member, preserving open members; nothing closed writes nothing
+        #[arg(long)]
+        cascade: bool,
+
         /// Preview what would be reopened without writing
+        #[arg(long)]
+        dry_run: bool,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum UnarchiveTarget {
+    /// Move a whole archived root tree back; plain unarchive preserves states and dates
+    Action {
+        query: String,
+        #[arg(long)]
+        charter: Option<String>,
+        #[arg(short, long)]
+        file: Option<PathBuf>,
+        /// Reopen the root after moving it
+        #[arg(long)]
+        reopen: bool,
+        /// Reopen closed descendants too (requires --reopen)
+        #[arg(long, requires = "reopen")]
+        cascade: bool,
         #[arg(long)]
         dry_run: bool,
     },

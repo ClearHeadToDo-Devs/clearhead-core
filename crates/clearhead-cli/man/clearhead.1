@@ -366,10 +366,15 @@ Lifecycle state: \fBnew\fR, \fBactive\fR, \fBblocked\fR, \fBclosed\fR.
 [\fB\-\-file\fR \fIpath\fR]
 [\fB\-\-dry\-run\fR]
 .PP
-Set the action's state to \fBCompleted\fR and append a \fB%\fR completion
-timestamp.
-The action is moved from \fB<charter>.actions\fR to
-\fB<charter>.completed.actions\fR.
+Set only the selected active line to \fBCompleted\fR and stamp its \fB%\fR
+completion date in place. No lines move. A closed target is refused as
+\fBalready-closed\fR. Results contain \fBopen_children\fR (open descendant ids),
+not \fBchildren\fR.
+.PP
+With \fB\-\-cascade\fR, force the target to Completed and close every open
+descendant, even below closed members. Closed descendants keep state and date;
+a matching target keeps its date, an oppositely closed target gets a new date.
+Nothing to do succeeds without writing.
 .\" --------------------------------------------------------------------
 .SS "cancel \(em mark an action cancelled"
 .PP
@@ -378,8 +383,42 @@ The action is moved from \fB<charter>.actions\fR to
 [\fB\-\-file\fR \fIpath\fR]
 [\fB\-\-dry\-run\fR]
 .PP
-Set the action's state to \fBCancelled\fR without deleting it.
-The action is moved to \fB<charter>.completed.actions\fR.
+Set only the selected active line to \fBCancelled\fR with a closure date, in
+place. \fB\-\-cascade\fR mirrors complete: force the target to Cancelled and
+cancel open descendants, preserving already closed descendants and a matching
+target's date. Single cancel refuses closed targets; an empty cascade writes
+nothing.
+.PP
+Materialized recurring occurrences resolve in the shared close: closure,
+calendar deviation, frozen Plan link in the line's sidecar, and the next token
+commit together. Forcing a closed target closed does not resolve again.
+.\" --------------------------------------------------------------------
+.SS "reopen and unarchive"
+.PP
+.B clearhead reopen action
+\fIquery\fR [\fB\-\-cascade\fR] [\fB\-\-file\fR \fIpath\fR] [\fB\-\-dry-run\fR]
+.PP
+Reopen one closed active line as NotStarted and clear its date. A single reopen
+refuses an open target. With \fB\-\-cascade\fR reopen all closed members,
+walking through open ones without changing them; nothing closed writes nothing.
+Archived targets are refused, naming \fBunarchive\fR and the root. Reopening
+does not undo an occurrence deviation.
+.PP
+.B clearhead unarchive action
+\fIroot\fR [\fB\-\-reopen\fR [\fB\-\-cascade\fR]] [\fB\-\-dry-run\fR]
+.PP
+Move the whole root tree and sidecar entries back to the active file, preserving
+states, dates and parent links. Refuse non-roots and name the root.
+\fB\-\-reopen\fR reopens the root only; adding \fB\-\-cascade\fR reopens all
+closed members. Cascade without reopen is a usage error. With Neovim's
+\fBnvim_archive_on_save\fR enabled, plain unarchive is swept back on the next
+save of a fully closed tree; reopen before saving or use \fB\-\-reopen\fR.
+.\" --------------------------------------------------------------------
+.SS "transact"
+.PP
+\fBclearhead transact\fR folds update-action, complete-action, cancel-action
+and reopen-action in order and commits all effects together. Each operation
+acts on one line, not a subtree. Update refuses closed active lines too.
 .\" --------------------------------------------------------------------
 .SS "delete \(em remove an item"
 .PP
@@ -406,10 +445,14 @@ Remove a recurring Plan resource from the workspace.
 [\fB\-\-file\fR \fIpath\fR]
 [\fB\-\-dry\-run\fR]
 .PP
-Sweep Completed and Cancelled actions from \fB<charter>.actions\fR into
+Sweep fully closed root trees from \fB<charter>.actions\fR into
 \fB<charter>.completed.actions\fR across the whole workspace (default) or
-within a scoped charter path.
-This is a routine housekeeping step; it does not delete history.
+within a scoped charter path. Trees with any open member stay active. States,
+dates, parent links and sidecar entries survive both archive and unarchive.
+.PP
+\fBclearhead archive action\fR \fIroot\fR moves exactly one fully closed root
+tree. It refuses an open tree or a non-root and names the root. No close verb
+archives automatically.
 .RS 4
 .TP
 \fIscope\fR
@@ -444,7 +487,7 @@ Mutually exclusive with \fIquery\fR.
 .TP
 \fB\-\-force\fR
 Archive even if open actions remain in the primary \fB.actions\fR file
-(they are cancelled and swept).
+(their states are preserved).
 .TP
 \fB\-\-dry\-run\fR
 Print what would be archived without writing or deleting.
@@ -452,6 +495,9 @@ Print what would be archived without writing or deleting.
 .PP
 What \fBarchive charter\fR does:
 .RS 4
+.IP \(bu 4
+Sweep eligible closed trees into completed history first; closed facts end up
+in the archived completed file, with sidecar entries alongside them
 .IP \(bu 4
 Move charter Markdown, actions, completed actions, sidecar metadata, and owned
 supporting files into \fBarchive/\fR with the charter UUID as the stable stem
