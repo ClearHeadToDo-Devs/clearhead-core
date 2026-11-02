@@ -219,7 +219,7 @@ fn close_action_subtree(
         return Err(verb_target_error(ctx, query)?.into());
     };
 
-    let selector = match find_best_match(&open_actions, query, |_| true)? {
+    let selector = match find_source_state_match(&open_actions, query, is_open_action)? {
         Some(action) => clearhead_core::ActionSelector::from(action),
         None => return Err(verb_target_error(ctx, query)?.into()),
     };
@@ -604,8 +604,9 @@ pub fn reopen_action(
     cascade: bool,
     dry_run: bool,
 ) -> anyhow::Result<()> {
-    if let Some((path, actions)) = find_and_load_open_actions(ctx, file, charter, query)?
-        && let Some(action) = find_best_match(&actions, query, |_| true)?
+    if let Some((path, actions)) =
+        find_and_load_actions(ctx, file, charter, query, is_closed_action)?
+        && let Some(action) = find_source_state_match(&actions, query, is_closed_action)?
     {
         let outcome = clearhead_cli::filesystem::transition_action(
             &ctx.workspace_for_file(&path),
@@ -1114,13 +1115,23 @@ pub fn archive_actions(
 // ============================================================================
 
 /// Locate the `.actions` file a mutation verb should operate on. `Ok(None)`
-/// means the workspace scan found no open match — the caller builds the typed
+/// means the workspace scan found no match — the caller builds the typed
 /// target error; hard errors (io, parse, unknown charter) stay `Err`.
 fn find_and_load_open_actions(
     ctx: &CommandContext,
     file: &Option<PathBuf>,
     charter: &Option<String>,
     query: &str,
+) -> anyhow::Result<Option<(PathBuf, ActionList)>> {
+    find_and_load_actions(ctx, file, charter, query, is_open_action)
+}
+
+fn find_and_load_actions(
+    ctx: &CommandContext,
+    file: &Option<PathBuf>,
+    charter: &Option<String>,
+    query: &str,
+    preferred: fn(&Action) -> bool,
 ) -> anyhow::Result<Option<(PathBuf, ActionList)>> {
     if let Some(path) = file {
         let actions = super::load_file_for_mutation(path, "action lifecycle")?;
@@ -1138,7 +1149,7 @@ fn find_and_load_open_actions(
     // Search every workspace (respects --workspace); primary errors are hard,
     // additional workspaces are skipped on error like all_domain_models.
     for (_, ws_dir) in ctx.workspace_dirs() {
-        match find_act_in_open_files(&ws_dir, query) {
+        match find_act_in_open_files(&ws_dir, query, preferred) {
             Ok(Some(found)) => return Ok(Some(found)),
             Ok(None) => {}
             Err(e) if ws_dir == ctx.data_dir => return Err(e),
@@ -1149,10 +1160,11 @@ fn find_and_load_open_actions(
 }
 
 /// Scan `.actions` files in the workspace for one containing an action matching
-/// `query`. `Ok(None)` when no file has an open match.
+/// `query`, preferring the verb's source state before diagnosing a wrong state.
 fn find_act_in_open_files(
     data_dir: &Path,
     query: &str,
+    preferred: fn(&Action) -> bool,
 ) -> anyhow::Result<Option<(PathBuf, ActionList)>> {
     let paths = clearhead_cli::filesystem::list_action_files(data_dir)
         .context("Failed to list workspace")?;
@@ -1165,7 +1177,8 @@ fn find_act_in_open_files(
         .iter()
         .flat_map(|(_, actions)| actions.iter())
         .collect();
-    let Some(target_id) = find_best_match(&candidates, query, |_| true)?.map(|action| action.id)
+    let Some(target_id) =
+        find_source_state_match(&candidates, query, preferred)?.map(|action| action.id)
     else {
         return Ok(None);
     };
@@ -1247,6 +1260,21 @@ where
                 filter(action) && action.name.to_lowercase().contains(&query_lower)
             }))
         }
+    }
+}
+
+/// Prefer eligible targets; retain wrong-state matches only for typed errors.
+fn find_source_state_match<'a, T>(
+    actions: &'a [T],
+    query: &str,
+    preferred: fn(&Action) -> bool,
+) -> anyhow::Result<Option<&'a Action>>
+where
+    T: std::borrow::Borrow<Action> + clearhead_core::ReferenceEntity,
+{
+    match find_best_match(actions, query, preferred)? {
+        Some(action) => Ok(Some(action)),
+        None => find_best_match(actions, query, |_| true),
     }
 }
 

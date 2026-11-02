@@ -420,15 +420,20 @@ fn prepare_native_transaction(
     ),
     WorkspaceError,
 > {
-    let mut context = calendar::occurrence_transaction_input(workspace_root, now)?;
-    clearhead_core::workspace::transaction::prepare_transaction_with_occurrences(
+    let (mut context, inventory) = calendar::occurrence_transaction_input(workspace_root, now)?;
+    let prepared = clearhead_core::workspace::transaction::prepare_transaction_with_occurrences(
         model,
         operations,
         now,
         dry_run,
         Some(&mut context),
     )
-    .map_err(|e| WorkspaceError::Actions(e.to_string()))
+    .map_err(|e| WorkspaceError::Actions(e.to_string()))?;
+    calendar::validate_occurrence_inventory(
+        &NativeWorkspaceMounts::resolve(workspace_root),
+        &inventory,
+    )?;
+    Ok(prepared)
 }
 
 fn action_state(

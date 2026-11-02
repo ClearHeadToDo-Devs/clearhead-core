@@ -504,21 +504,40 @@ pub fn resolve_materialized_occurrence(
     now: chrono::DateTime<Local>,
 ) -> Result<bool, WorkspaceError> {
     let mounts = NativeWorkspaceMounts::resolve(workspace_root);
-    let mut input = occurrence_transaction_input(workspace_root, now)?;
+    let (mut input, inventory) = occurrence_transaction_input(workspace_root, now)?;
     input.occurrence_id = occurrence_id;
     input.operation = operation.clone();
     input.archive = materialized_occurrence_archive(&input.workspace, &mounts, occurrence_id)?;
     let (batch, changed) = prepare_materialized_occurrence_resolution(input)?;
     if changed {
+        validate_occurrence_inventory(&mounts, &inventory)?;
         super::deliver(&mounts, &batch)?;
     }
     Ok(changed)
 }
 
+pub(super) fn validate_occurrence_inventory(
+    mounts: &NativeWorkspaceMounts,
+    inventory: &clearhead_core::workspace::resource::WorkspaceMounts<MountInventory>,
+) -> Result<(), WorkspaceError> {
+    if mounts.inventory()? != *inventory {
+        return Err(WorkspaceError::Actions(
+            "plans vdir changed while materialized occurrence was being prepared".into(),
+        ));
+    }
+    Ok(())
+}
+
 pub(super) fn occurrence_transaction_input(
     workspace_root: &Path,
     now: chrono::DateTime<Local>,
-) -> Result<MaterializedOccurrencePreparationInput, WorkspaceError> {
+) -> Result<
+    (
+        MaterializedOccurrencePreparationInput,
+        clearhead_core::workspace::resource::WorkspaceMounts<MountInventory>,
+    ),
+    WorkspaceError,
+> {
     let mounts = NativeWorkspaceMounts::resolve(workspace_root);
     let inventory = mounts.inventory()?;
     let workspace = crate::filesystem::mounts::load_workspace_model(workspace_root)?;
@@ -539,20 +558,23 @@ pub(super) fn occurrence_transaction_input(
     let action_resources = sync_action_resources(&workspace, &SyncReport::default(), &mounts)?;
     let templates = sync_plan_templates(&workspace, &mounts.workspace)?;
     let observed_resources = sync_read_preconditions(&mounts, &inventory)?;
-    Ok(MaterializedOccurrencePreparationInput {
-        workspace,
-        store,
-        occurrence_id: Uuid::nil(),
-        operation: OccurrenceOp::Skip,
-        now,
-        plan_resources,
-        action_resources,
-        templates,
-        archive: None,
-        observed_resources,
-        store_location,
-        store_expected,
-    })
+    Ok((
+        MaterializedOccurrencePreparationInput {
+            workspace,
+            store,
+            occurrence_id: Uuid::nil(),
+            operation: OccurrenceOp::Skip,
+            now,
+            plan_resources,
+            action_resources,
+            templates,
+            archive: None,
+            observed_resources,
+            store_location,
+            store_expected,
+        },
+        inventory,
+    ))
 }
 
 fn materialized_occurrence_archive(
