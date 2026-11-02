@@ -180,7 +180,15 @@ fn archived_close_cascade_is_noop_only_when_outcome_already_holds() {
                         if dry_run {
                             assert_eq!(
                                 result,
-                                serde_json::json!({"kind":"dry-run", "operations":[], "files":[]})
+                                serde_json::json!({
+                                    "kind": "dry-run",
+                                    "operations": [{
+                                        "kind": if verb == "complete" { "completed" } else { "cancelled" },
+                                        "id": format!("urn:uuid:{ROOT}"),
+                                        "open_children": []
+                                    }],
+                                    "files": []
+                                })
                             );
                         } else {
                             assert_eq!(
