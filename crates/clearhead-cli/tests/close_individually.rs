@@ -192,6 +192,99 @@ fn singles_then_archive_equal_cascade_then_archive() {
 }
 
 #[test]
+fn archive_without_metadata_does_not_create_sidecars() {
+    let env = setup("[x]", "[x]");
+    run(&env, "complete", GRAND, &[]);
+    for verb in ["archive", "unarchive"] {
+        run(&env, verb, ROOT, &[]);
+        for name in [".work.json", ".work.completed.json"] {
+            assert!(!env.data_dir.join("charters").join(name).exists());
+        }
+    }
+}
+
+#[test]
+fn archive_without_matching_metadata_leaves_sidecars_unchanged() {
+    let env = setup("[x]", "[x]");
+    run(&env, "complete", GRAND, &[]);
+    let metadata = "{\"actions\": {}}\n";
+    env.write_text("charters/.work.json", metadata);
+    let path = env.data_dir.join("charters/.work.json");
+    let modified = fs::metadata(&path).unwrap().modified().unwrap();
+    run(&env, "archive", ROOT, &[]);
+    assert_eq!(fs::read_to_string(&path).unwrap(), metadata);
+    assert_eq!(fs::metadata(&path).unwrap().modified().unwrap(), modified);
+    assert!(!env.data_dir.join("charters/.work.completed.json").exists());
+}
+
+#[test]
+fn storage_moves_distinguish_already_stored_roots_from_missing_ids() {
+    let env = setup("[x]", "[x]");
+    run(&env, "complete", GRAND, &[]);
+    for explicit_file in [false, true] {
+        let mut command = env.command();
+        command.args(["unarchive", "action", ROOT]);
+        if explicit_file {
+            command
+                .arg("--file")
+                .arg(env.data_dir.join("charters/work.actions"));
+        }
+        command.assert().failure().stderr(
+            predicate::str::contains("already active")
+                .and(predicate::str::contains("not found").not()),
+        );
+    }
+    run(&env, "archive", ROOT, &[]);
+    for explicit_file in [false, true] {
+        let mut command = env.command();
+        command.args(["archive", "action", ROOT]);
+        if explicit_file {
+            command
+                .arg("--file")
+                .arg(env.data_dir.join("charters/work.actions"));
+        }
+        command.assert().failure().stderr(
+            predicate::str::contains("already archived")
+                .and(predicate::str::contains("not found").not()),
+        );
+    }
+    for verb in ["archive", "unarchive"] {
+        env.command()
+            .args([verb, "action", "01951111-0000-7000-8000-000000000099"])
+            .assert()
+            .failure()
+            .stderr(
+                predicate::str::contains("not found")
+                    .and(predicate::str::contains("already").not()),
+            );
+    }
+}
+
+#[test]
+fn storage_move_dry_runs_are_marked_and_do_not_write() {
+    let env = setup("[x]", "[x]");
+    run(&env, "complete", GRAND, &[]);
+    for verb in ["archive", "unarchive"] {
+        let before = active(&env);
+        let completed = env.data_dir.join("charters/work.completed.actions");
+        let completed_before = fs::read(&completed).ok();
+        let result = run(&env, verb, ROOT, &["--dry-run"]);
+        assert_eq!(result["kind"], "dry-run");
+        assert_eq!(
+            result["operations"][0]["kind"],
+            if verb == "archive" {
+                "archived"
+            } else {
+                "unarchived"
+            }
+        );
+        assert_eq!(active(&env), before);
+        assert_eq!(fs::read(&completed).ok(), completed_before);
+        run(&env, verb, ROOT, &[]);
+    }
+}
+
+#[test]
 fn archive_unarchive_roundtrip_is_lossless_with_sidecars() {
     let env = setup("[x] %2026-10-02T11:00", "[_] %2026-10-03T11:00");
     run(&env, "complete", GRAND, &[]);
