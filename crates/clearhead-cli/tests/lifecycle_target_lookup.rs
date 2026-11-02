@@ -141,7 +141,7 @@ fn exact_id_in_wrong_file_is_not_replaced_by_same_named_action() {
         command(&env, verb)
             .assert()
             .failure()
-            .stdout(predicate::str::contains(if verb == "archive" {
+            .stderr(predicate::str::contains(if verb == "archive" {
                 "already archived"
             } else {
                 "already active"
@@ -195,12 +195,17 @@ fn archived_close_cascade_is_noop_only_when_outcome_already_holds() {
                             assert_eq!(result["open_children"], serde_json::json!([]));
                         }
                     } else {
-                        cmd.assert().failure().stdout(
-                            predicate::str::contains("\"kind\":\"archived\"")
-                                .and(predicate::str::contains("unarchive"))
-                                .and(predicate::str::contains(ROOT))
-                                .and(predicate::str::contains("already-closed").not()),
-                        );
+                        cmd.assert()
+                            .failure()
+                            .stdout(
+                                predicate::str::contains("\"kind\":\"archived\"")
+                                    .and(predicate::str::contains(ROOT))
+                                    .and(predicate::str::contains("already-closed").not()),
+                            )
+                            .stderr(
+                                predicate::str::contains("unarchive")
+                                    .and(predicate::str::contains(ROOT)),
+                            );
                     }
                     assert_eq!(
                         snapshot(&env),
