@@ -184,10 +184,18 @@ fn singles_then_archive_equal_cascade_then_archive() {
     for env in [&single, &cascade] {
         run(env, "archive", ROOT, &[]);
     }
-    assert_eq!(
-        read_actions(&single.data_dir.join("charters/work.completed.actions")).unwrap(),
-        read_actions(&cascade.data_dir.join("charters/work.completed.actions")).unwrap()
-    );
+    let normalized = [&single, &cascade].map(|env| {
+        let mut actions =
+            read_actions(&env.data_dir.join("charters/work.completed.actions")).unwrap();
+        for action in &mut actions {
+            assert!(action.state.is_terminal());
+            assert!(action.completed_at.is_some());
+            // Separate CLI invocations can stamp different wall-clock minutes.
+            action.completed_at = None;
+        }
+        actions
+    });
+    assert_eq!(normalized[0], normalized[1]);
     assert!(active(&single).is_empty());
 }
 
