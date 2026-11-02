@@ -56,6 +56,67 @@ fn multiple_occurrences_resolve_once_in_one_ordered_batch() {
 }
 
 #[test]
+fn ordinary_close_cascades_resolve_every_open_occurrence_member() {
+    for verb in ["complete", "cancel"] {
+        let env = setup();
+        let path = env.data_dir.join("charters/health.actions");
+        let tokens = read_actions(&path).unwrap();
+        let root = "01951111-0000-7000-8000-000000000001";
+        let body = fs::read_to_string(&path).unwrap();
+        env.write_actions(
+            "health.actions",
+            &format!(
+                "[ ] Exercise #{root}\n{}\n",
+                body.lines()
+                    .map(|line| format!(">{line}"))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            ),
+        );
+        env.command()
+            .args([verb, "action", root, "--cascade"])
+            .assert()
+            .success();
+        let after = read_actions(&path).unwrap();
+        assert_eq!(
+            after.len(),
+            5,
+            "closed parent, two closed occurrences, two next tokens"
+        );
+        let expected = if verb == "complete" {
+            clearhead_core::ActionState::Completed
+        } else {
+            clearhead_core::ActionState::Cancelled
+        };
+        assert_eq!(after[0].state, expected);
+        let sidecar: Value =
+            serde_json::from_slice(&fs::read(env.data_dir.join("charters/.health.json")).unwrap())
+                .unwrap();
+        for token in &tokens {
+            let action = after.iter().find(|a| a.id == token.id).unwrap();
+            assert_eq!(action.state, expected);
+            assert_eq!(action.parent_id.unwrap().to_string(), root);
+            assert!(sidecar["actions"][token.id.to_string()]["occurrence"].is_object());
+            assert!(sidecar["actions"][token.id.to_string()]["plan"].is_null());
+            let source = fs::read_to_string(
+                env.data_dir
+                    .join(format!("plans/health/{}.ics", token.name)),
+            )
+            .unwrap();
+            assert!(
+                source.contains(if verb == "complete" {
+                    "RECURRENCE-ID"
+                } else {
+                    "EXDATE"
+                }),
+                "{source}"
+            );
+        }
+        assert_eq!(after.iter().filter(|a| !a.state.is_terminal()).count(), 2);
+    }
+}
+
+#[test]
 fn rejected_and_dry_run_closes_write_no_occurrence_resources() {
     for dry_run in [false, true] {
         let env = setup();
