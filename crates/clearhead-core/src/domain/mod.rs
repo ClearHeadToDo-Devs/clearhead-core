@@ -395,26 +395,23 @@ pub struct PredecessorRef {
     pub resolved_uuid: Option<Uuid>,
 }
 
-/// Task definition or template for execution.
-///
-/// Maps to `cco:Plan` — information content that persists and can be
-/// realized multiple times (for recurring tasks) or once (for one-off tasks).
-///
-/// Plans hold the "what" — name, description, priority, contexts, recurrence rules.
-/// They do not hold execution state; that is the responsibility of [`PlannedAct`].
+/// Legacy calendar projection data. Native recurring work is a [`Habit`];
+/// one-off calendar projections derive from an [`Action`]'s planned block.
+/// This compatibility representation is not native Habit identity or state.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Plan {
     pub id: Uuid,
     pub name: String,
     pub description: Option<String>,
     pub recurrence: Option<Recurrence>,
-    /// Independent due-date recurrence rule (R: following :-syntax)
+    /// Legacy due recurrence, retained for calendar compatibility only.
+    /// Native Habits have one required rule; due windows do not recur independently.
     pub due_recurrence: Option<Recurrence>,
     /// Raw recurring iCalendar UID when this plan was loaded from an ICS file
     pub external_id: Option<String>,
-    /// Template name extracted from recurring VTODO DESCRIPTION
+    /// Template name extracted from recurring VEVENT DESCRIPTION
     pub template_name: Option<String>,
-    /// Recurrence anchor (DTSTART from the Plan VTODO)
+    /// Recurrence anchor (DTSTART from the calendar projection)
     pub dtstart: Option<DateTime<Local>>,
 }
 
@@ -534,6 +531,9 @@ pub struct Charter {
     pub state: Option<CharterState>,
     /// [`Plan`]s organized under this charter (nested hierarchy)
     pub plans: Vec<Plan>,
+    /// Native recurring prescriptions, separate from executable Actions.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub habits: Vec<Habit>,
     /// [`Action`]s scoped to this charter; each may optionally reference a plan.
     pub actions: Vec<Action>,
 }
@@ -593,6 +593,7 @@ pub fn charter_from_plans_and_name(name: String, plans: Vec<Plan>) -> Charter {
         objectives: None,
         state: None,
         plans,
+        habits: vec![],
         actions: vec![],
     }
 }
@@ -637,13 +638,67 @@ pub struct Action {
     pub charter: Option<String>,
     pub alias: Option<String>,
     pub is_sequential: Option<bool>,
-    /// The [`Plan`] that prescribed this action (hydrated from machine metadata,
-    /// not DSL).
+    /// Legacy calendar Plan link (hydrated from machine metadata, not DSL).
+    /// Native Habit lineage is [`native_occurrence`](Self::native_occurrence).
     pub plan_id: Option<Uuid>,
-    /// Canonical occurrence-slot key. With [`plan_id`](Self::plan_id) it is the
-    /// handle a deviation write targets. Live materialized occurrences hydrate it
-    /// from their sidecar Plan link; resolved facts snapshot it instead.
+    /// External transport occurrence address. Legacy calendar reconciliation
+    /// also uses this field for its slot key; native graph publication never
+    /// infers Habit identity or a canonical slot from these transport fields.
     pub external_occurrence_key: Option<String>,
+    /// Durable native lineage, independent of transport UID and occurrence key.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_occurrence: Option<NativeOccurrence>,
+}
+
+/// Native occurrence facts with the published sidecar JSON field names.
+/// Slot values are supplied by the host; this boundary does not generate slots.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct NativeOccurrence {
+    pub habit_id: Uuid,
+    pub occurrence_key: String,
+    pub plan_title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plan_uid: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scheduled_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rrule: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub template: Option<String>,
+}
+
+/// A native recurring prescription, not executable work or a transport Plan.
+/// Reuses Action field values and lifecycle vocabulary, but keeps template
+/// children outside the charter's live Action collection.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Habit {
+    pub definition: Action,
+    /// Required RFC 5545 RRULE text, without an `R:` or `RRULE:` prefix.
+    pub recurrence_rule: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub template: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub children: Vec<Action>,
+}
+
+impl Habit {
+    /// Validate publication invariants without changing source facts.
+    pub fn validate(&self) -> std::result::Result<(), String> {
+        if self.recurrence_rule.trim().is_empty() {
+            return Err("Habit requires a recurrence rule".into());
+        }
+        let closed = matches!(
+            self.definition.state,
+            ActionState::Completed | ActionState::Cancelled
+        );
+        if closed != self.definition.completed_at.is_some() {
+            return Err("Habit requires a closed date exactly when completed or cancelled".into());
+        }
+        if self.definition.planned.is_none() {
+            return Err("Habit requires a planned recurrence anchor".into());
+        }
+        Ok(())
+    }
 }
 
 impl Default for Action {
@@ -666,6 +721,7 @@ impl Default for Action {
             is_sequential: None,
             plan_id: None,
             external_occurrence_key: None,
+            native_occurrence: None,
         }
     }
 }

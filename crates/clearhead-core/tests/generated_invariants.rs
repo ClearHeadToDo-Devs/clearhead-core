@@ -229,6 +229,7 @@ fn generated_actions() -> impl Strategy<Value = Vec<Action>> {
                 is_sequential: seed.is_sequential,
                 plan_id: None,
                 external_occurrence_key: None,
+                native_occurrence: None,
             });
         }
         actions

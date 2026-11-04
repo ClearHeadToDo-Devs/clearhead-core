@@ -78,6 +78,7 @@ fn charter(
         objectives: None,
         state: None,
         plans,
+        habits: vec![],
         actions,
     }
 }
@@ -120,6 +121,7 @@ fn reference_scenario() -> impl Strategy<Value = ReferenceScenario> {
             parent: None,
             objectives: None,
             state: None,
+            habits: vec![],
             plans: vec![plan(plan_id, format!("Plan {seed}"))],
             actions: vec![root_action, child_action, planned_action],
         };
@@ -127,6 +129,7 @@ fn reference_scenario() -> impl Strategy<Value = ReferenceScenario> {
             id: child_charter_id,
             title: format!("Child {seed}"),
             description: None,
+            habits: vec![],
             alias: Some(child_charter_alias.clone()),
             parent: Some(root_alias.clone()),
             objectives: None,
@@ -138,6 +141,7 @@ fn reference_scenario() -> impl Strategy<Value = ReferenceScenario> {
             id: distractor_id,
             title: format!("Distractor {seed}"),
             description: None,
+            habits: vec![],
             alias: Some(format!("distractor-{seed}")),
             parent: None,
             objectives: None,
@@ -605,6 +609,7 @@ proptest! {
         let candidates = vec![
             Charter {
                 id: alias_id,
+                habits: vec![],
                 title: "Alias candidate".to_string(),
                 description: None,
                 alias: Some(input.clone()),
@@ -616,6 +621,7 @@ proptest! {
             },
             Charter {
                 id: identity_id,
+                habits: vec![],
                 title: "Identity candidate".to_string(),
                 description: None,
                 alias: Some(format!("identity-{seed}")),

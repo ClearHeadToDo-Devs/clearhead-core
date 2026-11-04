@@ -63,6 +63,7 @@ fn populated_action(id: Uuid, parent_id: Option<Uuid>, seed: u32, index: usize) 
         is_sequential: Some(index.is_multiple_of(2)),
         plan_id: Some(generated_id(0x5100_0005, seed, index)),
         external_occurrence_key: Some(format!("slot-{seed}-{index}")),
+        native_occurrence: None,
     }
 }
 

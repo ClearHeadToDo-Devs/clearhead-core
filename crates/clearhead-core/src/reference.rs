@@ -882,6 +882,7 @@ mod tests {
             parent: None,
             objectives: None,
             state: None,
+            habits: vec![],
             plans: vec![plan, subplan],
             actions: vec![make_action(action_id, plan_id)],
         };
@@ -891,6 +892,7 @@ mod tests {
             title: "Observability".to_string(),
             description: None,
             alias: Some("obs".to_string()),
+            habits: vec![],
             parent: Some("build".to_string()),
             objectives: None,
             state: None,
@@ -903,6 +905,7 @@ mod tests {
             title: "".to_string(),
             description: None,
             alias: Some("implicit".to_string()),
+            habits: vec![],
             parent: None,
             objectives: None,
             state: None,

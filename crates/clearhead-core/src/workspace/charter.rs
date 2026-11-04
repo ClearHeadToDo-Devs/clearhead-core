@@ -80,6 +80,7 @@ impl From<MarkdownCharter> for Charter {
             parent: mc.parent,
             objectives: mc.objectives,
             state: mc.state,
+            habits: vec![],
             plans: mc.plans.into_iter().map(|ip| ip.plan).collect(),
             actions: mc.actions.into_iter().map(|sa| sa.action).collect(),
         }
@@ -184,6 +185,7 @@ impl CharterDocument {
             parent: self.parent,
             objectives: self.objectives,
             state: self.state,
+            habits: vec![],
             plans: vec![],
             actions: vec![],
         }
@@ -258,6 +260,7 @@ pub fn implicit_charter(name: &str) -> Charter {
         parent: None,
         objectives: None,
         state: None,
+        habits: vec![],
         plans: vec![],
         actions: vec![],
     }
@@ -672,6 +675,7 @@ Stay healthy and fit through regular exercise and diet.
             alias: Some("test".to_string()),
             parent: None,
             objectives: Some(vec!["obj1".to_string()]),
+            habits: vec![],
             state: None,
             plans: vec![],
             actions: vec![],
