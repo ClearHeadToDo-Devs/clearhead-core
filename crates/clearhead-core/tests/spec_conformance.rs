@@ -12,6 +12,43 @@ use clearhead_core::{
 };
 use std::path::{Path, PathBuf};
 
+/// Exercise the registry grammar/query directly, not Core's Action projection:
+/// native Habit modeling is a separate increment.
+#[test]
+fn published_habit_fixtures_format_with_registry_grammar() {
+    use std::io::Cursor;
+    use topiary_core::{Language, Operation, TopiaryQuery, formatter};
+    use topiary_tree_sitter_facade::Language as TreeSitterLanguage;
+
+    let grammar: TreeSitterLanguage = tree_sitter_actions::LANGUAGE.into();
+    let language = Language {
+        name: "actions".to_string(),
+        query: TopiaryQuery::new(&grammar, tree_sitter_actions::FORMATTING_QUERY).unwrap(),
+        grammar,
+        indent: Some("  ".to_string()),
+    };
+    let root = spec_dir().join("examples/formatting/habits");
+    let mut pairs = 0;
+    for name in ["01_daily_review", "02_weekly_review"] {
+        let input = std::fs::read(root.join(name).join("input.actions")).unwrap();
+        let expected = std::fs::read(root.join(name).join("expected.actions")).unwrap();
+        let mut output = Vec::new();
+        formatter(
+            &mut Cursor::new(input),
+            &mut output,
+            &language,
+            Operation::Format {
+                skip_idempotence: false,
+                tolerate_parsing_errors: false,
+            },
+        )
+        .unwrap_or_else(|error| panic!("Habit fixture {name}: {error}"));
+        assert_eq!(output, expected, "Habit fixture {name}");
+        pairs += 1;
+    }
+    assert_eq!(pairs, 2, "both published Habit formatting pairs executed");
+}
+
 fn spec_dir() -> PathBuf {
     std::env::var("CLEARHEAD_SPEC_DIR")
         .map(PathBuf::from)

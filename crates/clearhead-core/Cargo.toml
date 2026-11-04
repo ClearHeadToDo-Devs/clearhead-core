@@ -11,7 +11,7 @@ readme = "README.md"
 # The specification release this crate implements: CI tests against its
 # published examples, and the platform checks its pinned specification is it.
 [package.metadata.clearhead]
-specification = "v0.4.0"
+specification = "v0.5.0"
 
 [features]
 default = ["formatting"]
@@ -52,7 +52,7 @@ tree-sitter = "0.26.3"
 # From crates.io, as any consumer gets it. To build against a local grammar
 # checkout, pass the override on the command line (see the README):
 #   --config 'patch.crates-io.tree-sitter-actions.path="../tree-sitter-actions"'
-tree-sitter-actions = "0.10.0"
+tree-sitter-actions = "=0.11.1"
 pulldown-cmark = { version = "0.13.4", default-features = false }
 regex = { version = "1.13.1", default-features = false, features = ["std", "unicode-perl"] }
 
