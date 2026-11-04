@@ -18,7 +18,7 @@ use uuid::Uuid;
 use super::{DCTERMS_NS, RDFS_NS, Result, ns, rdf_type, simple, typed, uuid_node};
 use crate::WorkspaceConfig;
 use crate::domain::time::Bound;
-use crate::domain::{Action, ActionState, Charter, CharterState, DomainModel, Objective};
+use crate::domain::{Action, ActionState, Charter, CharterState, DomainModel, Habit, Objective};
 use crate::reference::match_entity_reference;
 use crate::workspace::store::Workspace;
 
@@ -105,6 +105,10 @@ where
         project_objective(&mut out, objective, &model.objectives);
     }
     for charter in &model.charters {
+        for habit in &charter.habits {
+            habit.validate().map_err(super::RdfError::Projection)?;
+            project_habit(&mut out, habit, charter, zone);
+        }
         let tree = Tree::of(&charter.actions);
         for action in &charter.actions {
             project_action(&mut out, action, charter, &tree, zone);
@@ -276,6 +280,59 @@ impl<'a> Tree<'a> {
     }
 }
 
+fn project_habit<Tz>(out: &mut Graph, habit: &Habit, charter: &Charter, zone: &Tz)
+where
+    Tz: TimeZone,
+    Tz::Offset: Display,
+{
+    let definition = &habit.definition;
+    let subject = uuid_node(definition.id);
+    out.node(&subject, rdf_type(), app("Habit"));
+    out.text(&subject, label("label"), Some(&definition.name));
+    out.text(
+        &subject,
+        dcterms("description"),
+        definition.description.as_deref(),
+    );
+    out.node(&subject, app("state"), action_state(&definition.state));
+    out.add(&subject, app("rule"), simple(&habit.recurrence_rule));
+    if habit.children.is_empty() {
+        out.text(&subject, app("template"), habit.template.as_deref());
+    }
+    project_planned(out, &subject, definition, zone);
+    if let Some(closed) = &definition.completed_at {
+        out.add(&subject, app("closed"), written(closed));
+    }
+    out.node(&subject, app("partOf"), uuid_node(charter.id));
+    out.location(&subject, definition.id);
+}
+
+fn project_planned<Tz>(out: &mut Graph, subject: &NamedNode, action: &Action, zone: &Tz)
+where
+    Tz: TimeZone,
+    Tz::Offset: Display,
+{
+    if let Some(planned) = &action.planned {
+        out.add(subject, app("plannedStart"), written(&planned.start));
+        out.add(
+            subject,
+            app("plannedFrom"),
+            instant(planned.start.at_in(zone)),
+        );
+        if let Some(end) = &planned.end {
+            out.add(subject, app("plannedEnd"), written(end));
+        }
+        let minutes = planned.duration_in(zone).map(|d| d.num_minutes());
+        if let Some(minutes) = minutes.filter(|m| *m >= 1) {
+            out.add(
+                subject,
+                app("durationMinutes"),
+                typed(minutes.to_string(), "integer"),
+            );
+        }
+    }
+}
+
 fn project_action<Tz>(out: &mut Graph, action: &Action, charter: &Charter, tree: &Tree, zone: &Tz)
 where
     Tz: TimeZone,
@@ -303,24 +360,14 @@ where
         out.node(&subject, app("context"), node);
     }
 
-    if let Some(planned) = &action.planned {
-        out.add(&subject, app("plannedStart"), written(&planned.start));
-        out.add(
+    project_planned(out, &subject, action, zone);
+    if let Some(occurrence) = &action.native_occurrence {
+        out.node(
             &subject,
-            app("plannedFrom"),
-            instant(planned.start.at_in(zone)),
+            app("occurrenceOf"),
+            uuid_node(occurrence.habit_id),
         );
-        if let Some(end) = &planned.end {
-            out.add(&subject, app("plannedEnd"), written(end));
-        }
-        let minutes = planned.duration_in(zone).map(|d| d.num_minutes());
-        if let Some(minutes) = minutes.filter(|m| *m >= 1) {
-            out.add(
-                &subject,
-                app("durationMinutes"),
-                typed(minutes.to_string(), "integer"),
-            );
-        }
+        out.add(&subject, app("slot"), simple(&occurrence.occurrence_key));
     }
     if let Some(due) = &action.due_date {
         if let Some(start) = &due.start {

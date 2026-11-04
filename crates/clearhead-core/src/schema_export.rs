@@ -7,6 +7,7 @@
 //! `has` prefix, so a single grep connects a field here to its ontology property
 //! and its `.actions` DSL token.
 
+use crate::domain::Habit;
 use crate::{Action, ActionState};
 use serde::Serialize;
 
@@ -54,9 +55,25 @@ pub struct SchemaAction {
     pub external_occurrence_key: Option<String>,
     #[serde(rename = "parentId", skip_serializing_if = "Option::is_none")]
     pub parent_id: Option<String>,
+    #[serde(rename = "recurrenceRule", skip_serializing_if = "Option::is_none")]
+    pub recurrence_rule: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub children: Option<Vec<SchemaAction>>,
 }
 
 impl SchemaAction {
+    /// Project a native Habit using Action JSON fields plus its required rule.
+    /// Children remain template data in this document, never live graph nodes.
+    pub fn from_habit(habit: &Habit) -> Result<Self, String> {
+        habit.validate()?;
+        let mut value = Self::from_action(&habit.definition);
+        value.recurrence_rule = Some(habit.recurrence_rule.clone());
+        if !habit.children.is_empty() {
+            value.children = Some(habit.children.iter().map(Self::from_action).collect());
+        }
+        Ok(value)
+    }
+
     /// Project a domain [`Action`] onto the canonical schema shape.
     ///
     /// Core stores the hierarchy flat (via `parent_id`), which the schema
@@ -88,6 +105,8 @@ impl SchemaAction {
             }),
             external_occurrence_key: action.external_occurrence_key.clone(),
             parent_id: action.parent_id.map(|u| u.to_string()),
+            recurrence_rule: None,
+            children: None,
         }
     }
 }

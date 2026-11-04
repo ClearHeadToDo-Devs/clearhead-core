@@ -407,6 +407,7 @@ pub(super) fn new_charter(
         parent,
         objectives: None,
         state: Some(CharterState::New),
+        habits: vec![],
         plans: vec![],
         actions: vec![],
     }
@@ -869,6 +870,7 @@ mod tests {
         let mut mc = MarkdownCharter::from(Charter {
             id: uuid::Uuid::nil(),
             title: "Platform".to_string(),
+            habits: vec![],
             description: None,
             alias: None,
             parent: None,
