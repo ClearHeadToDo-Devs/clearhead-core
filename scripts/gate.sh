@@ -55,7 +55,12 @@ step "wasm dependency gate"             sh scripts/wasm-dependency-gate.sh
 step "pure-core source gate"            sh scripts/pure-core-source-gate.sh
 step "habit reader inventory regressions" env PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_habit_reader_gate.py
 step "habit reader caller inventory"     python3 scripts/habit-reader-gate.py
-[ "$fast" -eq 0 ] && step "tests"       cargo test --workspace --quiet
+if [ "$fast" -eq 0 ]; then
+  for zone in UTC America/Los_Angeles Asia/Tokyo; do
+    step "habit slot identity TZ=$zone" env TZ="$zone" cargo test -p clearhead_core --test habit_slot_identity
+  done
+  step "tests" cargo test --workspace --quiet
+fi
 
 if [ "$failed" -ne 0 ]; then
   echo "gate > FAILED"

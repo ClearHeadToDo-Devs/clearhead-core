@@ -12,6 +12,7 @@
 
 pub mod diff;
 pub mod filter;
+pub mod habit_slots;
 pub mod time;
 pub mod update;
 
