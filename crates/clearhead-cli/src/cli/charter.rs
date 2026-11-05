@@ -502,13 +502,17 @@ pub fn add_charter(
         .context("Failed to resolve template")?
         .ok_or_else(|| anyhow::anyhow!("Template '{}' not found", tpl_name))?;
 
-        let tpl_acts = clearhead_cli::filesystem::read_actions(&tpl_path)
+        let tpl_acts = clearhead_cli::filesystem::templates::read_template_actions(&tpl_path)
             .context("Failed to read template")?;
 
         let instantiated =
             templates::instantiate_template(&tpl_acts, |_| uuid::Uuid::now_v7(), None);
 
-        super::save_file(&actions_path, &instantiated)?;
+        super::save_file(
+            &ctx.workspace_for_file(&actions_path),
+            &actions_path,
+            &instantiated,
+        )?;
 
         println!(
             "Applied template '{}': {} action(s) to {}",

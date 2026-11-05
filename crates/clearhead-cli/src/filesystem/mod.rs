@@ -442,7 +442,7 @@ fn validate_source_path(source_path: &Path, charter_root: &Path) -> Result<(), W
         .map(|root| contained_in(&root))
         .unwrap_or(false);
     let valid_name = clearhead_core::workspace::action_files::is_live_actions(
-        &action_files::role_path(source_path),
+        &action_files::role_path(charter_root.parent().unwrap_or(charter_root), source_path),
     );
     if valid_location && valid_name {
         Ok(())

@@ -54,13 +54,19 @@ Core's own Rust sources: the gate is independent of sibling checkout contents.
 The cross-repository nvim token inventory was dropped; nvim's semantic tests
 remain owned and run by that repository. A new caller or a new matching read
 inside an existing file requires an explicit inventory update after auditing
-its role. This conservative guard is not a substitute for semantic tests.
+its role. Comment-only lines (including block comments) are excluded; inline
+comments and inline tests still count. The gate runs a regression test for this
+filter before checking the inventory. This conservative guard is not a substitute
+for semantic tests.
 
 Storage roles are determined by the first component of a workspace-data-root
 relative path, through Core's `resource_role`: only `archive/` and `templates/`
 at that root are special. Native CLI and LSP paths are relativized by the shared
-`filesystem::action_files::role_path` adapter. Directory-form charters such as
-`charters/archive/` and workspace ancestors named `templates` remain ordinary.
+`filesystem::action_files::role_path` adapter with the caller's explicit loaded
+workspace root; it never probes ancestors for directory names. Workspace reads
+and writes use `read_actions_in` / `write_actions_in`; standalone codec wrappers
+have suffix semantics only. Directory-form charters such as `charters/archive/`
+and workspace ancestors named `templates` or `charters` remain ordinary.
 
 `habit_reader_conformance` and `habit_reader_paths` execute real integration
 tests: root/flat/directory files, Habit-only owners, named templates, terminal

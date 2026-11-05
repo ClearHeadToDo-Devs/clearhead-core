@@ -332,9 +332,9 @@ pub fn workspace_name_for_root(path: &Path) -> String {
 }
 
 /// Load actions for read-only operations using recoverable parse mode.
-pub fn load_file_for_read(path: &Path, command: &str) -> anyhow::Result<ActionList> {
+pub fn load_file_for_read(root: &Path, path: &Path, command: &str) -> anyhow::Result<ActionList> {
     clearhead_core::workspace::action_files::require_action_resource(
-        &crate::filesystem::action_files::role_path(path),
+        &crate::filesystem::action_files::role_path(root, path),
     )
     .map_err(anyhow::Error::msg)?;
     if !path.exists() {
@@ -408,9 +408,13 @@ pub fn parse_content_for_mutation(
 /// Load actions for mutating operations.
 ///
 /// If syntax issues are present, this returns an error and callers must not write.
-pub fn load_file_for_mutation(path: &Path, command: &str) -> anyhow::Result<ActionList> {
+pub fn load_file_for_mutation(
+    root: &Path,
+    path: &Path,
+    command: &str,
+) -> anyhow::Result<ActionList> {
     clearhead_core::workspace::action_files::require_action_resource(
-        &crate::filesystem::action_files::role_path(path),
+        &crate::filesystem::action_files::role_path(root, path),
     )
     .map_err(anyhow::Error::msg)?;
     if !path.exists() {
@@ -426,8 +430,8 @@ pub fn load_file_for_mutation(path: &Path, command: &str) -> anyhow::Result<Acti
 ///
 /// Also updates the charter sidecar (best-effort — sidecar failures
 /// are logged but do not prevent the actions file from being saved).
-pub fn save_file(path: &Path, actions: &ActionList) -> anyhow::Result<()> {
-    clearhead_cli::filesystem::write_actions(actions, path)?;
+pub fn save_file(root: &Path, path: &Path, actions: &ActionList) -> anyhow::Result<()> {
+    clearhead_cli::filesystem::action_files::write_actions_in(root, actions, path)?;
     if let Err(e) = update_sidecar(path, actions) {
         warn!(path = %path.display(), error = %e, "Failed to update sidecar");
     }
@@ -946,7 +950,7 @@ fn dispatch(cli: &argparser::Cli, ctx: &CommandContext) -> anyhow::Result<()> {
             } => file::format_file(ctx, path, *write, style, indent_style, indent_width),
         },
         Verb::Lint { target } => match target {
-            argparser::LintTarget::File { path } => file::lint_file(path),
+            argparser::LintTarget::File { path } => file::lint_file(ctx, path),
         },
         Verb::Normalize { target } => match target {
             argparser::NormalizeTarget::File {

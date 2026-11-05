@@ -46,7 +46,7 @@ pub fn format_file(
     Ok(())
 }
 
-pub fn lint_file(path: &Option<std::path::PathBuf>) -> anyhow::Result<()> {
+pub fn lint_file(ctx: &CommandContext, path: &Option<std::path::PathBuf>) -> anyhow::Result<()> {
     let input_file = path.as_ref();
     debug!(input_file = ?input_file, "Executing Lint File");
     let content = read_input(input_file)?;
@@ -60,7 +60,7 @@ pub fn lint_file(path: &Option<std::path::PathBuf>) -> anyhow::Result<()> {
         .unwrap_or_else(|| std::path::Path::new("stdin.actions"));
     for diagnostic in clearhead_core::workspace::habit_files::lint_action_file(
         &parsed,
-        &crate::filesystem::action_files::role_path(role_path),
+        &crate::filesystem::action_files::role_path(&ctx.workspace_for_file(role_path), role_path),
     ) {
         match diagnostic.severity {
             clearhead_cli::LintSeverity::Error => results.errors.push(diagnostic),

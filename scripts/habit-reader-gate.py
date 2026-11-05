@@ -2,8 +2,8 @@
 """Guard the audited reader surface; additions require an explicit inventory update.
 
 This is a caller-inventory guard, not a substitute for habit_reader_conformance.
-Counts deliberately include inline tests/comments: false positives require review,
-whereas a newly introduced reader must not silently escape the inventory.
+Comment-only lines do not affect counts. Inline comments and tests still count;
+a newly introduced reader must not silently escape the inventory.
 """
 import argparse
 from pathlib import Path
@@ -12,7 +12,7 @@ import sys
 
 ROOT = Path(__file__).resolve().parent.parent
 INVENTORY = ROOT / "docs/habit-reader-callers.txt"
-TOKENS = re.compile(r"\.actions|\b(?:parse_actions|parse_document|parse_tree|read_actions|read_template_actions|classify_action_file|is_live_actions|is_charter_action_file|is_action_history|require_action_resource|load_file_for_read|load_file_for_mutation|parse_content_for_read|parse_content_for_rewrite|parse_content_for_mutation|from_actions_with_charter|ActionResourceState|FileState|SourcedAction|ActionsFile|get_parser)\b")
+TOKENS = re.compile(r"\.actions|\b(?:parse_actions|parse_document|parse_tree|read_actions|read_actions_in|write_actions_in|read_template_actions|classify_action_file|is_live_actions|is_charter_action_file|is_action_history|require_action_resource|load_file_for_read|load_file_for_mutation|parse_content_for_read|parse_content_for_rewrite|parse_content_for_mutation|from_actions_with_charter|ActionResourceState|FileState|SourcedAction|ActionsFile|get_parser)\b")
 
 
 def scan():
@@ -21,7 +21,21 @@ def scan():
         relative = path.relative_to(ROOT)
         if "src" not in relative.parts:
             continue
-        count = len(TOKENS.findall(path.read_text()))
+        lines = []
+        in_comment = False
+        for line in path.read_text().splitlines():
+            stripped = line.lstrip()
+            if in_comment:
+                if "*/" in stripped:
+                    in_comment = False
+                continue
+            if stripped.startswith("//"):
+                continue
+            if stripped.startswith("/*"):
+                in_comment = "*/" not in stripped
+                continue
+            lines.append(line)
+        count = len(TOKENS.findall("\n".join(lines)))
         if count:
             result[relative.as_posix()] = count
     return result

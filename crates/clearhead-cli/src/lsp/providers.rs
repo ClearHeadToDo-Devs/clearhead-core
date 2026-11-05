@@ -39,13 +39,21 @@ pub fn compute_diagnostics(doc: &ParsedDocument) -> Vec<Diagnostic> {
         .collect()
 }
 
-pub fn compute_file_diagnostics(doc: &ParsedDocument, uri: &Uri) -> Vec<Diagnostic> {
+pub fn compute_file_diagnostics(
+    doc: &ParsedDocument,
+    uri: &Uri,
+    root: Option<&std::path::Path>,
+) -> Vec<Diagnostic> {
     let mut diagnostics = compute_diagnostics(doc);
     if let Some(path) = uri.to_file_path() {
         diagnostics.extend(
             clearhead_core::workspace::habit_files::lint_action_file(
                 doc,
-                &crate::filesystem::action_files::role_path(path.as_ref()),
+                &root
+                    .map(|root| crate::filesystem::action_files::role_path(root, path.as_ref()))
+                    .unwrap_or_else(|| {
+                        std::path::PathBuf::from(path.file_name().unwrap_or_default())
+                    }),
             )
             .into_iter()
             .map(lint_diagnostic_to_lsp),

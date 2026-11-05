@@ -58,7 +58,7 @@ pub fn observe_doctor(workspace_root: &Path) -> Result<DoctorEvidence, Workspace
                 .and_then(|name| name.to_str())
                 .is_some_and(|name| name.ends_with(".completed.actions"))
                 && clearhead_core::workspace::action_files::is_action_history(
-                    &super::action_files::role_path(path),
+                    &super::action_files::role_path(&mounts.workspace, path),
                 )
         })
         .map(|path| observe_document(&charter_root, path))
@@ -67,7 +67,7 @@ pub fn observe_doctor(workspace_root: &Path) -> Result<DoctorEvidence, Workspace
         .into_iter()
         .filter(|path| {
             clearhead_core::workspace::action_files::is_action_history(
-                &super::action_files::role_path(path),
+                &super::action_files::role_path(&mounts.workspace, path),
             )
         })
         .map(|path| observe_document(&archive_root, path))

@@ -28,7 +28,7 @@ pub fn read_archived_action_facts(root: &Path) -> Result<Vec<ArchivedActionFact>
     for path in files {
         let metadata = crate::filesystem::sidecar::read_sidecar(&sidecar_path(&path))?;
         let source_path = path.strip_prefix(root).unwrap_or(&path).to_path_buf();
-        for action in crate::filesystem::action_files::read_actions(&path)? {
+        for action in crate::filesystem::action_files::read_actions_in(root, &path)? {
             let occurrence = metadata
                 .actions
                 .get(&action.id.to_string())

@@ -56,9 +56,17 @@ pub fn apply_template(
         return Ok(());
     }
 
-    let mut existing = super::load_file_for_mutation(&actions_path, "apply template")?;
+    let mut existing = super::load_file_for_mutation(
+        &ctx.workspace_for_file(&actions_path),
+        &actions_path,
+        "apply template",
+    )?;
     existing.extend(instantiated.iter().cloned());
-    super::save_file(&actions_path, &existing)?;
+    super::save_file(
+        &ctx.workspace_for_file(&actions_path),
+        &actions_path,
+        &existing,
+    )?;
 
     info!(template = %name, count = instantiated.len(), path = %actions_path.display(), "Template applied");
     println!(
