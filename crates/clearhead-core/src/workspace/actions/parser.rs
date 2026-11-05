@@ -284,6 +284,12 @@ pub fn parse_action_recursive(
                 }
             }
             "do_date" => {
+                // Action has no field for a rule, so reading on would drop it
+                // at the next write. Refuse until habits files are read
+                // (`core-habit-readers`).
+                if meta.child_by_field_name("recurrence").is_some() {
+                    return Err("R: recurrence is not supported yet; the file is left unchanged");
+                }
                 (planned, do_date_range) = parse_planned_field(&meta, &node.source);
             }
             "due_date" => {
@@ -504,6 +510,26 @@ mod tests {
         tree_wrapper
             .try_into()
             .expect("Failed to convert to ActionList")
+    }
+
+    /// Until habits files are read, a recurrence is refused as 0.3.2 refused it,
+    /// so no write can drop the rule it cannot hold.
+    #[test]
+    fn recurrence_is_refused_not_dropped() {
+        let source = "[ ] Walk @2026-11-05T07:00 R:FREQ=DAILY\n  >[ ] Shoes\n";
+        let tree = parse_tree(source).unwrap();
+        let parsed: crate::workspace::actions::source::ParsedDocument = TreeWrapper {
+            tree,
+            source: source.to_string(),
+        }
+        .try_into()
+        .unwrap();
+        assert!(
+            parsed.actions.is_empty(),
+            "no action survives without its rule"
+        );
+        assert_eq!(parsed.syntax_errors.len(), 1);
+        assert!(parsed.syntax_errors[0].message.contains("R:"));
     }
 
     #[test]
