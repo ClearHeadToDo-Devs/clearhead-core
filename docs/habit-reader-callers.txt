@@ -69,8 +69,3 @@
 29 crates/clearhead-core/src/workspace/store/pathing.rs
 3 crates/clearhead-core/src/workspace/templates.rs
 18 crates/clearhead-core/src/workspace/transaction.rs
-1 nvim/ftdetect/actions.lua
-1 nvim/lua/clearhead/actions.lua
-1 nvim/lua/clearhead/config.lua
-2 nvim/lua/clearhead/health.lua
-15 nvim/lua/clearhead/init.lua

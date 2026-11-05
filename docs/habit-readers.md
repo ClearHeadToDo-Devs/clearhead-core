@@ -49,10 +49,18 @@ syntax-only consumers, inline tests and incidental documentation matches.
 ## Guard and evidence
 
 `python3 scripts/habit-reader-gate.py` compares source-match counts with
-`docs/habit-reader-callers.txt`. It runs in `scripts/gate.sh`; when nvim is
-present alongside Core it covers nvim too. A new caller or a new matching read
+`docs/habit-reader-callers.txt`. It runs in `scripts/gate.sh` and covers only
+Core's own Rust sources: the gate is independent of sibling checkout contents.
+The cross-repository nvim token inventory was dropped; nvim's semantic tests
+remain owned and run by that repository. A new caller or a new matching read
 inside an existing file requires an explicit inventory update after auditing
 its role. This conservative guard is not a substitute for semantic tests.
+
+Storage roles are determined by the first component of a workspace-data-root
+relative path, through Core's `resource_role`: only `archive/` and `templates/`
+at that root are special. Native CLI and LSP paths are relativized by the shared
+`filesystem::action_files::role_path` adapter. Directory-form charters such as
+`charters/archive/` and workspace ancestors named `templates` remain ordinary.
 
 `habit_reader_conformance` and `habit_reader_paths` execute real integration
 tests: root/flat/directory files, Habit-only owners, named templates, terminal

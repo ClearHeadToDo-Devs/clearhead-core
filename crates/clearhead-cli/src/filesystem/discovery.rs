@@ -31,7 +31,11 @@ pub(crate) struct PlanFileEntry {
 fn discover_charter_action_files(dir: &Path) -> Result<Vec<PathBuf>, WorkspaceError> {
     let mut files = Vec::new();
     discover_recursive(dir, "actions", &mut files)?;
-    files.retain(|path| clearhead_core::workspace::action_files::is_charter_action_file(path));
+    files.retain(|path| {
+        clearhead_core::workspace::action_files::is_charter_action_file(
+            &Path::new("charters").join(path.strip_prefix(dir).unwrap()),
+        )
+    });
     files.sort();
     Ok(files)
 }

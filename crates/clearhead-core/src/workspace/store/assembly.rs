@@ -139,7 +139,10 @@ pub fn assemble_workspace(input: &WorkspaceAssemblyInput) -> Result<WorkspaceRea
             }
         };
 
-        for diagnostic in crate::workspace::habit_files::lint_action_file(&parsed_doc, &relative) {
+        for diagnostic in crate::workspace::habit_files::lint_action_file(
+            &parsed_doc,
+            &Path::new("charters").join(&relative),
+        ) {
             findings.push(match diagnostic.severity {
                 crate::workspace::actions::LintSeverity::Error => {
                     Finding::violation(&diagnostic.code, &relative, diagnostic.message)
@@ -214,7 +217,8 @@ pub fn assemble_workspace(input: &WorkspaceAssemblyInput) -> Result<WorkspaceRea
 
     for path in input.workspace_files().filter(|path| {
         path.as_str().ends_with(".actions")
-            && path.as_str().split('/').any(|part| part == "templates")
+            && crate::workspace::action_files::resource_role(Path::new(path.as_str()))
+                == crate::workspace::action_files::ResourceRole::Template
             && !has_hidden_component(path.as_str())
     }) {
         let relative = Path::new(path.as_str());
@@ -559,9 +563,11 @@ pub fn assembled_domain_model(read: WorkspaceRead) -> DomainModel {
 fn action_files(input: &WorkspaceAssemblyInput) -> Vec<PathBuf> {
     let mut paths = input
         .workspace_files()
+        .filter(|path| {
+            crate::workspace::action_files::is_charter_action_file(Path::new(path.as_str()))
+        })
         .filter_map(|path| path.as_str().strip_prefix("charters/"))
         .filter(|path| !has_hidden_component(path))
-        .filter(|path| crate::workspace::action_files::is_charter_action_file(Path::new(path)))
         .map(PathBuf::from)
         .collect::<Vec<_>>();
     paths.sort();
@@ -574,11 +580,6 @@ fn charter_files(input: &WorkspaceAssemblyInput) -> Vec<PathBuf> {
         .filter_map(|path| path.as_str().strip_prefix("charters/"))
         .filter(|path| !has_hidden_component(path))
         .filter(|path| path.ends_with(".md"))
-        .filter(|path| {
-            !path
-                .split('/')
-                .any(|part| part == "templates" || part == "archive")
-        })
         .map(PathBuf::from)
         .collect::<Vec<_>>();
     paths.sort();
@@ -592,9 +593,6 @@ fn collect_sidecar_actions(input: &WorkspaceAssemblyInput) -> BTreeMap<String, A
         .filter(|path| {
             let path = path.as_str();
             path.starts_with("charters/")
-                && !path
-                    .split('/')
-                    .any(|part| part == "templates" || part == "archive")
                 && !has_hidden_parent_component(path)
                 && path.ends_with(".json")
                 && path

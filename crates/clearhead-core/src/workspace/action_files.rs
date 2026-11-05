@@ -46,24 +46,41 @@ pub fn actions_anchor(path: &Path) -> Option<PathBuf> {
     Some(path.with_file_name(format!("{stem}.actions")))
 }
 
-/// Whether a resource is part of a live charter, rather than terminal or template data.
+/// Storage role at the workspace data root (never at an arbitrary ancestor).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResourceRole {
+    Ordinary,
+    Archive,
+    Template,
+}
+
+/// Takes a workspace-root-relative path. Nested charter directory names are ordinary.
+pub fn resource_role(relative: &Path) -> ResourceRole {
+    match relative
+        .components()
+        .next()
+        .and_then(|part| part.as_os_str().to_str())
+    {
+        Some("archive") => ResourceRole::Archive,
+        Some("templates") => ResourceRole::Template,
+        _ => ResourceRole::Ordinary,
+    }
+}
+
+/// Whether a workspace-root-relative resource belongs to a live charter.
 pub fn is_charter_action_file(path: &Path) -> bool {
     matches!(
         classify_action_file(path),
         Some((_, ActionFileRole::Actions | ActionFileRole::Habits))
-    ) && !path
-        .components()
-        .any(|part| part.as_os_str() == "templates" || part.as_os_str() == "archive")
+    ) && resource_role(path) == ResourceRole::Ordinary
 }
 
-/// Whether a path holds executable live Actions (not Habit/template data).
+/// Whether a workspace-root-relative path holds executable live Actions.
 pub fn is_live_actions(path: &Path) -> bool {
     matches!(
         classify_action_file(path),
         Some((_, ActionFileRole::Actions))
-    ) && !path
-        .components()
-        .any(|part| part.as_os_str() == "templates" || part.as_os_str() == "archive")
+    ) && resource_role(path) == ResourceRole::Ordinary
 }
 
 /// An executable Action/history resource, including archives but not templates.
@@ -71,9 +88,7 @@ pub fn is_action_history(path: &Path) -> bool {
     matches!(
         classify_action_file(path),
         Some((_, ActionFileRole::Actions | ActionFileRole::Completed))
-    ) && !path
-        .components()
-        .any(|part| part.as_os_str() == "templates")
+    ) && resource_role(path) != ResourceRole::Template
 }
 
 /// Reject attempts to lower Habit/template data into an executable mutation.
@@ -81,9 +96,7 @@ pub fn require_action_resource(path: &Path) -> Result<(), String> {
     if matches!(
         classify_action_file(path),
         Some((_, ActionFileRole::Habits | ActionFileRole::Upcoming))
-    ) || path
-        .components()
-        .any(|part| part.as_os_str() == "templates")
+    ) || resource_role(path) == ResourceRole::Template
     {
         Err("Habit definitions and template data are not executable Actions".into())
     } else {

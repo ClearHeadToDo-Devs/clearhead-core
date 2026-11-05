@@ -57,7 +57,7 @@ fn collect_completed_actions_files(
             if path
                 .file_name()
                 .and_then(|name| name.to_str())
-                .is_some_and(|name| name == "templates" || name.starts_with('.'))
+                .is_some_and(|name| name.starts_with('.'))
             {
                 continue;
             }

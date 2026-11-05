@@ -453,7 +453,8 @@ fn collect_archived_action_states(
     let mut states = HashMap::new();
     for document in documents {
         let relative = logical_path_buf(&document.path);
-        if !crate::workspace::action_files::is_action_history(&relative) {
+        if !crate::workspace::action_files::is_action_history(&Path::new("archive").join(&relative))
+        {
             continue;
         }
         let source = match document_text(document) {

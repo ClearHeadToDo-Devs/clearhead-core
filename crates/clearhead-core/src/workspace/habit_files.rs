@@ -37,9 +37,8 @@ pub fn habits_from_actions(actions: &[Action]) -> Vec<Habit> {
 
 /// Semantic diagnostics never turn syntactically valid R: into parser recovery.
 pub fn lint_action_file(doc: &ParsedDocument, path: &Path) -> Vec<LintDiagnostic> {
-    let template = path
-        .components()
-        .any(|part| part.as_os_str() == "templates");
+    let template =
+        super::action_files::resource_role(path) == super::action_files::ResourceRole::Template;
     let habits = !template
         && matches!(
             classify_action_file(path),

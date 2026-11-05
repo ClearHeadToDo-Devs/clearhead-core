@@ -17,20 +17,13 @@ TOKENS = re.compile(r"\.actions|\b(?:parse_actions|parse_document|parse_tree|rea
 
 def scan():
     result = {}
-    for base, prefix, suffix in [(ROOT / "crates", "", ".rs"),
-                                 (ROOT.parent / "clearhead.nvim/lua", "nvim/", ".lua"),
-                                 (ROOT.parent / "clearhead.nvim/ftdetect", "nvim/", ".lua")]:
-        for path in base.rglob("*" + suffix):
-            if prefix:
-                name = prefix + path.relative_to(ROOT.parent / "clearhead.nvim").as_posix()
-            else:
-                relative = path.relative_to(ROOT)
-                if "src" not in relative.parts:
-                    continue
-                name = relative.as_posix()
-            count = len(TOKENS.findall(path.read_text()))
-            if count:
-                result[name] = count
+    for path in (ROOT / "crates").rglob("*.rs"):
+        relative = path.relative_to(ROOT)
+        if "src" not in relative.parts:
+            continue
+        count = len(TOKENS.findall(path.read_text()))
+        if count:
+            result[relative.as_posix()] = count
     return result
 
 
@@ -48,8 +41,6 @@ def main():
         if not line or line.startswith("#"):
             continue
         count, name = line.split(maxsplit=1)
-        if name.startswith("nvim/") and not (ROOT.parent / "clearhead.nvim").is_dir():
-            continue
         expected[name] = int(count)
     differences = [name for name in sorted(actual.keys() | expected.keys()) if actual.get(name) != expected.get(name)]
     for name in differences:

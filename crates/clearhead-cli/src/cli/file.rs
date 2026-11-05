@@ -58,7 +58,10 @@ pub fn lint_file(path: &Option<std::path::PathBuf>) -> anyhow::Result<()> {
     let role_path = input_file
         .map(|path| path.as_path())
         .unwrap_or_else(|| std::path::Path::new("stdin.actions"));
-    for diagnostic in clearhead_core::workspace::habit_files::lint_action_file(&parsed, role_path) {
+    for diagnostic in clearhead_core::workspace::habit_files::lint_action_file(
+        &parsed,
+        &crate::filesystem::action_files::role_path(role_path),
+    ) {
         match diagnostic.severity {
             clearhead_cli::LintSeverity::Error => results.errors.push(diagnostic),
             _ => results.warnings.push(diagnostic),
