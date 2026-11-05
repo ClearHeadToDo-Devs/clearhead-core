@@ -12,7 +12,7 @@ Implements specification v0.5.0 with grammar v0.11.1: `clearhead 0.4.0 (specific
 
 ### Changed
 - **Closing is a state change in place** (platform Decision 58). `complete action` and `cancel action` stamp only the named action's state and date; the line stays in the active file, its children stay open and are reported, and nothing is archived. Closing an already closed action is refused.
-- **`--cascade` closes a whole tree** (platform Decision 59): the target and every open descendant. Descendants that are already closed, including cancelled ones, keep their state and date. When nothing is open the command succeeds and changes nothing.
+- **`--cascade` closes a whole tree** (platform Decision 59): the target and every open descendant. Descendants that are already closed, including cancelled ones, keep their state and date. A target closed the other way is forced (completing a cancelled action makes it completed with a new date). When the target already has the requested state and nothing below it is open, the command succeeds and changes nothing.
 - **`archive` moves whole root trees.** `archive action` moves one fully closed root tree to `.completed.actions` without changing any state; a child is refused with its root named. `archive actions` sweeps every eligible tree and leaves the rest. Sidecars move with their actions.
 - `--dry-run` on complete, cancel and reopen prints the transaction dry-run envelope with the files it would touch, and archive and unarchive results use the committed-move envelope, so a preview never reads as a commit.
 - Transactions resolve UUIDs across the active and completed files before falling back, and an archived target is refused with the root to unarchive unless the requested outcome already holds.
