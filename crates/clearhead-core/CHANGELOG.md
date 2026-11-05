@@ -6,6 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-05
+
+Included in the clearhead 0.4.0 binary release. Declares specification v0.5.0 and pins registry tree-sitter-actions `=0.11.1`; schema URLs move to `v0.5.0`. **v0.5.0 Habits are only partly implemented:** the domain and graph below, with no habits-file reader, occurrence generation or calendar migration yet.
+
+### Added
+- `domain::Habit` and `NativeOccurrence`: native Habit definitions using the Action state vocabulary, a required rule and recurrence anchor, closed dates only on terminal states, and separate template children; canonical Habit JSON export. The application graph projects them with `app:occurrenceOf` and canonical STRING slots, independent of transport identifiers.
+- `action_lifecycle`: the shared close, reopen and move transitions, with `expand_cascade`, `tree_root`, `prepare_action_move` and `MoveMode`; `prepare_transaction_with_occurrences` and `fold_materialized_occurrence_resolution` for occurrence closure.
+- `ActionState::is_terminal`, `VerbError::already_closed` and `require_open_action`; `unique_selector_match` and `unique_selector_match_pair` resolve one selector across the active and completed files.
+
+### Changed
+- Closing is a state change in place and archival moves whole root trees (platform Decisions 58 and 59; Core Decision 2 amended for `--cascade`). `plan_action_archive` takes root trees.
+- A recurrence (`R:`) in an actions file is an `action-parse-error` for its root tree, so no write drops a rule `Action` cannot hold.
+
+### Removed
+- `close_subtree`, `reopen_subtree`, `prepare_close_action_subtree`, `prepare_reopen_action_subtree`, `prepare_action_archive` and their `PreparedCloseOutcome` and `PreparedReopenOutcome`: superseded by `action_lifecycle`.
+
 ## [0.3.1] - 2026-10-14
 
 Source snapshot included in the clearhead 0.3.2 binary release; crates.io publication is not part of this delivery.

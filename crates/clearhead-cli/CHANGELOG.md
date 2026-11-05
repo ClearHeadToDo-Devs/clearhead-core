@@ -6,6 +6,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## Unreleased
 
+## 0.4.0 - 2026-11-05
+
+Implements specification v0.5.0 with grammar v0.11.1: `clearhead 0.4.0 (specification v0.5.0, grammar v0.11.1)`. The individual close and root-tree archive of v0.4.0 (platform Decisions 58 and 59) are complete. **The Habits of v0.5.0 are only partly implemented:** Core can project a Habit into the application graph, but nothing reads habits files yet, generates occurrences or syncs Habits with the calendar. Uses Core 0.4.0.
+
+### Changed
+- **Closing is a state change in place** (platform Decision 58). `complete action` and `cancel action` stamp only the named action's state and date; the line stays in the active file, its children stay open and are reported, and nothing is archived. Closing an already closed action is refused.
+- **`--cascade` closes a whole tree** (platform Decision 59): the target and every open descendant. Descendants that are already closed, including cancelled ones, keep their state and date. When nothing is open the command succeeds and changes nothing.
+- **`archive` moves whole root trees.** `archive action` moves one fully closed root tree to `.completed.actions` without changing any state; a child is refused with its root named. `archive actions` sweeps every eligible tree and leaves the rest. Sidecars move with their actions.
+- `--dry-run` on complete, cancel and reopen prints the transaction dry-run envelope with the files it would touch, and archive and unarchive results use the committed-move envelope, so a preview never reads as a commit.
+- Transactions resolve UUIDs across the active and completed files before falling back, and an archived target is refused with the root to unarchive unless the requested outcome already holds.
+
+### Added
+- `reopen action`: sets one closed action in the active file to not started and clears its date; `--cascade` reopens its tree. The transaction operation is `reopen-action`.
+- `unarchive action`: moves a whole archived root tree back to the active file, keeping states and dates; `--reopen` also reopens the root, and with `--cascade` the whole tree. With archive on save on, a tree still closed is swept back at the next save of that file, with nothing lost.
+
+### Known gaps
+- **Habits files are not read yet** (`core-habit-readers`). A `<charter>.habits.actions` file is treated as an ordinary actions file of a charter named `<charter>.habits`.
+- **A line with `R:` is refused, not read.** Any file containing a recurrence reports a parse error and is never rewritten, as in 0.3.2. Grammar v0.11.1 parses `R:`, but Core has nowhere to keep the rule yet, so reading on would drop it at the next write.
+
+### Fixed
+- Cascading completion and cancellation keep closed members' history instead of overwriting their state and date.
+
 ## 0.3.2 - 2026-10-14
 
 Source preparation for the shared dev-pod and sandbox-worker binary release. The existing cargo-dist workflow builds the archive; tagging and publication are separate facilitator steps. Core 0.3.1 is included from the local source, without requiring a crates.io publication.
