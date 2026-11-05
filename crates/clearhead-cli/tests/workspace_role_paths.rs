@@ -3,12 +3,20 @@ use common::TestEnv;
 
 #[test]
 fn parent_roles_and_directory_charters_are_ordinary_paths() {
-    for parent in ["archive", "templates"] {
-        for charter in ["home", "archive/next", "templates/next"] {
+    for parent in ["archive", "templates", "charters"] {
+        for charter in [
+            "home",
+            "archive/next",
+            "templates/next",
+            "work/templates/next",
+            "work/archive/next",
+        ] {
             let mut env = TestEnv::new();
             env.work_dir = env.work_dir.join(parent).join("ws");
             env.data_dir = env.work_dir.join(".clearhead");
             env.write_text("workspace.json", "{}");
+            // A supporting directory must not masquerade as the workspace root.
+            env.write_text("charters/work/charters/x.actions", "");
             let action = format!("charters/{charter}.actions");
             let habit = format!("charters/{charter}.habits.actions");
             env.write_text(&action, "[ ] Task #01951111-0000-7000-8000-000000000010\n");

@@ -207,6 +207,30 @@ fn habit_graph_conformance_native_slots_are_strings_not_transport_keys() {
 }
 
 #[test]
+fn plain_action_rule_export_matches_published_schema() {
+    let mut action = clearhead_core::parse_actions("[ ] Ordinary @2026-11-05 R:FREQ=DAILY\n")
+        .unwrap()
+        .remove(0);
+    assert_eq!(action.recurrence_rule.as_deref(), Some("FREQ=DAILY"));
+    let schema: Value =
+        serde_json::from_slice(&fs::read(spec().join("schemas/actions.schema.json")).unwrap())
+            .unwrap();
+    let validator = jsonschema::JSONSchema::compile(&schema).unwrap();
+    let document = serde_json::to_value(clearhead_core::schema_export::to_schema_document(&[
+        action.clone(),
+    ]))
+    .unwrap();
+    assert_eq!(document["actions"][0]["recurrenceRule"], "FREQ=DAILY");
+    assert!(document["actions"][0].get("recurrence_rule").is_none());
+    assert!(validator.is_valid(&document), "{document}");
+    action.recurrence_rule = None;
+    let document =
+        serde_json::to_value(clearhead_core::schema_export::to_schema_document(&[action])).unwrap();
+    assert!(document["actions"][0].get("recurrenceRule").is_none());
+    assert!(validator.is_valid(&document));
+}
+
+#[test]
 fn habit_graph_conformance_canonical_json_and_sidecar() {
     let model: DomainModel = serde_json::from_value(input()).unwrap();
     let habit = &model.charters[0].habits[0];
