@@ -207,7 +207,7 @@ fn habit_reader_conformance_discovery_and_explicit_action_guards() {
         let env = TestEnv::new();
         env.write_actions(&format!("{anchor}.actions"), "");
         env.write_actions(&format!("{anchor}.habits.actions"), &habit());
-        env.write_text("charters/templates/named.actions", &habit());
+        env.write_text("templates/named.actions", &habit());
         let files = clearhead_cli::filesystem::list_action_files(&env.data_dir).unwrap();
         assert_eq!(
             files,
