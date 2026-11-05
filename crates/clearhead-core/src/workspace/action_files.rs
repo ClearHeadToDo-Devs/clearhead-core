@@ -1,9 +1,9 @@
-//! Per-charter `.actions` / `.completed.actions` reads.
+//! Per-charter actions-resource classification and path derivation.
 //!
-//! Each charter's actions are stored across two DSL files:
-//! - `<charter>.actions`           — active actions (recurring occurrences are
-//!   projected on read, never filed)
-//! - `<charter>.completed.actions` — completed/cancelled actions
+//! - `<charter>.actions` — executable Actions, including persisted occurrences
+//! - `<charter>.habits.actions` — native Habit roots and template children
+//! - `<charter>.completed.actions` — terminal Action history
+//! - `<charter>.upcoming.actions` — retired artifacts, never live work
 //!
 //! Charter stem derivation mostly uses the file stem. Primary files like
 //! `subdir/next.actions` use the directory name, except the root anchor
@@ -14,6 +14,82 @@ use std::path::{Path, PathBuf};
 
 use crate::workspace::actions::ActionList;
 use crate::workspace::actions::repository::SourcedAction;
+
+/// The semantic role of an actions resource. Classify before deriving stems.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ActionFileRole {
+    Actions,
+    Habits,
+    Completed,
+    Upcoming,
+}
+
+/// Classify a known suffix, longest first, and return its full charter stem.
+pub fn classify_action_file(path: &Path) -> Option<(&str, ActionFileRole)> {
+    let name = path.file_name()?.to_str()?;
+    for (suffix, role) in [
+        (".habits.actions", ActionFileRole::Habits),
+        (".completed.actions", ActionFileRole::Completed),
+        (".upcoming.actions", ActionFileRole::Upcoming),
+        (".actions", ActionFileRole::Actions),
+    ] {
+        if let Some(stem) = name.strip_suffix(suffix) {
+            return Some((stem, role));
+        }
+    }
+    None
+}
+
+/// The ordinary actions anchor sharing this resource's charter and sidecar.
+pub fn actions_anchor(path: &Path) -> Option<PathBuf> {
+    let (stem, _) = classify_action_file(path)?;
+    Some(path.with_file_name(format!("{stem}.actions")))
+}
+
+/// Whether a resource is part of a live charter, rather than terminal or template data.
+pub fn is_charter_action_file(path: &Path) -> bool {
+    matches!(
+        classify_action_file(path),
+        Some((_, ActionFileRole::Actions | ActionFileRole::Habits))
+    ) && !path
+        .components()
+        .any(|part| part.as_os_str() == "templates" || part.as_os_str() == "archive")
+}
+
+/// Whether a path holds executable live Actions (not Habit/template data).
+pub fn is_live_actions(path: &Path) -> bool {
+    matches!(
+        classify_action_file(path),
+        Some((_, ActionFileRole::Actions))
+    ) && !path
+        .components()
+        .any(|part| part.as_os_str() == "templates" || part.as_os_str() == "archive")
+}
+
+/// An executable Action/history resource, including archives but not templates.
+pub fn is_action_history(path: &Path) -> bool {
+    matches!(
+        classify_action_file(path),
+        Some((_, ActionFileRole::Actions | ActionFileRole::Completed))
+    ) && !path
+        .components()
+        .any(|part| part.as_os_str() == "templates")
+}
+
+/// Reject attempts to lower Habit/template data into an executable mutation.
+pub fn require_action_resource(path: &Path) -> Result<(), String> {
+    if matches!(
+        classify_action_file(path),
+        Some((_, ActionFileRole::Habits | ActionFileRole::Upcoming))
+    ) || path
+        .components()
+        .any(|part| part.as_os_str() == "templates")
+    {
+        Err("Habit definitions and template data are not executable Actions".into())
+    } else {
+        Ok(())
+    }
+}
 
 /// A parsed `.actions` file — the workspace-layer representation of a charter's actions.
 ///
@@ -61,7 +137,7 @@ pub(crate) fn charter_stem(actions_path: &Path) -> String {
     // Primary file (next.actions) inside a subdirectory → use parent dir name,
     // except for the root anchor, whose parent is the literal workspace
     // container `charters/`.
-    if filename == crate::workspace::PRIMARY_ACTIONS_FILE
+    if classify_action_file(actions_path).is_some_and(|(stem, _)| stem == "next")
         && let Some(parent) = actions_path.parent()
         && let Some(dir_name) = parent.file_name().and_then(|s| s.to_str())
         && dir_name != "charters"
@@ -70,10 +146,9 @@ pub(crate) fn charter_stem(actions_path: &Path) -> String {
         return dir_name.to_string();
     }
 
-    actions_path
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("unknown")
+    classify_action_file(actions_path)
+        .map(|(stem, _)| stem)
+        .unwrap_or(filename)
         .to_string()
 }
 

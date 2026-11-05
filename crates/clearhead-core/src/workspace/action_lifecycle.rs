@@ -30,6 +30,10 @@ pub fn prepare_action_move(
     selection: Option<Uuid>,
     mode: MoveMode,
 ) -> Result<(EffectBatch, PreparedArchiveOutcome), ActionPrepareError> {
+    for path in [&active.path, &completed.path] {
+        super::action_files::require_action_resource(std::path::Path::new(path.as_str()))
+            .map_err(ActionPrepareError::Domain)?;
+    }
     let MoveMode {
         unarchive,
         reopen,

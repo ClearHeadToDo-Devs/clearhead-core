@@ -333,6 +333,8 @@ pub fn workspace_name_for_root(path: &Path) -> String {
 
 /// Load actions for read-only operations using recoverable parse mode.
 pub fn load_file_for_read(path: &Path, command: &str) -> anyhow::Result<ActionList> {
+    clearhead_core::workspace::action_files::require_action_resource(path)
+        .map_err(anyhow::Error::msg)?;
     if !path.exists() {
         return Ok(ActionList::new());
     }
@@ -405,6 +407,8 @@ pub fn parse_content_for_mutation(
 ///
 /// If syntax issues are present, this returns an error and callers must not write.
 pub fn load_file_for_mutation(path: &Path, command: &str) -> anyhow::Result<ActionList> {
+    clearhead_core::workspace::action_files::require_action_resource(path)
+        .map_err(anyhow::Error::msg)?;
     if !path.exists() {
         return Ok(ActionList::new());
     }

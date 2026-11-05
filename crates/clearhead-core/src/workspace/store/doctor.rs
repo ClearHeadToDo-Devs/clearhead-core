@@ -415,6 +415,15 @@ fn check_duplicate_uuids(
     for (file, action) in all_actions(charters, completed) {
         seen.entry(action.id).or_default().push(file.clone());
     }
+    for charter in charters {
+        if let Some(file) = &charter.habits_file {
+            for habit in &charter.habits {
+                for action in std::iter::once(&habit.definition).chain(habit.children.iter()) {
+                    seen.entry(action.id).or_default().push(file.clone());
+                }
+            }
+        }
+    }
     for (id, files) in seen {
         if files.len() > 1 {
             let list: Vec<String> = files.iter().map(|f| f.display().to_string()).collect();
@@ -444,6 +453,9 @@ fn collect_archived_action_states(
     let mut states = HashMap::new();
     for document in documents {
         let relative = logical_path_buf(&document.path);
+        if !crate::workspace::action_files::is_action_history(&relative) {
+            continue;
+        }
         let source = match document_text(document) {
             Ok(source) => source,
             Err(error) => {
@@ -645,6 +657,10 @@ fn collect_known_action_ids(
 ) -> HashSet<Uuid> {
     let mut known = HashSet::new();
     for charter in charters {
+        for habit in &charter.habits {
+            known.insert(habit.definition.id);
+            known.extend(habit.children.iter().map(|child| child.id));
+        }
         for sa in &charter.actions {
             known.insert(sa.action.id);
             known.extend(sa.action.plan_id);

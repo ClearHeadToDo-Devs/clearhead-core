@@ -54,7 +54,16 @@ pub fn lint_file(path: &Option<std::path::PathBuf>) -> anyhow::Result<()> {
     let parsed = clearhead_cli::get_parsed_document(&content)
         .map_err(|e| anyhow::anyhow!("Failed to parse document: {}", e))?;
 
-    let results = clearhead_cli::lint_document(&parsed);
+    let mut results = clearhead_cli::lint_document(&parsed);
+    let role_path = input_file
+        .map(|path| path.as_path())
+        .unwrap_or_else(|| std::path::Path::new("stdin.actions"));
+    for diagnostic in clearhead_core::workspace::habit_files::lint_action_file(&parsed, role_path) {
+        match diagnostic.severity {
+            clearhead_cli::LintSeverity::Error => results.errors.push(diagnostic),
+            _ => results.warnings.push(diagnostic),
+        }
+    }
 
     if results.errors.is_empty() && results.warnings.is_empty() && results.info.is_empty() {
         println!("no issues found");
@@ -180,19 +189,24 @@ fn implicit_charter_stem(md_path: &std::path::Path) -> Option<String> {
     }
     let anchor = actions_anchor_for_document(md_path)?;
     let anchor_stem = anchor.file_stem()?.to_str()?;
-    ["actions", "completed.actions", "upcoming.actions"]
-        .iter()
-        .any(|ext| anchor.with_extension(ext).exists())
-        .then(|| {
-            if is_readme {
-                dir.file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or(anchor_stem)
-                    .to_string()
-            } else {
-                anchor_stem.to_string()
-            }
-        })
+    [
+        "actions",
+        "habits.actions",
+        "completed.actions",
+        "upcoming.actions",
+    ]
+    .iter()
+    .any(|ext| anchor.with_extension(ext).exists())
+    .then(|| {
+        if is_readme {
+            dir.file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or(anchor_stem)
+                .to_string()
+        } else {
+            anchor_stem.to_string()
+        }
+    })
 }
 
 /// Create the `.md` for an implicit charter, so a durable id can be stamped

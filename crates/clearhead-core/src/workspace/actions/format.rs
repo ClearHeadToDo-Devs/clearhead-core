@@ -122,6 +122,12 @@ pub fn format_trusted_source(
 
 /// Format ActionList as .actions file format using Topiary
 fn format_as_actions(list: &ActionList, config: Option<FormatConfig>) -> Result<String, String> {
+    if list
+        .iter()
+        .any(|action| action.recurrence_rule.is_some() && action.planned.is_none())
+    {
+        return Err("cannot rewrite a recurrence whose planned anchor could not be parsed; source left unchanged".into());
+    }
     let config = config.unwrap_or_default();
 
     // 1. Generate basic content (Canonical style: Compact + Indentation)
@@ -184,12 +190,16 @@ fn format_with_topiary(input_text: &str, config: &FormatConfig) -> Result<String
     let mut input = Cursor::new(input_text.as_bytes());
     let mut output = Vec::new();
 
-    // Load query from tree-sitter-actions crate
-    let query_content = tree_sitter_actions::FORMATTING_QUERY;
+    // The pinned query owns layout. Recurrence is opaque source text at
+    // this boundary, including whitespace after R:, not formatter-owned syntax.
+    let query_content = format!(
+        "{}\n(recurrence) @leaf\n",
+        tree_sitter_actions::FORMATTING_QUERY
+    );
 
     // Initialize Grammar and Query
     let grammar: TreeSitterLanguage = tree_sitter_actions::LANGUAGE.into();
-    let query = TopiaryQuery::new(&grammar, query_content)
+    let query = TopiaryQuery::new(&grammar, &query_content)
         .map_err(|e| format!("Failed to compile Topiary query: {}", e))?;
 
     // Configure indentation based on user preferences

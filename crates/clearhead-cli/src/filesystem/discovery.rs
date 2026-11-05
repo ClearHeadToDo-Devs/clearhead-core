@@ -27,19 +27,11 @@ pub(crate) struct PlanFileEntry {
     pub inferred_parent: Option<String>,
 }
 
-/// Discover all `.actions` files recursively, skipping hidden directories.
-pub(crate) fn discover_action_files(dir: &Path) -> Result<Vec<PathBuf>, WorkspaceError> {
+/// Discover the syntax resources belonging to live charters, including Habits.
+fn discover_charter_action_files(dir: &Path) -> Result<Vec<PathBuf>, WorkspaceError> {
     let mut files = Vec::new();
     discover_recursive(dir, "actions", &mut files)?;
-    // Exclude `.completed.actions` (closed-action archives) and `.upcoming.actions`
-    // (a retired materialization artifact — recurring occurrences are now projected
-    // on read, never filed; any lingering legacy file must not shadow projections).
-    files.retain(|p| {
-        p.file_name()
-            .and_then(|n| n.to_str())
-            .map(|n| !n.ends_with(".completed.actions") && !n.ends_with(".upcoming.actions"))
-            .unwrap_or(true)
-    });
+    files.retain(|path| clearhead_core::workspace::action_files::is_charter_action_file(path));
     files.sort();
     Ok(files)
 }
@@ -162,7 +154,7 @@ pub fn collect_workspace_manifest(
     let plans_root = plans_root(root);
     let root_charter = root_charter_name(root);
 
-    let action_files = discover_action_files(&charter_root)?;
+    let action_files = discover_charter_action_files(&charter_root)?;
     let charter_files = discover_charter_files(&charter_root)?;
     let plan_files = discover_plan_files(&plans_root, &root_charter)?;
 
@@ -202,15 +194,14 @@ pub fn collect_workspace_manifest(
             .ok_or_else(|| WorkspaceError::Parse("Failed to infer charter name".to_string()))?;
         let inferred_parent = infer_parent_charter_name_for_workspace(relative, &root_charter);
 
-        entries_by_charter.insert(
-            charter_name.clone(),
-            WorkspaceManifestEntry {
+        entries_by_charter
+            .entry(charter_name.clone())
+            .or_insert(WorkspaceManifestEntry {
                 path: relative.to_string_lossy().into_owned(),
                 charter_name,
                 inferred_parent,
                 source_type: ManifestSourceType::Actions,
-            },
-        );
+            });
     }
 
     for file_path in charter_files {

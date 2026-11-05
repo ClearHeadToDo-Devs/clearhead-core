@@ -54,6 +54,13 @@ fn collect_completed_actions_files(
         let entry = entry?;
         let path = entry.path();
         if path.is_dir() {
+            if path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name == "templates" || name.starts_with('.'))
+            {
+                continue;
+            }
             collect_completed_actions_files(&path, out)?;
         } else if path
             .file_name()

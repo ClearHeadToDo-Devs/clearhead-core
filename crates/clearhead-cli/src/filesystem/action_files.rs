@@ -6,6 +6,8 @@ use clearhead_core::workspace::actions::format::{OutputFormat, format};
 use clearhead_core::workspace::{Action, ActionList, ActionsFile, SourcedAction, WorkspaceError};
 
 pub fn read_actions(path: &Path) -> Result<ActionList, WorkspaceError> {
+    clearhead_core::workspace::action_files::require_action_resource(path)
+        .map_err(WorkspaceError::Actions)?;
     let content = match std::fs::read_to_string(path) {
         Ok(content) => content,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
@@ -29,6 +31,8 @@ pub fn read_action_file(path: &Path) -> Result<ActionsFile, WorkspaceError> {
 }
 
 pub fn write_actions(actions: &[Action], path: &Path) -> Result<(), WorkspaceError> {
+    clearhead_core::workspace::action_files::require_action_resource(path)
+        .map_err(WorkspaceError::Actions)?;
     let content = format(&actions.to_vec(), OutputFormat::Actions, None, None)
         .map_err(WorkspaceError::Actions)?;
     crate::filesystem::durability::atomic_write(path, content.as_bytes())?;

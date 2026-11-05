@@ -612,6 +612,10 @@ pub fn charter_from_plans_and_name(name: String, plans: Vec<Plan>) -> Charter {
 /// call [`Action::depends_on`] to get resolved UUIDs for integration work.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Action {
+    /// Lossless recurrence text read from an action line. Outside a habits
+    /// file this is inert source data, diagnosed rather than interpreted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recurrence_rule: Option<String>,
     pub id: Uuid,
     /// Parent action ID for hierarchical nesting (`>` depth marker in DSL).
     pub parent_id: Option<Uuid>,
@@ -687,6 +691,20 @@ impl Habit {
         if self.recurrence_rule.trim().is_empty() {
             return Err("Habit requires a recurrence rule".into());
         }
+        let rule = self.recurrence_rule.trim().to_ascii_uppercase();
+        if rule.split(';').any(|part| part.starts_with("COUNT="))
+            && rule.split(';').any(|part| part.starts_with("UNTIL="))
+        {
+            return Err("Habit recurrence cannot combine COUNT and UNTIL".into());
+        }
+        let parsed = rule
+            .parse::<rrule::RRule<rrule::Unvalidated>>()
+            .map_err(|error| format!("invalid Habit recurrence: {error}"))?;
+        if let Some(planned) = self.definition.planned {
+            parsed
+                .validate(planned.start.at_in(&rrule::Tz::UTC))
+                .map_err(|error| format!("invalid Habit recurrence: {error}"))?;
+        }
         let closed = matches!(
             self.definition.state,
             ActionState::Completed | ActionState::Cancelled
@@ -722,6 +740,7 @@ impl Default for Action {
             plan_id: None,
             external_occurrence_key: None,
             native_occurrence: None,
+            recurrence_rule: None,
         }
     }
 }

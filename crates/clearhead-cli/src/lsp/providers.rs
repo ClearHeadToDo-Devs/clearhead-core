@@ -39,6 +39,18 @@ pub fn compute_diagnostics(doc: &ParsedDocument) -> Vec<Diagnostic> {
         .collect()
 }
 
+pub fn compute_file_diagnostics(doc: &ParsedDocument, uri: &Uri) -> Vec<Diagnostic> {
+    let mut diagnostics = compute_diagnostics(doc);
+    if let Some(path) = uri.to_file_path() {
+        diagnostics.extend(
+            clearhead_core::workspace::habit_files::lint_action_file(doc, path.as_ref())
+                .into_iter()
+                .map(lint_diagnostic_to_lsp),
+        );
+    }
+    diagnostics
+}
+
 pub fn finding_to_lsp(finding: &Finding) -> Diagnostic {
     Diagnostic {
         range: Range::new(Position::new(0, 0), Position::new(0, 0)),

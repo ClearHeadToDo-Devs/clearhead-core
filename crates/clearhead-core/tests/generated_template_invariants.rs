@@ -34,6 +34,7 @@ fn populated_action(id: Uuid, parent_id: Option<Uuid>, seed: u32, index: usize) 
     let predecessor_id = generated_id(0x4100_0004, seed, index);
 
     Action {
+        recurrence_rule: None,
         id,
         parent_id,
         state: match index % 5 {

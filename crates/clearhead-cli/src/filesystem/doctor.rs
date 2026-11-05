@@ -57,12 +57,13 @@ pub fn observe_doctor(workspace_root: &Path) -> Result<DoctorEvidence, Workspace
             path.file_name()
                 .and_then(|name| name.to_str())
                 .is_some_and(|name| name.ends_with(".completed.actions"))
+                && clearhead_core::workspace::action_files::is_action_history(path)
         })
         .map(|path| observe_document(&charter_root, path))
         .collect::<Result<Vec<_>, _>>()?;
     let archived_actions = walk_visible_files(&archive_root)
         .into_iter()
-        .filter(|path| path.extension().and_then(|extension| extension.to_str()) == Some("actions"))
+        .filter(|path| clearhead_core::workspace::action_files::is_action_history(path))
         .map(|path| observe_document(&archive_root, path))
         .collect::<Result<Vec<_>, _>>()?;
     let archived_charters = walk_visible_files(&archive_root)
@@ -261,7 +262,8 @@ fn observe_sidecar(
     let companion = companion_path(&path);
     Ok(DoctorSidecarEvidence {
         document: observe_document(charter_root, path)?,
-        companion_exists: companion.is_file(),
+        companion_exists: companion.is_file()
+            || companion.with_extension("habits.actions").is_file(),
     })
 }
 

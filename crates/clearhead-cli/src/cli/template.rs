@@ -31,13 +31,14 @@ pub fn apply_template(
             .context("Failed to resolve template")?
             .ok_or_else(|| anyhow::anyhow!("Template '{}' not found", name))?;
 
-    let tpl_acts = clearhead_cli::filesystem::read_actions(&tpl_path).with_context(|| {
-        format!(
-            "Failed to read template '{}' at {}",
-            name,
-            tpl_path.display(),
-        )
-    })?;
+    let tpl_acts = clearhead_cli::filesystem::templates::read_template_actions(&tpl_path)
+        .with_context(|| {
+            format!(
+                "Failed to read template '{}' at {}",
+                name,
+                tpl_path.display(),
+            )
+        })?;
 
     if tpl_acts.is_empty() {
         anyhow::bail!("Template '{}' is empty", name);

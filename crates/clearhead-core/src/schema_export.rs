@@ -105,7 +105,7 @@ impl SchemaAction {
             }),
             external_occurrence_key: action.external_occurrence_key.clone(),
             parent_id: action.parent_id.map(|u| u.to_string()),
-            recurrence_rule: None,
+            recurrence_rule: action.recurrence_rule.clone(),
             children: None,
         }
     }

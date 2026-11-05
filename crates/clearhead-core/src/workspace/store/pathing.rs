@@ -29,6 +29,8 @@ pub fn infer_charter_name_for_workspace(
 /// attach calendar resources by exact path instead of reconstructing ownership
 /// from aliases, titles, or action-file basenames.
 pub fn charter_collection_from_anchor(relative_path: &Path) -> PathBuf {
+    let anchor = crate::workspace::action_files::actions_anchor(relative_path);
+    let relative_path = anchor.as_deref().unwrap_or(relative_path);
     let filename = relative_path
         .file_name()
         .and_then(|name| name.to_str())
@@ -98,15 +100,13 @@ pub fn actions_anchor_for_document(relative_path: &Path) -> Option<PathBuf> {
 ///
 /// Returns `None` for a path that is not an actions file.
 pub fn document_anchor_for_actions(relative_path: &Path) -> Option<PathBuf> {
-    let filename = relative_path.file_name()?.to_str()?;
-    if !filename.ends_with(".actions") {
-        return None;
-    }
-    let directory = relative_path.parent().unwrap_or_else(|| Path::new(""));
+    let anchor = crate::workspace::action_files::actions_anchor(relative_path)?;
+    let filename = anchor.file_name()?.to_str()?;
+    let directory = anchor.parent().unwrap_or_else(|| Path::new(""));
     if filename == PRIMARY_ACTIONS_FILE {
         return Some(directory.join(PRIMARY_DOCUMENT_FILE));
     }
-    let stem = relative_path.file_stem()?.to_str()?;
+    let stem = anchor.file_stem()?.to_str()?;
     if stem.is_empty() {
         return None;
     }
@@ -187,7 +187,8 @@ pub fn infer_parent_charter_name(relative_path: &Path) -> Option<String> {
 ///
 /// `health.completed` → `"health"`, `health` → `"health"`.
 pub(crate) fn strip_archive_suffix(stem: &str) -> &str {
-    stem.strip_suffix(".completed")
+    stem.strip_suffix(".habits")
+        .or_else(|| stem.strip_suffix(".completed"))
         .or_else(|| stem.strip_suffix(".archived"))
         .unwrap_or(stem)
 }
@@ -197,7 +198,9 @@ pub(crate) fn strip_archive_suffix(stem: &str) -> &str {
 /// Both `next.actions` and `README.md` are "primary" files — they represent
 /// the charter itself, not a sub-charter.
 pub(crate) fn is_primary_filename(filename: &str) -> bool {
-    filename == PRIMARY_ACTIONS_FILE || filename == PRIMARY_DOCUMENT_FILE
+    filename == PRIMARY_DOCUMENT_FILE
+        || crate::workspace::action_files::classify_action_file(Path::new(filename))
+            .is_some_and(|(stem, _)| stem == ROOT_ANCHOR_STEM)
 }
 
 #[cfg(test)]

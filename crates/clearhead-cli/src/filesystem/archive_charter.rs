@@ -364,7 +364,16 @@ fn archive_many(
         let completed_replacement = completed_abs.as_ref().and_then(|p| swept.remove(p));
         let completed_sidecar = completed_abs.as_ref().map(|p| sidecar_path(p));
         let completed_meta_replacement = completed_sidecar.as_ref().and_then(|p| swept.remove(p));
-        let quartet: [(Option<PathBuf>, PathBuf, Option<Vec<u8>>); 5] = [
+        let habits_abs = mc
+            .habits_file
+            .as_ref()
+            .map(|rel| layout.charter_root.join(rel));
+        let quartet: [(Option<PathBuf>, PathBuf, Option<Vec<u8>>); 6] = [
+            (
+                habits_abs,
+                archive_root.join(format!("{}.habits.actions", mc.id)),
+                None,
+            ),
             (acts_abs, acts_dest.clone(), active_replacement),
             (
                 completed_abs,

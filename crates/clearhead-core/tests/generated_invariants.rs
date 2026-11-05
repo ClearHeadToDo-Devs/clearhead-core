@@ -202,6 +202,7 @@ fn generated_actions() -> impl Strategy<Value = Vec<Action>> {
             }
             let created_at = generated_datetime(seed.created_day, 0);
             actions.push(Action {
+                recurrence_rule: None,
                 id: ids[index],
                 parent_id,
                 state: seed.state,

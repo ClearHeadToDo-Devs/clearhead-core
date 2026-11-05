@@ -80,8 +80,11 @@ fn resolve_charter_by_file<'a>(
     let abs_root =
         std::fs::canonicalize(charter_root).unwrap_or_else(|_| charter_root.to_path_buf());
     let rel = abs_file.strip_prefix(&abs_root).unwrap_or(&abs_file);
-    mcs.iter()
-        .find(|mc| mc.actions_file.as_deref() == Some(rel) || mc.md_file.as_deref() == Some(rel))
+    mcs.iter().find(|mc| {
+        mc.actions_file.as_deref() == Some(rel)
+            || mc.habits_file.as_deref() == Some(rel)
+            || mc.md_file.as_deref() == Some(rel)
+    })
 }
 
 /// Resolve a MarkdownCharter from either a query string or a file path.
