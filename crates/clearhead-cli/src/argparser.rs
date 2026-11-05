@@ -1010,7 +1010,7 @@ pub enum ArchiveTarget {
         #[arg(conflicts_with_all = ["closed", "file"])]
         query: Option<String>,
 
-        /// Infer charter from this file path (e.g. the current editor buffer)
+        /// Infer charter from its .md, .actions, .habits.actions or .completed.actions file (e.g. the current editor buffer)
         #[arg(short, long, conflicts_with_all = ["query", "closed"])]
         file: Option<std::path::PathBuf>,
 

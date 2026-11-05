@@ -935,7 +935,7 @@ fn sync_plan_templates(
             else {
                 continue;
             };
-            let steps = crate::filesystem::read_actions(&template_path)?;
+            let steps = crate::filesystem::templates::read_template_actions(&template_path)?;
             let generated_ids = steps.iter().map(|_| Uuid::now_v7()).collect();
             templates.push(SyncPlanTemplate {
                 plan_id: plan.plan.id,

@@ -4,6 +4,12 @@ use std::path::{Path, PathBuf};
 
 use clearhead_core::workspace::WorkspaceError;
 
+/// Read template data explicitly, never through the executable-Action reader.
+pub fn read_template_actions(path: &Path) -> Result<clearhead_core::ActionList, WorkspaceError> {
+    let source = std::fs::read_to_string(path)?;
+    clearhead_core::parse_actions(&source).map_err(WorkspaceError::Actions)
+}
+
 pub fn resolve_template(
     charter_dir: &Path,
     data_root: &Path,

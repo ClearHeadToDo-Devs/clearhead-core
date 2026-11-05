@@ -139,6 +139,17 @@ pub fn assemble_workspace(input: &WorkspaceAssemblyInput) -> Result<WorkspaceRea
             }
         };
 
+        for diagnostic in crate::workspace::habit_files::lint_action_file(
+            &parsed_doc,
+            &Path::new("charters").join(&relative),
+        ) {
+            findings.push(match diagnostic.severity {
+                crate::workspace::actions::LintSeverity::Error => {
+                    Finding::violation(&diagnostic.code, &relative, diagnostic.message)
+                }
+                _ => Finding::warning(&diagnostic.code, &relative, diagnostic.message),
+            });
+        }
         let source_map = parsed_doc.source_map;
         let mut sourced: Vec<SourcedAction> = parsed_doc
             .actions
@@ -154,6 +165,29 @@ pub fn assemble_workspace(input: &WorkspaceAssemblyInput) -> Result<WorkspaceRea
                 }
             })
             .collect();
+        hydrate_actions_map(&mut sourced, &global_actions);
+        let is_habits = matches!(
+            crate::workspace::action_files::classify_action_file(&relative),
+            Some((_, crate::workspace::action_files::ActionFileRole::Habits))
+        );
+        if is_habits {
+            let anchor = crate::workspace::action_files::actions_anchor(&relative).unwrap();
+            let charter = charters.entry(name.clone()).or_insert_with(|| {
+                let mut charter = MarkdownCharter::from(implicit_charter(&name));
+                charter.actions_file = Some(anchor.clone());
+                charter.plans_dir = charter_collection_from_anchor(&anchor);
+                charter
+            });
+            charter.habits_file = Some(relative.clone());
+            let definitions = sourced.iter().map(|s| s.action.clone()).collect::<Vec<_>>();
+            charter.habits = crate::workspace::habit_files::habits_from_actions(&definitions);
+            charter.habit_sources = sourced
+                .into_iter()
+                .filter_map(|s| s.source_metadata.map(|metadata| (s.action.id, metadata)))
+                .collect();
+            path_for_name.entry(name).or_insert(anchor);
+            continue;
+        }
         let base: Charter = from_actions_with_charter(
             &sourced
                 .iter()
@@ -176,10 +210,29 @@ pub fn assemble_workspace(input: &WorkspaceAssemblyInput) -> Result<WorkspaceRea
                 format!("could not parse sidecar at expected path: {error}"),
             ));
         }
-        hydrate_actions_map(&mut sourced, &global_actions);
         charter.actions = sourced;
         charters.entry(name.clone()).or_insert(charter);
         path_for_name.entry(name).or_insert(relative);
+    }
+
+    for path in input.workspace_files().filter(|path| {
+        path.as_str().ends_with(".actions")
+            && crate::workspace::action_files::resource_role(Path::new(path.as_str()))
+                == crate::workspace::action_files::ResourceRole::Template
+            && !has_hidden_component(path.as_str())
+    }) {
+        let relative = Path::new(path.as_str());
+        if let Ok(Some(source)) = input.workspace_text(relative)
+            && let Ok(doc) = crate::workspace::parse_document(source)
+        {
+            for diagnostic in crate::workspace::habit_files::lint_action_file(&doc, relative) {
+                findings.push(Finding::warning(
+                    &diagnostic.code,
+                    relative,
+                    diagnostic.message,
+                ));
+            }
+        }
     }
 
     let mut explicit_parent_charters = HashSet::new();
@@ -510,11 +563,11 @@ pub fn assembled_domain_model(read: WorkspaceRead) -> DomainModel {
 fn action_files(input: &WorkspaceAssemblyInput) -> Vec<PathBuf> {
     let mut paths = input
         .workspace_files()
+        .filter(|path| {
+            crate::workspace::action_files::is_charter_action_file(Path::new(path.as_str()))
+        })
         .filter_map(|path| path.as_str().strip_prefix("charters/"))
         .filter(|path| !has_hidden_component(path))
-        .filter(|path| path.ends_with(".actions"))
-        .filter(|path| !path.ends_with(".completed.actions"))
-        .filter(|path| !path.ends_with(".upcoming.actions"))
         .map(PathBuf::from)
         .collect::<Vec<_>>();
     paths.sort();

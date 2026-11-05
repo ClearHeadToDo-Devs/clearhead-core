@@ -80,8 +80,11 @@ fn resolve_charter_by_file<'a>(
     let abs_root =
         std::fs::canonicalize(charter_root).unwrap_or_else(|_| charter_root.to_path_buf());
     let rel = abs_file.strip_prefix(&abs_root).unwrap_or(&abs_file);
-    mcs.iter()
-        .find(|mc| mc.actions_file.as_deref() == Some(rel) || mc.md_file.as_deref() == Some(rel))
+    mcs.iter().find(|mc| {
+        mc.actions_file.as_deref() == Some(rel)
+            || mc.habits_file.as_deref() == Some(rel)
+            || mc.md_file.as_deref() == Some(rel)
+    })
 }
 
 /// Resolve a MarkdownCharter from either a query string or a file path.
@@ -499,13 +502,17 @@ pub fn add_charter(
         .context("Failed to resolve template")?
         .ok_or_else(|| anyhow::anyhow!("Template '{}' not found", tpl_name))?;
 
-        let tpl_acts = clearhead_cli::filesystem::read_actions(&tpl_path)
+        let tpl_acts = clearhead_cli::filesystem::templates::read_template_actions(&tpl_path)
             .context("Failed to read template")?;
 
         let instantiated =
             templates::instantiate_template(&tpl_acts, |_| uuid::Uuid::now_v7(), None);
 
-        super::save_file(&actions_path, &instantiated)?;
+        super::save_file(
+            &ctx.workspace_for_file(&actions_path),
+            &actions_path,
+            &instantiated,
+        )?;
 
         println!(
             "Applied template '{}': {} action(s) to {}",

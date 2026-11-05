@@ -41,7 +41,11 @@ pub fn sync_events(
     let input_file = ctx.resolve_action_file(file.as_ref());
     debug!(input_file = %input_file.display(), dry_run = dry_run, "Executing Sync Events");
 
-    let actions = load_file_for_read(&input_file, "sync events")?;
+    let actions = load_file_for_read(
+        &ctx.workspace_for_file(&input_file),
+        &input_file,
+        "sync events",
+    )?;
     let mut sync_count = 0;
     let skip_count = 0; // TODO: track which events already exist
 

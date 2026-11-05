@@ -43,7 +43,8 @@ pub fn add_action(
     // Client-side read: resolve the fuzzy parent query to a stable selector and
     // support the dry-run preview. Core re-reads before delivery and re-resolves
     // the parent there, so this read is never the one that's written against.
-    let list = action_files::read_actions(&actions_path)?;
+    let list =
+        action_files::read_actions_in(&ctx.workspace_for_file(&actions_path), &actions_path)?;
 
     let parent_selector = parent
         .as_deref()
@@ -533,7 +534,8 @@ pub fn delete_action(
         // delete reaches an action wherever it lives. Either way the mutation is
         // handed to core, which re-resolves before delivery, cascades the subtree
         // in the owning file, and prunes the matching sidecar entries.
-        let open = action_files::read_actions(actions_path)?;
+        let open =
+            action_files::read_actions_in(&ctx.workspace_for_file(actions_path), actions_path)?;
         let resolved = match find_best_match(&open, query, |_| true)? {
             Some(action) => Some((
                 clearhead_core::ActionSelector::from(action),
@@ -541,7 +543,10 @@ pub fn delete_action(
             )),
             None => {
                 let completed_path = action_files::completed_actions_path(actions_path);
-                let closed = action_files::read_actions(&completed_path)?;
+                let closed = action_files::read_actions_in(
+                    &ctx.workspace_for_file(&completed_path),
+                    &completed_path,
+                )?;
                 find_best_match(&closed, query, |_| true)?.map(|action| {
                     (
                         clearhead_core::ActionSelector::from(action),
@@ -713,7 +718,7 @@ fn find_and_load_completed_actions(
     query: &str,
 ) -> anyhow::Result<Option<(PathBuf, ActionList)>> {
     if let Some(path) = file {
-        let completed = read_completed_sibling(path)?;
+        let completed = read_completed_sibling(&ctx.workspace_for_file(path), path)?;
         return Ok(Some((path.clone(), completed)));
     }
     if let Some(charter_query) = charter {
@@ -722,7 +727,7 @@ fn find_and_load_completed_actions(
             anyhow::anyhow!("Charter '{}' has no associated actions file", mc.title)
         })?;
         let path = clearhead_cli::filesystem::charter_root(&ws_root).join(rel);
-        let completed = read_completed_sibling(&path)?;
+        let completed = read_completed_sibling(&ws_root, &path)?;
         return Ok(Some((path, completed)));
     }
     for (_, ws_dir) in ctx.workspace_dirs() {
@@ -744,7 +749,7 @@ fn reopen_target_error(ctx: &CommandContext, query: &str) -> anyhow::Result<Verb
     for (_, ws_dir) in ctx.workspace_dirs() {
         let open_files = clearhead_cli::filesystem::list_action_files(&ws_dir).unwrap_or_default();
         for path in &open_files {
-            let Ok(actions) = action_files::read_actions(path) else {
+            let Ok(actions) = action_files::read_actions_in(&ws_dir, path) else {
                 continue;
             };
             if let Some(action) = find_best_match(&actions, query, is_open_action)? {
@@ -763,10 +768,10 @@ fn reopen_target_error(ctx: &CommandContext, query: &str) -> anyhow::Result<Verb
 
 /// Read the `.completed.actions` sibling of an active `.actions` path, treating
 /// a missing history as empty.
-fn read_completed_sibling(actions_path: &Path) -> anyhow::Result<ActionList> {
+fn read_completed_sibling(root: &Path, actions_path: &Path) -> anyhow::Result<ActionList> {
     let completed_path = clearhead_core::completed_actions_path(actions_path);
     if completed_path.exists() {
-        Ok(action_files::read_actions(&completed_path)?)
+        Ok(action_files::read_actions_in(root, &completed_path)?)
     } else {
         Ok(ActionList::new())
     }
@@ -783,7 +788,7 @@ fn find_act_in_completed_files(
         .context("Failed to list workspace")?;
     let mut loaded = Vec::with_capacity(paths.len());
     for path in paths {
-        let completed = read_completed_sibling(&path)?;
+        let completed = read_completed_sibling(data_dir, &path)?;
         if !completed.is_empty() {
             loaded.push((path, completed));
         }
@@ -1030,7 +1035,10 @@ fn collect_workspace_actions(
             if !open_only && let Some(actions_file) = &mc.actions_file {
                 let completed_path =
                     action_files::completed_actions_path(&charter_root.join(actions_file));
-                if let Ok(completed) = action_files::read_actions(&completed_path) {
+                if let Ok(completed) = action_files::read_actions_in(
+                    &ctx.workspace_for_file(&completed_path),
+                    &completed_path,
+                ) {
                     for action in completed {
                         result.push((label.clone(), action));
                     }
@@ -1095,9 +1103,10 @@ pub fn archive_actions(
 
     for actions_path in &charter_paths {
         let archived_count = if dry_run {
-            let active = action_files::read_actions(actions_path)?;
+            let root = ctx.workspace_for_file(actions_path);
+            let active = action_files::read_actions_in(&root, actions_path)?;
             let completed_path = action_files::completed_actions_path(actions_path);
-            let completed = action_files::read_actions(&completed_path)?;
+            let completed = action_files::read_actions_in(&root, &completed_path)?;
             clearhead_core::plan_action_archive(&active, &completed, Local::now()).archived_count
         } else {
             let workspace_root = ctx.workspace_for_file(actions_path);
@@ -1169,7 +1178,8 @@ fn find_and_load_actions(
     include_completed: bool,
 ) -> anyhow::Result<Option<(PathBuf, ActionList)>> {
     if let Some(path) = file {
-        let actions = load_lifecycle_candidates(path, include_completed)?;
+        let actions =
+            load_lifecycle_candidates(&ctx.workspace_for_file(path), path, include_completed)?;
         return Ok(Some((path.clone(), actions)));
     }
     if let Some(charter_query) = charter {
@@ -1178,7 +1188,7 @@ fn find_and_load_actions(
             anyhow::anyhow!("Charter '{}' has no associated actions file", mc.title)
         })?;
         let path = clearhead_cli::filesystem::charter_root(&ws_root).join(rel);
-        let actions = load_lifecycle_candidates(&path, include_completed)?;
+        let actions = load_lifecycle_candidates(&ws_root, &path, include_completed)?;
         return Ok(Some((path, actions)));
     }
     // Search every workspace (respects --workspace); primary errors are hard,
@@ -1196,10 +1206,15 @@ fn find_and_load_actions(
 
 /// Cascades must resolve archived targets too, so Core can distinguish a
 /// satisfied no-op from a refusal. Keep the active path as the mutation anchor.
-fn load_lifecycle_candidates(path: &Path, include_completed: bool) -> anyhow::Result<ActionList> {
-    let mut actions = super::load_file_for_mutation(path, "action lifecycle")?;
+fn load_lifecycle_candidates(
+    root: &Path,
+    path: &Path,
+    include_completed: bool,
+) -> anyhow::Result<ActionList> {
+    let mut actions = super::load_file_for_mutation(root, path, "action lifecycle")?;
     if include_completed {
-        actions.extend(action_files::read_actions(
+        actions.extend(action_files::read_actions_in(
+            root,
             &action_files::completed_actions_path(path),
         )?);
     }
@@ -1220,7 +1235,7 @@ fn find_act_in_open_files(
     for path in paths {
         loaded.push((
             path.clone(),
-            load_lifecycle_candidates(&path, include_completed)?,
+            load_lifecycle_candidates(data_dir, &path, include_completed)?,
         ));
     }
 
@@ -1251,7 +1266,7 @@ fn verb_target_error(ctx: &CommandContext, query: &str) -> anyhow::Result<VerbEr
             .map(|p| action_files::completed_actions_path(p))
             .collect();
         for path in open_files.iter().chain(&archives) {
-            let Ok(actions) = action_files::read_actions(path) else {
+            let Ok(actions) = action_files::read_actions_in(&ws_dir, path) else {
                 continue;
             };
             if let Some(action) = find_best_match(&actions, query, is_closed_action)? {
@@ -1504,7 +1519,10 @@ fn collect_all_actions(
             };
             let completed_path =
                 action_files::completed_actions_path(&charter_root.join(actions_file));
-            result.extend(action_files::read_actions(&completed_path)?);
+            result.extend(action_files::read_actions_in(
+                &ctx.data_dir,
+                &completed_path,
+            )?);
         }
     }
     Ok(result)

@@ -53,6 +53,8 @@ step "cli builds with no default features"  cargo check -p clearhead --no-defaul
 step "no oxigraph in the minimal cli"   no_oxigraph_in_minimal_cli
 step "wasm dependency gate"             sh scripts/wasm-dependency-gate.sh
 step "pure-core source gate"            sh scripts/pure-core-source-gate.sh
+step "habit reader inventory regressions" env PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_habit_reader_gate.py
+step "habit reader caller inventory"     python3 scripts/habit-reader-gate.py
 [ "$fast" -eq 0 ] && step "tests"       cargo test --workspace --quiet
 
 if [ "$failed" -ne 0 ]; then

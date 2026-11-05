@@ -743,7 +743,11 @@ pub fn export_plans(
             }
         } else if reference.ends_with(".actions") {
             let resolved = resolve_file_path(reference, &ctx.data_dir);
-            let actions = load_file_for_read(&resolved, "export plans")?;
+            let actions = load_file_for_read(
+                &ctx.workspace_for_file(&resolved),
+                &resolved,
+                "export plans",
+            )?;
             let relative = resolved.strip_prefix(&ctx.data_dir).unwrap_or(&resolved);
             let charter_name = clearhead_core::infer_charter_name(relative)
                 .unwrap_or_else(|| "unknown".to_string());

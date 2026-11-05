@@ -301,11 +301,19 @@ pub fn plan_workspace_read(
                 return false;
             }
             let filename = relative.rsplit('/').next().unwrap_or(relative);
-            return (relative.ends_with(".actions")
-                && !relative.ends_with(".completed.actions")
-                && !relative.ends_with(".upcoming.actions"))
-                || relative.ends_with(".md")
+            return matches!(
+                super::action_files::classify_action_file(std::path::Path::new(relative)),
+                Some((
+                    _,
+                    super::action_files::ActionFileRole::Actions
+                        | super::action_files::ActionFileRole::Habits
+                ))
+            ) || relative.ends_with(".md")
                 || (filename.starts_with('.') && relative.ends_with(".json"));
+        }
+        if let Some(relative) = path.strip_prefix("templates/") {
+            return relative.ends_with(".actions")
+                && !relative.split('/').any(|part| part.starts_with('.'));
         }
         // The manifest's workspace_name names an alias-less root objective.
         if path == "workspace.json" {

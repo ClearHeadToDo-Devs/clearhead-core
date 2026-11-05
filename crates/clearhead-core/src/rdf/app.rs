@@ -51,9 +51,19 @@ impl Locations {
             if let Some(file) = charter
                 .md_file
                 .as_deref()
+                .or(charter.habits_file.as_deref())
                 .or(charter.actions_file.as_deref())
             {
                 locations.files.insert(charter.id, in_charters(file));
+            }
+            if let Some(file) = charter.habits_file.as_deref() {
+                for habit in &charter.habits {
+                    let id = habit.definition.id;
+                    locations.files.insert(id, in_charters(file));
+                    if let Some(source) = charter.habit_sources.get(&id) {
+                        locations.lines.insert(id, source.root.start_row as u32 + 1);
+                    }
+                }
             }
             let Some(actions_file) = charter.actions_file.as_deref() else {
                 continue;

@@ -224,9 +224,9 @@ pub fn list_action_files(workspace_root: &Path) -> Result<Vec<PathBuf>, Workspac
         .files
         .paths()
         .filter(|path| path.as_str().starts_with("charters/"))
-        .filter(|path| path.as_str().ends_with(".actions"))
-        .filter(|path| !path.as_str().ends_with(".completed.actions"))
-        .filter(|path| !path.as_str().ends_with(".upcoming.actions"))
+        .filter(|path| {
+            clearhead_core::workspace::action_files::is_live_actions(Path::new(path.as_str()))
+        })
         .map(|path| mounts.workspace.join(path.as_str()))
         .collect::<Vec<_>>();
     paths.sort();

@@ -116,6 +116,13 @@ pub struct OccurrenceSnapshot {
 /// - `work/next.actions`            → `work/.next.json`
 /// - `work/feature/next.actions`    → `work/feature/.next.json`
 pub fn sidecar_path(actions_path: &Path) -> PathBuf {
+    let anchor = match crate::workspace::action_files::classify_action_file(actions_path) {
+        Some((_, crate::workspace::action_files::ActionFileRole::Habits)) => {
+            crate::workspace::action_files::actions_anchor(actions_path)
+        }
+        _ => None,
+    };
+    let actions_path = anchor.as_deref().unwrap_or(actions_path);
     let stem = actions_path
         .file_stem()
         .and_then(|s| s.to_str())

@@ -55,6 +55,8 @@ pub struct SchemaAction {
     pub external_occurrence_key: Option<String>,
     #[serde(rename = "parentId", skip_serializing_if = "Option::is_none")]
     pub parent_id: Option<String>,
+    /// Published Action.recurrenceRule is an optional string even for ordinary
+    /// Actions. Its presence outside Habits is a semantic lint, not activation.
     #[serde(rename = "recurrenceRule", skip_serializing_if = "Option::is_none")]
     pub recurrence_rule: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -105,7 +107,7 @@ impl SchemaAction {
             }),
             external_occurrence_key: action.external_occurrence_key.clone(),
             parent_id: action.parent_id.map(|u| u.to_string()),
-            recurrence_rule: None,
+            recurrence_rule: action.recurrence_rule.clone(),
             children: None,
         }
     }

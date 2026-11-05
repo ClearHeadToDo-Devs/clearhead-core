@@ -136,7 +136,10 @@ pub fn build(ctx: &CommandContext) -> anyhow::Result<Orient> {
             let completed_path = clearhead_cli::filesystem::action_files::completed_actions_path(
                 &charter_root.join(actions_file),
             );
-            match clearhead_cli::filesystem::action_files::read_actions(&completed_path) {
+            match clearhead_cli::filesystem::action_files::read_actions_in(
+                &workspace.root,
+                &completed_path,
+            ) {
                 Ok(actions) => completions.extend(actions),
                 Err(error) if workspace.root == ctx.data_dir => return Err(error.into()),
                 Err(error) => tracing::warn!(

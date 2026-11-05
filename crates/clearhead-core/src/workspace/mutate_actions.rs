@@ -89,6 +89,10 @@ pub fn prepare_action_insert(
     new_action: Action,
     parent: Option<&ActionSelector>,
 ) -> Result<(EffectBatch, PreparedInsertOutcome), ActionPrepareError> {
+    crate::workspace::action_files::require_action_resource(std::path::Path::new(
+        source.path.as_str(),
+    ))
+    .map_err(ActionPrepareError::Domain)?;
     let parent_id = match parent {
         Some(selector) => Some(
             unique_selector_match(&source.actions, selector)
@@ -121,6 +125,10 @@ pub fn prepare_action_update(
     update: ActionUpdate,
     now: DateTime<Local>,
 ) -> Result<(EffectBatch, PreparedUpdateOutcome), ActionPrepareError> {
+    crate::workspace::action_files::require_action_resource(std::path::Path::new(
+        source.path.as_str(),
+    ))
+    .map_err(ActionPrepareError::Domain)?;
     if let Some(state) = disallowed_terminal_update(&update) {
         return Err(ActionPrepareError::Domain(format!(
             "cannot set state to {state:?} via update; use complete/cancel, which close the selected action in place"
@@ -157,6 +165,12 @@ pub fn prepare_action_delete(
     completed_sidecar: SidecarResourceState,
     selector: &ActionSelector,
 ) -> Result<(EffectBatch, PreparedDeleteOutcome), ActionPrepareError> {
+    for path in [&active.path, &completed.path] {
+        crate::workspace::action_files::require_action_resource(std::path::Path::new(
+            path.as_str(),
+        ))
+        .map_err(ActionPrepareError::Domain)?;
+    }
     let mut active_actions = active.actions;
     let mut completed_actions = completed.actions;
     let (from_completed, action_id) = match unique_selector_match(&active_actions, selector)

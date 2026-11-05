@@ -146,6 +146,9 @@ impl Action {
         }
         if let Some(planned) = &self.planned {
             write!(f, " @{}", planned)?;
+            if let Some(rule) = &self.recurrence_rule {
+                write!(f, " R:{rule}")?;
+            }
         }
         if let Some(due_date) = &self.due_date {
             write!(f, " :{}", due_date)?;
@@ -230,6 +233,8 @@ pub fn parse_action_recursive(
     let mut id = None;
     let mut charter = None;
     let mut planned = None;
+    let mut recurrence_rule = None;
+    let mut planned_blocks = 0;
     let mut completed_date_time = None;
     let mut created_date_time = None;
     let mut predecessors = Vec::new();
@@ -284,12 +289,19 @@ pub fn parse_action_recursive(
                 }
             }
             "do_date" => {
-                // Action has no field for a rule, so reading on would drop it
-                // at the next write. Refuse until habits files are read
-                // (`core-habit-readers`).
-                if meta.child_by_field_name("recurrence").is_some() {
-                    return Err("R: recurrence is not supported yet; the file is left unchanged");
+                planned_blocks += 1;
+                let rule = meta.child_by_field_name("recurrence").map(|recurrence| {
+                    get_node_text(&recurrence, &node.source)
+                        .strip_prefix("R:")
+                        .unwrap_or_default()
+                        .to_string()
+                });
+                if planned_blocks > 1 && (recurrence_rule.is_some() || rule.is_some()) {
+                    return Err(
+                        "duplicate planned blocks with recurrence cannot be rewritten losslessly",
+                    );
                 }
+                recurrence_rule = rule;
                 (planned, do_date_range) = parse_planned_field(&meta, &node.source);
             }
             "due_date" => {
@@ -363,6 +375,7 @@ pub fn parse_action_recursive(
         priority,
         contexts: context_list,
         planned,
+        recurrence_rule,
         due_date: due_date_time,
         completed_at: completed_date_time,
         created_at: created_date_time,
@@ -512,10 +525,9 @@ mod tests {
             .expect("Failed to convert to ActionList")
     }
 
-    /// Until habits files are read, a recurrence is refused as 0.3.2 refused it,
-    /// so no write can drop the rule it cannot hold.
+    /// Replaces e726274's temporary refusal: retain the rule for every writer.
     #[test]
-    fn recurrence_is_refused_not_dropped() {
+    fn recurrence_is_retained_not_dropped() {
         let source = "[ ] Walk @2026-11-05T07:00 R:FREQ=DAILY\n  >[ ] Shoes\n";
         let tree = parse_tree(source).unwrap();
         let parsed: crate::workspace::actions::source::ParsedDocument = TreeWrapper {
@@ -524,12 +536,12 @@ mod tests {
         }
         .try_into()
         .unwrap();
-        assert!(
-            parsed.actions.is_empty(),
-            "no action survives without its rule"
+        assert_eq!(parsed.actions.len(), 2);
+        assert!(parsed.syntax_errors.is_empty());
+        assert_eq!(
+            parsed.actions[0].recurrence_rule.as_deref(),
+            Some("FREQ=DAILY")
         );
-        assert_eq!(parsed.syntax_errors.len(), 1);
-        assert!(parsed.syntax_errors[0].message.contains("R:"));
     }
 
     #[test]

@@ -298,7 +298,7 @@ fn component_to_plan<T: Component>(
 /// - `template: <name>` — binds a template for structural instantiation
 ///
 /// Returns `(template_name, description)`.
-fn parse_description_directives(desc: &str) -> (Option<String>, Option<String>) {
+pub(crate) fn parse_description_directives(desc: &str) -> (Option<String>, Option<String>) {
     let mut template: Option<String> = None;
     let mut body_start = 0usize;
 

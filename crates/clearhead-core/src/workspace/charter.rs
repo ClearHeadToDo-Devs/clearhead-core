@@ -62,6 +62,9 @@ pub struct MarkdownCharter {
     pub state: Option<CharterState>,
     pub plans: Vec<ICSPlan>,
     pub actions: Vec<SourcedAction>,
+    pub habits: Vec<crate::domain::Habit>,
+    pub habits_file: Option<PathBuf>,
+    pub habit_sources: std::collections::HashMap<Uuid, crate::workspace::actions::SourceMetadata>,
 
     pub md_file: Option<PathBuf>,
     pub actions_file: Option<PathBuf>,
@@ -80,7 +83,7 @@ impl From<MarkdownCharter> for Charter {
             parent: mc.parent,
             objectives: mc.objectives,
             state: mc.state,
-            habits: vec![],
+            habits: mc.habits,
             plans: mc.plans.into_iter().map(|ip| ip.plan).collect(),
             actions: mc.actions.into_iter().map(|sa| sa.action).collect(),
         }
@@ -100,6 +103,9 @@ impl From<Charter> for MarkdownCharter {
         };
         MarkdownCharter {
             id: c.id,
+            habits: c.habits,
+            habits_file: None,
+            habit_sources: Default::default(),
             id_source: CharterIdSource::Derived,
             title: c.title,
             description: c.description,

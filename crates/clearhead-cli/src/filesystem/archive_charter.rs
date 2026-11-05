@@ -64,7 +64,7 @@ use clearhead_core::workspace::{MarkdownCharter, WorkspaceError};
 
 use crate::filesystem::mounts::NativeWorkspaceMounts;
 use crate::filesystem::sidecar::read_sidecar;
-use crate::filesystem::{load_workspace, read_actions, read_workspace};
+use crate::filesystem::{load_workspace, read_workspace};
 
 // ============================================================================
 // Public types
@@ -279,7 +279,7 @@ fn archive_many(
         // unless forced. Counting is the only reason we read the files — the
         // bytes themselves move verbatim, so there is no hydration to do.
         let open_count = match &acts_abs {
-            Some(p) => read_actions(p)?
+            Some(p) => super::action_files::read_actions_in(root, p)?
                 .iter()
                 .filter(|a| !matches!(a.state, ActionState::Completed | ActionState::Cancelled))
                 .count(),
@@ -314,7 +314,7 @@ fn archive_many(
             )
             .map_err(WorkspaceError::Actions)?
             .len(),
-            None => count_actions(&acts_abs)?,
+            None => count_actions(root, &acts_abs)?,
         };
         completed_swept += match completed_abs.as_ref().and_then(|p| swept.get(p)) {
             Some(bytes) => clearhead_core::parse_actions(
@@ -322,7 +322,7 @@ fn archive_many(
             )
             .map_err(WorkspaceError::Actions)?
             .len(),
-            None => count_actions(&completed_abs)?,
+            None => count_actions(root, &completed_abs)?,
         };
 
         // Compute self-containing destination bytes without mutating live
@@ -364,7 +364,16 @@ fn archive_many(
         let completed_replacement = completed_abs.as_ref().and_then(|p| swept.remove(p));
         let completed_sidecar = completed_abs.as_ref().map(|p| sidecar_path(p));
         let completed_meta_replacement = completed_sidecar.as_ref().and_then(|p| swept.remove(p));
-        let quartet: [(Option<PathBuf>, PathBuf, Option<Vec<u8>>); 5] = [
+        let habits_abs = mc
+            .habits_file
+            .as_ref()
+            .map(|rel| layout.charter_root.join(rel));
+        let quartet: [(Option<PathBuf>, PathBuf, Option<Vec<u8>>); 6] = [
+            (
+                habits_abs,
+                archive_root.join(format!("{}.habits.actions", mc.id)),
+                None,
+            ),
             (acts_abs, acts_dest.clone(), active_replacement),
             (
                 completed_abs,
@@ -704,9 +713,9 @@ fn map_policy_error(error: ArchivePolicyError) -> ArchiveCharterError {
 }
 
 /// Count the actions in an optional file, treating a missing file as empty.
-fn count_actions(path: &Option<PathBuf>) -> Result<usize, ArchiveCharterError> {
+fn count_actions(root: &Path, path: &Option<PathBuf>) -> Result<usize, ArchiveCharterError> {
     match path {
-        Some(p) => Ok(read_actions(p)?.len()),
+        Some(p) => Ok(super::action_files::read_actions_in(root, p)?.len()),
         None => Ok(0),
     }
 }
@@ -1065,9 +1074,9 @@ mod tests {
     #[test]
     fn missing_action_sources_count_as_zero() {
         let temp = tempfile::tempdir().expect("tempdir");
-        assert_eq!(count_actions(&None).unwrap(), 0);
+        assert_eq!(count_actions(temp.path(), &None).unwrap(), 0);
         assert_eq!(
-            count_actions(&Some(temp.path().join("missing.actions"))).unwrap(),
+            count_actions(temp.path(), &Some(temp.path().join("missing.actions"))).unwrap(),
             0
         );
     }

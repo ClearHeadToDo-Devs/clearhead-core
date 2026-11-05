@@ -3093,6 +3093,9 @@ mod tests {
             overrides: BTreeMap::new(),
         };
         let charter = MarkdownCharter {
+            habits: vec![],
+            habits_file: None,
+            habit_sources: Default::default(),
             id: Uuid::now_v7(),
             id_source: crate::workspace::CharterIdSource::Ephemeral,
             title: "health".into(),

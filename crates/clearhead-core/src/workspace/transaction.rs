@@ -569,6 +569,12 @@ pub fn prepare_transaction_with_occurrences(
     >,
 ) -> Result<(EffectBatch, PreparedTransactionOutcome), TransactionError> {
     require_actions_formatting().map_err(TransactionError::Request)?;
+    for file in &model.files {
+        for path in [&file.source_path, &file.completed_path] {
+            super::action_files::require_action_resource(std::path::Path::new(path.as_str()))
+                .map_err(TransactionError::Request)?;
+        }
+    }
 
     let mut occurrence_effects = std::collections::BTreeMap::new();
     let mut occurrence_preconditions = std::collections::BTreeMap::new();

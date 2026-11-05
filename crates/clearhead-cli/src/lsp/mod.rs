@@ -14,7 +14,7 @@ mod handlers;
 mod providers;
 mod telemetry;
 
-use providers::{compute_diagnostics, finding_to_lsp};
+use providers::{compute_file_diagnostics, finding_to_lsp};
 
 #[derive(Debug)]
 struct DocumentState {
@@ -101,7 +101,13 @@ impl Backend {
                 let mut diagnostics = document
                     .parsed
                     .as_ref()
-                    .map(compute_diagnostics)
+                    .map(|parsed| {
+                        compute_file_diagnostics(
+                            parsed,
+                            &uri,
+                            self.workspace_for_uri(&uri).as_deref(),
+                        )
+                    })
                     .unwrap_or_default();
                 diagnostics.extend(workspace_diagnostics);
                 diagnostics
@@ -121,7 +127,7 @@ impl Backend {
 
             let mut diagnostics = if let Some(ref p) = parsed {
                 debug!(uri = ?uri, action_count = p.actions.len(), "Document updated");
-                compute_diagnostics(p)
+                compute_file_diagnostics(p, &uri, self.workspace_for_uri(&uri).as_deref())
             } else {
                 warn!(uri = ?uri, "Document update failed to parse");
                 Vec::new()
