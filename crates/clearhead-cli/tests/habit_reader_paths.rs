@@ -206,7 +206,7 @@ fn doctor_displays_each_template_lint_source_line() {
     let env = TestEnv::new();
     env.write_text(
         "templates/named.actions",
-        "[ ] First step\\n\\n[ ] Second step\\n",
+        "[ ] First step\n\n[ ] Second step\n",
     );
 
     let output = env.command().args(["doctor"]).output().unwrap();
