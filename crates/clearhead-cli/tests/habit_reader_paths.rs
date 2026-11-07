@@ -202,6 +202,20 @@ fn habit_reader_conformance_habit_only_owner_locations_and_sidecar_doctor() {
 }
 
 #[test]
+fn doctor_displays_each_template_lint_source_line() {
+    let env = TestEnv::new();
+    env.write_text(
+        "templates/named.actions",
+        "[ ] First step\n\n[ ] Second step\n",
+    );
+
+    let output = env.command().args(["doctor"]).output().unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("templates/named.actions:1"), "{stdout}");
+    assert!(stdout.contains("templates/named.actions:3"), "{stdout}");
+}
+
+#[test]
 fn habit_reader_conformance_discovery_and_explicit_action_guards() {
     for anchor in ["next", "review", "project/next"] {
         let env = TestEnv::new();

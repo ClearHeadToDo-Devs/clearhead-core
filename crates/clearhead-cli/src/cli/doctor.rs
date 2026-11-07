@@ -150,7 +150,11 @@ fn print_report(diagnosis: &Diagnosis) {
         };
         println!("\n{} ({})", label, group.len());
         for finding in group {
-            println!("  [{}] {}", finding.path.display(), finding.code);
+            let path = finding.range.map_or_else(
+                || finding.path.display().to_string(),
+                |range| format!("{}:{}", finding.path.display(), range.start_row + 1),
+            );
+            println!("  [{}] {}", path, finding.code);
             for line in finding.message.lines() {
                 println!("    {}", line.trim_start());
             }

@@ -13,9 +13,9 @@ use super::pathing::{
     infer_parent_charter_name_for_workspace,
 };
 use crate::domain::{Charter, DomainModel, Objective};
-use crate::workspace::actions::TrustedDocument;
 use crate::workspace::actions::convert::from_actions_with_charter;
 use crate::workspace::actions::repository::SourcedAction;
+use crate::workspace::actions::{LintDiagnostic, LintSeverity, TrustedDocument};
 use crate::workspace::calendar::ics::parse_ics;
 use crate::workspace::charter::{
     CharterIdSource, MarkdownCharter, frontmatter_has_parent_key, implicit_charter, parse_charter,
@@ -143,12 +143,7 @@ pub fn assemble_workspace(input: &WorkspaceAssemblyInput) -> Result<WorkspaceRea
             &parsed_doc,
             &Path::new("charters").join(&relative),
         ) {
-            findings.push(match diagnostic.severity {
-                crate::workspace::actions::LintSeverity::Error => {
-                    Finding::violation(&diagnostic.code, &relative, diagnostic.message)
-                }
-                _ => Finding::warning(&diagnostic.code, &relative, diagnostic.message),
-            });
+            findings.push(finding_from_lint_diagnostic(&relative, diagnostic));
         }
         let source_map = parsed_doc.source_map;
         let mut sourced: Vec<SourcedAction> = parsed_doc
@@ -226,11 +221,7 @@ pub fn assemble_workspace(input: &WorkspaceAssemblyInput) -> Result<WorkspaceRea
             && let Ok(doc) = crate::workspace::parse_document(source)
         {
             for diagnostic in crate::workspace::habit_files::lint_action_file(&doc, relative) {
-                findings.push(Finding::warning(
-                    &diagnostic.code,
-                    relative,
-                    diagnostic.message,
-                ));
+                findings.push(finding_from_lint_diagnostic(relative, diagnostic));
             }
         }
     }
@@ -560,6 +551,23 @@ pub fn assembled_domain_model(read: WorkspaceRead) -> DomainModel {
     }
 }
 
+fn finding_from_lint_diagnostic(path: &Path, diagnostic: LintDiagnostic) -> Finding {
+    match diagnostic.severity {
+        LintSeverity::Error => Finding::violation_with_range(
+            &diagnostic.code,
+            path,
+            diagnostic.message,
+            diagnostic.range,
+        ),
+        LintSeverity::Warning | LintSeverity::Info => Finding::warning_with_range(
+            &diagnostic.code,
+            path,
+            diagnostic.message,
+            diagnostic.range,
+        ),
+    }
+}
+
 fn action_files(input: &WorkspaceAssemblyInput) -> Vec<PathBuf> {
     let mut paths = input
         .workspace_files()
@@ -797,6 +805,7 @@ fn resolve_predecessor_aliases(charters: &mut [MarkdownCharter]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::workspace::actions::SourceRange;
     use crate::workspace::resource::{
         ResourceRevision, ResourceSnapshot, WorkspaceInventory, WorkspaceSnapshot,
     };
@@ -861,6 +870,35 @@ mod tests {
             },
             charter_ids,
         }
+    }
+
+    #[test]
+    fn lint_finding_conversion_preserves_severity_and_source_range() {
+        let range = SourceRange {
+            start_row: 3,
+            start_col: 4,
+            end_row: 3,
+            end_col: 8,
+        };
+        let error = finding_from_lint_diagnostic(
+            Path::new("template"),
+            LintDiagnostic::error("E002", "invalid template".into(), range),
+        );
+        assert_eq!(
+            error.severity,
+            super::super::findings::FindingSeverity::Violation
+        );
+        assert_eq!(error.range, Some(range));
+
+        let warning = finding_from_lint_diagnostic(
+            Path::new("template"),
+            LintDiagnostic::warning("habit-id-missing", "persist id".into(), range),
+        );
+        assert_eq!(
+            warning.severity,
+            super::super::findings::FindingSeverity::Warning
+        );
+        assert_eq!(warning.range, Some(range));
     }
 
     #[test]
