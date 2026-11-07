@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## Unreleased
 
+Adopts published specification v0.6.0 with grammar v0.11.1; this is contract and schema-URL adoption only, with no new behavior. Habits remain partly implemented: native graph projection exists, but stamping, recurrence linting and generation are not implemented. Uses Core from this source revision.
+
 ## 0.4.0 - 2026-11-05
 
 Implements specification v0.5.0 with grammar v0.11.1: `clearhead 0.4.0 (specification v0.5.0, grammar v0.11.1)`. The individual close and root-tree archive of v0.4.0 (platform Decisions 58 and 59) are complete. **The Habits of v0.5.0 are only partly implemented:** Core can project a Habit into the application graph, but nothing reads habits files yet, generates occurrences or syncs Habits with the calendar. Uses Core 0.4.0.
