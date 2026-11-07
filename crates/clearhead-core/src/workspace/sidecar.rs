@@ -13,10 +13,10 @@ use std::path::{Path, PathBuf};
 /// The published contract for this file's shape. Stamped into every sidecar
 /// on render (see [`render_sidecar`]) so the file is self-describing and editors
 /// validate on write — the same declarative-filesystem theme as recording
-/// `charter.id`. Points at `master`; retargeting to a tagged release is
-/// tracked separately (see the schema-source-of-truth decision).
+/// `charter.id`. The URL targets the published specification release adopted
+/// by this Core revision.
 pub const CHARTER_METADATA_SCHEMA_URL: &str =
-    "https://clearhead.dev/schemas/v0.5.0/charter_metadata.schema.json";
+    "https://clearhead.dev/schemas/v0.6.0/charter_metadata.schema.json";
 
 /// Root of the per-charter sidecar JSON (`.<charter>.json`).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

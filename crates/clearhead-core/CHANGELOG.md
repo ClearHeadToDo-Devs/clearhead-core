@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+Adopts published specification v0.6.0; this is contract and schema-URL adoption only, with no new behavior. Habits remain partly implemented: native graph projection exists, but stamping, recurrence linting and generation are not implemented.
+
 ## [0.4.0] - 2026-11-05
 
 Included in the clearhead 0.4.0 binary release. Declares specification v0.5.0 and pins registry tree-sitter-actions `=0.11.1`; schema URLs move to `v0.5.0`. **v0.5.0 Habits are only partly implemented:** the domain and graph below, with no habits-file reader, occurrence generation or calendar migration yet.
