@@ -135,7 +135,7 @@ pub struct SourceMetadata {
 }
 
 /// A row/column span within a source file.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize)]
 pub struct SourceRange {
     pub start_row: usize,
     pub start_col: usize,

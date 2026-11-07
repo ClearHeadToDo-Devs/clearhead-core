@@ -6,6 +6,7 @@
 //! Produced by `read_workspace_with_plans` (per-file read failures) and,
 //! eventually, `doctor` (cross-file coherence checks). See Decision 34.
 
+use crate::workspace::actions::SourceRange;
 use crate::workspace::resource::MountId;
 use serde::Serialize;
 use std::path::PathBuf;
@@ -36,6 +37,9 @@ pub struct Finding {
     /// charter resources, plans root for calendar resources).
     pub path: PathBuf,
     pub message: String,
+    /// Original zero-based parser range for source-backed findings.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub range: Option<SourceRange>,
 }
 
 impl Finding {
@@ -55,7 +59,19 @@ impl Finding {
             mount,
             path: path.into(),
             message: message.into(),
+            range: None,
         }
+    }
+
+    pub fn warning_with_range(
+        code: &str,
+        path: impl Into<PathBuf>,
+        message: impl Into<String>,
+        range: SourceRange,
+    ) -> Self {
+        let mut finding = Self::warning(code, path, message);
+        finding.range = Some(range);
+        finding
     }
 
     pub fn violation(code: &str, path: impl Into<PathBuf>, message: impl Into<String>) -> Self {
@@ -74,7 +90,19 @@ impl Finding {
             mount,
             path: path.into(),
             message: message.into(),
+            range: None,
         }
+    }
+
+    pub fn violation_with_range(
+        code: &str,
+        path: impl Into<PathBuf>,
+        message: impl Into<String>,
+        range: SourceRange,
+    ) -> Self {
+        let mut finding = Self::violation(code, path, message);
+        finding.range = Some(range);
+        finding
     }
 }
 
@@ -88,5 +116,6 @@ mod tests {
         let json = serde_json::to_value(&f).unwrap();
         assert_eq!(json["severity"], "violation");
         assert_eq!(json["code"], "sidecar-corrupt");
+        assert!(json.get("range").is_none());
     }
 }
