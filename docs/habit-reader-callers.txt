@@ -1,6 +1,6 @@
 # Audited surface: docs/habit-readers.md; count then source path.
 24 crates/clearhead-cli/src/cli/action.rs
-13 crates/clearhead-cli/src/cli/charter.rs
+14 crates/clearhead-cli/src/cli/charter.rs
 5 crates/clearhead-cli/src/cli/debug.rs
 14 crates/clearhead-cli/src/cli/file.rs
 13 crates/clearhead-cli/src/cli/mod.rs
@@ -9,7 +9,7 @@
 1 crates/clearhead-cli/src/cli/query.rs
 1 crates/clearhead-cli/src/cli/resolver.rs
 2 crates/clearhead-cli/src/cli/service.rs
-2 crates/clearhead-cli/src/cli/template.rs
+4 crates/clearhead-cli/src/cli/template.rs
 1 crates/clearhead-cli/src/display/detail.rs
 6 crates/clearhead-cli/src/display/tree.rs
 1 crates/clearhead-cli/src/environment_reader.rs
@@ -17,13 +17,13 @@
 15 crates/clearhead-cli/src/filesystem/action_files.rs
 61 crates/clearhead-cli/src/filesystem/archive_charter.rs
 5 crates/clearhead-cli/src/filesystem/archive_facts.rs
-57 crates/clearhead-cli/src/filesystem/calendar.rs
+59 crates/clearhead-cli/src/filesystem/calendar.rs
 1 crates/clearhead-cli/src/filesystem/discovery.rs
 6 crates/clearhead-cli/src/filesystem/doctor.rs
 3 crates/clearhead-cli/src/filesystem/durability.rs
 22 crates/clearhead-cli/src/filesystem/mod.rs
 5 crates/clearhead-cli/src/filesystem/mounts.rs
-5 crates/clearhead-cli/src/filesystem/templates.rs
+4 crates/clearhead-cli/src/filesystem/templates.rs
 6 crates/clearhead-cli/src/lib.rs
 7 crates/clearhead-cli/src/lsp/handlers.rs
 15 crates/clearhead-cli/src/lsp/mod.rs
@@ -49,7 +49,7 @@
 83 crates/clearhead-core/src/workspace/calendar/reconcile.rs
 5 crates/clearhead-core/src/workspace/calendar/sync_store.rs
 5 crates/clearhead-core/src/workspace/charter.rs
-5 crates/clearhead-core/src/workspace/habit_files.rs
+6 crates/clearhead-core/src/workspace/habit_files.rs
 1 crates/clearhead-core/src/workspace/init.rs
 7 crates/clearhead-core/src/workspace/mod.rs
 25 crates/clearhead-core/src/workspace/mutate_actions.rs

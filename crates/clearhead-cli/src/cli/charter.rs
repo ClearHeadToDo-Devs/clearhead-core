@@ -506,7 +506,7 @@ pub fn add_charter(
             .context("Failed to read template")?;
 
         let instantiated =
-            templates::instantiate_template(&tpl_acts, |_| uuid::Uuid::now_v7(), None);
+            templates::instantiate_template(&tpl_acts.actions, |_| uuid::Uuid::now_v7(), None);
 
         super::save_file(
             &ctx.workspace_for_file(&actions_path),

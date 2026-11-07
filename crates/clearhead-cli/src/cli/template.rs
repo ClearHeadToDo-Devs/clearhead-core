@@ -40,11 +40,11 @@ pub fn apply_template(
             )
         })?;
 
-    if tpl_acts.is_empty() {
+    if tpl_acts.actions.is_empty() {
         anyhow::bail!("Template '{}' is empty", name);
     }
 
-    let instantiated = templates::instantiate_template(&tpl_acts, |_| Uuid::now_v7(), None);
+    let instantiated = templates::instantiate_template(&tpl_acts.actions, |_| Uuid::now_v7(), None);
 
     if dry_run {
         println!(
