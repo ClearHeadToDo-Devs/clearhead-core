@@ -51,6 +51,21 @@ pub fn lint_action_file(doc: &ParsedDocument, path: &Path) -> Vec<LintDiagnostic
             .unwrap_or_default()
     };
     let mut diagnostics = Vec::new();
+    if template || habits {
+        for action in &doc.actions {
+            if doc
+                .source_map
+                .get(&action.id)
+                .is_some_and(|source| source.is_id_generated)
+            {
+                diagnostics.push(LintDiagnostic::warning(
+                    "habit-id-missing",
+                    "persist Habit and template-step ids before stamping".into(),
+                    range(action.id),
+                ));
+            }
+        }
+    }
     if !habits {
         for action in &doc.actions {
             if action.recurrence_rule.is_some() {
@@ -76,14 +91,6 @@ pub fn lint_action_file(doc: &ParsedDocument, path: &Path) -> Vec<LintDiagnostic
             ));
         }
         for action in std::iter::once(&habit.definition).chain(habit.children.iter()) {
-            let source = doc.source_map.get(&action.id);
-            if source.is_some_and(|source| source.is_id_generated) {
-                diagnostics.push(LintDiagnostic::warning(
-                    "habit-id-missing",
-                    "persist Habit and template-step ids before stamping".into(),
-                    range(action.id),
-                ));
-            }
             if action.parent_id.is_some() && action.recurrence_rule.is_some() {
                 diagnostics.push(LintDiagnostic::error(
                     "E002",

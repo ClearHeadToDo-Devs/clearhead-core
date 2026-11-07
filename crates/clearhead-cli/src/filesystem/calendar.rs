@@ -936,10 +936,10 @@ fn sync_plan_templates(
                 continue;
             };
             let steps = crate::filesystem::templates::read_template_actions(&template_path)?;
-            let generated_ids = steps.iter().map(|_| Uuid::now_v7()).collect();
+            let generated_ids = steps.actions.iter().map(|_| Uuid::now_v7()).collect();
             templates.push(SyncPlanTemplate {
                 plan_id: plan.plan.id,
-                steps,
+                steps: steps.actions,
                 generated_ids,
             });
         }

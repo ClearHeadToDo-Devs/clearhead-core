@@ -46,6 +46,19 @@ syntax-only consumers, inline tests and incidental documentation matches.
 | nvim | `lua/clearhead/init.lua` | Complete-suffix stem inference; live picker excludes definitions/templates/history; save autocmd never sweeps Habits; explicit Habit archive routes to charter archive. Format/reload autocmds still apply to Habit syntax. |
 | Other nvim suffix matches | `lua/clearhead/{config,health}.lua`, `ftdetect/actions.lua` | Configuration/default capture, grammar compatibility and syntax filetype detection; no semantic Action discovery. Remaining Lua modules consume classified CLI views or edit syntax. |
 
+## Named-template identity records (2026-11-07)
+
+`filesystem/templates.rs::read_template_actions` returns the strict parser's
+`ParsedDocument`, including `source_map`: a step's `is_id_generated` record
+identifies ids absent from the written source. A generated UUID in `actions`
+alone is not evidence of a persisted identity. Manual application, charter
+creation and legacy calendar expansion consume the document's `actions` as
+before; they do not impose a new stamping policy. `habit_files::lint_action_file`
+reports `habit-id-missing` for named-template steps as well as Habit roots and
+inline children, using each step's source range. `habit_template_ids` integration
+tests in Core and CLI cover the report, reader records, written-id round trips
+and strict syntax rejection. Template lookup and stamping remain separate work.
+
 ## Guard and evidence
 
 `python3 scripts/habit-reader-gate.py` compares source-match counts with

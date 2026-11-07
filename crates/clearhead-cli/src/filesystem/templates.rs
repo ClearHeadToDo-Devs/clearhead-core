@@ -5,9 +5,17 @@ use std::path::{Path, PathBuf};
 use clearhead_core::workspace::WorkspaceError;
 
 /// Read template data explicitly, never through the executable-Action reader.
-pub fn read_template_actions(path: &Path) -> Result<clearhead_core::ActionList, WorkspaceError> {
+///
+/// Keep the parser's source map alongside the steps: `is_id_generated` distinguishes
+/// an ephemeral parsed id from a written id without trusting caller-supplied flags.
+/// As before, reject syntax errors rather than returning a recovered template.
+pub fn read_template_actions(
+    path: &Path,
+) -> Result<clearhead_core::ParsedDocument, WorkspaceError> {
     let source = std::fs::read_to_string(path)?;
-    clearhead_core::parse_actions(&source).map_err(WorkspaceError::Actions)
+    clearhead_core::parse_actions_with_mode(&source, clearhead_core::ParseMode::Strict)
+        .map(|outcome| outcome.document)
+        .map_err(|error| WorkspaceError::Actions(error.to_string()))
 }
 
 pub fn resolve_template(
