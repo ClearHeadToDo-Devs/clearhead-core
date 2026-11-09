@@ -19,7 +19,7 @@
 5 crates/clearhead-cli/src/filesystem/archive_facts.rs
 59 crates/clearhead-cli/src/filesystem/calendar.rs
 1 crates/clearhead-cli/src/filesystem/discovery.rs
-6 crates/clearhead-cli/src/filesystem/doctor.rs
+7 crates/clearhead-cli/src/filesystem/doctor.rs
 3 crates/clearhead-cli/src/filesystem/durability.rs
 22 crates/clearhead-cli/src/filesystem/mod.rs
 5 crates/clearhead-cli/src/filesystem/mounts.rs
@@ -55,8 +55,8 @@
 25 crates/clearhead-core/src/workspace/mutate_actions.rs
 11 crates/clearhead-core/src/workspace/resource.rs
 30 crates/clearhead-core/src/workspace/sidecar.rs
-29 crates/clearhead-core/src/workspace/store/assembly.rs
-29 crates/clearhead-core/src/workspace/store/doctor.rs
+31 crates/clearhead-core/src/workspace/store/assembly.rs
+31 crates/clearhead-core/src/workspace/store/doctor.rs
 1 crates/clearhead-core/src/workspace/store/load.rs
 23 crates/clearhead-core/src/workspace/store/pathing.rs
 3 crates/clearhead-core/src/workspace/templates.rs

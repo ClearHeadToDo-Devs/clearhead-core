@@ -104,6 +104,7 @@ mod tests {
             ),
             rrule: Some("FREQ=DAILY".into()),
             template: None,
+            extra: Default::default(),
         };
         let mut metadata = CharterMetadata::default();
         metadata.actions.insert(
@@ -112,6 +113,7 @@ mod tests {
                 created: None,
                 plan: None,
                 occurrence: Some(occurrence.clone()),
+                extra: Default::default(),
             },
         );
         write_sidecar(&sidecar_path(&completed), &metadata).unwrap();
