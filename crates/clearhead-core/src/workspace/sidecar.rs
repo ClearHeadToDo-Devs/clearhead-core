@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 /// `charter.id`. The URL targets the published specification release adopted
 /// by this Core revision.
 pub const CHARTER_METADATA_SCHEMA_URL: &str =
-    "https://clearhead.dev/schemas/v0.6.0/charter_metadata.schema.json";
+    "https://clearhead.dev/schemas/v0.7.0/charter_metadata.schema.json";
 
 /// Root of the per-charter sidecar JSON (`.<charter>.json`).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
