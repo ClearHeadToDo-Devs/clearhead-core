@@ -6,7 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## Unreleased
 
-Adopts published specification v0.7.0 with grammar v0.11.1; this is contract and schema-URL adoption only, with no new behavior. Habits remain partly implemented: native graph projection exists, but stamping, recurrence linting and generation are not implemented. Uses Core from this source revision.
+Adopts published specification v0.7.0 with grammar v0.11.1; this is contract and schema-URL adoption only, with no new behavior. Habits remain partly implemented: native graph projection exists, but stamping, recurrence linting and generation are not implemented. Sidecar `notes.<uuid>` entries are not supported; Core has no notes field and deletes such keys on the next sidecar rewrite, including notes added by hand or another tool. Uses Core from this source revision.
 
 ## 0.4.0 - 2026-11-05
 
