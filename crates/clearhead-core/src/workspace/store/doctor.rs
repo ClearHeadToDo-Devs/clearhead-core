@@ -68,6 +68,8 @@ pub struct DoctorEvidence {
     /// The root charter's `charters/README.md`, when present.
     pub root_readme: Option<DoctorDocument>,
     pub sidecars: Vec<DoctorSidecarEvidence>,
+    /// Archive-root-relative sidecars, used only as note relocation destinations.
+    pub archived_sidecars: Vec<DoctorSidecarEvidence>,
     pub plan_collections: Vec<DoctorCollectionEvidence>,
     pub durability_residue: Vec<DurabilityResidue>,
     pub observed_at: DateTime<Local>,
@@ -77,6 +79,14 @@ pub struct DoctorEvidence {
 /// these typed instructions; shells never scrape human finding messages.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum DoctorRepair {
+    /// Move a complete log, never discard it. Destination is written first.
+    RelocateNotes {
+        source: WorkspacePath,
+        destination: WorkspacePath,
+        id: String,
+        expected: ResourceRevision,
+        destination_expected: Option<ResourceRevision>,
+    },
     PruneSidecarEntry {
         path: WorkspacePath,
         id: String,
@@ -143,7 +153,8 @@ pub fn diagnose(read: &WorkspaceRead, evidence: &DoctorEvidence) -> Diagnosis {
 
     check_workspace_identity(&evidence.manifest, &mut findings);
     let completed = collect_completed_actions(&evidence.completed_actions, &mut findings);
-    let archived = collect_archived_action_states(&evidence.archived_actions, &mut findings);
+    let (archived, archived_owners) =
+        collect_archived_action_states(&evidence.archived_actions, &mut findings);
     let charters = &read.charters;
 
     check_duplicate_uuids(charters, &completed, &mut findings);
@@ -165,6 +176,14 @@ pub fn diagnose(read: &WorkspaceRead, evidence: &DoctorEvidence) -> Diagnosis {
         check_sidecar_coherence(
             &evidence.sidecars,
             &known_action_ids,
+            &mut findings,
+            &mut repairs,
+        );
+        check_notes(
+            evidence,
+            charters,
+            &completed,
+            archived_owners,
             &mut findings,
             &mut repairs,
         );
@@ -449,12 +468,18 @@ fn check_duplicate_uuids(
 fn collect_archived_action_states(
     documents: &[DoctorDocument],
     findings: &mut Vec<Finding>,
-) -> HashMap<Uuid, ActionState> {
+) -> (HashMap<Uuid, ActionState>, HashMap<String, PathBuf>) {
     let mut states = HashMap::new();
+    let mut owners = HashMap::new();
     for document in documents {
         let relative = logical_path_buf(&document.path);
-        if !crate::workspace::action_files::is_action_history(&Path::new("archive").join(&relative))
-        {
+        let archived_path = Path::new("archive").join(&relative);
+        let history = crate::workspace::action_files::is_action_history(&archived_path);
+        let habits = matches!(
+            crate::workspace::action_files::classify_action_file(&relative),
+            Some((_, crate::workspace::action_files::ActionFileRole::Habits))
+        );
+        if !history && !habits {
             continue;
         }
         let source = match document_text(document) {
@@ -471,7 +496,10 @@ fn collect_archived_action_states(
         match crate::workspace::parse_document(source) {
             Ok(doc) => {
                 for action in doc.actions {
-                    states.insert(action.id, action.state);
+                    owners.insert(action.id.to_string(), sidecar_path(&archived_path));
+                    if history {
+                        states.insert(action.id, action.state);
+                    }
                 }
             }
             Err(error) => findings.push(Finding::warning(
@@ -481,7 +509,7 @@ fn collect_archived_action_states(
             )),
         }
     }
-    states
+    (states, owners)
 }
 
 /// A predecessor reference (`<uuid`) resolved against the live workspace and,
@@ -711,6 +739,112 @@ fn check_sidecar_coherence(
     }
 }
 
+/// Notes follow entity identity, unlike prunable orphan action metadata.
+fn check_notes(
+    evidence: &DoctorEvidence,
+    charters: &[MarkdownCharter],
+    completed: &HashMap<PathBuf, Vec<Action>>,
+    mut owners: HashMap<String, PathBuf>,
+    findings: &mut Vec<Finding>,
+    repairs: &mut Vec<DoctorRepair>,
+) {
+    for document in &evidence.archived_charters {
+        if let Ok(source) = document_text(document)
+            && let Ok(Some(id)) = crate::workspace::charter_frontmatter_id(source)
+            && let Some(anchor) =
+                super::actions_anchor_for_document(Path::new(document.path.as_str()))
+        {
+            owners.insert(
+                id.to_string(),
+                Path::new("archive").join(sidecar_path(&anchor)),
+            );
+        }
+    }
+    let sidecars = evidence
+        .sidecars
+        .iter()
+        .map(|sidecar| ("charters", sidecar))
+        .chain(
+            evidence
+                .archived_sidecars
+                .iter()
+                .map(|sidecar| ("archive", sidecar)),
+        )
+        .map(|(region, sidecar)| {
+            (
+                WorkspacePath::new(format!("{region}/{}", sidecar.document.path)).unwrap(),
+                (sidecar, parsed_sidecar(sidecar)),
+            )
+        })
+        .collect::<std::collections::BTreeMap<_, _>>();
+    for (path, action) in all_actions(charters, completed) {
+        owners.insert(
+            action.id.to_string(),
+            Path::new("charters").join(sidecar_path(path)),
+        );
+    }
+    for charter in charters {
+        let anchor = charter.actions_file.clone().or_else(|| {
+            charter
+                .md_file
+                .as_ref()
+                .and_then(|path| super::actions_anchor_for_document(path))
+        });
+        if let Some(anchor) = anchor {
+            let path = Path::new("charters").join(sidecar_path(&anchor));
+            owners.insert(charter.id.to_string(), path.clone());
+            for habit in &charter.habits {
+                for action in std::iter::once(&habit.definition).chain(habit.children.iter()) {
+                    owners.insert(action.id.to_string(), path.clone());
+                }
+            }
+        }
+    }
+    for (source, (sidecar, metadata)) in &sidecars {
+        let Some(metadata) = metadata else {
+            continue;
+        };
+        for id in metadata.notes.keys() {
+            let relative = logical_path_buf(source);
+            let Some(destination) = owners.get(id) else {
+                findings.push(Finding::warning(
+                    "orphaned-notes",
+                    &relative,
+                    format!("notes for '{id}' match no known entity; retained, never pruned"),
+                ));
+                continue;
+            };
+            if *destination == relative {
+                continue;
+            }
+            let Ok(destination) =
+                WorkspacePath::new(destination.to_string_lossy().replace('\\', "/"))
+            else {
+                continue;
+            };
+            findings.push(Finding::warning(
+                "misplaced-notes",
+                &relative,
+                format!("notes for '{id}' belong in {destination}; doctor --fix relocates them"),
+            ));
+            let destination_sidecar = sidecars.get(&destination);
+            let destination_expected =
+                destination_sidecar.map(|(s, _)| s.document.revision.clone());
+            // Never replace unreadable destination data with an empty sidecar.
+            if destination_sidecar.is_some_and(|(_, metadata)| metadata.is_none()) {
+                continue;
+            }
+            repairs.push(DoctorRepair::RelocateNotes {
+                source: source.clone(),
+                destination,
+                id: id.clone(),
+                expected: sidecar.document.revision.clone(),
+                destination_expected,
+            });
+        }
+    }
+}
+
 /// The earliest plausible `created` timestamp. ClearHead's files-as-truth
 /// storage did not exist before this, so anything earlier is a corrupt
 /// derivation (a non-v7 id whose random bits decoded as a timestamp), not
@@ -810,12 +944,14 @@ fn check_orphaned_sidecars(
     repairs: &mut Vec<DoctorRepair>,
 ) {
     for sidecar in sidecars.iter().filter(|sidecar| !sidecar.companion_exists) {
-        let retains_live_metadata = parsed_sidecar(sidecar).is_some_and(|metadata| {
-            metadata.actions.keys().any(|key| {
-                Uuid::parse_str(key)
-                    .ok()
-                    .is_some_and(|id| known_action_ids.contains(&id))
-            })
+        let retains_live_metadata = parsed_sidecar(sidecar).is_none_or(|metadata| {
+            !metadata.notes.is_empty()
+                || !metadata.extra.is_empty()
+                || metadata.actions.keys().any(|key| {
+                    Uuid::parse_str(key)
+                        .ok()
+                        .is_some_and(|id| known_action_ids.contains(&id))
+                })
         });
         if retains_live_metadata {
             continue;

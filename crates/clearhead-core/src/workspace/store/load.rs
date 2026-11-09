@@ -124,6 +124,9 @@ impl From<Workspace> for DomainModel {
 /// What a pure read of the workspace produced: everything that loaded, plus
 /// a [`Finding`] for everything that didn't (or loaded with issues).
 pub struct WorkspaceRead {
+    /// Union of every sidecar log, including notes for moved or closed entities.
+    /// Each log is ordered by instant with ties retaining sidecar/array order.
+    pub notes: std::collections::BTreeMap<String, Vec<crate::workspace::sidecar::Note>>,
     pub charters: Vec<MarkdownCharter>,
     pub objectives: Vec<crate::domain::Objective>,
     /// Each objective's file, relative to the data root (`objectives/…`).

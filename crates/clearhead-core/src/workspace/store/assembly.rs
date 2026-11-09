@@ -84,7 +84,7 @@ pub fn assemble_workspace(input: &WorkspaceAssemblyInput) -> Result<WorkspaceRea
     // Ordered by name, so every load returns charters in one order.
     let mut charters: BTreeMap<String, MarkdownCharter> = BTreeMap::new();
     let mut path_for_name: HashMap<String, PathBuf> = HashMap::new();
-    let global_actions = collect_sidecar_actions(input);
+    let global_metadata = collect_sidecar_metadata(input);
 
     for relative in action_files(input) {
         let Some(name) = infer_charter_name_for_workspace(&relative, root_charter) else {
@@ -160,7 +160,7 @@ pub fn assemble_workspace(input: &WorkspaceAssemblyInput) -> Result<WorkspaceRea
                 }
             })
             .collect();
-        hydrate_actions_map(&mut sourced, &global_actions);
+        hydrate_actions_map(&mut sourced, &global_metadata.actions);
         let is_habits = matches!(
             crate::workspace::action_files::classify_action_file(&relative),
             Some((_, crate::workspace::action_files::ActionFileRole::Habits))
@@ -477,6 +477,7 @@ pub fn assemble_workspace(input: &WorkspaceAssemblyInput) -> Result<WorkspaceRea
         }
     }
     Ok(WorkspaceRead {
+        notes: global_metadata.notes,
         charters,
         objectives,
         objective_files,
@@ -594,8 +595,10 @@ fn charter_files(input: &WorkspaceAssemblyInput) -> Vec<PathBuf> {
     paths
 }
 
-fn collect_sidecar_actions(input: &WorkspaceAssemblyInput) -> BTreeMap<String, ActionMeta> {
-    let mut union = BTreeMap::new();
+fn collect_sidecar_metadata(
+    input: &WorkspaceAssemblyInput,
+) -> crate::workspace::sidecar::CharterMetadata {
+    let mut union = crate::workspace::sidecar::CharterMetadata::default();
     let mut sidecars = input
         .workspace_files()
         .filter(|path| {
@@ -621,11 +624,15 @@ fn collect_sidecar_actions(input: &WorkspaceAssemblyInput) -> BTreeMap<String, A
             continue;
         };
         for (key, action) in metadata.actions {
-            let target: &mut ActionMeta = union.entry(key).or_default();
+            let target: &mut ActionMeta = union.actions.entry(key).or_default();
             target.created = target.created.or(action.created);
             target.plan = target.plan.clone().or(action.plan);
             target.occurrence = target.occurrence.clone().or(action.occurrence);
         }
+        crate::workspace::sidecar::merge_notes(&mut union.notes, metadata.notes);
+    }
+    for log in union.notes.values_mut() {
+        log.sort_by_key(|note| note.at);
     }
     union
 }

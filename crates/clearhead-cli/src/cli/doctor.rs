@@ -63,6 +63,24 @@ fn repair_unowned_state(
     let mut names = 0;
     for repair in &diagnosis.repairs {
         match repair {
+            DoctorRepair::RelocateNotes {
+                source,
+                destination,
+                id,
+                ..
+            } => {
+                println!(
+                    "{} notes for {} from {} to {}",
+                    if dry_run {
+                        "Would relocate"
+                    } else {
+                        "Relocated"
+                    },
+                    id,
+                    source,
+                    destination
+                );
+            }
             DoctorRepair::PruneSidecarEntry { path, id, .. } => {
                 entries += 1;
                 println!(

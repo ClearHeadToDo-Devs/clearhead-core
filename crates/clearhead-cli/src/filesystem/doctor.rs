@@ -68,6 +68,12 @@ pub fn observe_doctor(workspace_root: &Path) -> Result<DoctorEvidence, Workspace
         .filter(|path| {
             clearhead_core::workspace::action_files::is_action_history(
                 &super::action_files::role_path(&mounts.workspace, path),
+            ) || matches!(
+                clearhead_core::workspace::action_files::classify_action_file(path),
+                Some((
+                    _,
+                    clearhead_core::workspace::action_files::ActionFileRole::Habits
+                ))
             )
         })
         .map(|path| observe_document(&archive_root, path))
@@ -82,15 +88,8 @@ pub fn observe_doctor(workspace_root: &Path) -> Result<DoctorEvidence, Workspace
         .is_file()
         .then(|| observe_document(&charter_root, readme))
         .transpose()?;
-    let sidecars = walk_visible_files(&charter_root)
-        .into_iter()
-        .filter(|path| {
-            path.file_name()
-                .and_then(|name| name.to_str())
-                .is_some_and(|name| name.starts_with('.') && name.ends_with(".json"))
-        })
-        .map(|path| observe_sidecar(&charter_root, path))
-        .collect::<Result<Vec<_>, _>>()?;
+    let sidecars = observe_sidecars(&charter_root)?;
+    let archived_sidecars = observe_sidecars(&archive_root)?;
     let plan_collections = observe_plan_collections(&plans_root, MountId::Workspace)?;
 
     let mut durability_residue = Vec::new();
@@ -110,6 +109,7 @@ pub fn observe_doctor(workspace_root: &Path) -> Result<DoctorEvidence, Workspace
         archived_charters,
         root_readme,
         sidecars,
+        archived_sidecars,
         plan_collections,
         durability_residue,
         observed_at: Local::now(),
@@ -125,8 +125,6 @@ pub fn apply_doctor_repairs(
         return Ok(());
     }
     let mounts = NativeWorkspaceMounts::resolve(workspace_root);
-    let charter_root = mounts.workspace.join("charters");
-
     let current = diagnose_workspace(workspace_root)?;
     if current.repairs != repairs {
         return Err(WorkspaceError::Actions(
@@ -135,68 +133,7 @@ pub fn apply_doctor_repairs(
         ));
     }
 
-    let removed_sidecars = repairs
-        .iter()
-        .filter_map(|repair| match repair {
-            DoctorRepair::RemoveSidecar { path, expected } => {
-                Some((path.clone(), expected.clone()))
-            }
-            _ => None,
-        })
-        .collect::<BTreeMap<_, _>>();
-    struct SidecarEdit {
-        expected: ResourceRevision,
-        prune: BTreeSet<String>,
-        charter_id: Option<uuid::Uuid>,
-    }
-    let mut sidecar_edits: BTreeMap<WorkspacePath, SidecarEdit> = BTreeMap::new();
-    for repair in repairs {
-        let (DoctorRepair::PruneSidecarEntry { path, expected, .. }
-        | DoctorRepair::MirrorRootCharterId { path, expected, .. }) = repair
-        else {
-            continue;
-        };
-        if removed_sidecars.contains_key(path) {
-            continue;
-        }
-        let edit = sidecar_edits
-            .entry(path.clone())
-            .or_insert_with(|| SidecarEdit {
-                expected: expected.clone(),
-                prune: BTreeSet::new(),
-                charter_id: None,
-            });
-        if edit.expected != *expected {
-            return Err(WorkspaceError::Actions(format!(
-                "doctor repair has inconsistent revisions for sidecar '{}'",
-                path
-            )));
-        }
-        match repair {
-            DoctorRepair::PruneSidecarEntry { id, .. } => {
-                edit.prune.insert(id.clone());
-            }
-            DoctorRepair::MirrorRootCharterId { id, .. } => edit.charter_id = Some(*id),
-            _ => {}
-        }
-    }
-    for (relative, edit) in sidecar_edits {
-        let path = charter_root.join(relative.as_str());
-        validate_file_revision(&path, &edit.expected)?;
-        let mut metadata = crate::filesystem::sidecar::read_sidecar(&path)?;
-        for id in edit.prune {
-            metadata.actions.remove(&id);
-        }
-        if let Some(id) = edit.charter_id {
-            metadata.charter.get_or_insert_with(Default::default).id = Some(id);
-        }
-        crate::filesystem::sidecar::write_sidecar(&path, &metadata)?;
-    }
-    for (relative, expected) in removed_sidecars {
-        let path = charter_root.join(relative.as_str());
-        validate_file_revision(&path, &expected)?;
-        remove_file_if_present(&path)?;
-    }
+    repair_sidecars(&mounts.workspace, repairs)?;
     for repair in repairs {
         match repair {
             DoctorRepair::RemovePlansCollection { location, expected } => {
@@ -213,6 +150,159 @@ pub fn apply_doctor_repairs(
                 crate::filesystem::durability::atomic_write(&displayname, name)?;
             }
             _ => {}
+        }
+    }
+    Ok(())
+}
+
+/// Load each affected sidecar once, validate all evidence, then deliver gains
+/// before removals. Retrying a partial relocation skips notes already present.
+fn repair_sidecars(root: &Path, repairs: &[DoctorRepair]) -> Result<(), WorkspaceError> {
+    use crate::filesystem::sidecar::{lock_sidecar, write_sidecar};
+    let mut expected = BTreeMap::new();
+    for repair in repairs {
+        match repair {
+            DoctorRepair::RelocateNotes {
+                source,
+                destination,
+                expected: revision,
+                destination_expected,
+                ..
+            } => {
+                expected.insert(source.clone(), Some(revision.clone()));
+                expected.insert(destination.clone(), destination_expected.clone());
+            }
+            DoctorRepair::PruneSidecarEntry {
+                path,
+                expected: revision,
+                ..
+            }
+            | DoctorRepair::RemoveSidecar {
+                path,
+                expected: revision,
+            }
+            | DoctorRepair::MirrorRootCharterId {
+                path,
+                expected: revision,
+                ..
+            } => {
+                expected.insert(
+                    WorkspacePath::new(format!("charters/{path}")).unwrap(),
+                    Some(revision.clone()),
+                );
+            }
+            _ => {}
+        }
+    }
+    // Deterministic lock order also covers an append racing a relocation.
+    let lock_paths = expected
+        .keys()
+        .map(|path| root.join(path.as_str()).with_file_name(".clearhead.lock"))
+        .collect::<BTreeSet<_>>();
+    let _locks = lock_paths
+        .iter()
+        .map(|path| lock_sidecar(path))
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut metadata = BTreeMap::new();
+    for (path, expected_revision) in &expected {
+        let physical = root.join(path.as_str());
+        let bytes = match std::fs::read(&physical) {
+            Ok(bytes) => Some(bytes),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(error) => return Err(error.into()),
+        };
+        if bytes.as_deref().map(revision).as_ref() != expected_revision.as_ref() {
+            return Err(WorkspaceError::Actions(format!(
+                "doctor repair evidence for '{path}' is stale"
+            )));
+        }
+        let value = match bytes {
+            Some(bytes) => clearhead_core::workspace::parse_sidecar(
+                std::str::from_utf8(&bytes)
+                    .map_err(|error| WorkspaceError::Parse(error.to_string()))?,
+            )?,
+            None => Default::default(),
+        };
+        metadata.insert(path.clone(), value);
+    }
+    let mut gains = BTreeSet::new();
+    // Clone source logs before merging: a sidecar may both gain and lose logs.
+    let transfers = repairs
+        .iter()
+        .filter_map(|repair| {
+            if let DoctorRepair::RelocateNotes {
+                source,
+                destination,
+                id,
+                ..
+            } = repair
+            {
+                Some((
+                    source.clone(),
+                    destination.clone(),
+                    id.clone(),
+                    metadata[source].notes[id].clone(),
+                ))
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<_>>();
+    for (_, destination, id, notes) in &transfers {
+        let log = metadata
+            .get_mut(destination)
+            .unwrap()
+            .notes
+            .entry(id.clone())
+            .or_default();
+        // Match each existing entry at most once: repeated identical source
+        // entries are distinct notes, not duplicates introduced by a retry.
+        let mut unmatched = log.iter().collect::<Vec<_>>();
+        let mut missing = Vec::new();
+        for note in notes {
+            if let Some(index) = unmatched.iter().position(|existing| *existing == note) {
+                unmatched.remove(index);
+            } else {
+                missing.push(note.clone());
+            }
+        }
+        log.extend(missing);
+        gains.insert(destination.clone());
+    }
+    for path in gains {
+        write_sidecar(&root.join(path.as_str()), &metadata[&path])?;
+    }
+    let mut changed = BTreeSet::new();
+    for (source, _, id, _) in transfers {
+        metadata.get_mut(&source).unwrap().notes.remove(&id);
+        changed.insert(source);
+    }
+    for repair in repairs {
+        match repair {
+            DoctorRepair::PruneSidecarEntry { path, id, .. } => {
+                let path = WorkspacePath::new(format!("charters/{path}")).unwrap();
+                metadata.get_mut(&path).unwrap().actions.remove(id);
+                changed.insert(path);
+            }
+            DoctorRepair::MirrorRootCharterId { path, id, .. } => {
+                let path = WorkspacePath::new(format!("charters/{path}")).unwrap();
+                metadata
+                    .get_mut(&path)
+                    .unwrap()
+                    .charter
+                    .get_or_insert_with(Default::default)
+                    .id = Some(*id);
+                changed.insert(path);
+            }
+            _ => {}
+        }
+    }
+    for path in changed {
+        write_sidecar(&root.join(path.as_str()), &metadata[&path])?;
+    }
+    for repair in repairs {
+        if let DoctorRepair::RemoveSidecar { path, .. } = repair {
+            remove_file_if_present(&root.join("charters").join(path.as_str()))?;
         }
     }
     Ok(())
@@ -259,6 +349,18 @@ fn observe_document(root: &Path, path: PathBuf) -> Result<DoctorDocument, Worksp
         bytes,
         revision,
     })
+}
+
+fn observe_sidecars(root: &Path) -> Result<Vec<DoctorSidecarEvidence>, WorkspaceError> {
+    walk_visible_files(root)
+        .into_iter()
+        .filter(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with('.') && name.ends_with(".json"))
+        })
+        .map(|path| observe_sidecar(root, path))
+        .collect()
 }
 
 fn observe_sidecar(
@@ -414,18 +516,6 @@ fn logical_path_from_native(path: &Path) -> Result<WorkspacePath, WorkspaceError
         .ok_or_else(|| WorkspaceError::InvalidPath(path.to_path_buf()))?
         .join("/");
     logical_path(&logical)
-}
-
-fn validate_file_revision(path: &Path, expected: &ResourceRevision) -> Result<(), WorkspaceError> {
-    let actual = std::fs::read(path).map(|bytes| revision(&bytes))?;
-    if &actual == expected {
-        Ok(())
-    } else {
-        Err(WorkspaceError::Actions(format!(
-            "doctor repair evidence for '{}' is stale",
-            path.display()
-        )))
-    }
 }
 
 fn remove_file_if_present(path: &Path) -> Result<(), WorkspaceError> {

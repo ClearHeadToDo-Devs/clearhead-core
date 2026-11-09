@@ -40,6 +40,58 @@ pub struct CharterMetadata {
     /// the next time anything touches them.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty", alias = "acts")]
     pub actions: BTreeMap<String, ActionMeta>,
+    /// Append-only logs for any entity, independent of its lifecycle state.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub notes: BTreeMap<String, Vec<Note>>,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, serde_json::Value>,
+}
+
+/// One note. Readers accept legacy entries without an author and preserve
+/// hand-authored extension fields. Read views sort by instant, stably for ties;
+/// storage order is never rewritten merely to read it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Note {
+    #[serde(deserialize_with = "deserialize_note_instant")]
+    pub at: DateTime<chrono::FixedOffset>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub by: Option<String>,
+    pub text: String,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, serde_json::Value>,
+}
+
+fn deserialize_note_instant<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<DateTime<chrono::FixedOffset>, D::Error> {
+    let text = String::deserialize(deserializer)?;
+    DateTime::parse_from_rfc3339(&text)
+        .or_else(|_| DateTime::parse_from_str(&text, "%Y-%m-%dT%H:%M%#z"))
+        .or_else(|_| {
+            chrono::NaiveDate::parse_from_str(&text, "%Y-%m-%d")
+                .map(|date| date.and_hms_opt(0, 0, 0).unwrap().and_utc().fixed_offset())
+        })
+        .map_err(serde::de::Error::custom)
+}
+
+/// Append without imposing any lifecycle restriction on the entity.
+pub fn append_note(metadata: &mut CharterMetadata, entity: uuid::Uuid, note: Note) {
+    metadata
+        .notes
+        .entry(entity.to_string())
+        .or_default()
+        .push(note);
+}
+
+/// Merge logs in deterministic sidecar/position order, including repeated notes
+/// (which are distinct log entries). The caller stably sorts the completed union.
+pub(crate) fn merge_notes(
+    target: &mut BTreeMap<String, Vec<Note>>,
+    source: BTreeMap<String, Vec<Note>>,
+) {
+    for (id, notes) in source {
+        target.entry(id).or_default().extend(notes);
+    }
 }
 
 /// Charter-level sidecar metadata.
@@ -55,6 +107,8 @@ pub struct CharterMeta {
     /// When this charter was first created by tooling.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub created: Option<DateTime<Local>>,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, serde_json::Value>,
 }
 
 /// Per-action sidecar metadata.
@@ -79,6 +133,8 @@ pub struct ActionMeta {
     /// completed instance realized.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub occurrence: Option<OccurrenceSnapshot>,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, serde_json::Value>,
 }
 
 /// Link from one Action to the Plan or recurring Plan occurrence it realizes.
@@ -91,6 +147,8 @@ pub struct ActionPlanLink {
     /// one-off Plan.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub occurrence_key: Option<String>,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, serde_json::Value>,
 }
 
 /// Durable lineage captured when a materialized recurring occurrence closes.
@@ -107,6 +165,8 @@ pub struct OccurrenceSnapshot {
     pub rrule: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub template: Option<String>,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, serde_json::Value>,
 }
 
 /// Derive the sidecar path from an `.actions` file path.
@@ -234,7 +294,12 @@ fn created_from_uuid(id: uuid::Uuid) -> Option<DateTime<Local>> {
 pub fn render_sidecar(metadata: &CharterMetadata) -> Result<String, WorkspaceError> {
     let mut metadata = metadata.clone();
     metadata.schema = Some(CHARTER_METADATA_SCHEMA_URL.to_string());
-    serde_json::to_string_pretty(&metadata).map_err(|e| WorkspaceError::Parse(e.to_string()))
+    serde_json::to_string_pretty(&metadata)
+        .map(|mut json| {
+            json.push('\n');
+            json
+        })
+        .map_err(|e| WorkspaceError::Parse(e.to_string()))
 }
 
 #[cfg(test)]
@@ -311,6 +376,7 @@ mod tests {
                 plan: Some(ActionPlanLink {
                     uid: "foreign-plan@example.test".to_string(),
                     occurrence_key: Some("20260825T160000Z".to_string()),
+                    extra: Default::default(),
                 }),
                 ..Default::default()
             },
@@ -326,6 +392,7 @@ mod tests {
             &ActionPlanLink {
                 uid: "foreign-plan@example.test".to_string(),
                 occurrence_key: Some("20260825T160000Z".to_string()),
+                extra: Default::default(),
             }
         );
     }
@@ -337,6 +404,7 @@ mod tests {
             charter: Some(CharterMeta {
                 id: Some(charter_id),
                 created: Some(Local::now()),
+                extra: Default::default(),
             }),
             ..Default::default()
         };
@@ -449,6 +517,7 @@ mod tests {
                 plan: Some(ActionPlanLink {
                     uid: uid.into(),
                     occurrence_key: Some(occurrence_key.into()),
+                    extra: Default::default(),
                 }),
                 ..Default::default()
             },

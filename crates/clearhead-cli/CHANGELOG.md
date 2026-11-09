@@ -6,7 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## Unreleased
 
-Adopts published specification v0.7.0 with grammar v0.11.1; this is contract and schema-URL adoption only, with no new behavior. Habits remain partly implemented: native graph projection exists, but stamping, recurrence linting and generation are not implemented. Sidecar `notes.<uuid>` entries are not supported; Core has no notes field and deletes such keys on the next sidecar rewrite, including notes added by hand or another tool. Uses Core from this source revision.
+Adopts published specification v0.7.0 with grammar v0.11.1; this is contract and schema-URL adoption only, with no new behavior. Habits remain partly implemented: native graph projection exists, but stamping, recurrence linting and generation are not implemented. Uses Core from this source revision.
+
+The native sidecar API serializes note appends with an OS file lock. Doctor relocates misplaced notes rather than pruning them, and retains orphan logs and unknown sidecar keys. All sidecar writes emit two-space JSON with a trailing newline. Rendering notes and switching `jot` away from legacy `## Log` follow separately.
 
 ## 0.4.0 - 2026-11-05
 

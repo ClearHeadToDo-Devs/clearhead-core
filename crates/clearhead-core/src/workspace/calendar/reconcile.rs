@@ -1145,6 +1145,7 @@ pub fn prepare_sync(
             .plan = Some(ActionPlanLink {
             uid: link.uid,
             occurrence_key: None,
+            extra: Default::default(),
         });
         dirty_sidecars.insert(resource.actions_file.clone());
     }
@@ -1666,6 +1667,7 @@ fn occurrence_snapshot(
             text.strip_prefix("R:").unwrap_or(&text).to_string()
         }),
         template: plan.plan.template_name.clone(),
+        extra: Default::default(),
     }
 }
 
@@ -1691,14 +1693,19 @@ fn link_staged_occurrences(charter: &MarkdownCharter, sidecar: &mut CharterMetad
         else {
             continue;
         };
-        let link = ActionPlanLink {
-            uid,
-            occurrence_key: Some(slot_key),
-        };
         let meta = sidecar
             .actions
             .entry(occurrence_id.to_string())
             .or_default();
+        let link = ActionPlanLink {
+            uid,
+            occurrence_key: Some(slot_key),
+            extra: meta
+                .plan
+                .as_ref()
+                .map(|link| link.extra.clone())
+                .unwrap_or_default(),
+        };
         if meta.occurrence.is_none() && meta.plan.as_ref() != Some(&link) {
             meta.plan = Some(link);
             changed = true;
@@ -2545,6 +2552,7 @@ mod tests {
                 plan: Some(ActionPlanLink {
                     uid: "foreign@example.com".into(),
                     occurrence_key: None,
+                    extra: Default::default(),
                 }),
                 ..Default::default()
             },
@@ -3172,6 +3180,7 @@ mod tests {
             Some(ActionPlanLink {
                 uid,
                 occurrence_key: token.external_occurrence_key.clone(),
+                extra: Default::default(),
             })
         );
         assert!(
