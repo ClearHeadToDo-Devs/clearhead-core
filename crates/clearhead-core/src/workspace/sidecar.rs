@@ -67,6 +67,10 @@ fn deserialize_note_instant<'de, D: serde::Deserializer<'de>>(
     let text = String::deserialize(deserializer)?;
     DateTime::parse_from_rfc3339(&text)
         .or_else(|_| DateTime::parse_from_str(&text, "%Y-%m-%dT%H:%M%#z"))
+        .or_else(|_| {
+            chrono::NaiveDate::parse_from_str(&text, "%Y-%m-%d")
+                .map(|date| date.and_hms_opt(0, 0, 0).unwrap().and_utc().fixed_offset())
+        })
         .map_err(serde::de::Error::custom)
 }
 
@@ -79,16 +83,14 @@ pub fn append_note(metadata: &mut CharterMetadata, entity: uuid::Uuid, note: Not
         .push(note);
 }
 
-/// Merge logs in deterministic sidecar/position order. Equal timestamps retain
-/// that order, including repeated notes (which are distinct log entries).
+/// Merge logs in deterministic sidecar/position order, including repeated notes
+/// (which are distinct log entries). The caller stably sorts the completed union.
 pub(crate) fn merge_notes(
     target: &mut BTreeMap<String, Vec<Note>>,
     source: BTreeMap<String, Vec<Note>>,
 ) {
     for (id, notes) in source {
-        let log = target.entry(id).or_default();
-        log.extend(notes);
-        log.sort_by_key(|note| note.at);
+        target.entry(id).or_default().extend(notes);
     }
 }
 

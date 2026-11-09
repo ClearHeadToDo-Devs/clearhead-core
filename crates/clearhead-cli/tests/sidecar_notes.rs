@@ -15,6 +15,31 @@ fn note(text: &str, at: &str) -> Note {
 }
 
 #[test]
+fn sidecar_accepts_date_only_notes_as_midnight_utc() {
+    let metadata = parse_sidecar(
+        &json!({
+            "actions": {ENTITY: {"created": "2026-11-06T12:00:00Z"}},
+            "notes": {ENTITY: [
+                {"at": "2026-11-07", "text": "migrated", "future": true},
+                {"at": "2026-11-08T01:00:00+01:00", "text": "later"}
+            ]}
+        })
+        .to_string(),
+    )
+    .unwrap();
+    assert_eq!(
+        metadata.notes[ENTITY][0].at.to_rfc3339(),
+        "2026-11-07T00:00:00+00:00"
+    );
+    assert!(metadata.notes[ENTITY][0].by.is_none());
+    assert_eq!(metadata.notes[ENTITY][0].extra["future"], true);
+    assert_eq!(metadata.notes[ENTITY].len(), 2);
+    assert!(metadata.actions[ENTITY].created.is_some());
+    let rendered = render_sidecar(&metadata).unwrap();
+    assert_eq!(parse_sidecar(&rendered).unwrap().notes, metadata.notes);
+}
+
+#[test]
 fn rewrites_preserve_every_unknown_key_and_format_with_newline() {
     let input = json!({
         "future": {"nested": [1, {"x": true}]},
@@ -62,13 +87,21 @@ fn workspace_unions_sidecars_and_stably_orders_hand_edited_logs() {
     ], CHARTER: [{"at": "2026-11-01T00:00:00Z", "text": "charter note"}]}})
         .to_string(),
     );
+    env.write_text(
+        "charters/.zz-old.json",
+        &json!({"notes": {ENTITY: [
+            {"at": "2026-11-02T00:00:00Z", "text": "tie b"},
+            {"at": "2026-10-31", "text": "earliest"}
+        ]}})
+        .to_string(),
+    );
     let read = read_workspace(&env.data_dir).unwrap();
     assert_eq!(
         read.notes[ENTITY]
             .iter()
             .map(|n| n.text.as_str())
             .collect::<Vec<_>>(),
-        ["first", "tie a", "tie b", "last"]
+        ["earliest", "first", "tie a", "tie b", "tie b", "last"]
     );
     assert_eq!(read.notes[CHARTER][0].text, "charter note");
     assert!(read.notes[ENTITY].iter().all(|n| n.by.is_none()));
@@ -279,6 +312,52 @@ fn doctor_relocates_to_archived_entity_without_overwriting_its_existing_log() {
             .unwrap()
             .notes
             .is_empty()
+    );
+}
+
+#[test]
+fn doctor_retry_after_destination_write_does_not_duplicate_notes() {
+    let env = common::TestEnv::new();
+    env.write_actions("work.actions", &format!("[ ] Work #{ENTITY}\n"));
+    let shared = json!({"at": "2026-11-01T00:00Z", "text": "copied", "future": 1});
+    let distinct = json!({"at": "2026-11-01T00:00Z", "text": "copied", "future": 2});
+    env.write_text(
+        "charters/.old.json",
+        &json!({"notes": {ENTITY: [shared.clone(), shared.clone(), distinct.clone()]}}).to_string(),
+    );
+    let before = diagnose_workspace(&env.data_dir).unwrap();
+    // Model an interrupted repair: the destination gained a note, but the
+    // source was not removed. A fresh diagnosis must safely finish the move.
+    env.write_text(
+        "charters/.work.json",
+        &json!({"notes": {ENTITY: [shared.clone()]}}).to_string(),
+    );
+    assert!(apply_doctor_repairs(&env.data_dir, &before.repairs).is_err());
+    let retry = diagnose_workspace(&env.data_dir).unwrap();
+    assert!(retry.findings.iter().any(|f| f.code == "misplaced-notes"));
+    apply_doctor_repairs(&env.data_dir, &retry.repairs).unwrap();
+    let destination = read_sidecar(&env.data_dir.join("charters/.work.json")).unwrap();
+    assert_eq!(
+        destination.notes[ENTITY],
+        vec![
+            serde_json::from_value::<Note>(shared.clone()).unwrap(),
+            serde_json::from_value::<Note>(shared).unwrap(),
+            serde_json::from_value::<Note>(distinct).unwrap()
+        ]
+    );
+    assert!(
+        read_sidecar(&env.data_dir.join("charters/.old.json"))
+            .unwrap()
+            .notes
+            .is_empty()
+    );
+    let after = diagnose_workspace(&env.data_dir).unwrap();
+    apply_doctor_repairs(&env.data_dir, &after.repairs).unwrap();
+    assert_eq!(
+        read_sidecar(&env.data_dir.join("charters/.work.json"))
+            .unwrap()
+            .notes,
+        destination.notes
     );
 }
 

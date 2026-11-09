@@ -631,6 +631,9 @@ fn collect_sidecar_metadata(
         }
         crate::workspace::sidecar::merge_notes(&mut union.notes, metadata.notes);
     }
+    for log in union.notes.values_mut() {
+        log.sort_by_key(|note| note.at);
+    }
     union
 }
 

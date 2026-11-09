@@ -156,7 +156,7 @@ pub fn apply_doctor_repairs(
 }
 
 /// Load each affected sidecar once, validate all evidence, then deliver gains
-/// before removals. A failed relocation can leave duplicates, never lost notes.
+/// before removals. Retrying a partial relocation skips notes already present.
 fn repair_sidecars(root: &Path, repairs: &[DoctorRepair]) -> Result<(), WorkspaceError> {
     use crate::filesystem::sidecar::{lock_sidecar, write_sidecar};
     let mut expected = BTreeMap::new();
@@ -249,13 +249,24 @@ fn repair_sidecars(root: &Path, repairs: &[DoctorRepair]) -> Result<(), Workspac
         })
         .collect::<Vec<_>>();
     for (_, destination, id, notes) in &transfers {
-        metadata
+        let log = metadata
             .get_mut(destination)
             .unwrap()
             .notes
             .entry(id.clone())
-            .or_default()
-            .extend(notes.clone());
+            .or_default();
+        // Match each existing entry at most once: repeated identical source
+        // entries are distinct notes, not duplicates introduced by a retry.
+        let mut unmatched = log.iter().collect::<Vec<_>>();
+        let mut missing = Vec::new();
+        for note in notes {
+            if let Some(index) = unmatched.iter().position(|existing| *existing == note) {
+                unmatched.remove(index);
+            } else {
+                missing.push(note.clone());
+            }
+        }
+        log.extend(missing);
         gains.insert(destination.clone());
     }
     for path in gains {
