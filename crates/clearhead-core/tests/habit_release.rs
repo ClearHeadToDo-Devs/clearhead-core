@@ -2,18 +2,18 @@
 
 #[test]
 fn habit_release_uses_published_registry_grammar_and_specification() {
-    assert_eq!(clearhead_core::SPECIFICATION, "v0.6.0");
+    assert_eq!(clearhead_core::SPECIFICATION, "v0.7.0");
     assert_eq!(
         clearhead_core::grammar_version().as_deref(),
         Some("v0.11.1")
     );
     assert_eq!(
         clearhead_core::workspace::sidecar::CHARTER_METADATA_SCHEMA_URL,
-        "https://clearhead.dev/schemas/v0.6.0/charter_metadata.schema.json"
+        "https://clearhead.dev/schemas/v0.7.0/charter_metadata.schema.json"
     );
     assert_eq!(
         clearhead_core::workspace::manifest::WORKSPACE_SCHEMA_URL,
-        "https://clearhead.dev/schemas/v0.6.0/workspace.schema.json"
+        "https://clearhead.dev/schemas/v0.7.0/workspace.schema.json"
     );
 
     let output = std::process::Command::new("cargo")
