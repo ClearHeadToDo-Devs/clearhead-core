@@ -1,7 +1,44 @@
 use super::{Action, ActionList, ActionState};
 use serde_json::{Value, json};
 use std::collections::HashMap;
+use std::collections::HashSet;
 use uuid::Uuid;
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct SemanticMerge {
+    pub merged: ActionList,
+    pub conflicts: Vec<Conflict>,
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub enum Conflict {
+    FieldConflict(FieldConflict),
+    ActionDeleted(ActionDeleted),
+    BothAdded(BothAdded),
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct FieldConflict {
+    pub id: Uuid,
+    pub fields: Vec<String>,
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct ActionDeleted {
+    pub id: Uuid,
+    pub deleted_by: Side,
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub enum Side {
+    Ours,
+    Theirs,
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct BothAdded {
+    pub id: Uuid,
+}
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct ActionDiff {
@@ -84,6 +121,155 @@ pub fn diff_actions(old_actions: &ActionList, new_actions: &ActionList) -> Diff 
     }
 
     diff
+}
+
+pub fn semantic_merge(base: &ActionList, ours: &ActionList, theirs: &ActionList) -> SemanticMerge {
+    let mut merged = vec![];
+    let mut conflicts = vec![];
+
+    let index = (
+        index_actions(base),
+        index_actions(ours),
+        index_actions(theirs),
+    );
+
+    let mut seen = HashSet::new();
+    let ids: Vec<Uuid> = ours
+        .iter()
+        .chain(theirs)
+        .chain(base)
+        .map(|a| a.id)
+        .filter(|id| seen.insert(*id)) // insert returns false if it was already there
+        .collect();
+
+    for id in ids {
+        let base_action = index.0.get(&id);
+        let our_action = index.1.get(&id);
+        let their_action = index.2.get(&id);
+
+        match (base_action, our_action, their_action) {
+            (Some(base), Some(ours), Some(theirs)) => {
+                let (merged_action, conflict) = merge_action(base, ours, theirs);
+                merged.push(merged_action);
+                if let Some(conflict) = conflict {
+                    conflicts.push(conflict);
+                }
+            }
+            (None, Some(ours), Some(theirs)) => {
+                // Both added the same action independently; check for conflicts
+                if ours == theirs {
+                    merged.push((*ours).clone());
+                } else {
+                    // Conflict: both added different versions of the same action
+                    merged.push((*ours).clone()); // or choose one arbitrarily
+                    conflicts.push(Conflict::BothAdded(BothAdded { id }));
+                }
+            }
+            (Some(base), Some(ours), None) => {
+                if ours != base {
+                    // Theirs removed it, but we modified it; keep ours and note conflict
+                    merged.push((*ours).clone());
+                    conflicts.push(Conflict::ActionDeleted(ActionDeleted {
+                        id,
+                        deleted_by: Side::Theirs,
+                    }));
+                }
+            }
+            (Some(base), None, Some(theirs)) => {
+                if theirs != base {
+                    // Ours removed it, but they modified it; keep theirs and note conflict
+                    merged.push((*theirs).clone());
+                    conflicts.push(Conflict::ActionDeleted(ActionDeleted {
+                        id,
+                        deleted_by: Side::Ours,
+                    }));
+                }
+            }
+            (Some(_), None, None) => {
+                // Both removed it; nothing to do
+            }
+            (None, Some(ours), None) => {
+                // Only ours added it
+                merged.push((*ours).clone());
+            }
+            (None, None, Some(theirs)) => {
+                // Only theirs added it
+                merged.push((*theirs).clone());
+            }
+            (None, None, None) => {
+                unreachable!()
+            }
+        }
+    }
+    SemanticMerge { merged, conflicts }
+}
+
+fn index_actions(actions: &ActionList) -> HashMap<Uuid, &Action> {
+    actions.iter().map(|a| (a.id, a)).collect()
+}
+
+fn merge_action(base: &Action, ours: &Action, theirs: &Action) -> (Action, Option<Conflict>) {
+    let mut fields = Vec::new();
+    // Three-way merge one field by name; the label always matches the field.
+    macro_rules! mergeField {
+        ($f:ident) => {
+            pick(stringify!($f), &base.$f, &ours.$f, &theirs.$f, &mut fields)
+        };
+    }
+    // A struct literal without `..`: adding a field to Action fails to compile here
+    // until the merge decides what to do with it.
+    let merged = Action {
+        id: ours.id,
+        recurrence_rule: mergeField!(recurrence_rule),
+        parent_id: mergeField!(parent_id),
+        state: mergeField!(state),
+        name: mergeField!(name),
+        description: mergeField!(description),
+        priority: mergeField!(priority),
+        contexts: mergeField!(contexts),
+        planned: mergeField!(planned),
+        due_date: mergeField!(due_date),
+        completed_at: mergeField!(completed_at),
+        created_at: mergeField!(created_at),
+        predecessors: mergeField!(predecessors),
+        charter: mergeField!(charter),
+        alias: mergeField!(alias),
+        is_sequential: mergeField!(is_sequential),
+        plan_id: mergeField!(plan_id),
+        external_occurrence_key: mergeField!(external_occurrence_key),
+        native_occurrence: mergeField!(native_occurrence),
+    };
+
+    let conflict = (!fields.is_empty()).then_some(Conflict::FieldConflict(FieldConflict {
+        id: ours.id,
+        fields,
+    }));
+    (merged, conflict)
+}
+
+fn pick<T: PartialEq + Clone>(
+    field: &str,
+    base: &T,
+    ours: &T,
+    theirs: &T,
+    conflicts: &mut Vec<String>,
+) -> T {
+    merge_field(base, ours, theirs).unwrap_or_else(|| {
+        conflicts.push(field.to_string());
+        ours.clone() // placeholder on conflict, like Git's %A
+    })
+}
+
+fn merge_field<T: PartialEq + Clone>(base: &T, ours: &T, theirs: &T) -> Option<T> {
+    if ours == theirs {
+        Some(ours.clone())
+    } else if ours == base {
+        Some(theirs.clone())
+    } else if theirs == base {
+        Some(ours.clone())
+    } else {
+        None
+    }
 }
 
 fn compare_action(old: &Action, new: &Action) -> Vec<FieldChange> {
