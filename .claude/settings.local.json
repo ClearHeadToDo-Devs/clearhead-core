@@ -3,5 +3,8 @@
     "allow": [
       "Bash(cargo build:*)"
     ]
-  }
+  },
+  "disabledMcpjsonServers": [
+    "agent-workspace"
+  ]
 }
