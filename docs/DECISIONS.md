@@ -7,6 +7,21 @@ alternatives rejected, and the trade-off accepted.
 
 ---
 
+## Decision 4: Stay on chrono; jiff Waits on the Calendar Crates
+
+Decided by Darrion on 2026-11-17. Core keeps chrono rather than moving to
+jiff. `rrule` 0.14 and `icalendar` 0.17 depend on chrono and chrono-tz
+non-optionally and expose chrono types, so jiff would not remove chrono: it
+would add a second datetime library and a conversion layer in
+`workspace/calendar`. The gain is small: jiff's `Disambiguation::Compatible`
+would replace the hand-rolled RFC 5545 rule in `domain/time.rs::resolve_local`,
+and its bundled zones would replace chrono-tz. Chrono spans 52 files.
+
+Revisit when chrono itself causes a bug, when Core takes over recurrence
+expansion from `rrule`, or when `rrule` and `icalendar` support jiff.
+
+---
+
 ## Decision 3: Single Closure in Place; Explicit Cascades Force Their Target
 
 Decided by Darrion on 2026-11-02 (platform Decisions 58 and 59). This amends
