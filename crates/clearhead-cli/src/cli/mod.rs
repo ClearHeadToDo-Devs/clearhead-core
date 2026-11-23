@@ -6,6 +6,7 @@ pub mod export;
 pub mod file;
 pub mod init;
 pub mod locate;
+pub mod notes;
 pub mod orient;
 pub mod plan;
 pub mod query;
@@ -790,6 +791,7 @@ fn dispatch(cli: &argparser::Cli, ctx: &CommandContext) -> anyhow::Result<()> {
             } => plan::show_plan(ctx, query, file, format, table_options),
             argparser::ShowTarget::Action { query, file } => action::show_action(ctx, query, file),
             argparser::ShowTarget::Charter { query } => charter::show_charter(ctx, query),
+            argparser::ShowTarget::Notes { query, json } => notes::show_notes(ctx, query, *json),
         },
         Verb::Add { target } => match target {
             argparser::AddTarget::Plan {

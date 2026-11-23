@@ -480,6 +480,16 @@ pub enum ShowTarget {
         /// UUID, alias, or name of the charter
         query: String,
     },
+
+    /// Show an entity's notes, newest last: any charter, action or Habit, closed and archived included
+    Notes {
+        /// UUID, short UUID, or alias of the entity
+        query: String,
+
+        /// Print the notes as a JSON array
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 // =============================================================================

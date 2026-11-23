@@ -87,7 +87,13 @@ pub fn assemble_workspace(input: &WorkspaceAssemblyInput) -> Result<WorkspaceRea
     let mut charters: BTreeMap<String, MarkdownCharter> = BTreeMap::new();
     let mut path_for_name: HashMap<String, PathBuf> = HashMap::new();
     let sidecars = parse_sidecars(input, &mut findings);
-    let action_meta = union_action_meta(sidecars.values());
+    // Live metadata only: an archived sidecar never hydrates an active action.
+    let action_meta = union_action_meta(
+        sidecars
+            .iter()
+            .filter(|(path, _)| path.as_str().starts_with("charters/"))
+            .map(|(_, metadata)| metadata),
+    );
 
     for relative in action_files(input) {
         let Some(name) = infer_charter_name_for_workspace(&relative, root_charter) else {
@@ -586,7 +592,8 @@ fn charter_files(input: &WorkspaceAssemblyInput) -> Vec<PathBuf> {
     paths
 }
 
-/// Parse every sidecar under `charters/` once, keyed by workspace path. One
+/// Parse every sidecar the read plan read (`charters/`, and `archive/` when the
+/// scope asked for it) once, keyed by workspace path. One
 /// that is not UTF-8 or not a valid sidecar is a `sidecar-corrupt` finding and
 /// is skipped.
 fn parse_sidecars(
@@ -621,13 +628,13 @@ fn parse_sidecars(
 }
 
 fn is_sidecar(path: &str) -> bool {
+    let hidden_json = |name: &str| name.starts_with('.') && name.ends_with(".json");
+    if let Some(name) = path.strip_prefix("archive/") {
+        return !name.contains('/') && hidden_json(name);
+    }
     path.starts_with("charters/")
         && !has_hidden_parent_component(path)
-        && path.ends_with(".json")
-        && path
-            .rsplit('/')
-            .next()
-            .is_some_and(|name| name.starts_with('.'))
+        && path.rsplit('/').next().is_some_and(hidden_json)
 }
 
 /// Action metadata across sidecars; the first sidecar to set a field wins.

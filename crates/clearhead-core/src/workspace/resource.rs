@@ -282,6 +282,17 @@ impl ReadPlan {
     }
 }
 
+/// Which regions a workspace read covers. The archive grows without bound, so
+/// only a caller that asks for it pays to read it.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum ReadScope {
+    /// `charters/`, `templates/`, `objectives/` and plans; never `archive/`.
+    #[default]
+    Active,
+    /// Active, plus the archived sidecars (`archive/.<uuid>.json`).
+    WithArchive,
+}
+
 /// Plan the immutable reads required to assemble the supplied mounts.
 ///
 /// Classification and narrower read planning can evolve in Core without
@@ -290,9 +301,16 @@ impl ReadPlan {
 /// workspace resources carry meaning.
 pub fn plan_workspace_read(
     inventory: &WorkspaceMounts<MountInventory>,
+    scope: ReadScope,
 ) -> WorkspaceMounts<ReadPlan> {
     let workspace = inventory.workspace.files.paths().filter(|path| {
         let path = path.as_str();
+        if let Some(name) = path.strip_prefix("archive/") {
+            return scope == ReadScope::WithArchive
+                && !name.contains('/')
+                && name.starts_with('.')
+                && name.ends_with(".json");
+        }
         if let Some(relative) = path.strip_prefix("charters/") {
             let hidden_parent = relative
                 .rsplit_once('/')
@@ -587,7 +605,7 @@ mod tests {
             }),
         };
 
-        let plan = plan_workspace_read(&inventory);
+        let plan = plan_workspace_read(&inventory, ReadScope::Active);
         assert_eq!(
             plan.workspace.paths(),
             std::slice::from_ref(&workspace_path)
@@ -595,6 +613,38 @@ mod tests {
         assert_eq!(
             plan.external_plans.unwrap().paths(),
             std::slice::from_ref(&external_path)
+        );
+    }
+
+    #[test]
+    fn archived_sidecars_are_read_only_when_the_scope_asks() {
+        let files = [
+            "archive/.019f733d-45c2-7dd2-91dc-8631f33c6b77.json",
+            "archive/019f733d-45c2-7dd2-91dc-8631f33c6b77.actions",
+            "archive/019f733d-45c2-7dd2-91dc-8631f33c6b77.md",
+            "archive/charters/.nested.json",
+        ];
+        let inventory = WorkspaceMounts {
+            workspace: MountInventory {
+                files: WorkspaceInventory::new(
+                    files.map(|file| (path(file), ResourceRevision::new(file))),
+                ),
+                collections: BTreeSet::new(),
+            },
+            external_plans: None,
+        };
+
+        assert!(
+            plan_workspace_read(&inventory, ReadScope::Active)
+                .workspace
+                .paths()
+                .is_empty()
+        );
+        assert_eq!(
+            plan_workspace_read(&inventory, ReadScope::WithArchive)
+                .workspace
+                .paths(),
+            &[path(files[0])]
         );
     }
 
@@ -615,7 +665,7 @@ mod tests {
             external_plans: None,
         };
 
-        let plan = plan_workspace_read(&inventory);
+        let plan = plan_workspace_read(&inventory, ReadScope::Active);
         assert_eq!(plan.workspace.paths(), &[path("objectives/eat-well.md")]);
     }
 

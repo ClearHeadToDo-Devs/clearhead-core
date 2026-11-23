@@ -1,7 +1,9 @@
 mod common;
 
 use clearhead_cli::filesystem::sidecar::{append_note, read_sidecar, stamp_charter_id};
-use clearhead_cli::filesystem::{apply_doctor_repairs, diagnose_workspace, read_workspace};
+use clearhead_cli::filesystem::{
+    apply_doctor_repairs, diagnose_workspace, read_workspace, read_workspace_with_archive,
+};
 use clearhead_core::workspace::sidecar::{
     Note, notes_across, parse_sidecar, render_sidecar, sidecar_path,
 };
@@ -420,4 +422,46 @@ fn new_charter_sidecar_has_two_space_json_and_trailing_newline() {
     let bytes = fs::read_to_string(env.data_dir.join("charters/.fresh.json")).unwrap();
     assert!(bytes.ends_with('\n'));
     assert!(bytes.contains("\n  \"charter\": {\n    \"id\":"));
+}
+
+#[test]
+fn archived_notes_are_read_only_when_the_archive_is_asked_for() {
+    let env = common::TestEnv::new();
+    let habit = "019f733d-4600-7000-8000-000000000002";
+    env.write_text(
+        "charters/done.md",
+        &format!("---\nid: {CHARTER}\nalias: done\nstate: Closed\n---\n# Done\n"),
+    );
+    env.write_actions("done.actions", &format!("[x] Finished #{ENTITY}\n"));
+    env.write_actions(
+        "done.habits.actions",
+        &format!("[ ] Daily @2026-11-01 R:FREQ=DAILY #{habit}\n"),
+    );
+    let anchor = env.data_dir.join("charters/done.actions");
+    for id in [ENTITY, CHARTER, habit] {
+        append_note(
+            &anchor,
+            id.parse().unwrap(),
+            note(id, "2026-11-01T00:00:00Z"),
+        )
+        .unwrap();
+    }
+    env.command()
+        .args(["archive", "charter", "done"])
+        .assert()
+        .success();
+    assert!(
+        env.data_dir
+            .join(format!("archive/.{CHARTER}.json"))
+            .exists()
+    );
+
+    let active = read_workspace(&env.data_dir).unwrap();
+    let archived = read_workspace_with_archive(&env.data_dir).unwrap();
+    for id in [ENTITY, CHARTER, habit] {
+        let id = id.parse().unwrap();
+        assert!(notes_across(active.sidecars.values(), id).is_empty());
+        let notes = notes_across(archived.sidecars.values(), id);
+        assert_eq!(notes.len(), 1, "one note, no duplicates, for {id}");
+    }
 }

@@ -80,7 +80,7 @@ pub use mutate_actions::{
 pub use objective::{objective_file_name, parse_objective};
 pub use resource::{
     DeliveryError, Effect, EffectBatch, EffectBatchError, ExpectedResource, MountId,
-    MountInventory, MountReadEvidence, ReadPlan, ResourceConflict, ResourceLocation,
+    MountInventory, MountReadEvidence, ReadPlan, ReadScope, ResourceConflict, ResourceLocation,
     ResourcePrecondition, ResourceReadFailure, ResourceRevision, ResourceSnapshot, SnapshotError,
     WorkspaceInventory, WorkspaceMounts, WorkspacePath, WorkspacePathError, WorkspaceSnapshot,
     plan_workspace_read,

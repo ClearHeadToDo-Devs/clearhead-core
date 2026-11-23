@@ -2,15 +2,16 @@
 //! `archive/` region as flat, UUID-stemmed plaintext facts.
 //!
 //! The archived form is *data, not a projection*: nothing is serialized to
-//! Turtle or JSON-LD. A charter's own `.actions` / `.completed.actions` / `.md`
-//! / sidecar files move into `<data_root>/archive/`, each **re-stemmed on the
-//! charter's UUID** (`<uuid>.actions`, `<uuid>.completed.actions`, `<uuid>.md`,
+//! Turtle or JSON-LD. A charter's own `.actions` / `.completed.actions` /
+//! `.habits.actions` / `.md` / sidecar files move into `<data_root>/archive/`,
+//! each **re-stemmed on the charter's UUID** (`<uuid>.actions`,
+//! `<uuid>.completed.actions`, `<uuid>.habits.actions`, `<uuid>.md`,
 //! `.<uuid>.json`) and dropped flat — no subdirectories. The UUID is the only
 //! stable key for an immutable fact: names collide over time and are mutable,
 //! and mirroring the live directory tree would reintroduce the sibling-alias
 //! collisions the flat scheme exists to avoid. Because discovery only recurses
 //! into `charters/`, the moved files drop out of the default read automatically
-//! while staying fully parseable by Core's workspace assembly. Any RDF view is
+//! (`ReadScope::WithArchive` reads the archived sidecars back, for notes) while staying fully parseable by Core's workspace assembly. Any RDF view is
 //! regenerated from the loaded model, exactly like live data; archival never
 //! writes Turtle.
 //!
@@ -28,8 +29,8 @@
 //!    - If any are open and `force` is false, refuse and return
 //!      [`ArchiveCharterError::OpenActions`].
 //! 3. Stamp the sidecar's `charter.id` (self-identification), then move the
-//!    quartet — `<uuid>.actions`, `<uuid>.completed.actions`, `<uuid>.md`,
-//!    `.<uuid>.json` — plus any supporting files (each prefixed `<uuid>.`),
+//!    charter's files — `<uuid>.actions`, `<uuid>.completed.actions`,
+//!    `<uuid>.habits.actions`, `<uuid>.md`, `.<uuid>.json` — plus any supporting files (each prefixed `<uuid>.`),
 //!    all-or-none, through the batch transaction. Each lands flat in
 //!    `<data_root>/archive/`. The sidecar moves *with* the files rather than
 //!    folded into the lines, so its `created_at` provenance survives intact.

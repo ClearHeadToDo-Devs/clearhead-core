@@ -12,8 +12,8 @@ use clearhead_core::workspace::resource::{
     WorkspaceSnapshot,
 };
 use clearhead_core::workspace::{
-    Finding, FindingSeverity, MarkdownCharter, Workspace, WorkspaceAssemblyInput, WorkspaceError,
-    WorkspaceRead, assemble_workspace, plan_workspace_read,
+    Finding, FindingSeverity, MarkdownCharter, ReadScope, Workspace, WorkspaceAssemblyInput,
+    WorkspaceError, WorkspaceRead, assemble_workspace, plan_workspace_read,
 };
 
 /// Physical roots resolved by the native adapter.
@@ -176,7 +176,13 @@ fn persisted_root_charter_name(data_root: &Path) -> String {
 
 /// Relaxed native read: inventory and read bytes without replaying pending intent.
 pub fn read_workspace(workspace_root: &Path) -> Result<WorkspaceRead, WorkspaceError> {
-    assemble_native(workspace_root)
+    assemble_native(workspace_root, ReadScope::Active)
+}
+
+/// [`read_workspace`] plus the archived sidecars, for commands that must see
+/// archived entities (an entity's notes). Everything else reads active only.
+pub fn read_workspace_with_archive(workspace_root: &Path) -> Result<WorkspaceRead, WorkspaceError> {
+    assemble_native(workspace_root, ReadScope::WithArchive)
 }
 
 /// Native load: inventory, read, and flag violations in one line.
@@ -190,7 +196,7 @@ pub fn load_workspace(workspace_root: &Path) -> Result<Vec<MarkdownCharter>, Wor
 /// stay silent here, but a violation may hide data from the command's output,
 /// so the reader is pointed at `doctor` once.
 fn read_and_report(workspace_root: &Path) -> Result<WorkspaceRead, WorkspaceError> {
-    let read = assemble_native(workspace_root)?;
+    let read = assemble_native(workspace_root, ReadScope::Active)?;
     if let Some(notice) = violation_notice(workspace_root, &read.findings) {
         eprintln!("{notice}");
     }
@@ -254,10 +260,13 @@ pub fn load_workspace_model(workspace_root: &Path) -> Result<Workspace, Workspac
         .with_objectives(read.objectives, read.objective_files))
 }
 
-fn assemble_native(workspace_root: &Path) -> Result<WorkspaceRead, WorkspaceError> {
+fn assemble_native(
+    workspace_root: &Path,
+    scope: ReadScope,
+) -> Result<WorkspaceRead, WorkspaceError> {
     let mounts = NativeWorkspaceMounts::resolve(workspace_root);
     let inventory = mounts.inventory()?;
-    let plans = plan_workspace_read(&inventory);
+    let plans = plan_workspace_read(&inventory, scope);
     let reads = mounts.read(&plans, &inventory)?;
     // The shell mints one ephemeral id per charter document so Core stays free
     // of the clock/RNG (I1, I3). Only an id-less document consumes its entry.
@@ -533,7 +542,7 @@ mod tests {
                 .contains(&WorkspacePath::new("next").unwrap())
         );
 
-        let plans = plan_workspace_read(&inventory);
+        let plans = plan_workspace_read(&inventory, ReadScope::Active);
         let reads = mounts.read(&plans, &inventory).unwrap();
         assert_eq!(
             reads

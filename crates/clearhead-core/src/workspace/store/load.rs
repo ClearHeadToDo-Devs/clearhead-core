@@ -124,7 +124,8 @@ impl From<Workspace> for DomainModel {
 /// What a pure read of the workspace produced: everything that loaded, plus
 /// a [`Finding`] for everything that didn't (or loaded with issues).
 pub struct WorkspaceRead {
-    /// Every sidecar under `charters/` that parsed, keyed by workspace path.
+    /// Every sidecar the read covered and that parsed, keyed by workspace path:
+    /// `charters/`, plus `archive/` only under [`crate::workspace::ReadScope::WithArchive`].
     /// Read an entity's notes with [`crate::workspace::sidecar::notes_across`].
     pub sidecars: std::collections::BTreeMap<
         crate::workspace::resource::WorkspacePath,
