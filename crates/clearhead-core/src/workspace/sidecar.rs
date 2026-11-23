@@ -83,15 +83,27 @@ pub fn append_note(metadata: &mut CharterMetadata, entity: uuid::Uuid, note: Not
         .push(note);
 }
 
-/// Merge logs in deterministic sidecar/position order, including repeated notes
-/// (which are distinct log entries). The caller stably sorts the completed union.
-pub(crate) fn merge_notes(
-    target: &mut BTreeMap<String, Vec<Note>>,
-    source: BTreeMap<String, Vec<Note>>,
-) {
-    for (id, notes) in source {
-        target.entry(id).or_default().extend(notes);
-    }
+/// Read notes for a given entity from a single sidecar
+pub fn notes_for(metadata: &CharterMetadata, entity: uuid::Uuid) -> &[Note] {
+    metadata
+        .notes
+        .get(&entity.to_string())
+        .map(Vec::as_slice)
+        .unwrap_or(&[])
+}
+
+/// One entity's notes across sidecars, sorted by `at`; ties keep input order.
+pub fn notes_across<'a>(
+    sidecars: impl IntoIterator<Item = &'a CharterMetadata>,
+    entity: uuid::Uuid,
+) -> Vec<Note> {
+    let mut notes: Vec<Note> = sidecars
+        .into_iter()
+        .flat_map(|metadata| notes_for(metadata, entity))
+        .cloned()
+        .collect();
+    notes.sort_by_key(|note| note.at);
+    notes
 }
 
 /// Charter-level sidecar metadata.
@@ -657,5 +669,75 @@ mod tests {
         let loaded = parse_sidecar(&render_sidecar(&meta).unwrap()).unwrap();
         assert_eq!(loaded.actions.len(), 1);
         assert!(loaded.actions.contains_key("test-uuid"));
+    }
+
+    // ===== Notes =====
+
+    fn note(text: &str, at: &str) -> Note {
+        Note {
+            at: DateTime::parse_from_rfc3339(at).unwrap(),
+            by: None,
+            text: text.into(),
+            extra: BTreeMap::new(),
+        }
+    }
+
+    fn texts(notes: &[Note]) -> Vec<&str> {
+        notes.iter().map(|note| note.text.as_str()).collect()
+    }
+
+    #[test]
+    fn notes_for_reads_appends_in_order() {
+        let entity = uuid::Uuid::now_v7();
+        let mut metadata = CharterMetadata::default();
+        append_note(&mut metadata, entity, note("first", "2026-11-20T10:00:00Z"));
+        append_note(
+            &mut metadata,
+            entity,
+            note("second", "2026-11-20T11:00:00Z"),
+        );
+        assert_eq!(texts(notes_for(&metadata, entity)), ["first", "second"]);
+    }
+
+    #[test]
+    fn notes_for_unknown_entity_is_empty() {
+        let mut metadata = CharterMetadata::default();
+        append_note(
+            &mut metadata,
+            uuid::Uuid::now_v7(),
+            note("other", "2026-11-20T10:00:00Z"),
+        );
+        assert!(notes_for(&metadata, uuid::Uuid::now_v7()).is_empty());
+    }
+
+    #[test]
+    fn notes_across_sorts_by_instant_and_keeps_input_order_on_ties() {
+        let entity = uuid::Uuid::now_v7();
+        let (mut active, mut archived) = (CharterMetadata::default(), CharterMetadata::default());
+        append_note(
+            &mut archived,
+            entity,
+            note("oldest", "2026-11-19T10:00:00Z"),
+        );
+        append_note(
+            &mut active,
+            entity,
+            note("tie active", "2026-11-20T10:00:00Z"),
+        );
+        append_note(
+            &mut archived,
+            entity,
+            note("tie archived", "2026-11-20T10:00:00Z"),
+        );
+        append_note(&mut active, entity, note("newest", "2026-11-21T10:00:00Z"));
+        append_note(
+            &mut active,
+            uuid::Uuid::now_v7(),
+            note("someone else", "2026-11-20T12:00:00Z"),
+        );
+        assert_eq!(
+            texts(&notes_across([&active, &archived], entity)),
+            ["oldest", "tie active", "tie archived", "newest"]
+        );
     }
 }

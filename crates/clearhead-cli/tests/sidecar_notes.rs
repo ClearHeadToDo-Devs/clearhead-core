@@ -2,7 +2,9 @@ mod common;
 
 use clearhead_cli::filesystem::sidecar::{append_note, read_sidecar, stamp_charter_id};
 use clearhead_cli::filesystem::{apply_doctor_repairs, diagnose_workspace, read_workspace};
-use clearhead_core::workspace::sidecar::{Note, parse_sidecar, render_sidecar, sidecar_path};
+use clearhead_core::workspace::sidecar::{
+    Note, notes_across, parse_sidecar, render_sidecar, sidecar_path,
+};
 use serde_json::json;
 use std::{fs, path::Path, process::Command};
 use uuid::Uuid;
@@ -96,15 +98,35 @@ fn workspace_unions_sidecars_and_stably_orders_hand_edited_logs() {
         .to_string(),
     );
     let read = read_workspace(&env.data_dir).unwrap();
+    let entity = notes_across(read.sidecars.values(), ENTITY.parse().unwrap());
     assert_eq!(
-        read.notes[ENTITY]
-            .iter()
-            .map(|n| n.text.as_str())
-            .collect::<Vec<_>>(),
+        entity.iter().map(|n| n.text.as_str()).collect::<Vec<_>>(),
         ["earliest", "first", "tie a", "tie b", "tie b", "last"]
     );
-    assert_eq!(read.notes[CHARTER][0].text, "charter note");
-    assert!(read.notes[ENTITY].iter().all(|n| n.by.is_none()));
+    let charter = notes_across(read.sidecars.values(), CHARTER.parse().unwrap());
+    assert_eq!(charter[0].text, "charter note");
+    assert!(entity.iter().all(|n| n.by.is_none()));
+}
+
+#[test]
+fn every_unparsable_sidecar_is_a_finding_not_only_a_charters_own() {
+    let env = common::TestEnv::new();
+    env.write_actions("work.actions", &format!("[ ] Open #{ENTITY}\n"));
+    env.write_text(
+        "charters/.work.json",
+        &json!({"notes": {ENTITY: [{"at": "2026-11-01T00:00:00Z", "text": "kept"}]}}).to_string(),
+    );
+    env.write_text("charters/.z-old.json", "{ not json");
+    let read = read_workspace(&env.data_dir).unwrap();
+    let corrupt = read
+        .findings
+        .iter()
+        .filter(|f| f.code == "sidecar-corrupt")
+        .map(|f| f.path.clone())
+        .collect::<Vec<_>>();
+    assert_eq!(corrupt, [Path::new(".z-old.json")]);
+    let notes = notes_across(read.sidecars.values(), ENTITY.parse().unwrap());
+    assert_eq!(notes[0].text, "kept");
 }
 
 #[test]

@@ -24,7 +24,9 @@ use crate::workspace::objective::{objective_file_name, parse_objective};
 use crate::workspace::resource::{
     MountId, MountInventory, MountReadEvidence, WorkspaceMounts, WorkspacePath,
 };
-use crate::workspace::sidecar::{ActionMeta, hydrate_actions_map, parse_sidecar, sidecar_path};
+use crate::workspace::sidecar::{
+    ActionMeta, CharterMetadata, hydrate_actions_map, parse_sidecar, sidecar_path,
+};
 
 /// Host-neutral evidence required for workspace assembly.
 #[derive(Clone, Debug)]
@@ -84,7 +86,8 @@ pub fn assemble_workspace(input: &WorkspaceAssemblyInput) -> Result<WorkspaceRea
     // Ordered by name, so every load returns charters in one order.
     let mut charters: BTreeMap<String, MarkdownCharter> = BTreeMap::new();
     let mut path_for_name: HashMap<String, PathBuf> = HashMap::new();
-    let global_metadata = collect_sidecar_metadata(input);
+    let sidecars = parse_sidecars(input, &mut findings);
+    let action_meta = union_action_meta(sidecars.values());
 
     for relative in action_files(input) {
         let Some(name) = infer_charter_name_for_workspace(&relative, root_charter) else {
@@ -160,7 +163,7 @@ pub fn assemble_workspace(input: &WorkspaceAssemblyInput) -> Result<WorkspaceRea
                 }
             })
             .collect();
-        hydrate_actions_map(&mut sourced, &global_metadata.actions);
+        hydrate_actions_map(&mut sourced, &action_meta);
         let is_habits = matches!(
             crate::workspace::action_files::classify_action_file(&relative),
             Some((_, crate::workspace::action_files::ActionFileRole::Habits))
@@ -193,18 +196,6 @@ pub fn assemble_workspace(input: &WorkspaceAssemblyInput) -> Result<WorkspaceRea
         let mut charter = MarkdownCharter::from(base);
         charter.actions_file = Some(relative.clone());
         charter.plans_dir = charter_collection_from_anchor(&relative);
-        let conventional_sidecar = sidecar_path(&relative);
-        if let Some(source) = input
-            .workspace_text(&Path::new("charters").join(&conventional_sidecar))
-            .map_err(WorkspaceError::Parse)?
-            && let Err(error) = parse_sidecar(source)
-        {
-            findings.push(Finding::violation(
-                "sidecar-corrupt",
-                &conventional_sidecar,
-                format!("could not parse sidecar at expected path: {error}"),
-            ));
-        }
         charter.actions = sourced;
         charters.entry(name.clone()).or_insert(charter);
         path_for_name.entry(name).or_insert(relative);
@@ -477,7 +468,7 @@ pub fn assemble_workspace(input: &WorkspaceAssemblyInput) -> Result<WorkspaceRea
         }
     }
     Ok(WorkspaceRead {
-        notes: global_metadata.notes,
+        sidecars,
         charters,
         objectives,
         objective_files,
@@ -595,44 +586,63 @@ fn charter_files(input: &WorkspaceAssemblyInput) -> Vec<PathBuf> {
     paths
 }
 
-fn collect_sidecar_metadata(
+/// Parse every sidecar under `charters/` once, keyed by workspace path. One
+/// that is not UTF-8 or not a valid sidecar is a `sidecar-corrupt` finding and
+/// is skipped.
+fn parse_sidecars(
     input: &WorkspaceAssemblyInput,
-) -> crate::workspace::sidecar::CharterMetadata {
-    let mut union = crate::workspace::sidecar::CharterMetadata::default();
-    let mut sidecars = input
+    findings: &mut Vec<Finding>,
+) -> BTreeMap<WorkspacePath, CharterMetadata> {
+    let mut sidecars = BTreeMap::new();
+    for path in input
         .workspace_files()
-        .filter(|path| {
-            let path = path.as_str();
-            path.starts_with("charters/")
-                && !has_hidden_parent_component(path)
-                && path.ends_with(".json")
-                && path
-                    .rsplit('/')
-                    .next()
-                    .is_some_and(|name| name.starts_with('.'))
-        })
-        .collect::<Vec<_>>();
-    sidecars.sort();
-    for path in sidecars {
+        .filter(|path| is_sidecar(path.as_str()))
+    {
         let Some(resource) = input.reads.workspace.snapshot.resource(path) else {
             continue;
         };
-        let Ok(source) = std::str::from_utf8(resource.bytes()) else {
-            continue;
-        };
-        let Ok(metadata) = parse_sidecar(source) else {
-            continue;
-        };
-        for (key, action) in metadata.actions {
-            let target: &mut ActionMeta = union.actions.entry(key).or_default();
-            target.created = target.created.or(action.created);
-            target.plan = target.plan.clone().or(action.plan);
-            target.occurrence = target.occurrence.clone().or(action.occurrence);
+        let parsed = std::str::from_utf8(resource.bytes())
+            .map_err(|error| error.to_string())
+            .and_then(|source| parse_sidecar(source).map_err(|error| error.to_string()));
+        match parsed {
+            Ok(metadata) => {
+                sidecars.insert(path.clone(), metadata);
+            }
+            Err(error) => findings.push(Finding::violation(
+                "sidecar-corrupt",
+                path.as_str()
+                    .strip_prefix("charters/")
+                    .unwrap_or(path.as_str()),
+                format!("could not parse sidecar: {error}; its metadata and notes are skipped"),
+            )),
         }
-        crate::workspace::sidecar::merge_notes(&mut union.notes, metadata.notes);
     }
-    for log in union.notes.values_mut() {
-        log.sort_by_key(|note| note.at);
+    sidecars
+}
+
+fn is_sidecar(path: &str) -> bool {
+    path.starts_with("charters/")
+        && !has_hidden_parent_component(path)
+        && path.ends_with(".json")
+        && path
+            .rsplit('/')
+            .next()
+            .is_some_and(|name| name.starts_with('.'))
+}
+
+/// Action metadata across sidecars; the first sidecar to set a field wins.
+fn union_action_meta<'a>(
+    sidecars: impl IntoIterator<Item = &'a CharterMetadata>,
+) -> BTreeMap<String, ActionMeta> {
+    let mut union: BTreeMap<String, ActionMeta> = BTreeMap::new();
+    for (key, action) in sidecars.into_iter().flat_map(|metadata| &metadata.actions) {
+        let target = union.entry(key.clone()).or_default();
+        target.created = target.created.or(action.created);
+        target.plan = target.plan.clone().or_else(|| action.plan.clone());
+        target.occurrence = target
+            .occurrence
+            .clone()
+            .or_else(|| action.occurrence.clone());
     }
     union
 }

@@ -55,7 +55,7 @@
 25 crates/clearhead-core/src/workspace/mutate_actions.rs
 11 crates/clearhead-core/src/workspace/resource.rs
 30 crates/clearhead-core/src/workspace/sidecar.rs
-31 crates/clearhead-core/src/workspace/store/assembly.rs
+29 crates/clearhead-core/src/workspace/store/assembly.rs
 31 crates/clearhead-core/src/workspace/store/doctor.rs
 1 crates/clearhead-core/src/workspace/store/load.rs
 23 crates/clearhead-core/src/workspace/store/pathing.rs
