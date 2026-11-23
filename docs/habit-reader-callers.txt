@@ -4,6 +4,7 @@
 5 crates/clearhead-cli/src/cli/debug.rs
 14 crates/clearhead-cli/src/cli/file.rs
 13 crates/clearhead-cli/src/cli/mod.rs
+1 crates/clearhead-cli/src/cli/notes.rs
 4 crates/clearhead-cli/src/cli/orient.rs
 8 crates/clearhead-cli/src/cli/plan.rs
 1 crates/clearhead-cli/src/cli/query.rs
