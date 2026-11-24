@@ -6,7 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
-Adopts published specification v0.7.0; this is contract and schema-URL adoption only, with no new behavior. Habits remain partly implemented: native graph projection exists, but stamping, recurrence linting and generation are not implemented.
+Adopts published specification v0.8.0: notes in the JSON projections, and `by` as the writer's name. Habits remain partly implemented: native graph projection exists, but stamping, recurrence linting and generation are not implemented.
 
 Sidecar notes are now read as a workspace-wide union and can be appended for any entity, regardless of state, through the native serialized append API. Reads order hand-edited logs by instant, retaining ties and accepting missing authors. Doctor relocates misplaced logs and reports, but never deletes, orphan notes. Rewrites preserve unknown sidecar keys and emit two-space JSON with a trailing newline. Legacy `## Log` and `jot` behavior are unchanged in this step.
 
