@@ -174,3 +174,87 @@ fn a_corrupt_sidecar_is_reported_not_silently_skipped() {
         .stdout(predicate::str::contains("kept"))
         .stderr(predicate::str::contains("warning: skipped .broken.json"));
 }
+
+#[test]
+fn show_action_carries_notes_in_json_and_text() {
+    let env = common::TestEnv::new();
+    env.write_actions("work.actions", &format!("[ ] Noted =noted #{ACTION}\n"));
+    jot(
+        &env,
+        "charters/work.actions",
+        ACTION,
+        "remember",
+        "2026-11-01T00:00:00Z",
+    );
+
+    let output = env
+        .command()
+        .args(["show", "action", "noted", "--json"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let document: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(document["actions"][0]["id"], ACTION);
+    assert_eq!(
+        document["actions"][0]["notes"],
+        json!([{"at": "2026-11-01T00:00:00Z", "by": "agent:test", "text": "remember"}])
+    );
+    env.command()
+        .args(["show", "action", "noted"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "notes:\n  2026-11-01T00:00:00Z  agent:test\n    remember\n",
+        ));
+}
+
+#[test]
+fn show_charter_json_carries_notes_beside_the_legacy_log() {
+    let env = common::TestEnv::new();
+    env.write_text(
+        "charters/work.md",
+        &format!(
+            "---\nid: {CHARTER}\nalias: work\nstate: Active\n---\n# Work\n\n## Log\n\n- 2026-10-01 — old entry\n"
+        ),
+    );
+    env.write_actions("work.actions", "");
+    jot(
+        &env,
+        "charters/work.actions",
+        CHARTER,
+        "new entry",
+        "2026-11-01T00:00:00Z",
+    );
+
+    let output = env
+        .command()
+        .args(["show", "charter", "work", "--json"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let document: Value = serde_json::from_slice(&output.stdout).unwrap();
+    let charter = &document["charters"][0];
+    assert_eq!(charter["log"][0]["text"], "old entry");
+    assert_eq!(charter["notes"][0]["text"], "new entry");
+}
+
+#[test]
+fn entities_without_notes_leave_the_field_out() {
+    let env = common::TestEnv::new();
+    env.write_actions("work.actions", &format!("[ ] Quiet =quiet #{ACTION}\n"));
+    let output = env
+        .command()
+        .args(["show", "action", "quiet", "--json"])
+        .output()
+        .unwrap();
+    let document: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(document["actions"][0].get("notes").is_none());
+}

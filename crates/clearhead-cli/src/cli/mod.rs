@@ -789,8 +789,12 @@ fn dispatch(cli: &argparser::Cli, ctx: &CommandContext) -> anyhow::Result<()> {
                 format,
                 table_options,
             } => plan::show_plan(ctx, query, file, format, table_options),
-            argparser::ShowTarget::Action { query, file } => action::show_action(ctx, query, file),
-            argparser::ShowTarget::Charter { query } => charter::show_charter(ctx, query),
+            argparser::ShowTarget::Action { query, file, json } => {
+                action::show_action(ctx, query, file, *json)
+            }
+            argparser::ShowTarget::Charter { query, json } => {
+                charter::show_charter(ctx, query, *json)
+            }
             argparser::ShowTarget::Notes { query, json } => notes::show_notes(ctx, query, *json),
         },
         Verb::Add { target } => match target {

@@ -208,26 +208,11 @@ fn print_charters_json(
 ) -> anyhow::Result<()> {
     let mut rows = Vec::new();
     for (_, root, charters) in workspaces {
-        let charter_root = clearhead_cli::filesystem::charter_root(root);
         for charter in charters
             .iter()
             .filter(|charter| keep(&charter.alias, &charter.description))
         {
-            let content = charter
-                .md_file
-                .as_ref()
-                .map(|path| {
-                    let path = charter_root.join(path);
-                    std::fs::read_to_string(&path)
-                        .with_context(|| format!("Cannot read charter document {}", path.display()))
-                })
-                .transpose()?;
-            rows.push(
-                clearhead_core::workspace::project_charter_schema(charter, content.as_deref())
-                    .map_err(|error| {
-                        anyhow::anyhow!("Cannot project charter {}: {error}", charter.title)
-                    })?,
-            );
+            rows.push(charter_row(root, charter)?);
         }
     }
     println!(
@@ -235,6 +220,25 @@ fn print_charters_json(
         serde_json::to_string_pretty(&clearhead_core::workspace::project_charters_schema(rows))?
     );
     Ok(())
+}
+
+/// One charter's charters.schema.json row, from its source document so
+/// sections and the legacy log survive.
+fn charter_row(
+    root: &std::path::Path,
+    charter: &clearhead_core::MarkdownCharter,
+) -> anyhow::Result<serde_json::Value> {
+    let content = charter
+        .md_file
+        .as_ref()
+        .map(|path| {
+            let path = clearhead_cli::filesystem::charter_root(root).join(path);
+            std::fs::read_to_string(&path)
+                .with_context(|| format!("Cannot read charter document {}", path.display()))
+        })
+        .transpose()?;
+    clearhead_core::workspace::project_charter_schema(charter, content.as_deref())
+        .map_err(|error| anyhow::anyhow!("Cannot project charter {}: {error}", charter.title))
 }
 
 fn load_source_charters(
@@ -337,24 +341,42 @@ fn open_act_count(charter: &Charter) -> usize {
         .count()
 }
 
-pub fn show_charter(ctx: &CommandContext, query: &str) -> anyhow::Result<()> {
-    let charters: Vec<(Charter, bool)> = load_source_charters(ctx)?
-        .into_iter()
-        .flat_map(|(_, _, charters)| charters)
-        .map(|charter| {
-            let declared = charter.id_source == CharterIdSource::Document;
-            (Charter::from(charter), declared)
-        })
+pub fn show_charter(ctx: &CommandContext, query: &str, json: bool) -> anyhow::Result<()> {
+    let workspaces = load_source_charters(ctx)?;
+    let sources: Vec<(&PathBuf, &clearhead_core::MarkdownCharter)> = workspaces
+        .iter()
+        .flat_map(|(_, root, charters)| charters.iter().map(move |charter| (root, charter)))
+        .collect();
+    let charters: Vec<Charter> = sources
+        .iter()
+        .map(|(_, charter)| Charter::from((*charter).clone()))
         .collect();
 
-    let candidates: Vec<&Charter> = charters.iter().map(|(charter, _)| charter).collect();
+    let candidates: Vec<&Charter> = charters.iter().collect();
     let found = resolve_charter(&candidates, query)?
         .ok_or_else(|| anyhow::anyhow!("No charter found matching '{}'", query))?;
-    let declared = charters
+    let (root, source) = sources
         .iter()
-        .any(|(charter, declared)| charter.id == found.id && *declared);
+        .find(|(_, charter)| charter.id == found.id)
+        .expect("a resolved charter comes from the sources");
+    let declared = source.id_source == CharterIdSource::Document;
+    let sidecars = crate::cli::notes::active_sidecars(ctx)?;
+    let notes = clearhead_core::workspace::sidecar::notes_across(&sidecars, found.id);
 
+    if json {
+        let row = clearhead_core::workspace::with_charter_notes(charter_row(root, source)?, notes);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&clearhead_core::workspace::project_charters_schema(
+                vec![row]
+            ))?
+        );
+        return Ok(());
+    }
     println!("{}", crate::display::render_charter_detail(found, declared));
+    if let Some(section) = crate::cli::notes::notes_section(&notes) {
+        print!("\n{section}");
+    }
     Ok(())
 }
 

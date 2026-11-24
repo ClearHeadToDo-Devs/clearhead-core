@@ -67,7 +67,7 @@ pub use charter::{
     CharterDocument, CharterIdSource, MarkdownCharter, append_log_entry, charter_frontmatter_id,
     edit_charter_document, format_charter, implicit_charter, parse_charter,
 };
-pub use charter_schema::{project_charter_schema, project_charters_schema};
+pub use charter_schema::{project_charter_schema, project_charters_schema, with_charter_notes};
 pub use init::{
     InitPlan, InitRequest, InitSnapshot, ReadmeId, RootId, plan_workspace_init, resolve_root_id,
 };

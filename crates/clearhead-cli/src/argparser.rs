@@ -473,12 +473,20 @@ pub enum ShowTarget {
         /// File containing the .actions file. If not provided, workspace search.
         #[arg(short, long)]
         file: Option<PathBuf>,
+
+        /// Print the action per actions.schema.json, notes included
+        #[arg(long)]
+        json: bool,
     },
 
     /// Show details of a specific charter
     Charter {
         /// UUID, alias, or name of the charter
         query: String,
+
+        /// Print the charter per charters.schema.json, notes included
+        #[arg(long)]
+        json: bool,
     },
 
     /// Show an entity's notes, newest last: any charter, action or Habit, closed and archived included

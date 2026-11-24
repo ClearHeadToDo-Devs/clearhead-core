@@ -132,6 +132,40 @@ fn core_projection_conforms_to_spec_schema() {
 }
 
 #[test]
+fn projections_carrying_notes_conform_to_spec_schemas() {
+    use clearhead_core::workspace::sidecar::Note;
+    let note: Note = serde_json::from_value(serde_json::json!({
+        "at": "2026-11-24T05:00:00Z", "by": "agent:test", "text": "a note", "future": 1
+    }))
+    .unwrap();
+    let actions = parse_actions("[ ] Noted #019f733d-45b2-7f21-bcad-5610887b7230\n").unwrap();
+    let mut document = clearhead_core::schema_export::to_schema_document(&actions);
+    document.actions[0] = document.actions[0].clone().with_notes(vec![note.clone()]);
+    let action = serde_json::to_value(&document).unwrap();
+    assert_eq!(action["actions"][0]["notes"][0]["text"], "a note");
+    let charter = clearhead_core::workspace::project_charters_schema(vec![
+        clearhead_core::workspace::with_charter_notes(
+            serde_json::json!({"title": "Work", "state": "active"}),
+            vec![note],
+        ),
+    ]);
+    for (relative, value) in [
+        ("schemas/actions.schema.json", &action),
+        ("schemas/charters.schema.json", &charter),
+    ] {
+        let validator = schema_validator(relative);
+        let errors: Vec<String> = validator
+            .validate(value)
+            .err()
+            .into_iter()
+            .flatten()
+            .map(|error| format!("{error} (at {})", error.instance_path))
+            .collect();
+        assert!(errors.is_empty(), "{relative}: {errors:?}");
+    }
+}
+
+#[test]
 fn every_field_fixture_has_the_specified_domain_meaning() {
     let actions = parse_actions(&fixture("parse/every_field.actions")).unwrap();
     assert_eq!(actions.len(), 1);

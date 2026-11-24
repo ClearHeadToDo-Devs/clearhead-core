@@ -157,6 +157,17 @@ pub fn project_charters_schema(rows: Vec<Value>) -> Value {
     json!({"charters": rows})
 }
 
+/// Carry a charter row's `notes`, ordered as readers order them; none leaves
+/// the field out. The legacy `## Log` stays in `log`.
+pub fn with_charter_notes(mut row: Value, notes: Vec<crate::workspace::sidecar::Note>) -> Value {
+    if !notes.is_empty()
+        && let Some(object) = row.as_object_mut()
+    {
+        object.insert("notes".into(), json!(notes));
+    }
+    row
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

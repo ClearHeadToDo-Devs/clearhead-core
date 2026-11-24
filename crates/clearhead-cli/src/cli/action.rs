@@ -1055,6 +1055,7 @@ pub fn show_action(
     ctx: &CommandContext,
     query: &str,
     file: &Option<PathBuf>,
+    json: bool,
 ) -> anyhow::Result<()> {
     let actions: Vec<Action> =
         if file.is_none() && !ctx.workspace_config().additional_workspaces.is_empty() {
@@ -1068,8 +1069,22 @@ pub fn show_action(
 
     let action = find_best_match(&actions, query, |_| true)?
         .ok_or_else(|| anyhow::anyhow!("No action found matching '{}'", query))?;
+    let sidecars = crate::cli::notes::active_sidecars(ctx)?;
+    let notes = clearhead_core::workspace::sidecar::notes_across(&sidecars, action.id);
 
+    if json {
+        let document = clearhead_core::schema_export::SchemaDocument {
+            actions: vec![
+                clearhead_core::schema_export::SchemaAction::from_action(action).with_notes(notes),
+            ],
+        };
+        println!("{}", serde_json::to_string_pretty(&document)?);
+        return Ok(());
+    }
     println!("{}", crate::display::render_action_detail(action));
+    if let Some(section) = crate::cli::notes::notes_section(&notes) {
+        print!("\n{section}");
+    }
     Ok(())
 }
 

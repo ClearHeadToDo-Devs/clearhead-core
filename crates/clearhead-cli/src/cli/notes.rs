@@ -3,8 +3,8 @@
 use std::collections::BTreeMap;
 
 use anyhow::Context;
-use clearhead_core::workspace::WorkspaceRead;
 use clearhead_core::workspace::sidecar::{Note, notes_across};
+use clearhead_core::workspace::{CharterMetadata, WorkspaceRead};
 use clearhead_core::{ReferenceEntity, ReferenceSelection, select_reference};
 use uuid::Uuid;
 
@@ -73,13 +73,7 @@ fn resolve_owner(owners: &[NoteOwner], query: &str) -> anyhow::Result<Uuid> {
 pub fn show_notes(ctx: &CommandContext, query: &str, json: bool) -> anyhow::Result<()> {
     let read = clearhead_cli::filesystem::read_workspace_with_archive(&ctx.data_dir)
         .context("Failed to read workspace")?;
-    for finding in read.findings.iter().filter(|f| f.code == "sidecar-corrupt") {
-        eprintln!(
-            "warning: skipped {}: {}",
-            finding.path.display(),
-            finding.message
-        );
-    }
+    warn_corrupt_sidecars(&read);
     let id = resolve_owner(&note_owners(&read), query)?;
     let notes = notes_across(read.sidecars.values(), id);
     if json {
@@ -90,6 +84,40 @@ pub fn show_notes(ctx: &CommandContext, query: &str, json: bool) -> anyhow::Resu
         print!("{}", render_notes(&notes));
     }
     Ok(())
+}
+
+/// The active sidecars of every workspace in view, for `show action` and
+/// `show charter`, which resolve live entities only.
+pub fn active_sidecars(ctx: &CommandContext) -> anyhow::Result<Vec<CharterMetadata>> {
+    let mut sidecars = Vec::new();
+    for (_, root) in ctx.workspace_dirs() {
+        let read = clearhead_cli::filesystem::read_workspace(&root)
+            .with_context(|| format!("Failed to read workspace {}", root.display()))?;
+        warn_corrupt_sidecars(&read);
+        sidecars.extend(read.sidecars.into_values());
+    }
+    Ok(sidecars)
+}
+
+/// An entity's notes for a detail view: a `notes:` block, or nothing.
+pub fn notes_section(notes: &[Note]) -> Option<String> {
+    (!notes.is_empty()).then(|| {
+        let body: String = render_notes(notes)
+            .lines()
+            .map(|line| format!("  {line}\n"))
+            .collect();
+        format!("notes:\n{body}")
+    })
+}
+
+fn warn_corrupt_sidecars(read: &WorkspaceRead) {
+    for finding in read.findings.iter().filter(|f| f.code == "sidecar-corrupt") {
+        eprintln!(
+            "warning: skipped {}: {}",
+            finding.path.display(),
+            finding.message
+        );
+    }
 }
 
 /// A header line (`at`, then `by` when known) and the text indented below it.

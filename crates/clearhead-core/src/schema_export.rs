@@ -8,6 +8,7 @@
 //! and its `.actions` DSL token.
 
 use crate::domain::Habit;
+use crate::workspace::sidecar::Note;
 use crate::{Action, ActionState};
 use serde::Serialize;
 
@@ -61,6 +62,9 @@ pub struct SchemaAction {
     pub recurrence_rule: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub children: Option<Vec<SchemaAction>>,
+    /// The action's notes, read from the sidecars (workspace.md Notes).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub notes: Option<Vec<Note>>,
 }
 
 impl SchemaAction {
@@ -109,7 +113,14 @@ impl SchemaAction {
             parent_id: action.parent_id.map(|u| u.to_string()),
             recurrence_rule: action.recurrence_rule.clone(),
             children: None,
+            notes: None,
         }
+    }
+
+    /// Carry `notes`, ordered as readers order them; none leaves the field out.
+    pub fn with_notes(mut self, notes: Vec<Note>) -> Self {
+        self.notes = (!notes.is_empty()).then_some(notes);
+        self
     }
 }
 
