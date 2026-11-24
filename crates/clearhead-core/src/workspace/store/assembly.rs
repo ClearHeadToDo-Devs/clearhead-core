@@ -339,8 +339,11 @@ pub fn assemble_workspace(input: &WorkspaceAssemblyInput) -> Result<WorkspaceRea
             continue;
         };
         let path = Path::new("charters").join(sidecar_path(actions_file));
-        if let Ok(Some(source)) = input.workspace_text(&path)
-            && let Ok(Some(id)) = parse_sidecar(source).map(|meta| meta.charter.and_then(|c| c.id))
+        if let Ok(path) = workspace_path(&path)
+            && let Some(id) = sidecars
+                .get(&path)
+                .and_then(|meta| meta.charter.as_ref())
+                .and_then(|charter| charter.id)
         {
             charter.id = id;
             charter.id_source = CharterIdSource::Sidecar;

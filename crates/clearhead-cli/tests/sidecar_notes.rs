@@ -465,3 +465,42 @@ fn archived_notes_are_read_only_when_the_archive_is_asked_for() {
         assert_eq!(notes.len(), 1, "one note, no duplicates, for {id}");
     }
 }
+
+#[test]
+fn an_id_less_charter_adopts_the_id_its_sidecar_records() {
+    let env = common::TestEnv::new();
+    env.write_actions("work.actions", &format!("[ ] Open #{ENTITY}\n"));
+    env.write_text(
+        "charters/.work.json",
+        &json!({"charter": {"id": CHARTER}}).to_string(),
+    );
+    let read = read_workspace(&env.data_dir).unwrap();
+    let work = read.charters.iter().find(|c| c.title == "work").unwrap();
+    assert_eq!(work.id.to_string(), CHARTER);
+}
+
+#[test]
+fn archived_action_metadata_never_hydrates_a_live_action() {
+    let env = common::TestEnv::new();
+    env.write_actions("work.actions", &format!("[ ] Open #{ENTITY}\n"));
+    env.write_text(
+        "charters/.work.json",
+        &json!({"actions": {ENTITY: {"created": "2026-11-05T12:00:00Z"}}}).to_string(),
+    );
+    // archive/ sorts before charters/, so without the live-only rule this
+    // older value would win the first-sidecar-wins merge.
+    env.write_text(
+        &format!("archive/.{CHARTER}.json"),
+        &json!({"actions": {ENTITY: {"created": "2026-01-01T12:00:00Z"}}}).to_string(),
+    );
+    let read = read_workspace_with_archive(&env.data_dir).unwrap();
+    let action = read
+        .charters
+        .iter()
+        .flat_map(|c| &c.actions)
+        .find(|s| s.action.id.to_string() == ENTITY)
+        .unwrap();
+    // Noon UTC: the local-time Bound keeps the date in any zone within ±12h.
+    let created = format!("{:?}", action.action.created_at);
+    assert!(created.contains("2026-11-05"), "{created}");
+}
