@@ -10,6 +10,8 @@ Adopts published specification v0.7.0; this is contract and schema-URL adoption 
 
 Sidecar notes are now read as a workspace-wide union and can be appended for any entity, regardless of state, through the native serialized append API. Reads order hand-edited logs by instant, retaining ties and accepting missing authors. Doctor relocates misplaced logs and reports, but never deletes, orphan notes. Rewrites preserve unknown sidecar keys and emit two-space JSON with a trailing newline. Legacy `## Log` and `jot` behavior are unchanged in this step.
 
+`note_sidecars` returns the sidecar each entity's notes belong in, the rule `doctor` checks notes against, so writers and `doctor` agree. **Removed:** `append_log_entry`; nothing writes a charter's `## Log` any more, though readers still show it.
+
 ## [0.4.0] - 2026-11-05
 
 Included in the clearhead 0.4.0 binary release. Declares specification v0.5.0 and pins registry tree-sitter-actions `=0.11.1`; schema URLs move to `v0.5.0`. **v0.5.0 Habits are only partly implemented:** the domain and graph below, with no habits-file reader, occurrence generation or calendar migration yet.

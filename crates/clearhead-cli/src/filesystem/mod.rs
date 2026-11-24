@@ -1020,12 +1020,6 @@ mod charter_document_tests {
                     .unwrap()
                 }),
             ),
-            (
-                "jot.md",
-                Box::new(|base| {
-                    clearhead_core::append_log_entry(base, "2026-09-22T12:00 — a finding")
-                }),
-            ),
         ];
 
         for (name, derive) in derivations {

@@ -10,6 +10,8 @@ Adopts published specification v0.7.0 with grammar v0.11.1; this is contract and
 
 The native sidecar API serializes note appends with an OS file lock. Doctor relocates misplaced notes rather than pruning them, and retains orphan logs and unknown sidecar keys. All sidecar writes emit two-space JSON with a trailing newline. Rendering notes and switching `jot` away from legacy `## Log` follow separately.
 
+`jot <reference> <text>` appends a note to any charter, action or Habit, found by UUID, short prefix or alias, closed and archived ones included; `jot charter <query> <text>` also matches a charter's title. Notes go to the sidecar `doctor` expects them in, never to the charter document or the `.actions` line, and `jot` refuses an entity without a durable id. The note's `by` is `--by`, else the configured `name` (`CLEARHEAD_NAME` or a config file), else the login name. **Breaking:** `jot` no longer writes the charter's `## Log`, no longer creates a charter document, and drops `--charter` and the sole-charter default.
+
 ## 0.4.0 - 2026-11-05
 
 Implements specification v0.5.0 with grammar v0.11.1: `clearhead 0.4.0 (specification v0.5.0, grammar v0.11.1)`. The individual close and root-tree archive of v0.4.0 (platform Decisions 58 and 59) are complete. **The Habits of v0.5.0 are only partly implemented:** Core can project a Habit into the application graph, but nothing reads habits files yet, generates occurrences or syncs Habits with the calendar. Uses Core 0.4.0.

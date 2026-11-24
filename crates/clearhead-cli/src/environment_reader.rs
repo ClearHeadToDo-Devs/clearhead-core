@@ -51,6 +51,11 @@ pub struct Config {
     #[serde(default)]
     pub default_to_user_scope: bool,
 
+    // The writer's name on notes `jot` appends when `--by` is not given
+    // (`CLEARHEAD_NAME` in the environment). Unset falls back to the login name.
+    #[serde(default)]
+    pub name: Option<String>,
+
     // Tag hierarchies for implicit inheritance
     // Maps parent tag -> list of child tags
     #[serde(default)]
@@ -74,6 +79,14 @@ pub struct Config {
 
     #[serde(default = "default_indent_width")]
     pub cli_indent_width: usize,
+}
+
+/// The login name: seeds a user workspace's name, and signs a note when no
+/// name is configured.
+pub fn current_username() -> String {
+    std::env::var("USER")
+        .or_else(|_| std::env::var("USERNAME"))
+        .unwrap_or_else(|_| "user".to_string())
 }
 
 // Default functions

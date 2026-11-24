@@ -51,8 +51,11 @@ clearhead complete action "Buy oat milk"
 # Archived actions refuse reopen: unarchive their root tree first
 clearhead reopen action "Buy oat milk"
 
-# Jot a timestamped finding into a charter's ## Log (frictionless capture)
-clearhead jot "range reads need a cache keyed on Last-Modified" --charter inbox
+# Jot a note on any charter, action or Habit, by id, prefix or alias;
+# `jot charter` also matches a charter's title. Notes live in the sidecar.
+clearhead jot cache-reads "range reads need a cache keyed on Last-Modified"
+clearhead jot charter inbox "triaged the week's captures"
+clearhead show notes cache-reads
 
 # Archive whole root trees whose members are all closed out of active files
 clearhead archive actions
@@ -94,8 +97,9 @@ Unarchive uses operation kind `unarchived`; previews use top-level kind
 frontmatter `id` without rewriting the charter body or other metadata. It reuses
 an existing sidecar charter id when present; repeated runs preserve the id.
 `clearhead doctor` reports documents still missing one. Existing charter
-`update`, `close`, and `jot` do **not** stamp an id; `close` and `jot` stamp one
-only when creating a new document.
+`update` and `close` do **not** stamp an id; `close` stamps one only when
+creating a new document. `jot` refuses a charter, action or Habit without a
+durable id, since a note keyed by an id minted at load would be lost.
 
 ## Charter lifecycle state
 
@@ -114,8 +118,7 @@ unset, which reads the same way) rather than defaulting a fresh Charter to
 `Active`. `add action` prints a reminder naming the exact activation command
 when the Action it just added landed in a `New` Charter, and `clearhead
 doctor` reports every `New` Charter that still owns open Actions — the
-catch-all that covers every path into that state, including a `jot`-created
-document (`jot` never sets or changes state itself). Engagement also requires
+catch-all that covers every path into that state. Engagement also requires
 every ancestor Charter to be `Active`; `doctor` warns when an `Active`
 Charter sits beneath one that is not.
 

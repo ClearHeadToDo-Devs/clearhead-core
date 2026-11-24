@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use clearhead_core::workspace::resource::Effect;
 use clearhead_core::workspace::{InitPlan, InitRequest, RootId};
 
-use crate::environment_reader::{load_config, user_data_dir};
+use crate::environment_reader::{current_username, load_config, user_data_dir};
 
 /// Guard against nesting `.clearhead/` inside the user workspace.
 ///
@@ -96,13 +96,6 @@ fn prepare_project(cwd: &Path, user_data_dir: &Path) -> anyhow::Result<()> {
     }
     fs::write(&gitignore_path, gitignore).context("Failed to write .clearhead/.gitignore")?;
     Ok(())
-}
-
-/// The login name that seeds a user workspace's name; persisted once by init.
-fn current_username() -> String {
-    std::env::var("USER")
-        .or_else(|_| std::env::var("USERNAME"))
-        .unwrap_or_else(|_| "user".to_string())
 }
 
 fn report(plan: &InitPlan) {

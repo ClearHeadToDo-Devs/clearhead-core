@@ -179,14 +179,8 @@ pub fn diagnose(read: &WorkspaceRead, evidence: &DoctorEvidence) -> Diagnosis {
             &mut findings,
             &mut repairs,
         );
-        check_notes(
-            evidence,
-            charters,
-            &completed,
-            archived_owners,
-            &mut findings,
-            &mut repairs,
-        );
+        let owners = note_destinations(evidence, charters, &completed, archived_owners);
+        check_notes(evidence, owners, &mut findings, &mut repairs);
         check_orphaned_sidecars(
             &evidence.sidecars,
             &known_action_ids,
@@ -739,15 +733,24 @@ fn check_sidecar_coherence(
     }
 }
 
-/// Notes follow entity identity, unlike prunable orphan action metadata.
-fn check_notes(
+/// The sidecar each entity's notes belong in, keyed by entity id and
+/// workspace-relative (`charters/…` or `archive/…`). This is the rule
+/// `doctor` checks notes against, shared so a writer puts a note where
+/// `doctor` expects it.
+pub fn note_sidecars(read: &WorkspaceRead, evidence: &DoctorEvidence) -> HashMap<String, PathBuf> {
+    let mut ignored = Vec::new();
+    let completed = collect_completed_actions(&evidence.completed_actions, &mut ignored);
+    let (_, archived_owners) =
+        collect_archived_action_states(&evidence.archived_actions, &mut ignored);
+    note_destinations(evidence, &read.charters, &completed, archived_owners)
+}
+
+fn note_destinations(
     evidence: &DoctorEvidence,
     charters: &[MarkdownCharter],
     completed: &HashMap<PathBuf, Vec<Action>>,
     mut owners: HashMap<String, PathBuf>,
-    findings: &mut Vec<Finding>,
-    repairs: &mut Vec<DoctorRepair>,
-) {
+) -> HashMap<String, PathBuf> {
     for document in &evidence.archived_charters {
         if let Ok(source) = document_text(document)
             && let Ok(Some(id)) = crate::workspace::charter_frontmatter_id(source)
@@ -760,23 +763,6 @@ fn check_notes(
             );
         }
     }
-    let sidecars = evidence
-        .sidecars
-        .iter()
-        .map(|sidecar| ("charters", sidecar))
-        .chain(
-            evidence
-                .archived_sidecars
-                .iter()
-                .map(|sidecar| ("archive", sidecar)),
-        )
-        .map(|(region, sidecar)| {
-            (
-                WorkspacePath::new(format!("{region}/{}", sidecar.document.path)).unwrap(),
-                (sidecar, parsed_sidecar(sidecar)),
-            )
-        })
-        .collect::<std::collections::BTreeMap<_, _>>();
     for (path, action) in all_actions(charters, completed) {
         owners.insert(
             action.id.to_string(),
@@ -800,6 +786,33 @@ fn check_notes(
             }
         }
     }
+    owners
+}
+
+/// Notes follow entity identity, unlike prunable orphan action metadata.
+fn check_notes(
+    evidence: &DoctorEvidence,
+    owners: HashMap<String, PathBuf>,
+    findings: &mut Vec<Finding>,
+    repairs: &mut Vec<DoctorRepair>,
+) {
+    let sidecars = evidence
+        .sidecars
+        .iter()
+        .map(|sidecar| ("charters", sidecar))
+        .chain(
+            evidence
+                .archived_sidecars
+                .iter()
+                .map(|sidecar| ("archive", sidecar)),
+        )
+        .map(|(region, sidecar)| {
+            (
+                WorkspacePath::new(format!("{region}/{}", sidecar.document.path)).unwrap(),
+                (sidecar, parsed_sidecar(sidecar)),
+            )
+        })
+        .collect::<std::collections::BTreeMap<_, _>>();
     for (source, (sidecar, metadata)) in &sidecars {
         let Some(metadata) = metadata else {
             continue;

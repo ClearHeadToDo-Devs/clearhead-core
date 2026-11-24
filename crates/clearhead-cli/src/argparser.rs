@@ -264,19 +264,26 @@ pub enum Verb {
         target: UnarchiveTarget,
     },
 
-    /// Jot a timestamped finding into a charter's `## Log` (frictionless capture)
-    #[command(alias = "capture")]
+    /// Append a note to any entity: a charter, action or Habit (frictionless capture)
+    #[command(
+        alias = "capture",
+        args_conflicts_with_subcommands = true,
+        subcommand_negates_reqs = true
+    )]
     Jot {
-        /// The finding to record — a single distilled line worth keeping
-        text: String,
+        #[command(subcommand)]
+        target: Option<JotTarget>,
 
-        /// Charter to jot into (name, alias, or UUID). Defaults to the sole charter when unambiguous.
-        #[arg(long)]
-        charter: Option<String>,
+        /// The entity: its UUID, a short prefix, or its alias
+        #[arg(required = true)]
+        reference: Option<String>,
 
-        /// Preview the resulting `## Log` without writing
-        #[arg(long)]
-        dry_run: bool,
+        /// The note to record
+        #[arg(required = true)]
+        text: Option<String>,
+
+        #[command(flatten)]
+        options: JotOptions,
     },
 
     /// Apply a template or pattern to a charter
@@ -444,6 +451,32 @@ pub enum ReadTarget {
 // =============================================================================
 // Show targets
 // =============================================================================
+
+#[derive(Subcommand)]
+pub enum JotTarget {
+    /// Note a live charter found by its UUID, alias or title
+    Charter {
+        /// The charter: its UUID, a short prefix, its alias, or its title
+        query: String,
+
+        /// The note to record
+        text: String,
+
+        #[command(flatten)]
+        options: JotOptions,
+    },
+}
+
+#[derive(Args, Clone, Default, Debug)]
+pub struct JotOptions {
+    /// Who wrote the note. Defaults to the configured `name` (CLEARHEAD_NAME), then the login name
+    #[arg(long)]
+    pub by: Option<String>,
+
+    /// Print the note and where it would go, without writing
+    #[arg(long)]
+    pub dry_run: bool,
+}
 
 #[derive(Subcommand)]
 pub enum ShowTarget {

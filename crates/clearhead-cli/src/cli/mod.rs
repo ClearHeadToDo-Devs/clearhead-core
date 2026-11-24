@@ -1091,10 +1091,23 @@ fn dispatch(cli: &argparser::Cli, ctx: &CommandContext) -> anyhow::Result<()> {
             } => action::reopen_action(ctx, query, charter, file, *cascade, *dry_run),
         },
         Verb::Jot {
+            target,
+            reference,
             text,
-            charter,
-            dry_run,
-        } => charter::jot(ctx, text, charter.as_deref(), *dry_run),
+            options,
+        } => match target {
+            Some(argparser::JotTarget::Charter {
+                query,
+                text,
+                options,
+            }) => notes::jot_charter(ctx, query, text, options),
+            None => notes::jot(
+                ctx,
+                reference.as_deref().expect("clap requires a reference"),
+                text.as_deref().expect("clap requires the note text"),
+                options,
+            ),
+        },
         Verb::Apply { target } => match target {
             argparser::ApplyTarget::Template {
                 name,

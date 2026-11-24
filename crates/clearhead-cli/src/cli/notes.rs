@@ -1,6 +1,8 @@
-//! `show notes`: one entity's notes, wherever the entity now lives.
+//! An entity's notes: `show notes` reads them and `jot` appends one,
+//! wherever the entity now lives.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
+use std::path::PathBuf;
 
 use anyhow::Context;
 use clearhead_core::workspace::sidecar::{Note, notes_across};
@@ -9,6 +11,7 @@ use clearhead_core::{ReferenceEntity, ReferenceSelection, select_reference};
 use uuid::Uuid;
 
 use super::CommandContext;
+use crate::argparser::JotOptions;
 
 /// An entity that can own notes: every live charter, action and Habit, plus
 /// every id a sidecar holds notes for, so closed and archived entities resolve
@@ -141,4 +144,134 @@ fn render_notes(notes: &[Note]) -> String {
         }
     }
     out
+}
+
+/// `jot <reference> <text>`: any entity, resolved as `show notes` resolves
+/// it; an archived entity with no notes yet resolves by id.
+pub fn jot(
+    ctx: &CommandContext,
+    reference: &str,
+    text: &str,
+    options: &JotOptions,
+) -> anyhow::Result<()> {
+    let (read, sidecars) = read_note_sidecars(ctx)?;
+    let mut owners = note_owners(&read);
+    for id in sidecars.keys().filter_map(|id| id.parse::<Uuid>().ok()) {
+        if !owners.iter().any(|owner| owner.id == id) {
+            owners.push(NoteOwner { id, alias: None });
+        }
+    }
+    let id = resolve_owner(&owners, reference)?;
+    require_durable_id(&read, id)?;
+    append(ctx, &sidecars, id, text, options)
+}
+
+/// `jot charter <query> <text>`: a live charter, by id, alias or title.
+pub fn jot_charter(
+    ctx: &CommandContext,
+    query: &str,
+    text: &str,
+    options: &JotOptions,
+) -> anyhow::Result<()> {
+    let (read, sidecars) = read_note_sidecars(ctx)?;
+    let charters: Vec<clearhead_core::Charter> =
+        read.charters.iter().cloned().map(Into::into).collect();
+    let found = super::charter::resolve_charter(&charters, query)?
+        .ok_or_else(|| anyhow::anyhow!("No charter found matching '{query}'"))?;
+    require_durable_id(&read, found.id)?;
+    append(ctx, &sidecars, found.id, text, options)
+}
+
+/// Notes are keyed by id, so the id must be one the files keep: a declared
+/// or sidecar charter id, or a written `#id` on an action or Habit line. A
+/// note keyed by an id minted at load would be lost on the next read.
+fn require_durable_id(read: &WorkspaceRead, id: Uuid) -> anyhow::Result<()> {
+    use clearhead_core::workspace::CharterIdSource;
+    let unwritten = |name: &str| {
+        anyhow::anyhow!(
+            "{name} has no durable id, so a note on it would be lost; \
+             run `clearhead normalize file` on its file to write one"
+        )
+    };
+    for charter in &read.charters {
+        if charter.id == id
+            && matches!(
+                charter.id_source,
+                CharterIdSource::Ephemeral | CharterIdSource::Derived
+            )
+        {
+            return Err(unwritten(&format!("charter '{}'", charter.title)));
+        }
+        let action = charter
+            .actions
+            .iter()
+            .find(|sourced| sourced.action.id == id)
+            .filter(|sourced| {
+                sourced
+                    .source_metadata
+                    .as_ref()
+                    .is_some_and(|source| source.is_id_generated)
+            });
+        if let Some(sourced) = action {
+            return Err(unwritten(&format!("action '{}'", sourced.action.name)));
+        }
+        if charter
+            .habit_sources
+            .get(&id)
+            .is_some_and(|source| source.is_id_generated)
+        {
+            return Err(unwritten(&format!("Habit line {id}")));
+        }
+    }
+    Ok(())
+}
+
+/// The workspace with its archive, and the sidecar each entity's notes
+/// belong in, by the rule `doctor` checks.
+fn read_note_sidecars(
+    ctx: &CommandContext,
+) -> anyhow::Result<(WorkspaceRead, HashMap<String, PathBuf>)> {
+    let read = clearhead_cli::filesystem::read_workspace_with_archive(&ctx.data_dir)
+        .context("Failed to read workspace")?;
+    warn_corrupt_sidecars(&read);
+    let evidence = clearhead_cli::filesystem::observe_doctor(&ctx.data_dir)
+        .context("Failed to read workspace")?;
+    let sidecars = clearhead_core::workspace::note_sidecars(&read, &evidence);
+    Ok((read, sidecars))
+}
+
+fn append(
+    ctx: &CommandContext,
+    sidecars: &HashMap<String, PathBuf>,
+    id: Uuid,
+    text: &str,
+    options: &JotOptions,
+) -> anyhow::Result<()> {
+    let relative = sidecars
+        .get(&id.to_string())
+        .ok_or_else(|| anyhow::anyhow!("'{id}' is stored in no file that can hold notes"))?;
+    let note = Note {
+        at: chrono::SubsecRound::trunc_subsecs(chrono::Local::now().fixed_offset(), 0),
+        by: Some(note_author(ctx, options.by.as_deref())),
+        text: text.to_string(),
+        extra: BTreeMap::new(),
+    };
+    if options.dry_run {
+        print!("{}", render_notes(std::slice::from_ref(&note)));
+        println!("Would jot to {id} ({})", relative.display());
+        return Ok(());
+    }
+    let path = clearhead_cli::filesystem::workspace_data_root(&ctx.data_dir).join(relative);
+    clearhead_cli::filesystem::sidecar::append_note_to(&path, id, note)
+        .with_context(|| format!("Failed to jot to {}", path.display()))?;
+    println!("Jotted to {id} ({})", relative.display());
+    Ok(())
+}
+
+/// Who signs a note: `--by`, else the configured `name` (a config file or
+/// `CLEARHEAD_NAME`), else the login name.
+fn note_author(ctx: &CommandContext, by: Option<&str>) -> String {
+    by.map(str::to_string)
+        .or_else(|| ctx.config.name.clone())
+        .unwrap_or_else(crate::environment_reader::current_username)
 }

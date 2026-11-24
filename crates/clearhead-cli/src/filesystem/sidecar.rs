@@ -28,19 +28,28 @@ pub fn write_sidecar(path: &Path, metadata: &CharterMetadata) -> Result<(), Work
 /// Append to the owning entity's sidecar, including completed or archived
 /// owners. The caller supplies the same actions anchor used by other sidecar
 /// mutations; no entity state is used to gate a log entry.
-///
-/// Lock a stable companion rather than the replaced JSON inode. Dropping the
-/// file releases the OS lock even after an error or process termination.
 pub fn append_note(
     actions_path: &Path,
     entity: uuid::Uuid,
     note: clearhead_core::workspace::sidecar::Note,
 ) -> Result<(), WorkspaceError> {
-    let path = sidecar_path(actions_path);
-    let _lock = lock_sidecar(&path)?;
-    let mut metadata = read_sidecar(&path)?;
+    append_note_to(&sidecar_path(actions_path), entity, note)
+}
+
+/// [`append_note`] for a caller that already holds the sidecar's path, such
+/// as one from [`clearhead_core::workspace::note_sidecars`].
+///
+/// Lock a stable companion rather than the replaced JSON inode. Dropping the
+/// file releases the OS lock even after an error or process termination.
+pub fn append_note_to(
+    path: &Path,
+    entity: uuid::Uuid,
+    note: clearhead_core::workspace::sidecar::Note,
+) -> Result<(), WorkspaceError> {
+    let _lock = lock_sidecar(path)?;
+    let mut metadata = read_sidecar(path)?;
     clearhead_core::workspace::sidecar::append_note(&mut metadata, entity, note);
-    write_sidecar(&path, &metadata)
+    write_sidecar(path, &metadata)
 }
 
 pub(crate) fn lock_sidecar(path: &Path) -> Result<std::fs::File, WorkspaceError> {

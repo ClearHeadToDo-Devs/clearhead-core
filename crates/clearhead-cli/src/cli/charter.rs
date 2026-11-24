@@ -1,5 +1,4 @@
 use anyhow::Context;
-use chrono::Local;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
@@ -781,112 +780,6 @@ pub fn close_charter(
     );
 
     Ok(())
-}
-
-/// Append a timestamped finding to a charter's `## Log` — the `jot`/`capture`
-/// verb. This is a surgical text edit on the charter's markdown (via
-/// [`clearhead_core::append_log_entry`]) that preserves everything else, and it
-/// materializes a minimal `.md` (and the `## Log` section) when none exists yet,
-/// so capture never stalls on setup.
-pub fn jot(
-    ctx: &CommandContext,
-    text: &str,
-    charter: Option<&str>,
-    dry_run: bool,
-) -> anyhow::Result<()> {
-    let ws_root = ctx.data_dir.clone();
-    let mcs = clearhead_cli::filesystem::load_workspace(&ws_root)?;
-    let charter_root = clearhead_cli::filesystem::charter_root(&ws_root);
-
-    let mc_full = resolve_jot_charter(&mcs, charter)?;
-    let charter_model = Charter::from(mc_full.clone());
-    let (md_path, _) = charter_md_path(mc_full, &charter_root, &charter_model.title);
-
-    // Base content: the existing file, or a freshly materialized *minimal*
-    // charter document when none exists yet. Deliberately not `format_charter`:
-    // for an implicit charter that regenerator emits a derived `alias`/`parent`
-    // that reads as a second, colliding charter (doctor `alias-collision`). The
-    // `id` alone pairs the new `.md` with its `.actions`; everything else stays
-    // in the sidecar/derived model where it already lives.
-    //
-    // The read goes through the delivery seam so the revision it saw is
-    // re-checked before the write; a concurrent editor becomes a conflict
-    // rather than a lost log entry.
-    let document = clearhead_cli::filesystem::read_charter_document(&ws_root, &md_path)?;
-    let is_new = document.is_missing();
-
-    // Creating a whole new document is a valid time to mint a durable id
-    // (specifications/workspace.md, Concept Identity) — but only when the
-    // charter had no persisted anchor already. `Derived` and `Ephemeral`
-    // ids are never authoritative (the root's name-hashed id, or a
-    // shell-minted stand-in): writing one down here would persist an id
-    // nobody declared. A `Document` or `Sidecar` id is already real and
-    // must be kept, not replaced.
-    let minted_id = is_new.then(|| match mc_full.id_source {
-        CharterIdSource::Document | CharterIdSource::Sidecar => None,
-        CharterIdSource::Ephemeral | CharterIdSource::Derived => Some(uuid::Uuid::now_v7()),
-    });
-    let new_doc_id = minted_id.flatten().unwrap_or(charter_model.id);
-    let base = match document.content() {
-        Some(existing) => existing.to_string(),
-        None => format!("---\nid: {}\n---\n# {}\n", new_doc_id, charter_model.title),
-    };
-
-    let stamp = Local::now().format("%Y-%m-%dT%H:%M%:z");
-    let entry = format!("{stamp} — {}", text.trim());
-    let updated = clearhead_core::append_log_entry(&base, &entry);
-
-    if dry_run {
-        let verb = if is_new {
-            "Would create"
-        } else {
-            "Would update"
-        };
-        println!("{} {}:\n{}", verb, md_path.display(), updated);
-        return Ok(());
-    }
-
-    clearhead_cli::filesystem::write_charter_document(&ws_root, &document, &updated)
-        .with_context(|| format!("Failed to write '{}'", md_path.display()))?;
-    // Mirror a freshly minted id into the sidecar (best-effort, matching
-    // `add_charter`) so the two anchors agree from the moment the document
-    // exists, rather than leaving a `charter-document-without-id` gap for
-    // `doctor` to find on the very next load.
-    if let (Some(id), Some(actions_file)) = (minted_id.flatten(), &mc_full.actions_file) {
-        let actions_path = charter_root.join(actions_file);
-        if let Err(e) = clearhead_cli::filesystem::sidecar::stamp_charter_id(&actions_path, id) {
-            tracing::warn!(path = %actions_path.display(), error = %e, "Failed to record charter id in sidecar");
-        }
-    }
-    info!(charter = %charter_model.title, path = %md_path.display(), created = is_new, "Jotted log entry");
-    println!(
-        "Jotted to '{}' ({})",
-        charter_model.title,
-        md_path.display()
-    );
-    Ok(())
-}
-
-/// Resolve the charter to jot into: an explicit query, or — when omitted — the
-/// sole actionable charter in the workspace. Refuses to guess among several.
-fn resolve_jot_charter<'a>(
-    mcs: &'a [clearhead_core::MarkdownCharter],
-    charter: Option<&str>,
-) -> anyhow::Result<&'a clearhead_core::MarkdownCharter> {
-    if let Some(q) = charter {
-        let charters: Vec<Charter> = mcs.iter().cloned().map(Charter::from).collect();
-        let mc = resolve_charter(&charters, q)?
-            .ok_or_else(|| anyhow::anyhow!("No charter found matching '{}'", q))?;
-        return mcs
-            .iter()
-            .find(|c| c.id == mc.id)
-            .ok_or_else(|| anyhow::anyhow!("Internal: MarkdownCharter for '{}' missing", q));
-    }
-    match mcs {
-        [only] => Ok(only),
-        [] => anyhow::bail!("No charters in this workspace; create one with `add charter`"),
-        _ => anyhow::bail!("Multiple charters; specify which with --charter <name|alias|uuid>"),
-    }
 }
 
 #[cfg(test)]

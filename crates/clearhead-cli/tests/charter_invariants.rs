@@ -110,27 +110,20 @@ fn read_verbs_leave_the_workspace_bytes_untouched() {
 /// I5 — stamping is deliberate.
 ///
 /// Only `normalize` and the creation of a whole new document may write a
-/// charter id. `jot` into an existing id-less document must edit its text and
-/// leave it id-less. (`update` and `close` are covered in
-/// `tests/charter.rs`; creation is covered by the `jot_into_*_root_charter`
-/// tests there.)
+/// charter id. `jot` on an id-less charter refuses, since a note keyed by an
+/// ephemeral id would be lost, and leaves the document as it was. (`update`
+/// and `close` are covered in `tests/charter.rs`.)
 #[test]
 fn jot_does_not_stamp_an_id_on_an_existing_charter() {
     let env = TestEnv::new();
     seed(&env);
+    let path = env.data_dir.join("charters/my-charter.md");
+    let before = fs::read(&path).unwrap();
 
     env.command()
-        .args(["jot", "a finding worth keeping", "--charter", "my-charter"])
+        .args(["jot", "charter", "my-charter", "a finding worth keeping"])
         .assert()
-        .success();
+        .failure();
 
-    let content = fs::read_to_string(env.data_dir.join("charters/my-charter.md")).unwrap();
-    assert!(content.contains("## Log"), "jot lost the log:\n{content}");
-    assert!(content.contains("a finding worth keeping"), "{content}");
-    assert!(
-        !content
-            .lines()
-            .any(|line| line.trim_start().starts_with("id:")),
-        "jot stamped an id on an existing document:\n{content}"
-    );
+    assert_eq!(fs::read(&path).unwrap(), before, "jot edited the document");
 }

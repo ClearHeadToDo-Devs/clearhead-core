@@ -454,59 +454,6 @@ fn replace_h1_title(content: &str, title: &str) -> Result<String, String> {
         .ok_or_else(|| "Charter must have an H1 title to update".to_string())
 }
 
-/// Append a single log entry as a bullet under the charter's `## Log` section,
-/// returning the new markdown.
-///
-/// This is a *surgical* text edit: every byte of `content` outside the touched
-/// region is preserved. It deliberately does not round-trip through
-/// [`parse_charter`]/[`format_charter`], which regenerate the file from the
-/// parsed model and would silently drop unmodeled frontmatter (e.g. `defaults`)
-/// and normalize whitespace — wrong for an append-only log.
-///
-/// If a Log section exists (see [`is_log_heading`]), the bullet is inserted
-/// after the last non-blank line of that section (before trailing blank lines
-/// or a following heading). Otherwise a `## Log` section is created at the end
-/// of the document.
-pub fn append_log_entry(content: &str, entry: &str) -> String {
-    let bullet = format!("- {}", entry.trim());
-    let (_, body) = split_frontmatter(content);
-    let offset = content.len() - body.len();
-    let (_, sections) = markdown::sections(body, 2);
-
-    let Some(log) = sections
-        .iter()
-        .find(|section| is_log_heading(&section.heading))
-    else {
-        // No log section: create one at the end, separated from prior content.
-        let mut result = content.trim_end().to_string();
-        if !result.is_empty() {
-            result.push_str("\n\n");
-        }
-        result.push_str("## Log\n\n");
-        result.push_str(&bullet);
-        result.push('\n');
-        return result;
-    };
-
-    let start = offset + log.body_range.start;
-    let filled = log.body.trim_end().len();
-    if filled > 0 {
-        // Join the existing list right after its last non-blank line.
-        let at = start + filled;
-        return format!("{}\n{bullet}{}", &content[..at], &content[at..]);
-    }
-    // An empty section: the bullet goes where the section ends.
-    let at = offset + log.body_range.end;
-    let mut result = content[..at].to_string();
-    if !result.ends_with('\n') {
-        result.push('\n');
-    }
-    result.push_str(&bullet);
-    result.push('\n');
-    result.push_str(&content[at..]);
-    result
-}
-
 /// The charter's Log section: a level-2 heading reading `Log`, in any case.
 pub(super) fn is_log_heading(heading: &markdown::Heading) -> bool {
     heading.level == 2 && heading.text.eq_ignore_ascii_case("Log")
@@ -768,63 +715,6 @@ Stay healthy and fit through regular exercise and diet.
         assert!(edited.contains("title: 'New: title'\n"));
         assert!(edited.contains("custom: keep\n"));
         assert!(edited.contains("# New: title\n"));
-    }
-
-    #[test]
-    fn append_log_creates_section_when_absent() {
-        let content = "---\nid: x\n---\n# Title\n\nSome description.\n";
-        let out = append_log_entry(content, "first finding");
-        assert_eq!(
-            out,
-            "---\nid: x\n---\n# Title\n\nSome description.\n\n## Log\n\n- first finding\n"
-        );
-    }
-
-    #[test]
-    fn append_log_adds_bullet_to_existing_section() {
-        let content = "# Title\n\n## Log\n\n- old entry\n";
-        let out = append_log_entry(content, "new entry");
-        assert_eq!(out, "# Title\n\n## Log\n\n- old entry\n- new entry\n");
-    }
-
-    #[test]
-    fn append_log_inserts_before_following_section_and_preserves_it() {
-        // The log is not the last section; the bullet must land inside it and
-        // the trailing sibling section must be untouched.
-        let content = "# T\n\n## Log\n\n- a\n\n## Notes\n\nkeep me\n";
-        let out = append_log_entry(content, "b");
-        assert_eq!(out, "# T\n\n## Log\n\n- a\n- b\n\n## Notes\n\nkeep me\n");
-    }
-
-    #[test]
-    fn append_log_preserves_unmodeled_frontmatter() {
-        // The whole point of the surgical edit: `defaults` survives, where a
-        // format_charter round-trip would drop it.
-        let content = "---\nid: x\ndefaults:\n  priority: 3\n---\n# T\n";
-        let out = append_log_entry(content, "note");
-        assert!(out.contains("defaults:\n  priority: 3"), "{out}");
-        assert!(out.ends_with("## Log\n\n- note\n"), "{out}");
-    }
-
-    #[test]
-    fn append_log_joins_a_lowercase_log_heading() {
-        // The projection reads `## log` as the Log section; jot must agree
-        // rather than open a second one.
-        let content = "# T\n\n## log\n\n- a\n";
-        assert_eq!(
-            append_log_entry(content, "b"),
-            "# T\n\n## log\n\n- a\n- b\n"
-        );
-    }
-
-    #[test]
-    fn append_log_ignores_a_log_heading_inside_a_fence() {
-        let content = "# T\n\n```md\n## Log\n```\n";
-        assert!(
-            append_log_entry(content, "b").ends_with("```\n\n## Log\n\n- b\n"),
-            "{}",
-            append_log_entry(content, "b")
-        );
     }
 
     #[test]

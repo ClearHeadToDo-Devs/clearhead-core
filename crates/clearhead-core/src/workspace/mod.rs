@@ -64,7 +64,7 @@ pub use calendar::reconcile::{
 };
 pub use calendar::sync_store::{PlansSyncStore, decode_plans_sync_store, encode_plans_sync_store};
 pub use charter::{
-    CharterDocument, CharterIdSource, MarkdownCharter, append_log_entry, charter_frontmatter_id,
+    CharterDocument, CharterIdSource, MarkdownCharter, charter_frontmatter_id,
     edit_charter_document, format_charter, implicit_charter, parse_charter,
 };
 pub use charter_schema::{project_charter_schema, project_charters_schema, with_charter_notes};
@@ -104,6 +104,7 @@ pub use store::{
     WorkspaceAssemblyInput, WorkspaceError, WorkspaceRead, actions_anchor_for_document,
     assemble_workspace, assembled_domain_model, charter_collection_from_anchor, diagnose,
     document_anchor_for_actions, infer_charter_name, infer_charter_name_for_workspace,
-    infer_parent_charter_name, infer_parent_charter_name_for_workspace, state_coherence_findings,
+    infer_parent_charter_name, infer_parent_charter_name_for_workspace, note_sidecars,
+    state_coherence_findings,
 };
 pub use templates::{instantiate_template, template_candidates};

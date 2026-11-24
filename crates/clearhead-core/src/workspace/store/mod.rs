@@ -18,7 +18,7 @@ use crate::workspace::resource::ResourceConflict;
 pub use assembly::{WorkspaceAssemblyInput, assemble_workspace, assembled_domain_model};
 pub use doctor::{
     Diagnosis, DoctorCollectionEvidence, DoctorDocument, DoctorEvidence, DoctorRepair,
-    DoctorSidecarEvidence, DurabilityResidue, DurabilityResidueKind, diagnose,
+    DoctorSidecarEvidence, DurabilityResidue, DurabilityResidueKind, diagnose, note_sidecars,
     state_coherence_findings,
 };
 pub use findings::{Finding, FindingSeverity};
