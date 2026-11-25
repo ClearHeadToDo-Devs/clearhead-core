@@ -57,6 +57,21 @@ fn note_owners(read: &WorkspaceRead) -> Vec<NoteOwner> {
         .collect()
 }
 
+/// Every note owner, plus every entity a sidecar could hold notes for, so an
+/// archived entity with no notes yet resolves by id for both verbs.
+fn owners_with_sidecars(
+    read: &WorkspaceRead,
+    sidecars: &HashMap<String, PathBuf>,
+) -> Vec<NoteOwner> {
+    let mut owners = note_owners(read);
+    for id in sidecars.keys().filter_map(|id| id.parse::<Uuid>().ok()) {
+        if !owners.iter().any(|owner| owner.id == id) {
+            owners.push(NoteOwner { id, alias: None });
+        }
+    }
+    owners
+}
+
 fn resolve_owner(owners: &[NoteOwner], query: &str) -> anyhow::Result<Uuid> {
     match select_reference(owners, query) {
         ReferenceSelection::Unique { index, .. } => Ok(owners[index].id),
@@ -74,10 +89,8 @@ fn resolve_owner(owners: &[NoteOwner], query: &str) -> anyhow::Result<Uuid> {
 
 /// Print an entity's notes, oldest first so the newest is last.
 pub fn show_notes(ctx: &CommandContext, query: &str, json: bool) -> anyhow::Result<()> {
-    let read = clearhead_cli::filesystem::read_workspace_with_archive(&ctx.data_dir)
-        .context("Failed to read workspace")?;
-    warn_corrupt_sidecars(&read);
-    let id = resolve_owner(&note_owners(&read), query)?;
+    let (read, sidecars) = read_note_sidecars(ctx)?;
+    let id = resolve_owner(&owners_with_sidecars(&read, &sidecars), query)?;
     let notes = notes_across(read.sidecars.values(), id);
     if json {
         println!("{}", serde_json::to_string_pretty(&notes)?);
@@ -155,13 +168,7 @@ pub fn jot(
     options: &JotOptions,
 ) -> anyhow::Result<()> {
     let (read, sidecars) = read_note_sidecars(ctx)?;
-    let mut owners = note_owners(&read);
-    for id in sidecars.keys().filter_map(|id| id.parse::<Uuid>().ok()) {
-        if !owners.iter().any(|owner| owner.id == id) {
-            owners.push(NoteOwner { id, alias: None });
-        }
-    }
-    let id = resolve_owner(&owners, reference)?;
+    let id = resolve_owner(&owners_with_sidecars(&read, &sidecars), reference)?;
     require_durable_id(&read, id)?;
     append(ctx, &sidecars, id, text, options)
 }

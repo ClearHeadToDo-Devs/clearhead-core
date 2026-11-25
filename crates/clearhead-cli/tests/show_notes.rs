@@ -73,6 +73,22 @@ fn closed_action_notes_print_newest_last_as_text_and_json() {
 }
 
 #[test]
+fn an_archived_charter_without_notes_resolves_by_id_as_jot_does() {
+    let env = common::TestEnv::new();
+    env.write_text(
+        "charters/done.md",
+        &format!("---\nid: {CHARTER}\nalias: done\nstate: Closed\n---\n# Done\n"),
+    );
+    env.write_actions("done.actions", &format!("[x] Finished #{ACTION}\n"));
+    env.command()
+        .args(["archive", "charter", "done"])
+        .assert()
+        .success();
+
+    assert_eq!(notes_json(&env, CHARTER), json!([]));
+}
+
+#[test]
 fn archived_charter_action_and_habit_notes_resolve_by_id_once_each() {
     let env = common::TestEnv::new();
     env.write_text(
