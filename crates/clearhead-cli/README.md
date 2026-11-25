@@ -55,6 +55,8 @@ clearhead reopen action "Buy oat milk"
 # `jot charter` also matches a charter's title. Notes live in the sidecar.
 clearhead jot cache-reads "range reads need a cache keyed on Last-Modified"
 clearhead jot charter inbox "triaged the week's captures"
+# Backdate a note, e.g. when moving an old log entry, with no author claimed
+clearhead jot charter inbox "first triage" --at 2026-09-17 --no-by
 clearhead show notes cache-reads
 
 # Archive whole root trees whose members are all closed out of active files

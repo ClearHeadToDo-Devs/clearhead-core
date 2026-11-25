@@ -12,6 +12,8 @@ The native sidecar API serializes note appends with an OS file lock. Doctor relo
 
 `jot <reference> <text>` appends a note to any charter, action or Habit, found by UUID, short prefix or alias, closed and archived ones included; `jot charter <query> <text>` also matches a charter's title. Notes go to the sidecar `doctor` expects them in, never to the charter document or the `.actions` line, and `jot` refuses an entity without a durable id. The note's `by` is `--by`, else the configured `name` (`CLEARHEAD_NAME` or a config file), else the login name. **Breaking:** `jot` no longer writes the charter's `## Log`, no longer creates a charter document, and drops `--charter` and the sole-charter default.
 
+`jot --at <date-time>` records a note at that time instead of now (an ISO 8601 date-time with its offset, or a date read as midnight UTC), and `--no-by` records no author, so a migrated log entry keeps its date and claims no writer. A note dated before the latest one is stored in time order rather than at the end.
+
 ## 0.4.0 - 2026-11-05
 
 Implements specification v0.5.0 with grammar v0.11.1: `clearhead 0.4.0 (specification v0.5.0, grammar v0.11.1)`. The individual close and root-tree archive of v0.4.0 (platform Decisions 58 and 59) are complete. **The Habits of v0.5.0 are only partly implemented:** Core can project a Habit into the application graph, but nothing reads habits files yet, generates occurrences or syncs Habits with the calendar. Uses Core 0.4.0.

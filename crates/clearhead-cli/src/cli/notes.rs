@@ -251,8 +251,10 @@ fn append(
         .get(&id.to_string())
         .ok_or_else(|| anyhow::anyhow!("'{id}' is stored in no file that can hold notes"))?;
     let note = Note {
-        at: chrono::SubsecRound::trunc_subsecs(chrono::Local::now().fixed_offset(), 0),
-        by: Some(note_author(ctx, options.by.as_deref())),
+        at: options.at.unwrap_or_else(|| {
+            chrono::SubsecRound::trunc_subsecs(chrono::Local::now().fixed_offset(), 0)
+        }),
+        by: (!options.no_by).then(|| note_author(ctx, options.by.as_deref())),
         text: text.to_string(),
         extra: BTreeMap::new(),
     };

@@ -169,6 +169,48 @@ fn by_resolves_flag_then_env_then_config_then_login() {
 }
 
 #[test]
+fn at_backdates_a_note_and_keeps_the_sidecar_in_time_order() {
+    let env = common::TestEnv::new();
+    work(&env);
+    jot(&env, &["work", "now"]);
+    jot(&env, &["work", "a date", "--at", "2026-09-17"]);
+    jot(&env, &["work", "a time", "--at", "2026-09-17T23:28-07:00"]);
+
+    let sidecar: Value =
+        serde_json::from_slice(&std::fs::read(env.data_dir.join("charters/.work.json")).unwrap())
+            .unwrap();
+    let stored: Vec<&str> = sidecar["notes"][CHARTER]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|note| note["at"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        &stored[..2],
+        ["2026-09-17T00:00:00Z", "2026-09-17T23:28:00-07:00"]
+    );
+    assert_eq!(notes(&env, CHARTER)[2]["text"], "now");
+}
+
+#[test]
+fn at_refuses_a_time_without_an_offset() {
+    let env = common::TestEnv::new();
+    work(&env);
+    clearhead(&env)
+        .args(["jot", "work", "x", "--at", "2026-09-17T23:28"])
+        .assert()
+        .failure();
+}
+
+#[test]
+fn no_by_records_no_author() {
+    let env = common::TestEnv::new();
+    work(&env);
+    jot(&env, &["work", "unknown writer", "--no-by"]);
+    assert!(notes(&env, CHARTER)[0].get("by").is_none());
+}
+
+#[test]
 fn an_unknown_reference_fails_and_writes_nothing() {
     let env = common::TestEnv::new();
     work(&env);

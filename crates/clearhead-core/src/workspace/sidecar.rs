@@ -61,26 +61,31 @@ pub struct Note {
     pub extra: BTreeMap<String, serde_json::Value>,
 }
 
+/// A note's `at` as the sidecar accepts it: RFC 3339, a minute-precision
+/// date-time with offset, or a bare date read as midnight UTC (charters.md).
+pub fn parse_note_instant(text: &str) -> Result<DateTime<chrono::FixedOffset>, chrono::ParseError> {
+    DateTime::parse_from_rfc3339(text)
+        .or_else(|_| DateTime::parse_from_str(text, "%Y-%m-%dT%H:%M%#z"))
+        .or_else(|_| {
+            chrono::NaiveDate::parse_from_str(text, "%Y-%m-%d")
+                .map(|date| date.and_hms_opt(0, 0, 0).unwrap().and_utc().fixed_offset())
+        })
+}
+
 fn deserialize_note_instant<'de, D: serde::Deserializer<'de>>(
     deserializer: D,
 ) -> Result<DateTime<chrono::FixedOffset>, D::Error> {
     let text = String::deserialize(deserializer)?;
-    DateTime::parse_from_rfc3339(&text)
-        .or_else(|_| DateTime::parse_from_str(&text, "%Y-%m-%dT%H:%M%#z"))
-        .or_else(|_| {
-            chrono::NaiveDate::parse_from_str(&text, "%Y-%m-%d")
-                .map(|date| date.and_hms_opt(0, 0, 0).unwrap().and_utc().fixed_offset())
-        })
-        .map_err(serde::de::Error::custom)
+    parse_note_instant(&text).map_err(serde::de::Error::custom)
 }
 
-/// Append without imposing any lifecycle restriction on the entity.
+/// Append without imposing any lifecycle restriction on the entity. A note
+/// dated before the latest one goes after the last note at or before its
+/// instant, so the array stays in time order (charters.md).
 pub fn append_note(metadata: &mut CharterMetadata, entity: uuid::Uuid, note: Note) {
-    metadata
-        .notes
-        .entry(entity.to_string())
-        .or_default()
-        .push(note);
+    let notes = metadata.notes.entry(entity.to_string()).or_default();
+    let at = notes.partition_point(|existing| existing.at <= note.at);
+    notes.insert(at, note);
 }
 
 /// Read notes for a given entity from a single sidecar
@@ -697,6 +702,32 @@ mod tests {
             note("second", "2026-11-20T11:00:00Z"),
         );
         assert_eq!(texts(notes_for(&metadata, entity)), ["first", "second"]);
+    }
+
+    #[test]
+    fn a_backdated_note_is_stored_in_time_order() {
+        let entity = uuid::Uuid::now_v7();
+        let mut metadata = CharterMetadata::default();
+        append_note(&mut metadata, entity, note("noon", "2026-11-20T12:00:00Z"));
+        append_note(&mut metadata, entity, note("ten", "2026-11-20T10:00:00Z"));
+        append_note(
+            &mut metadata,
+            entity,
+            note("also noon", "2026-11-20T12:00:00Z"),
+        );
+        assert_eq!(
+            texts(notes_for(&metadata, entity)),
+            ["ten", "noon", "also noon"]
+        );
+    }
+
+    #[test]
+    fn a_bare_date_is_midnight_utc() {
+        assert_eq!(
+            parse_note_instant("2026-09-17").unwrap(),
+            DateTime::parse_from_rfc3339("2026-09-17T00:00:00Z").unwrap()
+        );
+        assert!(parse_note_instant("2026-09-17T10:00").is_err());
     }
 
     #[test]

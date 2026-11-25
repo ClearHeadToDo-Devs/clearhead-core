@@ -467,11 +467,27 @@ pub enum JotTarget {
     },
 }
 
+fn parse_note_at(text: &str) -> Result<chrono::DateTime<chrono::FixedOffset>, String> {
+    clearhead_core::workspace::sidecar::parse_note_instant(text).map_err(|_| {
+        "expected a date-time with its UTC offset (2026-09-17T23:28-07:00) or a date (2026-09-17)"
+            .to_string()
+    })
+}
+
 #[derive(Args, Clone, Default, Debug)]
 pub struct JotOptions {
     /// Who wrote the note. Defaults to the configured `name` (CLEARHEAD_NAME), then the login name
     #[arg(long)]
     pub by: Option<String>,
+
+    /// Record no author, for a note whose writer is unknown (a migrated log entry)
+    #[arg(long, conflicts_with = "by")]
+    pub no_by: bool,
+
+    /// When the note was written, instead of now: an ISO 8601 date-time with its UTC offset,
+    /// or a date (read as midnight UTC)
+    #[arg(long, value_parser = parse_note_at)]
+    pub at: Option<chrono::DateTime<chrono::FixedOffset>>,
 
     /// Print the note and where it would go, without writing
     #[arg(long)]
