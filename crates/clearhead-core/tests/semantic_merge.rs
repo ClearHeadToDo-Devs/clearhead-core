@@ -2,7 +2,8 @@
 
 use clearhead_core::ActionList;
 use clearhead_core::workspace::actions::diff::{
-    ActionDeleted, BothAdded, Conflict, FieldConflict, ParentCycle, Side, semantic_merge,
+    ActionDeleted, BothAdded, Conflict, FieldConflict, OrderConflict, ParentCycle, Side,
+    semantic_merge,
 };
 use clearhead_core::workspace::actions::{Action, ActionState};
 use uuid::Uuid;
@@ -276,4 +277,150 @@ fn test_semantic_merge_parent_cycle_conflicts() {
         merged.conflicts,
         vec![Conflict::ParentCycle(ParentCycle { ids: vec![b.id] })]
     );
+}
+
+fn abc() -> (Action, Action, Action) {
+    (named("A", None), named("B", None), named("C", None))
+}
+
+// Theirs moves C to the top while ours renames B: both kept, as "it just got moved".
+#[test]
+fn test_semantic_merge_keeps_one_side_reorder() {
+    let (a, b, c) = abc();
+    let base = vec![a.clone(), b.clone(), c.clone()];
+    let renamed_b = Action {
+        name: "B renamed".to_string(),
+        ..b.clone()
+    };
+    let ours = vec![a.clone(), renamed_b.clone(), c.clone()];
+    let theirs = vec![c.clone(), a.clone(), b];
+
+    let merged = semantic_merge(&base, &ours, &theirs);
+
+    assert_eq!(merged.merged, vec![c, a, renamed_b]);
+    assert!(merged.conflicts.is_empty());
+}
+
+// Both sides make the same reorder: nothing to resolve.
+#[test]
+fn test_semantic_merge_same_reorder_on_both_sides() {
+    let (a, b, c) = abc();
+    let base = vec![a.clone(), b.clone(), c.clone()];
+    let reordered = vec![c, a, b];
+
+    let merged = semantic_merge(&base, &reordered, &reordered);
+
+    assert_eq!(merged.merged, reordered);
+    assert!(merged.conflicts.is_empty());
+}
+
+// Both sides reorder the same siblings differently: a conflict, ours' order as the placeholder.
+#[test]
+fn test_semantic_merge_different_reorders_conflict() {
+    let (a, b, c) = abc();
+    let base = vec![a.clone(), b.clone(), c.clone()];
+    let ours = vec![c.clone(), a.clone(), b.clone()];
+    let theirs = vec![b, c, a];
+
+    let merged = semantic_merge(&base, &ours, &theirs);
+
+    assert_eq!(merged.merged, ours);
+    assert_eq!(
+        merged.conflicts,
+        vec![Conflict::OrderConflict(OrderConflict { parent: None })]
+    );
+}
+
+// Each side adds an action in its own place: both land after the sibling they followed.
+#[test]
+fn test_semantic_merge_places_additions_after_their_sibling() {
+    let (a, b, _) = abc();
+    let (x, y) = (named("X", None), named("Y", None));
+    let base = vec![a.clone(), b.clone()];
+    let ours = vec![a.clone(), b.clone(), y.clone()];
+    let theirs = vec![a.clone(), x.clone(), b.clone()];
+
+    let merged = semantic_merge(&base, &ours, &theirs);
+
+    assert_eq!(merged.merged, vec![a, x, b, y]);
+    assert!(merged.conflicts.is_empty());
+}
+
+// Theirs moves C under A: C is written right after A, ahead of B.
+#[test]
+fn test_semantic_merge_moves_action_to_new_parent() {
+    let (a, b, c) = abc();
+    let base = vec![a.clone(), b.clone(), c.clone()];
+    let c_under_a = Action {
+        parent_id: Some(a.id),
+        ..c
+    };
+    let theirs = vec![a.clone(), c_under_a.clone(), b.clone()];
+
+    let merged = semantic_merge(&base, &base, &theirs);
+
+    assert_eq!(merged.merged, theirs);
+    assert!(merged.conflicts.is_empty());
+}
+
+// Ours completes A while theirs adds an open child under it. The specification lets a closed
+// parent hold open work and reports it as W002, a warning, so the merge keeps both changes.
+#[test]
+fn test_semantic_merge_add_child_under_completed_parent() {
+    let a = named("A", None);
+    let child = named("Child of A", Some(a.id));
+    let completed_a = Action {
+        state: ActionState::Completed,
+        ..a.clone()
+    };
+    let base = vec![a.clone()];
+    let ours = vec![completed_a.clone()];
+    let theirs = vec![a, child.clone()];
+
+    let merged = semantic_merge(&base, &ours, &theirs);
+
+    assert_eq!(merged.merged, vec![completed_a, child]);
+    assert!(merged.conflicts.is_empty());
+}
+
+// Neighbouring edits: different fields of one action and different actions, all kept.
+#[test]
+fn test_semantic_merge_neighbouring_edits() {
+    let (a, b, _) = abc();
+    let base = vec![a.clone(), b.clone()];
+    let ours = vec![
+        Action {
+            name: "A renamed".to_string(),
+            ..a.clone()
+        },
+        b.clone(),
+    ];
+    let theirs = vec![
+        Action {
+            priority: Some(1),
+            ..a.clone()
+        },
+        Action {
+            name: "B renamed".to_string(),
+            ..b.clone()
+        },
+    ];
+
+    let merged = semantic_merge(&base, &ours, &theirs);
+
+    assert_eq!(
+        merged.merged,
+        vec![
+            Action {
+                name: "A renamed".to_string(),
+                priority: Some(1),
+                ..a
+            },
+            Action {
+                name: "B renamed".to_string(),
+                ..b
+            },
+        ]
+    );
+    assert!(merged.conflicts.is_empty());
 }

@@ -16,6 +16,7 @@ pub enum Conflict {
     ActionDeleted(ActionDeleted),
     BothAdded(BothAdded),
     ParentCycle(ParentCycle),
+    OrderConflict(OrderConflict),
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -45,6 +46,12 @@ pub struct BothAdded {
 #[derive(Debug, PartialEq, Clone)]
 pub struct ParentCycle {
     pub ids: Vec<Uuid>,
+}
+
+/// Both sides reordered this parent's children differently; ours' order is the placeholder.
+#[derive(Debug, PartialEq, Clone)]
+pub struct OrderConflict {
+    pub parent: Option<Uuid>,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -209,6 +216,8 @@ pub fn semantic_merge(base: &ActionList, ours: &ActionList, theirs: &ActionList)
         }
     }
     restore_deleted_parents(&mut merged, &mut conflicts, &index.1, &index.2);
+    let (merged, order_conflicts) = order_siblings(merged, [base, ours, theirs]);
+    conflicts.extend(order_conflicts);
     let (merged, cycle) = order_tree(merged, &index.1);
     conflicts.extend(cycle);
     SemanticMerge { merged, conflicts }
@@ -242,6 +251,72 @@ fn restore_deleted_parents(
         }
         i += 1;
     }
+}
+
+/// Merge the order of each parent's children, so a move made on one side is kept.
+///
+/// Children under the same parent on all three sides are ordered like a field: if one side kept
+/// base's order take the other's, and if both reordered differently report an OrderConflict and
+/// keep ours. Every other child (added, restored or moved in) goes after its nearest previous
+/// sibling on the side that has it there, or first when it has none.
+///
+/// Only the order within each parent changes; `depth_first` then writes the tree.
+fn order_siblings(mut merged: ActionList, sides: [&ActionList; 3]) -> (ActionList, Vec<Conflict>) {
+    let mut parents = Vec::new();
+    let mut groups: HashMap<Option<Uuid>, HashSet<Uuid>> = HashMap::new();
+    for action in &merged {
+        let group = groups.entry(action.parent_id).or_default();
+        if group.is_empty() {
+            parents.push(action.parent_id);
+        }
+        group.insert(action.id);
+    }
+
+    let mut rank = HashMap::new();
+    let mut conflicts = Vec::new();
+    for parent in parents {
+        let [base, ours, theirs] = sides.map(|side| siblings(side, parent, &groups[&parent]));
+        let on_every_side = |seq: &[Uuid]| -> Vec<Uuid> {
+            seq.iter()
+                .copied()
+                .filter(|id| base.contains(id) && ours.contains(id) && theirs.contains(id))
+                .collect()
+        };
+        let (b, o, t) = (
+            on_every_side(&base),
+            on_every_side(&ours),
+            on_every_side(&theirs),
+        );
+        let mut order = merge_field(&b, &o, &t).unwrap_or_else(|| {
+            conflicts.push(Conflict::OrderConflict(OrderConflict { parent }));
+            o.clone()
+        });
+        for side in [&ours, &theirs] {
+            for (i, id) in side.iter().enumerate() {
+                if order.contains(id) {
+                    continue;
+                }
+                let at = side[..i]
+                    .iter()
+                    .rev()
+                    .find_map(|prev| order.iter().position(|placed| placed == prev))
+                    .map_or(0, |p| p + 1);
+                order.insert(at, *id);
+            }
+        }
+        rank.extend(order.into_iter().enumerate().map(|(i, id)| (id, i)));
+    }
+    // Ranks compare only within a parent, which is all depth_first reads; the sort is stable.
+    merged.sort_by_key(|a| rank.get(&a.id).copied().unwrap_or(usize::MAX));
+    (merged, conflicts)
+}
+
+/// The ids of `parent`'s children on one side, in that side's order, limited to `group`.
+fn siblings(side: &ActionList, parent: Option<Uuid>, group: &HashSet<Uuid>) -> Vec<Uuid> {
+    side.iter()
+        .filter(|a| a.parent_id == parent && group.contains(&a.id))
+        .map(|a| a.id)
+        .collect()
 }
 
 /// Put the merged actions in tree order, refusing a parent cycle.
