@@ -15,6 +15,7 @@ pub enum Conflict {
     FieldConflict(FieldConflict),
     ActionDeleted(ActionDeleted),
     BothAdded(BothAdded),
+    ParentCycle(ParentCycle),
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -38,6 +39,12 @@ pub enum Side {
 #[derive(Debug, PartialEq, Clone)]
 pub struct BothAdded {
     pub id: Uuid,
+}
+
+/// Merged moves put these actions under their own descendants; their moves were undone.
+#[derive(Debug, PartialEq, Clone)]
+pub struct ParentCycle {
+    pub ids: Vec<Uuid>,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -201,7 +208,115 @@ pub fn semantic_merge(base: &ActionList, ours: &ActionList, theirs: &ActionList)
             }
         }
     }
+    restore_deleted_parents(&mut merged, &mut conflicts, &index.1, &index.2);
+    let (merged, cycle) = order_tree(merged, &index.1);
+    conflicts.extend(cycle);
     SemanticMerge { merged, conflicts }
+}
+
+/// Adding a child under an action the other side deleted is an edit to that action. Keep the action,
+/// and any deleted ancestors above it, and report each as edit versus delete.
+fn restore_deleted_parents(
+    merged: &mut ActionList,
+    conflicts: &mut Vec<Conflict>,
+    ours: &HashMap<Uuid, &Action>,
+    theirs: &HashMap<Uuid, &Action>,
+) {
+    let mut present: HashSet<Uuid> = merged.iter().map(|a| a.id).collect();
+    // Restored parents are pushed onto `merged`, so the loop reaches them and their parents too.
+    let mut i = 0;
+    while i < merged.len() {
+        if let Some(parent) = merged[i].parent_id
+            && !present.contains(&parent)
+        {
+            let kept = (ours.get(&parent).map(|a| (a, Side::Theirs)))
+                .or_else(|| theirs.get(&parent).map(|a| (a, Side::Ours)));
+            if let Some((action, deleted_by)) = kept {
+                merged.push((*action).clone());
+                present.insert(parent);
+                conflicts.push(Conflict::ActionDeleted(ActionDeleted {
+                    id: parent,
+                    deleted_by,
+                }));
+            }
+        }
+        i += 1;
+    }
+}
+
+/// Put the merged actions in tree order, refusing a parent cycle.
+///
+/// Each side's moves can be clean on their own and still form a cycle together (ours moves A
+/// under B, theirs moves B under A). The placeholder undoes the moves ours did not make, which
+/// leaves ours' tree, and the conflict names the actions whose moves were undone.
+fn order_tree(merged: ActionList, ours: &HashMap<Uuid, &Action>) -> (ActionList, Option<Conflict>) {
+    let (ordered, unreached) = depth_first(&merged);
+    if unreached.is_empty() {
+        return (ordered, None);
+    }
+    let mut undone = Vec::new();
+    let placeholder: ActionList = merged
+        .into_iter()
+        .map(|mut action| {
+            if let Some(our) = ours.get(&action.id)
+                && unreached.contains(&action.id)
+                && our.parent_id != action.parent_id
+            {
+                action.parent_id = our.parent_id;
+                undone.push(action.id);
+            }
+            action
+        })
+        .collect();
+    let (ordered, _) = depth_first(&placeholder);
+    (
+        ordered,
+        Some(Conflict::ParentCycle(ParentCycle { ids: undone })),
+    )
+}
+
+/// Order actions depth-first, so each child comes right after its parent.
+///
+/// The formatter writes actions in list order and marks depth with `>`, so a child that does not
+/// follow its parent is read back under the wrong one. Siblings keep their order in `list`.
+/// A child whose parent is missing becomes a root. Actions not reachable from a root (a parent
+/// cycle) are appended rather than dropped, and returned so the caller can report them.
+fn depth_first(list: &[Action]) -> (ActionList, HashSet<Uuid>) {
+    let ids: HashSet<Uuid> = list.iter().map(|a| a.id).collect();
+    let mut children: HashMap<Option<Uuid>, Vec<&Action>> = HashMap::new();
+    for action in list {
+        let parent = action.parent_id.filter(|id| ids.contains(id));
+        children.entry(parent).or_default().push(action);
+    }
+    let mut ordered = Vec::with_capacity(list.len());
+    let mut seen = HashSet::new();
+    push_subtree(None, &children, &mut seen, &mut ordered);
+    let mut unreached = HashSet::new();
+    for action in list {
+        if seen.insert(action.id) {
+            unreached.insert(action.id);
+            ordered.push(action.clone());
+        }
+    }
+    (ordered, unreached)
+}
+
+fn push_subtree(
+    parent: Option<Uuid>,
+    children: &HashMap<Option<Uuid>, Vec<&Action>>,
+    seen: &mut HashSet<Uuid>,
+    ordered: &mut ActionList,
+) {
+    for child in children.get(&parent).into_iter().flatten() {
+        if seen.insert(child.id) {
+            // Written under `parent`, so say so: a missing parent's child is read back as a root.
+            ordered.push(Action {
+                parent_id: parent,
+                ..(*child).clone()
+            });
+            push_subtree(Some(child.id), children, seen, ordered);
+        }
+    }
 }
 
 fn index_actions(actions: &ActionList) -> HashMap<Uuid, &Action> {
