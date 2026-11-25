@@ -236,6 +236,11 @@
         "at": "2026-11-25T01:18:26Z",
         "by": "agent:facilitator",
         "text": "Found 2026-09-25 while parking the support charter. Workarounds lose identity (delete then add) or bypass the CLI (a hand edit of two .actions files)."
+      },
+      {
+        "at": "2026-11-25T01:33:56Z",
+        "by": "agent:facilitator",
+        "text": "Also found 2026-10-01 folding implement-objectives into emit-the-ontology; the move was done by hand (from the support duplicate, now cancelled)."
       }
     ],
     "01a0f44c-58a0-752e-a856-7a16b88781ef": [
@@ -257,6 +262,13 @@
         "at": "2026-11-25T01:16:04Z",
         "by": "agent:facilitator",
         "text": "2026-11-25: blocked moving closed children's long descriptions to notes; update action returns already-closed, so the 7 in platform next.actions were trimmed by hand after jot."
+      }
+    ],
+    "01a1e2a7-dfb3-7b80-99ab-72b5d414c08d": [
+      {
+        "at": "2026-11-25T01:33:55Z",
+        "by": "agent:facilitator",
+        "text": "Done by Core 6c5539f: show action --json prints the action per actions.schema.json, notes included."
       }
     ]
   }
