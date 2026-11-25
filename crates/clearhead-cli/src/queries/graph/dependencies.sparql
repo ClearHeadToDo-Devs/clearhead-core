@@ -2,7 +2,7 @@
 # Graph view: dependencies
 # =============================================================================
 # Purpose: every action with its state, priority, what it waits on directly
-# and the whole it is part of (a parent action or its charter), for the
+# (an action or a charter) and the whole it is part of (a parent action or its charter), for the
 # dependency diagram. "Directly" is its own waits: its predecessors and the
 # sibling before it under ~, without the waits it inherits from its parent
 # (the parent's own edge already shows those). The DOT projection draws
@@ -19,7 +19,7 @@ CONSTRUCT {
             app:state ?status .
     ?action app:priority ?priority .
     ?action app:waitsOn ?predecessor .
-    ?predecessor a app:Action ;
+    ?predecessor a ?predecessor_kind ;
                  rdfs:label ?predecessor_name ;
                  app:state ?predecessor_status .
     ?action app:partOf ?parent .
@@ -34,9 +34,10 @@ WHERE {
     OPTIONAL {
         ?action app:waitsOn ?predecessor .
         FILTER NOT EXISTS { ?action app:partOf ?whole . ?whole app:waitsOn ?predecessor }
-        ?predecessor a app:Action ;
+        ?predecessor a ?predecessor_kind ;
                      rdfs:label ?predecessor_name ;
                      app:state ?predecessor_status .
+        FILTER(?predecessor_kind IN (app:Action, app:Charter))
     }
     # The whole it is part of: a parent action or its charter.
     OPTIONAL { ?action app:partOf ?parent }

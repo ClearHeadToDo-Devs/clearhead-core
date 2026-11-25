@@ -73,6 +73,42 @@ fn tree_nests_actions_under_their_charter() {
 }
 
 #[test]
+fn graph_draws_a_wait_on_a_charter() {
+    const PARTY: &str = "019f733d-4600-7000-8000-0000000000e5";
+    const HOST: &str = "019f733d-4600-7000-8000-0000000000f6";
+    let env = seed();
+    env.write_actions(
+        "dinner.actions",
+        &format!("[ ] Host a dinner <party #{HOST}\n"),
+    );
+    env.write_text(
+        "charters/party.md",
+        &format!("---\nid: {PARTY}\nalias: party\nstate: Active\n---\n# Party\n"),
+    );
+
+    let triples = stdout(
+        &env,
+        &["query", "graph", "dependencies", "--format", "turtle"],
+    );
+    let waits = format!(
+        "<urn:uuid:{HOST}> <https://clearhead.dev/vocab/app/v1#waitsOn> <urn:uuid:{PARTY}>"
+    );
+    assert!(triples.contains(&waits), "{triples}");
+
+    // The charter is drawn as the earlier work, pointing at the action.
+    let dot = stdout(&env, &["query", "graph", "dependencies", "--format", "dot"]);
+    let node = |id: &str| {
+        dot.lines()
+            .find(|line| line.contains(&format!("tooltip=\"urn:uuid:{id}\"")))
+            .and_then(|line| line.split_whitespace().next())
+            .unwrap_or_else(|| panic!("no node for {id}: {dot}"))
+            .to_string()
+    };
+    let edge = format!("{} -> {} [ color=", node(PARTY), node(HOST));
+    assert!(dot.contains(&edge), "{dot}");
+}
+
+#[test]
 fn graph_reconstructs_hierarchical_containment() {
     let env = seed();
     // The CONSTRUCT keeps the graph's upward app:partOf: the sub-action is part
