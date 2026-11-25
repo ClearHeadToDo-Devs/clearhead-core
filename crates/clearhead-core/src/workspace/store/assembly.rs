@@ -1281,6 +1281,8 @@ mod tests {
                     &format!(
                         "[ ] Shop =groceries #{action}\n\
                          [ ] Shared alias <groceries\n\
+                         [ ] Charter prefix <c:groceries\n\
+                         [ ] Action prefix <a:groceries\n\
                          [ ] Short uuid <01a0fb10\n"
                     ),
                 ),
@@ -1303,6 +1305,11 @@ mod tests {
             resolved("Shared alias"),
             Vec::<Uuid>::new(),
             "an action and a charter share it"
+        );
+        assert_eq!(resolved("Charter prefix"), vec![charter]);
+        assert_eq!(
+            resolved("Action prefix"),
+            vec![Uuid::parse_str(action).unwrap()]
         );
         assert_eq!(resolved("Short uuid"), vec![charter]);
         assert!(
