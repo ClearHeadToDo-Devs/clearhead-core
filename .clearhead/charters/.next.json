@@ -210,6 +210,48 @@
     }
   },
   "notes": {
+    "01a0d4a7-f0bd-7465-8583-757b4b3e7dc1": [
+      {
+        "at": "2026-11-25T01:18:26Z",
+        "by": "agent:facilitator",
+        "text": "Claim c41."
+      }
+    ],
+    "01a0d4a7-f0c4-775b-adcb-b7f6402d7e43": [
+      {
+        "at": "2026-11-25T01:18:26Z",
+        "by": "agent:facilitator",
+        "text": "Claim c42."
+      }
+    ],
+    "01a0d71a-889a-73d3-aea7-d9720a0bb051": [
+      {
+        "at": "2026-11-25T01:18:26Z",
+        "by": "agent:facilitator",
+        "text": "Decided 2026-09-24: doctor is the persistent view of workspace state."
+      }
+    ],
+    "01a0dafb-2037-7302-8099-77a95be083b8": [
+      {
+        "at": "2026-11-25T01:18:26Z",
+        "by": "agent:facilitator",
+        "text": "Found 2026-09-25 while parking the support charter. Workarounds lose identity (delete then add) or bypass the CLI (a hand edit of two .actions files)."
+      }
+    ],
+    "01a0f44c-58a0-752e-a856-7a16b88781ef": [
+      {
+        "at": "2026-11-25T01:18:26Z",
+        "by": "agent:facilitator",
+        "text": "Found 2026-09-30."
+      }
+    ],
+    "01a0f5be-21c8-7054-b41b-9e0819b8906c": [
+      {
+        "at": "2026-11-25T01:18:26Z",
+        "by": "agent:facilitator",
+        "text": "Found 2026-09-30 renaming plans-all-the-way-down to ground-the-ontology; fixed by hand with git mv."
+      }
+    ],
     "01a13b8b-5939-7600-b886-a5c9390b6512": [
       {
         "at": "2026-11-25T01:16:04Z",
