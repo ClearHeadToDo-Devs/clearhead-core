@@ -100,6 +100,24 @@ fn escape_reference(s: &str) -> String {
     escape_field(s, NAME_ESCAPE, false)
 }
 
+/// Escape a predecessor reference, except a typed one (`c:` or `a:`, a
+/// letter, then alias or path characters), which the grammar reads as one
+/// token and an escaped colon would only obscure.
+fn escape_predecessor(s: &str) -> String {
+    let mut chars = s.chars();
+    let typed = matches!(chars.next(), Some('a' | 'c'))
+        && chars.next() == Some(':')
+        && chars
+            .next()
+            .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+        && chars.all(|c| c.is_ascii_alphanumeric() || "_/.-".contains(c));
+    if typed {
+        s.to_string()
+    } else {
+        escape_reference(s)
+    }
+}
+
 /// Escape a description body while leaving complete `[[link]]` spans intact.
 pub(crate) fn escape_description(s: &str) -> String {
     escape_field(s, DESC_ESCAPE, true)
@@ -161,7 +179,7 @@ impl Action {
         }
         if let Some(predecessors) = &self.predecessors {
             for pred in predecessors {
-                write!(f, " <{}", escape_reference(&pred.raw_ref))?;
+                write!(f, " <{}", escape_predecessor(&pred.raw_ref))?;
             }
         }
         if include_id {
@@ -656,6 +674,26 @@ mod tests {
         let formatted = format!("{}", action);
         assert!(formatted.contains(&pred_uuid.to_string()));
         assert!(formatted.contains("<"));
+    }
+
+    #[test]
+    fn a_typed_predecessor_is_written_without_escapes() {
+        let written = |raw_ref: &str| {
+            let action = Action {
+                name: "Host".to_string(),
+                predecessors: Some(vec![PredecessorRef {
+                    raw_ref: raw_ref.to_string(),
+                    resolved_uuid: None,
+                }]),
+                ..Default::default()
+            };
+            format!("{action}")
+        };
+        assert!(written("c:home/groceries").contains(" <c:home/groceries"));
+        assert!(written("a:shop").contains(" <a:shop"));
+        // A digit after the colon is not a typed reference, so the colon stays
+        // escaped rather than reading back as a due date.
+        assert!(written("a:2026").contains(r" <a\:2026"));
     }
 
     #[test]

@@ -51,7 +51,7 @@ SELECT (?action AS ?id) ?name ?status ?source_file ?source_line ?priority ?sched
     FILTER NOT EXISTS {
         ?action app:waitsOn ?predecessor .
         ?predecessor app:state ?pred_state .
-        FILTER(?pred_state != app:Completed && ?pred_state != app:Cancelled)
+        FILTER(?pred_state NOT IN (app:Completed, app:Closed, app:Cancelled))
     }
     FILTER NOT EXISTS {
         ?child app:partOf ?action ;

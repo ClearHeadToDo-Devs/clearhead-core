@@ -313,7 +313,7 @@ impl fmt::Display for ReferenceError {
 impl std::error::Error for ReferenceError {}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Prefix {
+pub(crate) enum Prefix {
     Charter,
     Plan,
     Action,
@@ -534,7 +534,7 @@ pub fn filter_model_for_action(model: &DomainModel, action_id: Uuid) -> DomainMo
     }
 }
 
-fn parse_prefix(
+pub(crate) fn parse_prefix(
     input: &str,
     allow_prefixes: bool,
 ) -> Result<(Option<Prefix>, &str), ReferenceError> {

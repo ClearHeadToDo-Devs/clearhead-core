@@ -276,3 +276,25 @@ fn engagement_views_require_active_charter_ancestry() {
         );
     }
 }
+
+#[test]
+fn an_action_waiting_on_a_charter_is_free_once_it_closes() {
+    const PARTY: &str = "019f733d-4600-7000-8000-0000000000e5";
+    let env = seed(&format!("[ ] Host a dinner <party #{A}\n"));
+    let party = |state: &str| {
+        env.write_text(
+            "charters/party.md",
+            &format!("---\nid: {PARTY}\nalias: party\nstate: {state}\n---\n# Party\n"),
+        );
+    };
+    let unscheduled = || {
+        let doc: Value =
+            serde_json::from_slice(&run_index(&env, "unscheduled", "json")).expect("json");
+        doc.as_array().expect("row array").len()
+    };
+
+    party("Active");
+    assert_eq!(unscheduled(), 0, "an Active charter holds the wait");
+    party("Closed");
+    assert_eq!(unscheduled(), 1, "a Closed charter ends the wait");
+}

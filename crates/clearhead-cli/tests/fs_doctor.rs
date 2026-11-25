@@ -906,3 +906,36 @@ fn doctor_treats_a_null_id_as_undeclared() {
         finding.message
     );
 }
+
+#[test]
+fn doctor_resolves_a_predecessor_to_a_live_or_archived_charter() {
+    let workspace = make_workspace(&[
+        (
+            "work.actions",
+            "[ ] needs-live <01951111-0000-7000-0000-0000000000c1 #01951111-0000-7000-0000-0000000000d1\n\
+             [ ] needs-archived <01951111-0000-7000-0000-0000000000c2 #01951111-0000-7000-0000-0000000000d2\n",
+        ),
+        (
+            "live.md",
+            "---\nid: 01951111-0000-7000-0000-0000000000c1\nalias: live\nstate: Active\n---\n# Live\n",
+        ),
+    ]);
+    let archive = workspace.path().join(".clearhead").join("archive");
+    fs::create_dir_all(&archive).expect("create archive region");
+    fs::write(
+        archive.join("01951111-0000-7000-0000-0000000000c2.md"),
+        "---\nid: 01951111-0000-7000-0000-0000000000c2\nalias: gone\nstate: Closed\n---\n# Gone\n",
+    )
+    .expect("write archived charter");
+
+    let diagnosis = clearhead_cli::filesystem::diagnose_workspace(initialized(workspace.path()))
+        .expect("diagnose failed");
+    assert!(
+        !diagnosis
+            .findings
+            .iter()
+            .any(|f| f.code == "dangling-predecessor"),
+        "a charter is a predecessor: {:?}",
+        diagnosis.findings
+    );
+}

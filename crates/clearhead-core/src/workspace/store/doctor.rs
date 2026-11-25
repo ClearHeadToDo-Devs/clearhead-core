@@ -158,7 +158,14 @@ pub fn diagnose(read: &WorkspaceRead, evidence: &DoctorEvidence) -> Diagnosis {
     let charters = &read.charters;
 
     check_duplicate_uuids(charters, &completed, &mut findings);
-    check_dangling_predecessors(charters, &completed, &archived, &mut findings);
+    let archived_charters = collect_archived_charter_ids(&evidence.archived_charters);
+    check_dangling_predecessors(
+        charters,
+        &completed,
+        &archived,
+        &archived_charters,
+        &mut findings,
+    );
     check_charter_alias_collisions(charters, &mut findings);
     check_charters_name_objectives(charters, &mut findings);
     check_open_actions_under_unresolved_parents(charters, &mut findings);
@@ -454,6 +461,20 @@ fn check_duplicate_uuids(
     }
 }
 
+/// The ids of archived charters, read from their frontmatter. A document
+/// without a readable id is skipped here; other checks report it.
+fn collect_archived_charter_ids(documents: &[DoctorDocument]) -> HashSet<Uuid> {
+    documents
+        .iter()
+        .filter_map(|document| document_text(document).ok())
+        .filter_map(|source| {
+            crate::workspace::charter_frontmatter_id(source)
+                .ok()
+                .flatten()
+        })
+        .collect()
+}
+
 /// Index every archived action by UUID to its terminal state, reading the
 /// `archive/` region as plaintext (no graph). This is what lets a predecessor
 /// pointing into the archive resolve to a *state* — satisfied / abandoned —
@@ -507,7 +528,8 @@ fn collect_archived_action_states(
 }
 
 /// A predecessor reference (`<uuid`) resolved against the live workspace and,
-/// failing that, the archive. Only UUID-shaped references are judged; unresolved
+/// failing that, the archive. It names an action or a charter; a charter in
+/// the archive is terminal, so a wait on it is satisfied. Only UUID-shaped references are judged; unresolved
 /// name/alias text is the linter's live-buffer territory. An archived target
 /// resolves three ways:
 ///
@@ -520,10 +542,13 @@ fn check_dangling_predecessors(
     charters: &[MarkdownCharter],
     completed: &HashMap<PathBuf, Vec<Action>>,
     archived: &HashMap<Uuid, ActionState>,
+    archived_charters: &HashSet<Uuid>,
     findings: &mut Vec<Finding>,
 ) {
     let known: HashSet<Uuid> = all_actions(charters, completed)
         .map(|(_, a)| a.id)
+        .chain(charters.iter().map(|charter| charter.id))
+        .chain(archived_charters.iter().copied())
         .collect();
     for charter in charters {
         let Some(file) = &charter.actions_file else {
@@ -555,7 +580,7 @@ fn check_dangling_predecessors(
                         "dangling-predecessor",
                         file,
                         format!(
-                            "action '{}' depends on {} which matches no action, open, completed, or archived",
+                            "action '{}' depends on {} which matches no action or charter, open, completed, or archived",
                             sa.action.name, target
                         ),
                     )),

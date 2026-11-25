@@ -13,6 +13,9 @@ use super::pathing::{
     infer_parent_charter_name_for_workspace,
 };
 use crate::domain::{Charter, DomainModel, Objective};
+use crate::reference::{
+    Prefix, ReferenceEntity, ReferenceSelection, parse_prefix, select_reference_where,
+};
 use crate::workspace::actions::convert::from_actions_with_charter;
 use crate::workspace::actions::repository::SourcedAction;
 use crate::workspace::actions::{LintDiagnostic, LintSeverity, TrustedDocument};
@@ -450,7 +453,7 @@ pub fn assemble_workspace(input: &WorkspaceAssemblyInput) -> Result<WorkspaceRea
 
     attach_plans(input, &mut charters, &mut findings)?;
     let mut charters: Vec<_> = charters.into_values().collect();
-    resolve_predecessor_aliases(&mut charters);
+    resolve_predecessor_aliases(&mut charters, &mut findings);
     let (objectives, objective_files): (Vec<_>, HashMap<_, _>) =
         assemble_objectives(input, &mut findings)
             .into_iter()
@@ -804,29 +807,84 @@ fn parent_hints(
         .collect()
 }
 
-fn resolve_predecessor_aliases(charters: &mut [MarkdownCharter]) {
-    let alias_to_id: HashMap<String, Uuid> = charters
+/// Resolve each predecessor that is not already a full UUID to the one action
+/// or charter it names (action_file_format.md, Predecessors): full UUID, then
+/// short UUID, then alias, with `a:` or `c:` choosing the kind. A reference
+/// that matches more than one at its strongest tier stays unresolved (W009).
+fn resolve_predecessor_aliases(charters: &mut [MarkdownCharter], findings: &mut Vec<Finding>) {
+    let targets: Vec<PredecessorTarget> = charters
         .iter()
-        .flat_map(|charter| &charter.actions)
-        .filter_map(|sourced| {
-            sourced
-                .action
-                .alias
-                .as_ref()
-                .map(|alias| (alias.to_lowercase(), sourced.action.id))
+        .flat_map(|charter| {
+            std::iter::once(PredecessorTarget::new(charter.id, &charter.alias, true)).chain(
+                charter.actions.iter().map(|sourced| {
+                    PredecessorTarget::new(sourced.action.id, &sourced.action.alias, false)
+                }),
+            )
         })
         .collect();
     for charter in charters {
         for sourced in &mut charter.actions {
+            let name = &sourced.action.name;
             for predecessor in sourced.action.predecessors.iter_mut().flatten() {
-                if predecessor.resolved_uuid.is_none() {
-                    predecessor.resolved_uuid = alias_to_id
-                        .get(&predecessor.raw_ref.trim().to_lowercase())
-                        .copied();
+                if predecessor.resolved_uuid.is_some() {
+                    continue;
+                }
+                match select_predecessor(&targets, &predecessor.raw_ref) {
+                    ReferenceSelection::Unique { index, .. } => {
+                        predecessor.resolved_uuid = Some(targets[index].id);
+                    }
+                    ReferenceSelection::Ambiguous { .. } => findings.push(Finding::warning(
+                        "ambiguous-predecessor",
+                        charter.actions_file.clone().unwrap_or_default(),
+                        format!(
+                            "action '{name}' waits on '{}', which names more than one action or charter, so it waits on nothing; use c:, a: or a UUID",
+                            predecessor.raw_ref
+                        ),
+                    )),
+                    ReferenceSelection::NotFound => {}
                 }
             }
         }
     }
+}
+
+/// An action or a charter a predecessor may name.
+struct PredecessorTarget {
+    id: Uuid,
+    alias: Option<String>,
+    is_charter: bool,
+}
+
+impl PredecessorTarget {
+    fn new(id: Uuid, alias: &Option<String>, is_charter: bool) -> Self {
+        Self {
+            id,
+            alias: alias.clone(),
+            is_charter,
+        }
+    }
+}
+
+impl ReferenceEntity for PredecessorTarget {
+    fn reference_id(&self) -> Uuid {
+        self.id
+    }
+
+    fn reference_alias(&self) -> Option<&str> {
+        self.alias.as_deref()
+    }
+}
+
+fn select_predecessor(targets: &[PredecessorTarget], raw: &str) -> ReferenceSelection {
+    let Ok((kind, reference)) = parse_prefix(raw.trim(), true) else {
+        return ReferenceSelection::NotFound;
+    };
+    select_reference_where(targets, reference, |target| match kind {
+        Some(Prefix::Charter) => target.is_charter,
+        Some(Prefix::Action) => !target.is_charter,
+        Some(Prefix::Plan) => false,
+        None => true,
+    })
 }
 
 #[cfg(test)]
@@ -1205,5 +1263,73 @@ mod tests {
             "{}",
             finding.message
         );
+    }
+
+    #[test]
+    fn a_predecessor_resolves_to_an_action_or_a_charter() {
+        let charter = "01a0fb10-0000-7000-8000-0000000000c1";
+        let action = "02a0fb10-0000-7000-8000-000000000001";
+        let read = assemble_workspace(&input(
+            "home",
+            &[
+                (
+                    "charters/groceries.md",
+                    &format!("---\nid: {charter}\nalias: groceries\n---\n# Groceries\n"),
+                ),
+                (
+                    "charters/next.actions",
+                    &format!(
+                        "[ ] Shop =groceries #{action}\n\
+                         [ ] Shared alias <groceries\n\
+                         [ ] Short uuid <01a0fb10\n"
+                    ),
+                ),
+            ],
+            None,
+            &[],
+        ))
+        .unwrap();
+        let resolved = |name: &str| {
+            read.charters
+                .iter()
+                .flat_map(|charter| &charter.actions)
+                .find(|sourced| sourced.action.name == name)
+                .unwrap()
+                .action
+                .depends_on()
+        };
+        let charter = Uuid::parse_str(charter).unwrap();
+        assert_eq!(
+            resolved("Shared alias"),
+            Vec::<Uuid>::new(),
+            "an action and a charter share it"
+        );
+        assert_eq!(resolved("Short uuid"), vec![charter]);
+        assert!(
+            read.findings
+                .iter()
+                .any(|finding| finding.code == "ambiguous-predecessor"
+                    && finding.message.contains("Shared alias")),
+            "an ambiguous wait is reported: {:?}",
+            read.findings
+        );
+    }
+
+    #[test]
+    fn a_type_prefix_chooses_between_an_action_and_a_charter() {
+        let charter = Uuid::now_v7();
+        let action = Uuid::now_v7();
+        let alias = Some("groceries".to_string());
+        let targets = [
+            PredecessorTarget::new(charter, &alias, true),
+            PredecessorTarget::new(action, &alias, false),
+        ];
+        let resolved = |raw: &str| match select_predecessor(&targets, raw) {
+            ReferenceSelection::Unique { index, .. } => Some(targets[index].id),
+            _ => None,
+        };
+        assert_eq!(resolved("groceries"), None);
+        assert_eq!(resolved("c:groceries"), Some(charter));
+        assert_eq!(resolved("a:groceries"), Some(action));
     }
 }
