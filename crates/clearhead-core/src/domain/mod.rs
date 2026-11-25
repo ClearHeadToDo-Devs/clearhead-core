@@ -396,6 +396,29 @@ pub struct PredecessorRef {
     pub resolved_uuid: Option<Uuid>,
 }
 
+/// A charter's `base` (specifications/charters.md): conditions every Action it
+/// holds carries. They compose as an ancestor Action's do, so they are read
+/// into each Action's effective window and waits and never written into it.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct CharterBase {
+    /// A window, read as `:` is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub due_date: Option<time::Due>,
+    /// References every Action waits on, resolved as `<` is.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub predecessors: Vec<PredecessorRef>,
+}
+
+impl CharterBase {
+    /// Resolved predecessor UUIDs; unresolved references are skipped.
+    pub fn depends_on(&self) -> Vec<Uuid> {
+        self.predecessors
+            .iter()
+            .filter_map(|p| p.resolved_uuid)
+            .collect()
+    }
+}
+
 /// Legacy calendar projection data. Native recurring work is a [`Habit`];
 /// one-off calendar projections derive from an [`Action`]'s planned block.
 /// This compatibility representation is not native Habit identity or state.
@@ -530,6 +553,10 @@ pub struct Charter {
     /// Set to [`CharterState::Closed`] before archiving.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub state: Option<CharterState>,
+    /// Conditions every Action it holds carries, its own and its descendant
+    /// charters' (specifications/charters.md `base`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base: Option<CharterBase>,
     /// [`Plan`]s organized under this charter (nested hierarchy)
     pub plans: Vec<Plan>,
     /// Native recurring prescriptions, separate from executable Actions.
@@ -586,6 +613,7 @@ pub struct WorkspaceCharter {
 
 pub fn charter_from_plans_and_name(name: String, plans: Vec<Plan>) -> Charter {
     Charter {
+        base: None,
         id: Uuid::new_v4(),
         title: name.clone(),
         description: None,

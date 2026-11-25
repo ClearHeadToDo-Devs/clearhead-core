@@ -10,8 +10,10 @@
 #     (app:waitsOn, which includes every ancestor's waits)
 #   - the lowest open child: parents with open work below are containers,
 #     you act on the leaf
-#   - undated in scope: no planned start or deadline on the action *or any
-#     ancestor* — a child of a dated parent is planned work, not unscheduled
+#   - undated in scope: no planned start on the action *or any ancestor*,
+#     and no effective deadline (app:lateFrom, which carries every ancestor's
+#     and every holding charter's base) — a child of a dated parent is
+#     planned work, not unscheduled
 # Sorted by state (in progress first), priority (unset last), then name.
 # Returns: index contract columns plus priority, parent and parent_name
 # =============================================================================
@@ -39,8 +41,9 @@ SELECT (?action AS ?id) ?name ?status ?source_file ?source_line ?priority ?paren
     OPTIONAL { ?action app:partOf ?parent . ?parent a app:Action ; rdfs:label ?parent_name }
     FILTER NOT EXISTS {
         ?action app:partOf* ?scope .
-        ?scope app:plannedStart|app:due ?when .
+        ?scope app:plannedStart ?when .
     }
+    FILTER NOT EXISTS { ?action app:lateFrom ?late }
     FILTER NOT EXISTS {
         ?action app:waitsOn ?predecessor .
         ?predecessor app:state ?pred_state .

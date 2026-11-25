@@ -875,6 +875,7 @@ mod tests {
         let subplan = make_plan(subplan_id, "resolver");
 
         let charter = Charter {
+            base: None,
             id: charter_id,
             title: "Build".to_string(),
             description: None,
@@ -888,6 +889,7 @@ mod tests {
         };
 
         let child_charter = Charter {
+            base: None,
             id: child_charter_id,
             title: "Observability".to_string(),
             description: None,
@@ -901,6 +903,7 @@ mod tests {
         };
 
         let implicit_charter = Charter {
+            base: None,
             id: implicit_charter_id,
             title: "".to_string(),
             description: None,

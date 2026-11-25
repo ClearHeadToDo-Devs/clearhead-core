@@ -7,7 +7,7 @@
 use super::findings::{Finding, FindingSeverity};
 use super::load::{WorkspaceRead, syntax_error_summary};
 use super::pathing::{PRIMARY_ACTIONS_FILE, PRIMARY_DOCUMENT_FILE};
-use crate::domain::{Action, ActionState, CharterState};
+use crate::domain::{Action, ActionState, CharterState, PredecessorRef};
 use crate::workspace::charter::{MarkdownCharter, charter_frontmatter_id, parse_charter};
 use crate::workspace::completed_actions_path;
 use crate::workspace::manifest::WorkspaceManifest;
@@ -550,44 +550,66 @@ fn check_dangling_predecessors(
         .chain(charters.iter().map(|charter| charter.id))
         .chain(archived_charters.iter().copied())
         .collect();
-    for charter in charters {
-        let Some(file) = &charter.actions_file else {
-            continue;
-        };
-        for sa in &charter.actions {
-            for pred in sa.action.predecessors.iter().flatten() {
-                let target = pred
-                    .resolved_uuid
-                    .or_else(|| Uuid::parse_str(pred.raw_ref.trim()).ok());
-                let Some(target) = target else { continue };
-                if known.contains(&target) {
-                    continue; // live target — resolves normally
-                }
-                match archived.get(&target) {
-                    // satisfied — the dependency was completed before archival.
-                    Some(ActionState::Completed) => {}
-                    // abandoned — the dependency was cancelled/dropped.
-                    Some(_) => findings.push(Finding::warning(
-                        "abandoned-predecessor",
-                        file,
-                        format!(
-                            "action '{}' depends on {} which was archived without completing (abandoned)",
-                            sa.action.name, target
-                        ),
-                    )),
-                    // dangling — resolves nowhere, live or archived.
-                    None => findings.push(Finding::violation(
-                        "dangling-predecessor",
-                        file,
-                        format!(
-                            "action '{}' depends on {} which matches no action or charter, open, completed, or archived",
-                            sa.action.name, target
-                        ),
-                    )),
-                }
-            }
+    for (waiter, file, pred) in predecessor_refs(charters) {
+        let target = pred
+            .resolved_uuid
+            .or_else(|| Uuid::parse_str(pred.raw_ref.trim()).ok());
+        let Some(target) = target else { continue };
+        if known.contains(&target) {
+            continue; // live target — resolves normally
+        }
+        match archived.get(&target) {
+            // satisfied — the dependency was completed before archival.
+            Some(ActionState::Completed) => {}
+            // abandoned — the dependency was cancelled/dropped.
+            Some(_) => findings.push(Finding::warning(
+                "abandoned-predecessor",
+                file,
+                format!(
+                    "{waiter} depends on {target} which was archived without completing (abandoned)"
+                ),
+            )),
+            // dangling — resolves nowhere, live or archived.
+            None => findings.push(Finding::violation(
+                "dangling-predecessor",
+                file,
+                format!(
+                    "{waiter} depends on {target} which matches no action or charter, open, completed, or archived"
+                ),
+            )),
         }
     }
+}
+
+/// Every predecessor in the workspace with who waits and the file it is
+/// written in: each action's `<`, and each charter's `base` predecessors.
+fn predecessor_refs(
+    charters: &[MarkdownCharter],
+) -> impl Iterator<Item = (String, &PathBuf, &PredecessorRef)> {
+    charters.iter().flat_map(|charter| {
+        let actions = charter.actions_file.iter().flat_map(move |file| {
+            charter.actions.iter().flat_map(move |sa| {
+                let waiter = format!("action '{}'", sa.action.name);
+                sa.action
+                    .predecessors
+                    .iter()
+                    .flatten()
+                    .map(move |pred| (waiter.clone(), file, pred))
+            })
+        });
+        let base = charter.md_file.iter().flat_map(move |file| {
+            let waiter = format!(
+                "charter '{}' base",
+                charter.alias.as_deref().unwrap_or(&charter.title)
+            );
+            charter
+                .base
+                .iter()
+                .flat_map(|base| &base.predecessors)
+                .map(move |pred| (waiter.clone(), file, pred))
+        });
+        actions.chain(base)
+    })
 }
 
 /// Two charters claiming the same alias — resolution becomes last-writer-wins.

@@ -298,3 +298,56 @@ fn an_action_waiting_on_a_charter_is_free_once_it_closes() {
     party("Closed");
     assert_eq!(unscheduled(), 1, "a Closed charter ends the wait");
 }
+
+#[test]
+fn a_charter_base_wait_reaches_a_sub_charters_actions() {
+    const PERMIT: &str = "019f733d-4600-7000-8000-0000000000f7";
+    let env = seed("");
+    env.write_text(
+        "charters/work.md",
+        "---\nalias: work\nstate: Active\nbase:\n  predecessors: [c:permit]\n---\n# Work\n",
+    );
+    env.write_text(
+        "charters/kitchen.md",
+        "---\nalias: kitchen\nparent: work\nstate: Active\n---\n# Kitchen\n",
+    );
+    env.write_actions("kitchen.actions", &format!("[ ] Tile the floor #{A}\n"));
+    let permit = |state: &str| {
+        env.write_text(
+            "charters/permit.md",
+            &format!("---\nid: {PERMIT}\nalias: permit\nstate: {state}\n---\n# Permit\n"),
+        );
+    };
+    let names = || {
+        let doc: Value =
+            serde_json::from_slice(&run_index(&env, "unscheduled", "json")).expect("json");
+        doc.as_array()
+            .expect("row array")
+            .iter()
+            .map(|row| row["name"].as_str().unwrap().to_string())
+            .collect::<Vec<_>>()
+    };
+
+    permit("Active");
+    assert!(
+        names().is_empty(),
+        "work's base wait holds kitchen's action"
+    );
+    permit("Closed");
+    assert_eq!(names(), ["Tile the floor"]);
+}
+
+#[test]
+fn a_charter_base_deadline_dates_its_actions() {
+    let env = seed(&format!("[ ] Send the forms #{A}\n"));
+    env.write_text(
+        "charters/work.md",
+        "---\nalias: work\nstate: Active\nbase:\n  dueDateTime: 2026-01-01\n---\n# Work\n",
+    );
+    let rows = |view: &str| {
+        let doc: Value = serde_json::from_slice(&run_index(&env, view, "json")).expect("json");
+        doc.as_array().expect("row array").len()
+    };
+    assert_eq!(rows("unscheduled"), 0, "a base deadline is a date");
+    assert_eq!(rows("agenda"), 1, "and a past one is overdue");
+}

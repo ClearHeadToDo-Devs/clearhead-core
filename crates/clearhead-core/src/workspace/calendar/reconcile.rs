@@ -3101,6 +3101,7 @@ mod tests {
             overrides: BTreeMap::new(),
         };
         let charter = MarkdownCharter {
+            base: None,
             habits: vec![],
             habits_file: None,
             habit_sources: Default::default(),

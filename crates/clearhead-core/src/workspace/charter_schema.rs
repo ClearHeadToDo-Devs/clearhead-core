@@ -62,6 +62,12 @@ pub fn project_charter_schema(
         }
         row.insert("defaults".into(), defaults.clone());
     }
+    if let Some(base) = frontmatter.get("base") {
+        if !base.is_object() {
+            return Err("charter base must be a map".into());
+        }
+        row.insert("base".into(), base.clone());
+    }
 
     let body = if source.is_some() {
         body

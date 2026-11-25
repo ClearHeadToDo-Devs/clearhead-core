@@ -22,7 +22,7 @@ use std::path::PathBuf;
 use uuid::Uuid;
 
 use crate::domain::update::CharterUpdate;
-use crate::domain::{Charter, CharterState};
+use crate::domain::{Charter, CharterBase, CharterState, PredecessorRef};
 use crate::workspace::actions::repository::SourcedAction;
 use crate::workspace::calendar::ics::ICSPlan;
 use crate::workspace::markdown;
@@ -60,6 +60,8 @@ pub struct MarkdownCharter {
     /// Lifecycle state parsed from the charter `.md` frontmatter.
     /// `None` means the state has not been explicitly set (treated as `New`).
     pub state: Option<CharterState>,
+    /// Conditions every Action it holds carries (charters.md `base`).
+    pub base: Option<CharterBase>,
     pub plans: Vec<ICSPlan>,
     pub actions: Vec<SourcedAction>,
     pub habits: Vec<crate::domain::Habit>,
@@ -83,6 +85,7 @@ impl From<MarkdownCharter> for Charter {
             parent: mc.parent,
             objectives: mc.objectives,
             state: mc.state,
+            base: mc.base,
             habits: mc.habits,
             plans: mc.plans.into_iter().map(|ip| ip.plan).collect(),
             actions: mc.actions.into_iter().map(|sa| sa.action).collect(),
@@ -113,6 +116,7 @@ impl From<Charter> for MarkdownCharter {
             parent: c.parent,
             objectives: c.objectives,
             state: c.state,
+            base: c.base,
             plans: c
                 .plans
                 .into_iter()
@@ -155,6 +159,41 @@ struct CharterFrontmatter {
     parent: Option<String>,
     objectives: Option<Vec<String>>,
     state: Option<CharterState>,
+    base: Option<BaseFrontmatter>,
+}
+
+/// Frontmatter `base`: two keys, the rest reserved (charters.md). Values are
+/// read as their text, as the DSL writes them, whatever type YAML would give.
+#[derive(Deserialize, Default)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+struct BaseFrontmatter {
+    due_date_time: Option<String>,
+    predecessors: Option<Vec<String>>,
+}
+
+impl BaseFrontmatter {
+    fn into_base(self) -> Result<CharterBase, String> {
+        let due_date = self
+            .due_date_time
+            .map(|text| {
+                text.parse()
+                    .map_err(|error| format!("Invalid charter base dueDateTime '{text}': {error}"))
+            })
+            .transpose()?;
+        let predecessors = self
+            .predecessors
+            .unwrap_or_default()
+            .into_iter()
+            .map(|raw_ref| PredecessorRef {
+                resolved_uuid: Uuid::parse_str(raw_ref.trim()).ok(),
+                raw_ref,
+            })
+            .collect();
+        Ok(CharterBase {
+            due_date,
+            predecessors,
+        })
+    }
 }
 
 /// A charter document as it is written on disk: the frontmatter plus the
@@ -173,6 +212,7 @@ pub struct CharterDocument {
     pub parent: Option<String>,
     pub objectives: Option<Vec<String>>,
     pub state: Option<CharterState>,
+    pub base: Option<CharterBase>,
 }
 
 impl CharterDocument {
@@ -191,6 +231,7 @@ impl CharterDocument {
             parent: self.parent,
             objectives: self.objectives,
             state: self.state,
+            base: self.base,
             habits: vec![],
             plans: vec![],
             actions: vec![],
@@ -236,6 +277,7 @@ pub fn parse_charter(content: &str) -> Result<CharterDocument, String> {
         parent: fm.parent,
         objectives: fm.objectives,
         state: fm.state,
+        base: fm.base.map(BaseFrontmatter::into_base).transpose()?,
     })
 }
 
@@ -266,6 +308,7 @@ pub fn implicit_charter(name: &str) -> Charter {
         parent: None,
         objectives: None,
         state: None,
+        base: None,
         habits: vec![],
         plans: vec![],
         actions: vec![],
@@ -293,6 +336,18 @@ pub fn format_charter(charter: &Charter) -> String {
     }
     if let Some(ref state) = charter.state {
         out.push_str(&format!("state: {}\n", state));
+    }
+    if let Some(base) = &charter.base {
+        out.push_str("base:\n");
+        if let Some(due) = &base.due_date {
+            out.push_str(&format!("  dueDateTime: {due}\n"));
+        }
+        if !base.predecessors.is_empty() {
+            out.push_str("  predecessors:\n");
+            for predecessor in &base.predecessors {
+                out.push_str(&format!("    - {}\n", predecessor.raw_ref));
+            }
+        }
     }
     out.push_str("---\n");
 
@@ -622,6 +677,7 @@ Stay healthy and fit through regular exercise and diet.
     #[test]
     fn test_format_charter_round_trip() {
         let charter = Charter {
+            base: None,
             id: Uuid::new_v5(&CHARTER_NS, b"Test"),
             title: "Test".to_string(),
             description: Some("A test charter.".to_string()),
@@ -739,5 +795,43 @@ Stay healthy and fit through regular exercise and diet.
         .unwrap();
         assert_eq!(doc.title, "Work `now`");
         assert_eq!(doc.description.as_deref(), Some("body"));
+    }
+
+    #[test]
+    fn base_reads_a_window_and_waits_as_written() {
+        let source = "---\nalias: party\nbase:\n  dueDateTime: 2026-12-20\n  predecessors: [c:venue, 01951111-0000-7000-8000-000000000001]\n---\n# Party\n";
+        let base = parse_charter(source).unwrap().base.unwrap();
+        assert_eq!(base.due_date.unwrap().to_string(), "2026-12-20");
+        assert_eq!(base.predecessors[0].raw_ref, "c:venue");
+        assert_eq!(base.predecessors[0].resolved_uuid, None);
+        assert!(base.predecessors[1].resolved_uuid.is_some());
+
+        let interval = "---\nbase:\n  dueDateTime: 2026-12-01/2026-12-20\n---\n# Party\n";
+        let due = parse_charter(interval)
+            .unwrap()
+            .base
+            .unwrap()
+            .due_date
+            .unwrap();
+        assert_eq!(due.to_string(), "2026-12-01/2026-12-20");
+    }
+
+    #[test]
+    fn base_refuses_reserved_keys_and_bad_windows() {
+        let reserved = "---\nbase:\n  priority: 2\n---\n# Party\n";
+        assert!(parse_charter(reserved).is_err());
+        let bad = "---\nbase:\n  dueDateTime: someday\n---\n# Party\n";
+        assert!(parse_charter(bad).unwrap_err().contains("base dueDateTime"));
+    }
+
+    #[test]
+    fn format_charter_writes_base_back() {
+        let source = "---\nid: 01951111-0000-7000-8000-0000000000aa\nalias: party\nbase:\n  dueDateTime: 2026-12-01/2026-12-20\n  predecessors: [c:venue]\n---\n# Party\n";
+        let charter = parse_charter(source).unwrap().into_charter(Uuid::nil());
+        let written = format_charter(&charter);
+        assert!(written.contains(
+            "base:\n  dueDateTime: 2026-12-01/2026-12-20\n  predecessors:\n    - c:venue\n"
+        ));
+        assert_eq!(parse_charter(&written).unwrap().base, charter.base);
     }
 }

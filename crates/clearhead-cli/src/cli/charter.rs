@@ -424,6 +424,7 @@ pub(super) fn new_charter(
     parent: Option<String>,
 ) -> Charter {
     Charter {
+        base: None,
         id,
         title: title.to_string(),
         description: None,
@@ -790,6 +791,7 @@ mod tests {
     /// A charter with no `.md` yet, anchored on the given actions file.
     fn charter_needing_md(actions_file: &str) -> MarkdownCharter {
         let mut mc = MarkdownCharter::from(Charter {
+            base: None,
             id: uuid::Uuid::nil(),
             title: "Platform".to_string(),
             habits: vec![],

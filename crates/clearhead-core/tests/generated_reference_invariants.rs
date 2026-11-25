@@ -70,6 +70,7 @@ fn charter(
     actions: Vec<Action>,
 ) -> Charter {
     Charter {
+        base: None,
         id,
         title: format!("Charter {alias}"),
         description: None,
@@ -114,6 +115,7 @@ fn reference_scenario() -> impl Strategy<Value = ReferenceScenario> {
         );
 
         let mut root = Charter {
+            base: None,
             id: root_id,
             title: format!("Root {seed}"),
             description: None,
@@ -126,6 +128,7 @@ fn reference_scenario() -> impl Strategy<Value = ReferenceScenario> {
             actions: vec![root_action, child_action, planned_action],
         };
         let mut child_charter = Charter {
+            base: None,
             id: child_charter_id,
             title: format!("Child {seed}"),
             description: None,
@@ -138,6 +141,7 @@ fn reference_scenario() -> impl Strategy<Value = ReferenceScenario> {
             actions: vec![],
         };
         let mut distractor = Charter {
+            base: None,
             id: distractor_id,
             title: format!("Distractor {seed}"),
             description: None,
@@ -608,6 +612,7 @@ proptest! {
         };
         let candidates = vec![
             Charter {
+                base: None,
                 id: alias_id,
                 habits: vec![],
                 title: "Alias candidate".to_string(),
@@ -620,6 +625,7 @@ proptest! {
                 actions: vec![],
             },
             Charter {
+                base: None,
                 id: identity_id,
                 habits: vec![],
                 title: "Identity candidate".to_string(),

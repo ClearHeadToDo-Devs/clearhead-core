@@ -12,7 +12,7 @@ use super::pathing::{
     charter_collection_from_anchor, document_anchor_for_actions, infer_charter_name_for_workspace,
     infer_parent_charter_name_for_workspace,
 };
-use crate::domain::{Charter, DomainModel, Objective};
+use crate::domain::{Charter, DomainModel, Objective, PredecessorRef};
 use crate::reference::{
     Prefix, ReferenceEntity, ReferenceSelection, parse_prefix, select_reference_where,
 };
@@ -306,6 +306,9 @@ pub fn assemble_workspace(input: &WorkspaceAssemblyInput) -> Result<WorkspaceRea
                 }
                 if explicit.state.is_some() {
                     implicit.state = explicit.state;
+                }
+                if explicit.base.is_some() {
+                    implicit.base = explicit.base.clone();
                 }
                 implicit.md_file = Some(md_relative.clone());
             })
@@ -823,28 +826,52 @@ fn resolve_predecessor_aliases(charters: &mut [MarkdownCharter], findings: &mut 
         })
         .collect();
     for charter in charters {
+        let actions_file = charter.actions_file.clone().unwrap_or_default();
         for sourced in &mut charter.actions {
-            let name = &sourced.action.name;
+            let waiter = format!("action '{}'", sourced.action.name);
             for predecessor in sourced.action.predecessors.iter_mut().flatten() {
-                if predecessor.resolved_uuid.is_some() {
-                    continue;
-                }
-                match select_predecessor(&targets, &predecessor.raw_ref) {
-                    ReferenceSelection::Unique { index, .. } => {
-                        predecessor.resolved_uuid = Some(targets[index].id);
-                    }
-                    ReferenceSelection::Ambiguous { .. } => findings.push(Finding::warning(
-                        "ambiguous-predecessor",
-                        charter.actions_file.clone().unwrap_or_default(),
-                        format!(
-                            "action '{name}' waits on '{}', which names more than one action or charter, so it waits on nothing; use c:, a: or a UUID",
-                            predecessor.raw_ref
-                        ),
-                    )),
-                    ReferenceSelection::NotFound => {}
-                }
+                resolve_predecessor(&targets, predecessor, &waiter, &actions_file, findings);
             }
         }
+        // A base wait resolves as `<` does (charters.md), reported at the document.
+        let waiter = format!(
+            "charter '{}' base",
+            charter.alias.as_deref().unwrap_or(&charter.title)
+        );
+        let md_file = charter.md_file.clone().unwrap_or_default();
+        for predecessor in charter
+            .base
+            .iter_mut()
+            .flat_map(|base| &mut base.predecessors)
+        {
+            resolve_predecessor(&targets, predecessor, &waiter, &md_file, findings);
+        }
+    }
+}
+
+fn resolve_predecessor(
+    targets: &[PredecessorTarget],
+    predecessor: &mut PredecessorRef,
+    waiter: &str,
+    path: &Path,
+    findings: &mut Vec<Finding>,
+) {
+    if predecessor.resolved_uuid.is_some() {
+        return;
+    }
+    match select_predecessor(targets, &predecessor.raw_ref) {
+        ReferenceSelection::Unique { index, .. } => {
+            predecessor.resolved_uuid = Some(targets[index].id);
+        }
+        ReferenceSelection::Ambiguous { .. } => findings.push(Finding::warning(
+            "ambiguous-predecessor",
+            path,
+            format!(
+                "{waiter} waits on '{}', which names more than one action or charter, so it waits on nothing; use c:, a: or a UUID",
+                predecessor.raw_ref
+            ),
+        )),
+        ReferenceSelection::NotFound => {}
     }
 }
 

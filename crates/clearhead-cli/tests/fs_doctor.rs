@@ -939,3 +939,21 @@ fn doctor_resolves_a_predecessor_to_a_live_or_archived_charter() {
         diagnosis.findings
     );
 }
+
+#[test]
+fn doctor_flags_a_dangling_base_wait_at_the_charter() {
+    let workspace = make_workspace(&[(
+        "work.md",
+        "---\nid: 01951111-0000-7000-0000-0000000000e1\nalias: work\nstate: Active\nbase:\n  predecessors: [01951111-dead-7000-0000-000000000000]\n---\n# Work\n",
+    )]);
+    let diagnosis = clearhead_cli::filesystem::diagnose_workspace(initialized(workspace.path()))
+        .expect("diagnose failed");
+    let dangling: Vec<_> = diagnosis
+        .findings
+        .iter()
+        .filter(|f| f.code == "dangling-predecessor")
+        .collect();
+    assert_eq!(dangling.len(), 1, "findings: {:?}", diagnosis.findings);
+    assert!(dangling[0].message.contains("charter 'work' base"));
+    assert!(dangling[0].path.ends_with("work.md"));
+}

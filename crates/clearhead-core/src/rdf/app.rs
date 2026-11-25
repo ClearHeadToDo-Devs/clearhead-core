@@ -18,7 +18,9 @@ use uuid::Uuid;
 use super::{DCTERMS_NS, RDFS_NS, Result, ns, rdf_type, simple, typed, uuid_node};
 use crate::WorkspaceConfig;
 use crate::domain::time::Bound;
-use crate::domain::{Action, ActionState, Charter, CharterState, DomainModel, Habit, Objective};
+use crate::domain::{
+    Action, ActionState, Charter, CharterBase, CharterState, DomainModel, Habit, Objective,
+};
 use crate::reference::match_entity_reference;
 use crate::workspace::store::Workspace;
 
@@ -119,7 +121,7 @@ where
             habit.validate().map_err(super::RdfError::Projection)?;
             project_habit(&mut out, habit, charter, zone);
         }
-        let tree = Tree::of(&charter.actions);
+        let tree = Tree::of(&charter.actions, bases(model, charter));
         for action in &charter.actions {
             project_action(&mut out, action, charter, &tree, zone);
         }
@@ -197,13 +199,7 @@ fn project_charter(out: &mut Graph, charter: &Charter, model: &DomainModel) {
         app("state"),
         charter_state(charter.effective_state()),
     );
-    let parent = charter.parent.as_deref().and_then(|reference| {
-        model
-            .charters
-            .iter()
-            .find(|c| match_entity_reference(c.id, c.alias.as_deref(), reference).is_some())
-    });
-    if let Some(parent) = parent {
+    if let Some(parent) = parent_charter(model, charter) {
         out.node(&subject, app("partOf"), uuid_node(parent.id));
     }
     for reference in charter.objectives.iter().flatten() {
@@ -243,14 +239,39 @@ fn project_objective(out: &mut Graph, objective: &Objective, objectives: &[Objec
     out.location(&subject, objective.id);
 }
 
-/// One charter's actions as a tree, in document order.
+fn parent_charter<'a>(model: &'a DomainModel, charter: &Charter) -> Option<&'a Charter> {
+    let reference = charter.parent.as_deref()?;
+    model
+        .charters
+        .iter()
+        .find(|c| match_entity_reference(c.id, c.alias.as_deref(), reference).is_some())
+}
+
+/// The `base` of the charter and of every charter above it, nearest first
+/// (charters.md): what each of its actions inherits from the charters that
+/// hold it.
+fn bases<'a>(model: &'a DomainModel, charter: &'a Charter) -> Vec<&'a CharterBase> {
+    let mut seen = vec![charter.id];
+    let chain = std::iter::successors(Some(charter), |c| {
+        parent_charter(model, c).filter(|p| {
+            let fresh = !seen.contains(&p.id);
+            seen.push(p.id);
+            fresh
+        })
+    });
+    chain.filter_map(|c| c.base.as_ref()).collect()
+}
+
+/// One charter's actions as a tree, in document order, with the bases of the
+/// charters that hold it.
 struct Tree<'a> {
     by_id: HashMap<Uuid, &'a Action>,
     children: HashMap<Uuid, Vec<Uuid>>,
+    bases: Vec<&'a CharterBase>,
 }
 
 impl<'a> Tree<'a> {
-    fn of(actions: &'a [Action]) -> Self {
+    fn of(actions: &'a [Action], bases: Vec<&'a CharterBase>) -> Self {
         let mut children: HashMap<Uuid, Vec<Uuid>> = HashMap::new();
         for action in actions {
             if let Some(parent) = action.parent_id {
@@ -260,6 +281,7 @@ impl<'a> Tree<'a> {
         Self {
             by_id: actions.iter().map(|action| (action.id, action)).collect(),
             children,
+            bases,
         }
     }
 
@@ -272,10 +294,12 @@ impl<'a> Tree<'a> {
 
     /// Everything that must close before `action` can start (ontology.md,
     /// Waits): its own predecessors, the sibling before it under a sequential
-    /// parent, and its parent's waits.
+    /// parent, and its parent's waits; a top-level action also waits on the
+    /// bases' predecessors.
     fn waits_on(&self, action: &Action) -> Vec<Uuid> {
         let mut waits = action.depends_on();
         let Some(parent) = action.parent_id.and_then(|p| self.by_id.get(&p)) else {
+            waits.extend(self.bases.iter().flat_map(|base| base.depends_on()));
             return waits;
         };
         if parent.is_sequential == Some(true) {
@@ -385,7 +409,12 @@ where
         }
         out.add(&subject, app("due"), written(&due.end));
     }
-    let windows = || tree.lineage(action).filter_map(|a| a.due_date.as_ref());
+    let windows = || {
+        let bases = tree.bases.iter().filter_map(|base| base.due_date.as_ref());
+        tree.lineage(action)
+            .filter_map(|a| a.due_date.as_ref())
+            .chain(bases)
+    };
     if let Some(open) = windows()
         .filter_map(|due| due.start.map(|s| s.at_in(zone)))
         .max()
