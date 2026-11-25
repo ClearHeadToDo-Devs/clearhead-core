@@ -1,5 +1,5 @@
 {
-  "$schema": "https://clearhead.dev/schemas/v0.5.0/charter_metadata.schema.json",
+  "$schema": "https://clearhead.dev/schemas/v0.8.0/charter_metadata.schema.json",
   "actions": {
     "019d573f-95fd-7e93-a1ac-78dbec9be4b8": {
       "created": "2026-04-04T06:47:00Z"
@@ -208,5 +208,14 @@
     "f4e2bb84-0b07-45d2-9cad-21f60e697e1a": {
       "created": "2026-04-10T06:18:00Z"
     }
+  },
+  "notes": {
+    "01a13b8b-5939-7600-b886-a5c9390b6512": [
+      {
+        "at": "2026-11-25T01:16:04Z",
+        "by": "agent:facilitator",
+        "text": "2026-11-25: blocked moving closed children's long descriptions to notes; update action returns already-closed, so the 7 in platform next.actions were trimmed by hand after jot."
+      }
+    ]
   }
 }
