@@ -7,6 +7,34 @@ alternatives rejected, and the trade-off accepted.
 
 ---
 
+## Decision 6: Fall Back to a Line Merge Without Stable Action IDs
+
+Decided by Darrion: if an otherwise valid input has an action without a UUID,
+fall back to Git's line merge for that file. Missing IDs are lint findings,
+not a reason to block every merge. The driver neither guesses identity nor
+stamps one. Invalid or duplicate UUIDs are not eligible for fallback.
+
+**Trade-off:** Git can still conflict on different fields of one action.
+ClearHead checks the result before writing; a conflict whose markers would
+be read as description text must be resolved manually.
+
+---
+
+## Decision 5: Mark Only the Conflicting Region of an `.actions` Merge
+
+Decided by Darrion on 2026-11-26. Use Git markers around the smallest
+region of whole actions that contains the conflict. Keep unrelated merged
+edits outside the markers. If a field conflicts, each alternative includes
+the other fields' clean edits so choosing a side does not undo them. A
+structural conflict may need a larger region so both choices can preserve
+nesting and action identity.
+
+**Alternative rejected:** placing entire file versions in every conflict.
+A local block makes the disagreement easier to find and resolve, at the cost
+of checking that the surrounding actions still make sense with either choice.
+
+---
+
 ## Decision 4: Stay on chrono; jiff Waits on the Calendar Crates
 
 Decided by Darrion on 2026-11-17. Core keeps chrono rather than moving to

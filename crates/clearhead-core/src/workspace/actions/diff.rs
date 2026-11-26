@@ -31,10 +31,19 @@ pub struct ActionDeleted {
     pub deleted_by: Side,
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub enum Side {
     Ours,
     Theirs,
+}
+
+impl Side {
+    fn choose<T>(self, ours: T, theirs: T) -> T {
+        match self {
+            Self::Ours => ours,
+            Self::Theirs => theirs,
+        }
+    }
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -138,6 +147,10 @@ pub fn diff_actions(old_actions: &ActionList, new_actions: &ActionList) -> Diff 
 }
 
 pub fn semantic_merge(base: &ActionList, ours: &ActionList, theirs: &ActionList) -> SemanticMerge {
+    merge_preferred([base, ours, theirs], Side::Ours)
+}
+
+fn merge_preferred([base, ours, theirs]: [&ActionList; 3], prefer: Side) -> SemanticMerge {
     let mut merged = vec![];
     let mut conflicts = vec![];
 
@@ -163,19 +176,16 @@ pub fn semantic_merge(base: &ActionList, ours: &ActionList, theirs: &ActionList)
 
         match (base_action, our_action, their_action) {
             (Some(base), Some(ours), Some(theirs)) => {
-                let (merged_action, conflict) = merge_action(base, ours, theirs);
+                let (first, second) = prefer.choose((ours, theirs), (theirs, ours));
+                let (merged_action, conflict) = merge_action(base, first, second);
                 merged.push(merged_action);
                 if let Some(conflict) = conflict {
                     conflicts.push(conflict);
                 }
             }
             (None, Some(ours), Some(theirs)) => {
-                // Both added the same action independently; check for conflicts
-                if ours == theirs {
-                    merged.push((*ours).clone());
-                } else {
-                    // Conflict: both added different versions of the same action
-                    merged.push((*ours).clone()); // or choose one arbitrarily
+                merged.push((*prefer.choose(ours, theirs)).clone());
+                if ours != theirs {
                     conflicts.push(Conflict::BothAdded(BothAdded { id }));
                 }
             }
@@ -216,11 +226,114 @@ pub fn semantic_merge(base: &ActionList, ours: &ActionList, theirs: &ActionList)
         }
     }
     restore_deleted_parents(&mut merged, &mut conflicts, &index.1, &index.2);
-    let (merged, order_conflicts) = order_siblings(merged, [base, ours, theirs]);
+    keep_descendants(
+        &mut merged,
+        deleted_ids(&conflicts, Side::Theirs),
+        ours,
+        &index.2,
+    );
+    keep_descendants(
+        &mut merged,
+        deleted_ids(&conflicts, Side::Ours),
+        theirs,
+        &index.1,
+    );
+    let (merged, order_conflicts) = order_siblings(merged, [base, ours, theirs], prefer);
     conflicts.extend(order_conflicts);
-    let (merged, cycle) = order_tree(merged, &index.1);
+    let (merged, cycle) = order_tree(
+        merged,
+        prefer.choose(&index.1, &index.2),
+        [base, ours, theirs],
+        prefer,
+    );
     conflicts.extend(cycle);
     SemanticMerge { merged, conflicts }
+}
+
+/// Project the two possible resolutions without giving up any clean edits.
+/// The public merge report keeps edited actions as placeholders for a deletion
+/// conflict; a written alternative must actually reflect the deletion.
+pub(super) fn conflict_choices(sides: [&ActionList; 3], ours: &SemanticMerge) -> [ActionList; 2] {
+    let theirs = merge_preferred(sides, Side::Theirs);
+    [
+        honor_deletions(sides, ours, Side::Ours),
+        honor_deletions(sides, &theirs, Side::Theirs),
+    ]
+}
+
+fn honor_deletions(sides: [&ActionList; 3], result: &SemanticMerge, prefer: Side) -> ActionList {
+    let mut removed: HashSet<_> = deleted_ids(&result.conflicts, prefer).collect();
+    if removed.is_empty() {
+        return result.merged.clone();
+    }
+    let (edited, other) = prefer.choose((sides[1], sides[2]), (sides[2], sides[1]));
+    let preferred = index_actions(edited);
+    let mut choice = Vec::new();
+    for mut action in result.merged.iter().cloned() {
+        if removed.contains(&action.id) {
+            continue;
+        }
+        if action
+            .parent_id
+            .is_some_and(|parent| removed.contains(&parent))
+        {
+            let Some(previous) = preferred.get(&action.id) else {
+                // A child added under a deleted parent belongs only to the edit choice.
+                removed.insert(action.id);
+                continue;
+            };
+            // A child that already exists on this side goes back to where it was,
+            // rather than disappearing along with the parent it was moved into.
+            action.parent_id = previous.parent_id;
+        }
+        choice.push(action);
+    }
+    // Moving a child back can make its original parent necessary again.
+    let mut restored = Vec::new();
+    restore_deleted_parents(&mut choice, &mut restored, &preferred, &HashMap::new());
+    keep_descendants(
+        &mut choice,
+        deleted_ids(&restored, Side::Theirs),
+        edited,
+        &index_actions(other),
+    );
+    let (choice, _) = order_siblings(choice, sides, prefer);
+    order_tree(choice, &preferred, sides, prefer).0
+}
+
+fn deleted_ids(conflicts: &[Conflict], by: Side) -> impl Iterator<Item = Uuid> {
+    conflicts.iter().filter_map(move |conflict| match conflict {
+        Conflict::ActionDeleted(deletion) if deletion.deleted_by == by => Some(deletion.id),
+        _ => None,
+    })
+}
+
+/// A disputed subtree deletion includes its unchanged descendants, not just
+/// the edit that caused the conflict. A surviving child moved out on the
+/// deletion side is not part of that deletion.
+fn keep_descendants(
+    merged: &mut ActionList,
+    roots: impl Iterator<Item = Uuid>,
+    edited: &ActionList,
+    other: &HashMap<Uuid, &Action>,
+) {
+    let mut kept: HashSet<_> = roots.collect();
+    if kept.is_empty() {
+        return;
+    }
+    let mut present: HashSet<_> = merged.iter().map(|action| action.id).collect();
+    for action in edited {
+        if action
+            .parent_id
+            .is_some_and(|parent| kept.contains(&parent))
+            && !other.contains_key(&action.id)
+        {
+            kept.insert(action.id);
+            if present.insert(action.id) {
+                merged.push(action.clone());
+            }
+        }
+    }
 }
 
 /// Adding a child under an action the other side deleted is an edit to that action. Keep the action,
@@ -261,7 +374,11 @@ fn restore_deleted_parents(
 /// sibling on the side that has it there, or first when it has none.
 ///
 /// Only the order within each parent changes; `depth_first` then writes the tree.
-fn order_siblings(mut merged: ActionList, sides: [&ActionList; 3]) -> (ActionList, Vec<Conflict>) {
+fn order_siblings(
+    mut merged: ActionList,
+    sides: [&ActionList; 3],
+    prefer: Side,
+) -> (ActionList, Vec<Conflict>) {
     let mut parents = Vec::new();
     let mut groups: HashMap<Option<Uuid>, HashSet<Uuid>> = HashMap::new();
     for action in &merged {
@@ -289,7 +406,7 @@ fn order_siblings(mut merged: ActionList, sides: [&ActionList; 3]) -> (ActionLis
         );
         let mut order = merge_field(&b, &o, &t).unwrap_or_else(|| {
             conflicts.push(Conflict::OrderConflict(OrderConflict { parent }));
-            o.clone()
+            prefer.choose(o, t)
         });
         for side in [&ours, &theirs] {
             for (i, id) in side.iter().enumerate() {
@@ -322,9 +439,14 @@ fn siblings(side: &ActionList, parent: Option<Uuid>, group: &HashSet<Uuid>) -> V
 /// Put the merged actions in tree order, refusing a parent cycle.
 ///
 /// Each side's moves can be clean on their own and still form a cycle together (ours moves A
-/// under B, theirs moves B under A). The placeholder undoes the moves ours did not make, which
-/// leaves ours' tree, and the conflict names the actions whose moves were undone.
-fn order_tree(merged: ActionList, ours: &HashMap<Uuid, &Action>) -> (ActionList, Option<Conflict>) {
+/// under B, theirs moves B under A). Undo the moves the preferred side did
+/// not make, then order the repaired siblings in their actual parents.
+fn order_tree(
+    merged: ActionList,
+    preferred: &HashMap<Uuid, &Action>,
+    sides: [&ActionList; 3],
+    prefer: Side,
+) -> (ActionList, Option<Conflict>) {
     let (ordered, unreached) = depth_first(&merged);
     if unreached.is_empty() {
         return (ordered, None);
@@ -333,16 +455,17 @@ fn order_tree(merged: ActionList, ours: &HashMap<Uuid, &Action>) -> (ActionList,
     let placeholder: ActionList = merged
         .into_iter()
         .map(|mut action| {
-            if let Some(our) = ours.get(&action.id)
+            if let Some(original) = preferred.get(&action.id)
                 && unreached.contains(&action.id)
-                && our.parent_id != action.parent_id
+                && original.parent_id != action.parent_id
             {
-                action.parent_id = our.parent_id;
+                action.parent_id = original.parent_id;
                 undone.push(action.id);
             }
             action
         })
         .collect();
+    let (placeholder, _) = order_siblings(placeholder, sides, prefer);
     let (ordered, _) = depth_first(&placeholder);
     (
         ordered,

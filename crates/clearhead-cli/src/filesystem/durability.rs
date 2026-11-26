@@ -17,10 +17,11 @@ use std::path::Path;
 /// filtered by the process umask. Parent directories are created if they don't
 /// exist. On any error the original file (if it existed) is untouched.
 pub fn atomic_write(path: &Path, content: impl AsRef<[u8]>) -> io::Result<()> {
-    let dir = path.parent().unwrap_or(Path::new("."));
-    if !dir.as_os_str().is_empty() {
-        std::fs::create_dir_all(dir)?;
-    }
+    let dir = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    std::fs::create_dir_all(dir)?;
 
     let permissions = match std::fs::metadata(path) {
         Ok(metadata) => Some(metadata.permissions()),

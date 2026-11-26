@@ -222,6 +222,13 @@ pub enum Verb {
         target: NormalizeTarget,
     },
 
+    /// Merge three .actions files by UUID, writing the result to OURS
+    MergeActions {
+        base: PathBuf,
+        ours: PathBuf,
+        theirs: PathBuf,
+    },
+
     /// Apply changes from a patch file
     Patch {
         #[command(subcommand)]

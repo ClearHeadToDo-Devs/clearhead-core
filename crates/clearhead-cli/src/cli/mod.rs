@@ -6,6 +6,7 @@ pub mod export;
 pub mod file;
 pub mod init;
 pub mod locate;
+mod merge;
 pub mod notes;
 pub mod orient;
 pub mod plan;
@@ -732,6 +733,10 @@ fn run_command(cli: &argparser::Cli) -> anyhow::Result<()> {
         }
         return init::run(cli.config.clone(), *user, name.clone());
     }
+    // Git invokes the driver with temporary paths, not a ClearHead workspace.
+    if let Verb::MergeActions { base, ours, theirs } = &cli.command {
+        return merge::run(base, ours, theirs);
+    }
 
     let ctx = CommandContext::new(cli)?;
 
@@ -1124,7 +1129,9 @@ fn dispatch(cli: &argparser::Cli, ctx: &CommandContext) -> anyhow::Result<()> {
             } => charter::close_charter(ctx, query.as_deref(), file.as_deref(), *dry_run),
         },
         Verb::CompleteValues { kind } => complete_values(ctx, *kind),
-        Verb::Init { .. } => unreachable!("handled before CommandContext construction"),
+        Verb::Init { .. } | Verb::MergeActions { .. } => {
+            unreachable!("handled before CommandContext construction")
+        }
     }
 }
 

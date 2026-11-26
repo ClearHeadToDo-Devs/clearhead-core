@@ -9,6 +9,7 @@ pub mod convert;
 pub mod diff;
 pub mod format;
 pub mod lint;
+pub mod merge;
 pub mod parser;
 pub mod repository;
 pub mod source;
