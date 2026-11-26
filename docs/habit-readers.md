@@ -51,13 +51,13 @@ syntax-only consumers, inline tests and incidental documentation matches.
 `filesystem/templates.rs::read_template_actions` returns the strict parser's
 `ParsedDocument`, including `source_map`: a step's `is_id_generated` record
 identifies ids absent from the written source. A generated UUID in `actions`
-alone is not evidence of a persisted identity. Manual application, charter
-creation and legacy calendar expansion consume the document's `actions` as
-before; they do not impose a new stamping policy. `habit_files::lint_action_file`
-reports `habit-id-missing` for named-template steps as well as Habit roots and
-inline children, using each step's source range. `habit_template_ids` integration
-tests in Core and CLI cover the report, reader records, written-id round trips
-and strict syntax rejection. Template lookup and stamping remain separate work.
+alone is not evidence of a persisted identity. Before manual application, charter
+creation or legacy calendar expansion writes generated Actions, this reader
+rejects template recurrence (E002) with the file and line, using the same check
+as file lint and doctor. Missing written ids do not block these generation paths;
+`habit_files::lint_action_file` reports `habit-id-missing` with the step's source
+range. `habit_template_ids` integration tests in Core and CLI cover the report,
+reader records, written-id round trips and strict syntax rejection.
 
 ## Guard and evidence
 

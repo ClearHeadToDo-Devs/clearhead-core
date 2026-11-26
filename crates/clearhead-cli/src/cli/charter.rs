@@ -451,15 +451,6 @@ pub fn add_charter(
     let id = uuid::Uuid::now_v7();
     let charter = new_charter(id, title, alias.clone(), parent.clone());
 
-    if dry_run {
-        let formatted = clearhead_core::format_charter(&charter);
-        println!("{}", formatted);
-        if let Some(tpl_name) = template {
-            println!("Would apply template '{}'", tpl_name);
-        }
-        return Ok(());
-    }
-
     let filename = alias
         .as_deref()
         .unwrap_or(title)
@@ -470,11 +461,8 @@ pub fn add_charter(
     // If a parent is specified, resolve it to find the correct workspace and target directory.
     let (target_dir, data_root) = if let Some(parent_query) = parent {
         let (parent_mc, ws_root) = resolve_charter_across_workspaces(ctx, parent_query)?;
-        let dir = sub_charter_dir(&ws_root, &parent_mc)?;
-        std::fs::create_dir_all(&dir)
-            .with_context(|| format!("Failed to create directory '{}'", dir.display()))?;
         (
-            dir,
+            sub_charter_dir(&ws_root, &parent_mc)?,
             clearhead_cli::filesystem::workspace_data_root(&ws_root),
         )
     } else {
@@ -490,7 +478,32 @@ pub fn add_charter(
         anyhow::bail!("File already exists: {}", file_path.display());
     }
 
+    // Preflight the template before creating the charter directory, files or sidecar.
+    let template_actions = if let Some(name) = template {
+        let path =
+            clearhead_cli::filesystem::templates::resolve_template(&target_dir, &data_root, name)
+                .context("Failed to resolve template")?
+                .ok_or_else(|| anyhow::anyhow!("Template '{}' not found", name))?;
+        let steps = clearhead_cli::filesystem::templates::read_template_actions(&path)
+            .context("Failed to read template")?;
+        Some((name, steps))
+    } else {
+        None
+    };
+
     let content = clearhead_core::format_charter(&charter);
+    if dry_run {
+        println!("{content}");
+        if let Some(name) = template {
+            println!("Would apply template '{name}'");
+        }
+        return Ok(());
+    }
+
+    if parent.is_some() {
+        std::fs::create_dir_all(&target_dir)
+            .with_context(|| format!("Failed to create directory '{}'", target_dir.display()))?;
+    }
     clearhead_cli::filesystem::durability::atomic_write(&file_path, content)
         .context("Failed to write charter")?;
 
@@ -513,22 +526,9 @@ pub fn add_charter(
         id: canonical_id(id),
     });
 
-    if let Some(tpl_name) = template {
-        let charter_dir = file_path.parent().unwrap_or(std::path::Path::new(""));
-
-        let tpl_path = clearhead_cli::filesystem::templates::resolve_template(
-            charter_dir,
-            &data_root,
-            tpl_name,
-        )
-        .context("Failed to resolve template")?
-        .ok_or_else(|| anyhow::anyhow!("Template '{}' not found", tpl_name))?;
-
-        let tpl_acts = clearhead_cli::filesystem::templates::read_template_actions(&tpl_path)
-            .context("Failed to read template")?;
-
+    if let Some((name, steps)) = template_actions {
         let instantiated =
-            templates::instantiate_template(&tpl_acts.actions, |_| uuid::Uuid::now_v7(), None);
+            templates::instantiate_template(&steps.actions, |_| uuid::Uuid::now_v7(), None);
 
         super::save_file(
             &ctx.workspace_for_file(&actions_path),
@@ -538,7 +538,7 @@ pub fn add_charter(
 
         println!(
             "Applied template '{}': {} action(s) to {}",
-            tpl_name,
+            name,
             instantiated.len(),
             actions_path.display()
         );

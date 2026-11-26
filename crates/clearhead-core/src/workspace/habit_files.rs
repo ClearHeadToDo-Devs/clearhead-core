@@ -35,6 +35,26 @@ pub fn habits_from_actions(actions: &[Action]) -> Vec<Habit> {
         .collect()
 }
 
+/// Recurrence in a named template is invalid regardless of the template's filename.
+/// Both file linting and generation consume this check.
+pub fn template_recurrence_diagnostics(
+    doc: &ParsedDocument,
+) -> impl Iterator<Item = LintDiagnostic> + '_ {
+    doc.actions
+        .iter()
+        .filter(|action| action.recurrence_rule.is_some())
+        .map(|action| {
+            LintDiagnostic::error(
+                "E002",
+                "recurrence is not valid in a named template".into(),
+                doc.source_map
+                    .get(&action.id)
+                    .map(|source| source.root)
+                    .unwrap_or_default(),
+            )
+        })
+}
+
 /// Semantic diagnostics never turn syntactically valid R: into parser recovery.
 pub fn lint_action_file(doc: &ParsedDocument, path: &Path) -> Vec<LintDiagnostic> {
     let template =
@@ -66,15 +86,17 @@ pub fn lint_action_file(doc: &ParsedDocument, path: &Path) -> Vec<LintDiagnostic
             }
         }
     }
+    if template {
+        diagnostics.extend(template_recurrence_diagnostics(doc));
+        return diagnostics;
+    }
     if !habits {
-        for action in &doc.actions {
-            if action.recurrence_rule.is_some() {
-                diagnostics.push(LintDiagnostic::warning(
-                    "habit-scope",
-                    "R: belongs in the charter's .habits.actions file; source rule retained".into(),
-                    range(action.id),
-                ));
-            }
+        for action in doc.actions.iter().filter(|a| a.recurrence_rule.is_some()) {
+            diagnostics.push(LintDiagnostic::warning(
+                "habit-scope",
+                "R: belongs in the charter's .habits.actions file; source rule retained".into(),
+                range(action.id),
+            ));
         }
         return diagnostics;
     }

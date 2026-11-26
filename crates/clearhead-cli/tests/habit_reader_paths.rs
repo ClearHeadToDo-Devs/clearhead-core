@@ -56,25 +56,97 @@ fn habit_reader_conformance_invalid_recurrence_is_e002_not_parser_recovery() {
 }
 
 #[test]
-fn habit_reader_conformance_scope_warning_in_plain_and_named_template() {
+fn recurrence_warns_in_plain_actions_but_errors_on_any_named_template_step() {
     let env = TestEnv::new();
-    for path in [
-        "charters/review.actions",
-        "templates/named.actions",
-        "templates/named.habits.actions",
+    let source = format!(
+        "[ ] Review @2026-11-05 R:FREQ=DAILY #{HABIT_ID}\n  >[ ] Step @2026-11-05 R:FREQ=DAILY #{CHILD}\n"
+    );
+    let document = clearhead_core::workspace::parse_document(&source).unwrap();
+    assert!(document.syntax_errors.is_empty());
+
+    for (path, code, severity, succeeds) in [
+        ("charters/review.actions", "habit-scope", "WARN", true),
+        ("templates/named.actions", "E002", "ERROR", false),
+        ("templates/named.habits.actions", "E002", "ERROR", false),
     ] {
-        env.write_text(path, &habit());
-        let document = clearhead_core::workspace::parse_document(&habit()).unwrap();
+        env.write_text(path, &source);
+        let file = env.data_dir.join(path);
+        let output = env
+            .command()
+            .args(["lint", "file"])
+            .arg(&file)
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert_eq!(output.status.success(), succeeds, "{path}: {stdout}");
+        for line in [1, 2] {
+            assert!(
+                stdout.lines().any(|diagnostic| {
+                    diagnostic.starts_with(&format!("{}:{line}:", file.display()))
+                        && diagnostic.contains(&format!(": {severity}:"))
+                        && diagnostic.ends_with(&format!("[{code}]"))
+                }),
+                "{file:?}:{line}: {stdout}"
+            );
+        }
+    }
+
+    let doctor = env.command().arg("doctor").output().unwrap();
+    let stdout = String::from_utf8_lossy(&doctor.stdout);
+    assert!(!doctor.status.success(), "{stdout}");
+    for line in [1, 2] {
         assert!(
-            lint_action_file(&document, Path::new(path))
-                .iter()
-                .any(|d| d.code == "habit-scope")
+            stdout.contains(&format!("[templates/named.actions:{line}] E002")),
+            "{stdout}"
         );
-        env.command()
-            .args(["lint", "file", env.data_dir.join(path).to_str().unwrap()])
-            .assert()
-            .success()
-            .stdout(predicates::str::contains("habit-scope"));
+    }
+}
+
+#[test]
+fn invalid_template_cannot_be_applied_or_used_to_create_a_charter() {
+    let env = TestEnv::new();
+    let existing = format!("[ ] Keep me #{ID}\n");
+    env.write_actions("review.actions", &existing);
+    env.write_text(
+        "templates/named.actions",
+        "[ ] Review\n  >[ ] Invalid step @2026-11-05 R:FREQ=DAILY\n",
+    );
+    let target = env.data_dir.join("charters/review.actions");
+    let apply = [
+        "apply",
+        "template",
+        "named",
+        "--file",
+        target.to_str().unwrap(),
+    ];
+    let add = [
+        "add",
+        "charter",
+        "New",
+        "--parent",
+        "review",
+        "--template",
+        "named",
+    ];
+    for args in [&apply[..], &add[..]] {
+        for extra in [None, Some("--dry-run")] {
+            env.command()
+                .args(args)
+                .args(extra)
+                .assert()
+                .failure()
+                .stderr(predicates::str::contains("templates/named.actions:2"))
+                .stderr(predicates::str::contains("E002"));
+            assert_eq!(fs::read_to_string(&target).unwrap(), existing);
+            assert!(!env.data_dir.join("charters/review").exists());
+        }
+    }
+
+    env.write_text("templates/named.actions", "[ ] Valid step\n");
+    env.command().args(apply).assert().success();
+    env.command().args(add).assert().success();
+    for path in [target, env.data_dir.join("charters/review/new.actions")] {
+        assert!(fs::read_to_string(path).unwrap().contains("Valid step"));
     }
 }
 
