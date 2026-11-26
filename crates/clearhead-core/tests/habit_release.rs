@@ -5,7 +5,7 @@ fn habit_release_uses_published_registry_grammar_and_specification() {
     assert_eq!(clearhead_core::SPECIFICATION, "v0.8.0");
     assert_eq!(
         clearhead_core::grammar_version().as_deref(),
-        Some("v0.12.0")
+        Some("v0.13.0")
     );
     assert_eq!(
         clearhead_core::workspace::sidecar::CHARTER_METADATA_SCHEMA_URL,
@@ -30,12 +30,12 @@ fn habit_release_uses_published_registry_grammar_and_specification() {
         .filter(|package| package["name"] == "tree-sitter-actions")
         .collect();
     assert_eq!(grammars.len(), 1, "one registry grammar, no local patch");
-    assert_eq!(grammars[0]["version"], "0.12.0");
+    assert_eq!(grammars[0]["version"], "0.13.0");
     assert_eq!(
         grammars[0]["source"],
         "registry+https://github.com/rust-lang/crates.io-index"
     );
     assert!(include_str!("../../../Cargo.lock").contains(
-        "checksum = \"e5898d0807a18071aa1b9fce10aa86119ff7f6bc16ae406e8d7765a207197d83\""
+        "checksum = \"c56bd67e77683d3bb582477a4b4739425592e22cbf5c100fad6b65e2242fd4ec\""
     ));
 }

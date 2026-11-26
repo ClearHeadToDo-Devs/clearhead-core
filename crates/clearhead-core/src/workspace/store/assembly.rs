@@ -133,20 +133,7 @@ pub fn assemble_workspace(input: &WorkspaceAssemblyInput) -> Result<WorkspaceRea
         let parsed_doc = match TrustedDocument::try_from(parsed_doc) {
             Ok(document) => document.into_parsed(),
             Err(error) => {
-                let summary = error
-                    .issues
-                    .first()
-                    .map(|first| {
-                        format!(
-                            "{} parser issue(s); first at line {}, column {}: {}; file quarantined",
-                            error.issues.len(),
-                            first.range.start_row + 1,
-                            first.range.start_col + 1,
-                            first.message
-                        )
-                    })
-                    .unwrap_or_else(|| "parser integrity issue; file quarantined".to_string());
-                findings.push(Finding::violation("syntax-errors", &relative, summary));
+                findings.push(quarantine_finding(&relative, &error.issues));
                 continue;
             }
         };
@@ -556,6 +543,37 @@ pub fn assembled_domain_model(read: WorkspaceRead) -> DomainModel {
         objectives: read.objectives,
         charters: read.charters.into_iter().map(Charter::from).collect(),
     }
+}
+
+/// The one finding for a quarantined action file. An unresolved merge
+/// conflict is reported as E010 naming each conflict's lines; any other
+/// integrity issue as `syntax-errors`.
+fn quarantine_finding(path: &Path, issues: &[LintDiagnostic]) -> Finding {
+    let conflicts: Vec<String> = issues
+        .iter()
+        .filter(|issue| issue.code == "E010")
+        .map(|issue| format!("{}-{}", issue.range.start_row + 1, issue.range.end_row + 1))
+        .collect();
+    if !conflicts.is_empty() {
+        let message = format!(
+            "unresolved merge conflict at lines {}; file quarantined until resolved",
+            conflicts.join(", ")
+        );
+        return Finding::violation("E010", path, message);
+    }
+    let summary = issues
+        .first()
+        .map(|first| {
+            format!(
+                "{} parser issue(s); first at line {}, column {}: {}; file quarantined",
+                issues.len(),
+                first.range.start_row + 1,
+                first.range.start_col + 1,
+                first.message
+            )
+        })
+        .unwrap_or_else(|| "parser integrity issue; file quarantined".to_string());
+    Finding::violation("syntax-errors", path, summary)
 }
 
 fn finding_from_lint_diagnostic(path: &Path, diagnostic: LintDiagnostic) -> Finding {

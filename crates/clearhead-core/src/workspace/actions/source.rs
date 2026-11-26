@@ -206,11 +206,22 @@ pub fn parse_actions_with_mode(input: &str, mode: ParseMode) -> Result<ParseOutc
 
     if mode == ParseMode::Strict && !syntax_errors.is_empty() {
         let first = &syntax_errors[0];
+        let (code, hint) = if first.code == "E010" {
+            (
+                "E010",
+                "Resolve the merge conflict before running mutating commands",
+            )
+        } else {
+            (
+                "syntax-error",
+                "Fix syntax errors before running mutating commands",
+            )
+        };
         return Err(ParseFailure {
-            code: "syntax-error",
+            code,
             message: first.message.clone(),
             range: first.range,
-            hint: Some("Fix syntax errors before running mutating commands".to_string()),
+            hint: Some(hint.to_string()),
         });
     }
 
@@ -289,6 +300,9 @@ impl TryFrom<TreeWrapper> for ParsedDocument {
             }
         }
 
+        // A conflict explains any syntax error around it, so it leads.
+        syntax_errors.splice(0..0, conflict_diagnostics(root, &value.source));
+
         for root_action in root.children(&mut cursor) {
             if root_action.kind() == "root_action" {
                 let wrapper = create_node_wrapper(root_action, value.source.clone());
@@ -320,6 +334,64 @@ impl TryFrom<TreeWrapper> for ActionList {
         let parsed: ParsedDocument = value.try_into()?;
         Ok(parsed.actions)
     }
+}
+
+const CONFLICT_MARKERS: [&str; 4] = ["<<<<<<<", "|||||||", "=======", ">>>>>>>"];
+
+/// One E010 per unresolved merge conflict, spanning its opening marker line to
+/// its closing one (specification: Merge Conflict Markers). A conflicted file
+/// parses cleanly, but each side may hold the same action, so it is an
+/// integrity issue: the file is quarantined and refused for writes.
+fn conflict_diagnostics(root: Node<'_>, source: &str) -> Vec<LintDiagnostic> {
+    if !CONFLICT_MARKERS
+        .iter()
+        .any(|marker| source.contains(marker))
+    {
+        return Vec::new();
+    }
+    let mut markers = Vec::new();
+    let mut stack = vec![root];
+    while let Some(node) = stack.pop() {
+        if node.kind() == "conflict_marker" {
+            let text = &source[node.start_byte()..node.end_byte()];
+            markers.push((SourceRange::from_node(&node), &text[..7]));
+        } else {
+            let mut cursor = node.walk();
+            stack.extend(node.children(&mut cursor));
+        }
+    }
+    markers.sort_by_key(|(range, _)| (range.start_row, range.start_col));
+
+    let mut conflicts: Vec<SourceRange> = Vec::new();
+    let mut open: Option<SourceRange> = None;
+    for (range, marker) in markers {
+        match open.as_mut() {
+            Some(conflict) if marker != "<<<<<<<" => {
+                conflict.end_row = range.end_row;
+                conflict.end_col = range.end_col;
+            }
+            _ => {
+                conflicts.extend(open.take());
+                open = Some(range);
+            }
+        }
+        if marker == ">>>>>>>" {
+            conflicts.extend(open.take());
+        }
+    }
+    conflicts.extend(open);
+
+    conflicts
+        .into_iter()
+        .map(|range| {
+            let message = format!(
+                "unresolved merge conflict at lines {}-{}",
+                range.start_row + 1,
+                range.end_row + 1
+            );
+            LintDiagnostic::error("E010", message, range)
+        })
+        .collect()
 }
 
 // --- Tree-sitter wrappers ---

@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## Unreleased
 
+With grammar v0.13.0, an action file holding an unresolved git merge conflict is quarantined: `doctor` reports `E010` with each conflict's lines, `lint file` reports one E010 per conflict, reads leave its actions out, and `add`, `complete`, `format` and every other write refuse it until the markers are gone.
+
 Adopts published specification v0.8.0 with grammar v0.11.1: notes in the JSON projections, and `by` as the writer's name. Habits remain partly implemented: native graph projection exists, but stamping, recurrence linting and generation are not implemented. Uses Core from this source revision.
 
 The native sidecar API serializes note appends with an OS file lock. Doctor relocates misplaced notes rather than pruning them, and retains orphan logs and unknown sidecar keys. All sidecar writes emit two-space JSON with a trailing newline. Rendering notes and switching `jot` away from legacy `## Log` follow separately.

@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+Moves to registry tree-sitter-actions `=0.13.0`, which parses git merge conflict markers. Each unresolved conflict is one E010 integrity issue naming its lines (specification v0.9.0 Merge Conflict Markers, ahead of adopting the rest of v0.9.0): the file is quarantined with an `E010` finding, strict parsing fails with code `E010`, and `TrustedDocument` refuses it, so no rewrite touches it.
+
 Adopts published specification v0.8.0: notes in the JSON projections, and `by` as the writer's name. Habits remain partly implemented: native graph projection exists, but stamping, recurrence linting and generation are not implemented.
 
 Sidecar notes are now read as a workspace-wide union and can be appended for any entity, regardless of state, through the native serialized append API. Reads order hand-edited logs by instant, retaining ties and accepting missing authors. Doctor relocates misplaced logs and reports, but never deletes, orphan notes. Rewrites preserve unknown sidecar keys and emit two-space JSON with a trailing newline. Legacy `## Log` and `jot` behavior are unchanged in this step.

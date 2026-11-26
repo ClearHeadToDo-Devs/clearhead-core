@@ -53,7 +53,7 @@ tree-sitter = "0.26.3"
 # From crates.io, as any consumer gets it. To build against a local grammar
 # checkout, pass the override on the command line (see the README):
 #   --config 'patch.crates-io.tree-sitter-actions.path="../tree-sitter-actions"'
-tree-sitter-actions = "=0.12.0"
+tree-sitter-actions = "=0.13.0"
 pulldown-cmark = { version = "0.13.4", default-features = false }
 regex = { version = "1.13.1", default-features = false, features = ["std", "unicode-perl"] }
 
