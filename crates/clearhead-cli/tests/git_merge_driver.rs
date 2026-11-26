@@ -10,6 +10,10 @@ const BASE: &str = "[ ] Draft #01951111-0000-7000-8000-000000000001\n\
 fn git(dir: &Path, args: &[&str]) -> Output {
     Command::new("git")
         .current_dir(dir)
+        // A Git hook exports GIT_DIR; inherited, it points this git at the real repository, and init reinitializes it.
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_INDEX_FILE")
         .env("GIT_CONFIG_NOSYSTEM", "1")
         .env("GIT_CONFIG_GLOBAL", dir.join("unused-gitconfig"))
         .args([
