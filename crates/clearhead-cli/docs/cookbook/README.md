@@ -8,6 +8,11 @@ Normative behavior lives in the [ClearHead specifications](https://github.com/Cl
 
 - [Radicale and vdirsyncer](./radicale-vdirsyncer.md) — expose ClearHead's filesystem vdir through CalDAV without coupling ClearHead to a server.
 
+## Git tutorials
+
+- [Merge ClearHead actions with Git](../../../../docs/tutorials/merge-actions-with-git.md)
+- [Check staged ClearHead files before committing](../../../../docs/tutorials/check-clearhead-before-committing.md)
+
 ## Recipe conventions
 
 Each recipe should state:

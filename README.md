@@ -71,36 +71,12 @@ reopen before saving to keep it active. A reopened root with closed children can
 produce W003; closed roots with open children can produce W002. Both remain
 warnings, not closure prohibitions.
 
-## Trying the `.actions` merge driver
+## Using ClearHead with Git
 
-`clearhead merge-actions BASE OURS THEIRS` writes to `OURS` and exits zero
-on a clean merge. Conflicts exit nonzero and use Git markers around the
-conflicting action or the affected region of the tree. Unrelated edits stay
-outside the markers. The driver does not need a ClearHead workspace.
-
-To try it in one checkout, put a build with `merge-actions` on `PATH` and
-configure the local driver:
-
-```sh
-git config --local merge.clearhead-actions.driver 'clearhead merge-actions %O %A %B'
-```
-
-Add these patterns to the file printed by `git rev-parse --git-path info/attributes`
-for a local-only opt-in. The second rule keeps append-only completed-action
-archives on Git's union merge:
-
-```gitattributes
-*.actions merge=clearhead-actions
-*.completed.actions merge=union
-```
-
-If an otherwise valid input has an action without a UUID, the driver uses
-`git merge-file` on the whole file instead. It does not generate UUIDs or
-merge fields independently in that mode. A clean result must still parse and
-have no duplicate UUIDs. If Git puts markers where ClearHead cannot see them
-(such as inside a multiline description), the driver stops without writing.
-
-Malformed inputs stop the merge without rewriting `OURS`.
+- [Merge ClearHead actions with Git](docs/tutorials/merge-actions-with-git.md):
+  set up the optional `.actions` merge driver and try a two-branch merge.
+- [Check staged ClearHead files before committing](docs/tutorials/check-clearhead-before-committing.md):
+  install an optional pre-commit hook and verify it rejects unresolved conflicts.
 
 ## Building
 
