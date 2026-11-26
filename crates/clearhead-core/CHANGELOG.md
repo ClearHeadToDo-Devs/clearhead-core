@@ -6,13 +6,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
-Moves to registry tree-sitter-actions `=0.13.0`, which parses git merge conflict markers. Each unresolved conflict is one E010 integrity issue naming its lines (specification v0.9.0 Merge Conflict Markers, ahead of adopting the rest of v0.9.0): the file is quarantined with an `E010` finding, strict parsing fails with code `E010`, and `TrustedDocument` refuses it, so no rewrite touches it.
+## [0.5.0] - 2026-11-26
 
-Adopts published specification v0.8.0: notes in the JSON projections, and `by` as the writer's name. Habits remain partly implemented: native graph projection exists, but stamping, recurrence linting and generation are not implemented.
+Included in the ClearHead 0.5.0 binary release. Declares specification v0.8.0 and uses registry tree-sitter-actions `=0.13.0`. Git conflict markers and some charter wait and `base` behavior implement parts of v0.9.0 ahead of adopting the full release.
 
-Sidecar notes are now read as a workspace-wide union and can be appended for any entity, regardless of state, through the native serialized append API. Reads order hand-edited logs by instant, retaining ties and accepting missing authors. Doctor relocates misplaced logs and reports, but never deletes, orphan notes. Rewrites preserve unknown sidecar keys and emit two-space JSON with a trailing newline. Legacy `## Log` and `jot` behavior are unchanged in this step.
+### Added
 
-`note_sidecars` returns the sidecar each entity's notes belong in, the rule `doctor` checks notes against, so writers and `doctor` agree. **Removed:** `append_log_entry`; nothing writes a charter's `## Log` any more, though readers still show it.
+- `semantic_merge` reconciles action fields, nesting, and sibling order by UUID. `merge_source` preserves clean edits, renders independently resolvable Git conflict regions, and identifies files that need a text merge instead.
+- Workspace readers classify native Habits, named templates, active actions, and history separately. Habit readers preserve recurrence rules, validate definitions, and keep template steps out of executable action collections. Native Habits have zone-independent slot identity; this release does not generate occurrences.
+- Notes are read as a workspace-wide union and appear in JSON projections. `note_sidecars` identifies the same owner for native serialized appends and `doctor` checks. Reads preserve timestamp order, ties, and absent authors; doctor relocates misplaced logs and does not delete orphan notes.
+
+### Changed
+
+- A charter can be an action's predecessor, and charter `base` conditions reach the actions it holds across descendant charters.
+- Unresolved Git markers produce `E010`; strict parsing and `TrustedDocument` refuse conflicted source, so semantic operations cannot rewrite it.
+- Sidecar rewrites preserve unknown keys and use two-space JSON with a trailing newline.
+
+### Removed
+
+- `append_log_entry`. New notes go to sidecars; charter `## Log` remains legacy read-only text.
 
 ## [0.4.0] - 2026-11-05
 

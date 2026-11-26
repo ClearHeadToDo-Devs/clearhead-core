@@ -6,15 +6,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## Unreleased
 
-With grammar v0.13.0, an action file holding an unresolved git merge conflict is quarantined: `doctor` reports `E010` with each conflict's lines, `lint file` reports one E010 per conflict, reads leave its actions out, and `add`, `complete`, `format` and every other write refuse it until the markers are gone.
+## 0.5.0 - 2026-11-26
 
-Adopts published specification v0.8.0 with grammar v0.11.1: notes in the JSON projections, and `by` as the writer's name. Habits remain partly implemented: native graph projection exists, but stamping, recurrence linting and generation are not implemented. Uses Core from this source revision.
+Ships Core 0.5.0 and grammar v0.13.0. The declared specification and schema URLs are v0.8.0, with selected later behavior listed below.
 
-The native sidecar API serializes note appends with an OS file lock. Doctor relocates misplaced notes rather than pruning them, and retains orphan logs and unknown sidecar keys. All sidecar writes emit two-space JSON with a trailing newline. Rendering notes and switching `jot` away from legacy `## Log` follow separately.
+### Migration
 
-`jot <reference> <text>` appends a note to any charter, action or Habit, found by UUID, short prefix or alias, closed and archived ones included; `jot charter <query> <text>` also matches a charter's title. Notes go to the sidecar `doctor` expects them in, never to the charter document or the `.actions` line, and `jot` refuses an entity without a durable id. The note's `by` is `--by`, else the configured `name` (`CLEARHEAD_NAME` or a config file), else the login name. **Breaking:** `jot` no longer writes the charter's `## Log`, no longer creates a charter document, and drops `--charter` and the sole-charter default.
+**`jot` requires a target and writes to its sidecar.** Replace `--charter` and implicit charter selection with `clearhead jot <reference> <text>`, or `clearhead jot charter <query> <text>` to select a charter by title. `jot` no longer creates missing charters or appends to legacy `## Log`. Existing Markdown logs are left in place; `--at` and `--no-by` let you carry their original timestamps and unattributed entries into notes deliberately.
 
-`jot --at <date-time>` records a note at that time instead of now (an ISO 8601 date-time with its offset, or a date read as midnight UTC), and `--no-by` records no author, so a migrated log entry keeps its date and claims no writer. A note dated before the latest one is stored in time order rather than at the end.
+### Added
+
+- **Opt-in Git merge driver.** `clearhead merge-actions BASE OURS THEIRS` merges `.actions` files by UUID and writes to `OURS`. Incompatible edits get local Git conflict blocks. If a valid input has no UUID for an action, the driver falls back to Git's line merge. See the [merge tutorial](https://github.com/ClearHeadToDo-Devs/clearhead-core/blob/v0.5.0/docs/tutorials/merge-actions-with-git.md) and the optional [staged-workspace hook](https://github.com/ClearHeadToDo-Devs/clearhead-core/blob/v0.5.0/docs/tutorials/check-clearhead-before-committing.md).
+- **Notes on actions, charters, and Habits.** `jot` accepts a durable UUID, short prefix, or alias, including closed and archived targets. `show notes` reads the same log; JSON projections include notes. `--by` overrides the configured name and `--no-by` omits it. `doctor --fix` relocates misplaced logs without deleting orphan notes.
+- **Native Habit readers.** `.habits.actions` files load as Habit definitions, with attached template steps and recurrence diagnostics. Readers keep rules as written and do not treat steps as executable actions. Automatic Habit occurrence generation and calendar synchronization are not part of this release.
+- Actions can wait on charters. A charter's `base` conditions bound the actions it holds, including those in descendant charters.
+
+### Fixed
+
+- Unresolved Git conflict markers produce `E010`. `doctor` names the affected lines, reads leave the quarantined file out, and writes refuse it until resolved.
+- Sidecar note appends are serialized. Rewrites preserve unknown keys and keep notes ordered by timestamp.
 
 ## 0.4.0 - 2026-11-05
 
