@@ -79,6 +79,18 @@ fn git_merges_two_fields_on_the_same_line() {
 }
 
 #[test]
+fn git_merges_habit_source_without_changing_its_rule_or_template_step() {
+    let base = "[ ] Review @2026-11-05T08:00 R: FREQ=WEEKLY;BYDAY=WE,MO;INTERVAL=02 #01951111-0000-7000-8000-000000000001\n  >[ ] Template step #01951111-0000-7000-8000-000000000002\n";
+    let ours = base.replace("Review @", "Weekly review @");
+    let theirs = base.replace("Review @", "Review !2 @");
+    let (merge, text, unmerged) = merge_file("release.habits.actions", base, &ours, &theirs);
+
+    assert!(merge.status.success(), "{merge:?}");
+    assert!(unmerged.stdout.is_empty(), "{unmerged:?}");
+    assert_eq!(text, base.replace("Review @", "Weekly review !2 @"));
+}
+
+#[test]
 fn completed_action_archives_still_union_concurrent_appends() {
     let base = "[x] First\n";
     let (merge, text, unmerged) = merge_file(
