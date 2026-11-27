@@ -4,6 +4,7 @@ pub mod debug;
 pub mod doctor;
 pub mod export;
 pub mod file;
+mod habits;
 pub mod init;
 pub mod locate;
 mod merge;
@@ -1114,6 +1115,7 @@ fn dispatch(cli: &argparser::Cli, ctx: &CommandContext) -> anyhow::Result<()> {
             ),
         },
         Verb::Apply { target } => match target {
+            argparser::ApplyTarget::Habits { dry_run } => habits::run(ctx, *dry_run),
             argparser::ApplyTarget::Template {
                 name,
                 charter,

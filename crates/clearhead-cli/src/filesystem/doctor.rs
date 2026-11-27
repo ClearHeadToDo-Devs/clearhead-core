@@ -158,7 +158,7 @@ pub fn apply_doctor_repairs(
 /// Load each affected sidecar once, validate all evidence, then deliver gains
 /// before removals. Retrying a partial relocation skips notes already present.
 fn repair_sidecars(root: &Path, repairs: &[DoctorRepair]) -> Result<(), WorkspaceError> {
-    use crate::filesystem::sidecar::{lock_sidecar, write_sidecar};
+    use crate::filesystem::sidecar::{lock_sidecars, write_sidecar};
     let mut expected = BTreeMap::new();
     for repair in repairs {
         match repair {
@@ -194,15 +194,7 @@ fn repair_sidecars(root: &Path, repairs: &[DoctorRepair]) -> Result<(), Workspac
             _ => {}
         }
     }
-    // Deterministic lock order also covers an append racing a relocation.
-    let lock_paths = expected
-        .keys()
-        .map(|path| root.join(path.as_str()).with_file_name(".clearhead.lock"))
-        .collect::<BTreeSet<_>>();
-    let _locks = lock_paths
-        .iter()
-        .map(|path| lock_sidecar(path))
-        .collect::<Result<Vec<_>, _>>()?;
+    let _locks = lock_sidecars(expected.keys().map(|path| root.join(path.as_str())))?;
     let mut metadata = BTreeMap::new();
     for (path, expected_revision) in &expected {
         let physical = root.join(path.as_str());

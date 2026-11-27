@@ -72,6 +72,32 @@ clearhead unarchive action "Shopping" --reopen
 clearhead debug
 ```
 
+### Apply due Habits
+
+Define a Habit in its charter's `<charter>.habits.actions` file. For example,
+put this line in `charters/next.habits.actions`, using a UUID unique to your Habit:
+
+```text
+[ ] Weekly review @2026-11-30 R:FREQ=WEEKLY #01951111-0000-7000-8000-000000000011
+```
+
+```bash
+clearhead apply habits --dry-run  # Count due occurrences without writing them
+clearhead apply habits            # Write a batch to the owning charters
+```
+
+This applies to the primary workspace, or one selected with `--workspace`.
+Each run materializes up to 100 due occurrence trees, including missed slots.
+If more are due, run the same command again. Existing live and archived
+occurrences are not recreated. A refused Habit is reported with its source
+location and makes the command exit nonzero; valid Habits can still apply.
+The Habit and any template steps need explicit `#uuid` IDs.
+
+`apply habits` does not contact or write a calendar. It handles text rules
+with date, floating, or fixed-offset anchors and matching `EXDATE`s. Named
+series zones, added calendar dates (`RDATE`), and pending calendar overrides
+are not supported by this command yet.
+
 ### Lifecycle results
 
 When piped, `complete action`, `cancel action`, and `reopen action` emit a flat

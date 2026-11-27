@@ -609,7 +609,15 @@ pub fn plan_recurring_occurrence_sync(
 /// non-recurring common case.
 fn occurrence_subtree_ids(model: &DomainModel) -> HashSet<Uuid> {
     let actions = model.all_actions();
-    let roots = occurrence_links(actions.iter().copied());
+    let roots: HashSet<_> = occurrence_links(actions.iter().copied())
+        .into_keys()
+        .chain(
+            actions
+                .iter()
+                .filter(|action| action.native_occurrence.is_some())
+                .map(|action| action.id),
+        )
+        .collect();
     if roots.is_empty() {
         return HashSet::new();
     }
@@ -622,7 +630,7 @@ fn occurrence_subtree_ids(model: &DomainModel) -> HashSet<Uuid> {
         // that occurrence's subtree. The chain is a finite tree, so this terminates.
         let mut cursor = Some(action.id);
         while let Some(id) = cursor {
-            if roots.contains_key(&id) {
+            if roots.contains(&id) {
                 owned.insert(action.id);
                 break;
             }
@@ -1675,7 +1683,10 @@ fn occurrence_snapshot(
 /// the sidecar holds exactly one form of the link. An existing snapshot wins.
 fn freeze_occurrence_link(meta: &mut ActionMeta, snapshot: OccurrenceSnapshot) {
     meta.plan = None;
-    meta.occurrence.get_or_insert(snapshot);
+    meta.occurrence
+        .get_or_insert(crate::workspace::sidecar::OccurrenceLineage::Legacy(
+            snapshot,
+        ));
 }
 
 /// Record every materialized occurrence staged in `charter` as a durable Plan

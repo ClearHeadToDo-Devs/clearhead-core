@@ -1,6 +1,7 @@
 //! Native sidecar reads and writes around Core's pure metadata policy.
 
-use std::path::Path;
+use std::collections::BTreeSet;
+use std::path::{Path, PathBuf};
 
 use chrono::Local;
 use clearhead_core::workspace::{
@@ -62,6 +63,19 @@ pub(crate) fn lock_sidecar(path: &Path) -> Result<std::fs::File, WorkspaceError>
         .open(lock_path)?;
     lock.lock()?;
     Ok(lock)
+}
+
+/// Take one lock per directory, in a stable order for multi-sidecar writes.
+pub(crate) fn lock_sidecars(
+    paths: impl IntoIterator<Item = PathBuf>,
+) -> Result<Vec<std::fs::File>, WorkspaceError> {
+    paths
+        .into_iter()
+        .map(|path| path.with_file_name(".clearhead.lock"))
+        .collect::<BTreeSet<_>>()
+        .iter()
+        .map(|path| lock_sidecar(path))
+        .collect()
 }
 
 pub fn stamp_sidecar_entries(

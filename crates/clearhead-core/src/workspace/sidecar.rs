@@ -142,14 +142,14 @@ pub struct ActionMeta {
     /// immutable canonical slot.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub plan: Option<ActionPlanLink>,
-    /// Frozen lineage for a resolved materialized recurring occurrence.
+    /// Native Habit lineage, or the legacy snapshot from closing a Plan token.
     ///
     /// Resolution replaces the occurrence's live [`plan`](Self::plan) link with
     /// this snapshot, so an entry carries one form or the other. The fact must be
     /// self-contained: future plan edits/deletion must not change what this
     /// completed instance realized.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub occurrence: Option<OccurrenceSnapshot>,
+    pub occurrence: Option<OccurrenceLineage>,
     #[serde(flatten)]
     pub extra: BTreeMap<String, serde_json::Value>,
 }
@@ -168,7 +168,15 @@ pub struct ActionPlanLink {
     pub extra: BTreeMap<String, serde_json::Value>,
 }
 
-/// Durable lineage captured when a materialized recurring occurrence closes.
+/// `habit_id` is native identity; legacy snapshots used `plan_id` instead.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum OccurrenceLineage {
+    Native(crate::domain::NativeOccurrence),
+    Legacy(OccurrenceSnapshot),
+}
+
+/// Legacy lineage captured when a materialized Plan token closes.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct OccurrenceSnapshot {
     pub plan_id: uuid::Uuid,
@@ -241,6 +249,12 @@ pub fn hydrate_actions_map(
             .plan_id
             .map(|id| id.to_string())
             .unwrap_or_else(|| action.id.to_string());
+        if let Some(OccurrenceLineage::Native(occurrence)) = actions_meta
+            .get(&action.id.to_string())
+            .and_then(|meta| meta.occurrence.as_ref())
+        {
+            action.native_occurrence = Some(occurrence.clone());
+        }
         if let Some(meta) = actions_meta.get(&key) {
             if action.created_at.is_none() {
                 action.created_at = meta.created.map(crate::domain::time::Bound::minute);

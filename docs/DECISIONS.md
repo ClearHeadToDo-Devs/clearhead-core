@@ -7,6 +7,17 @@ alternatives rejected, and the trade-off accepted.
 
 ---
 
+## Decision 8: Expose Habit Catch-Up Separately from Calendar Sync
+
+`clearhead apply habits` materializes due native Habit trees without needing a
+calendar. Calendar sync is the higher-level operation; the first delivery does
+not make catch-up an implicit side effect of sync, reads, or unrelated writes.
+
+**Trade-off:** the user must explicitly rerun the command when it reports a
+backlog, but can preview and use it without involving a calendar.
+
+---
+
 ## Decision 7: Keep Authored Aliases When Stamping Habits
 
 Decided by Darrion: generated occurrences and steps keep the aliases written on

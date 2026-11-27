@@ -6,6 +6,7 @@ pub mod calendar;
 pub mod discovery;
 pub mod doctor;
 pub mod durability;
+pub mod habits;
 pub mod init;
 pub mod manifest;
 pub mod mounts;

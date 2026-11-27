@@ -7,7 +7,7 @@
 use std::path::{Path, PathBuf};
 
 use clearhead_core::ArchivedActionFact;
-use clearhead_core::workspace::sidecar::sidecar_path;
+use clearhead_core::workspace::sidecar::{OccurrenceLineage, sidecar_path};
 use clearhead_core::workspace::store::WorkspaceError;
 
 use crate::filesystem::{charter_root, workspace_data_root};
@@ -28,11 +28,19 @@ pub fn read_archived_action_facts(root: &Path) -> Result<Vec<ArchivedActionFact>
     for path in files {
         let metadata = crate::filesystem::sidecar::read_sidecar(&sidecar_path(&path))?;
         let source_path = path.strip_prefix(root).unwrap_or(&path).to_path_buf();
-        for action in crate::filesystem::action_files::read_actions_in(root, &path)? {
-            let occurrence = metadata
+        for mut action in crate::filesystem::action_files::read_actions_in(root, &path)? {
+            let occurrence = match metadata
                 .actions
                 .get(&action.id.to_string())
-                .and_then(|meta| meta.occurrence.clone());
+                .and_then(|meta| meta.occurrence.as_ref())
+            {
+                Some(OccurrenceLineage::Legacy(snapshot)) => Some(snapshot.clone()),
+                Some(OccurrenceLineage::Native(lineage)) => {
+                    action.native_occurrence = Some(lineage.clone());
+                    None
+                }
+                None => None,
+            };
             facts.push(ArchivedActionFact {
                 action,
                 source_path: source_path.clone(),
@@ -112,7 +120,7 @@ mod tests {
             ActionMeta {
                 created: None,
                 plan: None,
-                occurrence: Some(occurrence.clone()),
+                occurrence: Some(OccurrenceLineage::Legacy(occurrence.clone())),
                 extra: Default::default(),
             },
         );

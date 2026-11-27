@@ -3,6 +3,7 @@
 13 crates/clearhead-cli/src/cli/charter.rs
 5 crates/clearhead-cli/src/cli/debug.rs
 14 crates/clearhead-cli/src/cli/file.rs
+1 crates/clearhead-cli/src/cli/habits.rs
 13 crates/clearhead-cli/src/cli/mod.rs
 2 crates/clearhead-cli/src/cli/notes.rs
 4 crates/clearhead-cli/src/cli/orient.rs
@@ -22,6 +23,7 @@
 1 crates/clearhead-cli/src/filesystem/discovery.rs
 7 crates/clearhead-cli/src/filesystem/doctor.rs
 3 crates/clearhead-cli/src/filesystem/durability.rs
+9 crates/clearhead-cli/src/filesystem/habits.rs
 22 crates/clearhead-cli/src/filesystem/mod.rs
 5 crates/clearhead-cli/src/filesystem/mounts.rs
 4 crates/clearhead-cli/src/filesystem/templates.rs

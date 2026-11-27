@@ -3,7 +3,9 @@
 mod catch_up;
 mod schedule;
 
-pub use catch_up::{CatchUpBatch, CatchUpInput, plan_catch_up, plan_text_catch_up};
+pub use catch_up::{
+    CatchUpBatch, CatchUpInput, plan_catch_up, plan_text_catch_up, text_exclusions,
+};
 
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -273,6 +275,7 @@ impl PreparedStamp<'_> {
             scheduled_at: root.planned.map(|planned| planned.start.to_string()),
             rrule: Some(self.recurrence_rule.clone()),
             template: self.binding.clone(),
+            extra: Default::default(),
         });
         Ok(StampedOccurrence(stamped))
     }

@@ -1875,14 +1875,11 @@ mod tests {
             &std::fs::read_to_string(actions.parent().unwrap().join(".inbox.json")).unwrap(),
         )
         .unwrap();
-        assert_eq!(
-            sidecar.actions[&completed_id.to_string()]
-                .occurrence
-                .as_ref()
-                .unwrap()
-                .occurrence_key,
-            key
-        );
+        assert!(matches!(
+            &sidecar.actions[&completed_id.to_string()].occurrence,
+            Some(clearhead_core::workspace::sidecar::OccurrenceLineage::Legacy(snapshot))
+                if snapshot.occurrence_key == key
+        ));
         assert!(
             sidecar.actions[&completed_id.to_string()].plan.is_none(),
             "the frozen snapshot replaces the live link"

@@ -699,6 +699,8 @@ pub struct NativeOccurrence {
     pub rrule: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub template: Option<String>,
+    #[serde(flatten)]
+    pub extra: std::collections::BTreeMap<String, serde_json::Value>,
 }
 
 /// A native recurring prescription, not executable work or a transport Plan.

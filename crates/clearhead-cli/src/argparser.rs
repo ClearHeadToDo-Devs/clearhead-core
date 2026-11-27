@@ -1108,6 +1108,12 @@ pub enum ArchiveTarget {
 
 #[derive(Subcommand)]
 pub enum ApplyTarget {
+    /// Materialize a batch of due occurrences from native Habit definitions
+    Habits {
+        /// Preview catch-up without writing Actions or sidecars
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// Instantiate a template into a charter's .actions file
     Template {
         /// Template name (stem of the .actions file in templates/)
