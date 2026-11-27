@@ -17,6 +17,7 @@ pub mod calendar;
 pub mod charter;
 pub mod charter_schema;
 pub mod habit_files;
+pub mod habit_stamp;
 pub mod init;
 pub mod manifest;
 pub mod markdown;

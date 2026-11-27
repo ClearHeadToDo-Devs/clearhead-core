@@ -8,31 +8,33 @@ pub fn habits_from_actions(actions: &[Action]) -> Vec<Habit> {
     actions
         .iter()
         .filter(|action| action.parent_id.is_none())
-        .map(|root| {
-            let ids = collect_subtree_ids(actions, root.id);
-            let mut definition = root.clone();
-            let recurrence_rule = definition
-                .recurrence_rule
-                .take()
-                .unwrap_or_default()
-                .trim()
-                .to_string();
-            let (template, description) = super::calendar::ics::parse_description_directives(
-                definition.description.as_deref().unwrap_or(""),
-            );
-            definition.description = description;
-            Habit {
-                definition,
-                recurrence_rule,
-                template,
-                children: actions
-                    .iter()
-                    .filter(|a| a.id != root.id && ids.contains(&a.id))
-                    .cloned()
-                    .collect(),
-            }
-        })
+        .map(|root| habit_from_root(root, actions))
         .collect()
+}
+
+pub(super) fn habit_from_root(root: &Action, actions: &[Action]) -> Habit {
+    let ids = collect_subtree_ids(actions, root.id);
+    let mut definition = root.clone();
+    let recurrence_rule = definition
+        .recurrence_rule
+        .take()
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+    let (template, description) = super::calendar::ics::parse_description_directives(
+        definition.description.as_deref().unwrap_or(""),
+    );
+    definition.description = description;
+    Habit {
+        definition,
+        recurrence_rule,
+        template,
+        children: actions
+            .iter()
+            .filter(|a| a.id != root.id && ids.contains(&a.id))
+            .cloned()
+            .collect(),
+    }
 }
 
 /// Recurrence in a named template is invalid regardless of the template's filename.
@@ -42,17 +44,28 @@ pub fn template_recurrence_diagnostics(
 ) -> impl Iterator<Item = LintDiagnostic> + '_ {
     doc.actions
         .iter()
-        .filter(|action| action.recurrence_rule.is_some())
-        .map(|action| {
-            LintDiagnostic::error(
-                "E002",
-                "recurrence is not valid in a named template".into(),
-                doc.source_map
-                    .get(&action.id)
-                    .map(|source| source.root)
-                    .unwrap_or_default(),
-            )
-        })
+        .filter_map(|action| template_step_recurrence(doc, action, true))
+}
+
+pub(super) fn template_step_recurrence(
+    doc: &ParsedDocument,
+    action: &Action,
+    named: bool,
+) -> Option<LintDiagnostic> {
+    action.recurrence_rule.as_ref()?;
+    let message = if named {
+        "recurrence is not valid in a named template"
+    } else {
+        "recurrence is only valid on Habit roots"
+    };
+    Some(LintDiagnostic::error(
+        "E002",
+        message.into(),
+        doc.source_map
+            .get(&action.id)
+            .map(|source| source.root)
+            .unwrap_or_default(),
+    ))
 }
 
 /// Semantic diagnostics never turn syntactically valid R: into parser recovery.
@@ -112,15 +125,12 @@ pub fn lint_action_file(doc: &ParsedDocument, path: &Path) -> Vec<LintDiagnostic
                 root_range,
             ));
         }
-        for action in std::iter::once(&habit.definition).chain(habit.children.iter()) {
-            if action.parent_id.is_some() && action.recurrence_rule.is_some() {
-                diagnostics.push(LintDiagnostic::error(
-                    "E002",
-                    "recurrence is only valid on Habit roots".into(),
-                    range(action.id),
-                ));
-            }
-        }
+        diagnostics.extend(
+            habit
+                .children
+                .iter()
+                .filter_map(|action| template_step_recurrence(doc, action, false)),
+        );
     }
     diagnostics
 }

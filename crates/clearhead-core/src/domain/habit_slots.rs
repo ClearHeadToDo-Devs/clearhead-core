@@ -1,6 +1,8 @@
 //! Native Habit slot identity. This does not replace the legacy calendar
 //! occurrence key or its event-derived ids; those remain stable until migration.
-use chrono::{DateTime, LocalResult, NaiveDate, NaiveDateTime, Offset, TimeZone};
+use chrono::{
+    DateTime, FixedOffset, LocalResult, NaiveDate, NaiveDateTime, NaiveTime, Offset, TimeZone,
+};
 use chrono_tz::{GapInfo, Tz};
 use regex::Regex;
 use std::{str::FromStr, sync::OnceLock};
@@ -48,6 +50,18 @@ impl FromStr for SlotKey {
 pub struct NativeSlot {
     pub frame: SlotFrame,
     pub key: SlotKey,
+    // Wall position in the series frame (UTC for UtcOffset). The key alone
+    // cannot recover a TZID slot's written wall time inside a spring gap.
+    position: NaiveDateTime,
+}
+
+impl NativeSlot {
+    pub(crate) fn position_in(&self, offset: FixedOffset) -> Option<NaiveDateTime> {
+        match self.frame {
+            SlotFrame::UtcOffset => self.position.checked_add_offset(offset),
+            _ => Some(self.position),
+        }
+    }
 }
 
 /// Canonicalize an original slot (RECURRENCE-ID for a moved occurrence), not
@@ -55,9 +69,12 @@ pub struct NativeSlot {
 /// minute or second precision. TZID values are local times in the supplied
 /// series zone. Fractions retain arbitrary decimal precision without rounding.
 pub fn canonical_slot(frame: SlotFrame, original_slot: &str) -> Result<NativeSlot, String> {
-    let key = if frame == SlotFrame::Date {
+    let (key, position) = if frame == SlotFrame::Date {
         let date = parse_date(original_slot)?;
-        format!("D:{}", date.format("%Y-%m-%d"))
+        (
+            format!("D:{}", date.format("%Y-%m-%d")),
+            date.and_time(NaiveTime::MIN),
+        )
     } else {
         let (local, fraction, offset) = parse_datetime(original_slot)?;
         let (prefix, time, suffix) = match &frame {
@@ -70,21 +87,9 @@ pub fn canonical_slot(frame: SlotFrame, original_slot: &str) -> Result<NativeSlo
                 ("U:", utc, "Z")
             }
             SlotFrame::Tzid(zone) if offset.is_empty() => {
-                let utc = match zone.from_local_datetime(&local) {
-                    LocalResult::Single(time) => time.naive_utc(),
-                    // RFC 5545: the first occurrence of an ambiguous wall time.
-                    LocalResult::Ambiguous(a, b) => a.min(b).naive_utc(),
-                    LocalResult::None => {
-                        // RFC 5545: use the offset before the gap, without
-                        // shifting the source wall time or probing nearby dates.
-                        let (_, offset) = GapInfo::new(&local, zone)
-                            .and_then(|gap| gap.begin)
-                            .ok_or("cannot resolve series-zone gap")?;
-                        local
-                            .checked_sub_offset(offset.fix())
-                            .ok_or("slot outside supported date range")?
-                    }
-                };
+                let utc = local
+                    .checked_sub_offset(series_offset(*zone, local)?)
+                    .ok_or("slot outside supported date range")?;
                 ("U:", utc, "Z")
             }
             _ => return Err("slot value does not match its series frame".into()),
@@ -94,12 +99,33 @@ pub fn canonical_slot(frame: SlotFrame, original_slot: &str) -> Result<NativeSlo
         if date.len() != 19 || !date.as_bytes()[0].is_ascii_digit() {
             return Err("slot outside supported date range".into());
         }
-        format!("{prefix}{date}{fraction}{suffix}")
+        let position = if frame == SlotFrame::UtcOffset {
+            time
+        } else {
+            local
+        };
+        (format!("{prefix}{date}{fraction}{suffix}"), position)
     };
     Ok(NativeSlot {
         frame,
         key: SlotKey(key),
+        position,
     })
+}
+
+/// RFC 5545: first occurrence in a fold, offset before the gap otherwise.
+pub(crate) fn series_offset(zone: Tz, local: NaiveDateTime) -> Result<FixedOffset, &'static str> {
+    let offset = match zone.from_local_datetime(&local) {
+        LocalResult::Single(time) => *time.offset(),
+        LocalResult::Ambiguous(a, b) => *a.min(b).offset(),
+        LocalResult::None => {
+            GapInfo::new(&local, &zone)
+                .and_then(|gap| gap.begin)
+                .ok_or("cannot resolve series-zone gap")?
+                .1
+        }
+    };
+    Ok(offset.fix())
 }
 
 fn parse_date(value: &str) -> Result<NaiveDate, String> {

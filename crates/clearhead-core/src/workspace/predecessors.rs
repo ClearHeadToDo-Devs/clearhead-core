@@ -48,7 +48,7 @@ impl PredecessorScope {
         self.resolve_with_local(reference, LocalActions::default())
     }
 
-    fn resolve_with_local(
+    pub(super) fn resolve_with_local(
         &self,
         reference: &str,
         local: LocalActions<'_>,

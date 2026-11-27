@@ -57,7 +57,8 @@ step "habit reader inventory regressions" env PYTHONDONTWRITEBYTECODE=1 python3 
 step "habit reader caller inventory"     python3 scripts/habit-reader-gate.py
 if [ "$fast" -eq 0 ]; then
   for zone in UTC America/Los_Angeles Asia/Tokyo; do
-    step "habit slot identity TZ=$zone" env TZ="$zone" cargo test -p clearhead_core --test habit_slot_identity
+    step "habit identity and stamping TZ=$zone" env TZ="$zone" \
+      cargo test -p clearhead_core --test habit_slot_identity --test habit_step_identity
   done
   step "tests" cargo test --workspace --quiet
 fi

@@ -7,6 +7,19 @@ alternatives rejected, and the trade-off accepted.
 
 ---
 
+## Decision 7: Keep Authored Aliases When Stamping Habits
+
+Decided by Darrion: generated occurrences and steps keep the aliases written on
+the Habit and its template. Core does not add a slot suffix or silently prefer a
+template alias over an equally strong workspace match.
+
+**Trade-off:** repeats can make a bare alias ambiguous. The usual predecessor
+warning applies. Archive finished trees or rename unused aliases to tidy the
+workspace; for a wait on a specific template step, use its persisted UUID. The
+stamper rewrites that UUID to the corresponding step in each occurrence.
+
+---
+
 ## Decision 6: Fall Back to a Line Merge Without Stable Action IDs
 
 Decided by Darrion: if an otherwise valid input has an action without a UUID,
