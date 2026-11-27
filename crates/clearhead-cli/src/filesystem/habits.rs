@@ -1,5 +1,8 @@
 //! Native delivery of text-authored Habit catch-up. No calendar I/O effects.
 
+mod fast_forward;
+pub use fast_forward::fast_forward;
+
 use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
 

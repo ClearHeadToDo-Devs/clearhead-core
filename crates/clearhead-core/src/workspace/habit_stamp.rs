@@ -1,11 +1,13 @@
 //! Pure generation of native Habit occurrences; no slot discovery or writes.
 
 mod catch_up;
+mod fast_forward;
 mod schedule;
 
 pub use catch_up::{
     CatchUpBatch, CatchUpInput, plan_catch_up, plan_text_catch_up, text_exclusions,
 };
+pub use fast_forward::{FastForward, fast_forward_text_habit};
 
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -34,6 +36,39 @@ impl<'a> StampSource<'a> {
             path: path.as_ref(),
             doc,
         }
+    }
+
+    fn root(self, habit_id: Uuid) -> Result<&'a Action, WorkspaceError> {
+        self.check_syntax()?;
+        let mut matching = self
+            .doc
+            .actions
+            .iter()
+            .filter(|action| action.id == habit_id);
+        let root = matching
+            .next()
+            .filter(|root| root.parent_id.is_none())
+            .ok_or_else(|| {
+                WorkspaceError::Actions(format!(
+                    "{} has no Habit root {habit_id}",
+                    self.path.display()
+                ))
+            })?;
+        if matching.next().is_some() {
+            return Err(WorkspaceError::Actions(self.message(
+                self.range(habit_id),
+                "duplicate-uuid",
+                "Habit UUID is also used on another line",
+            )));
+        }
+        Ok(root)
+    }
+
+    fn has_written_id(self, id: Uuid) -> bool {
+        self.doc
+            .source_map
+            .get(&id)
+            .is_some_and(|source| !source.is_id_generated)
     }
 
     fn range(self, id: Uuid) -> SourceRange {
@@ -136,28 +171,7 @@ fn prepare_stamp<'a>(
     scope: &'a PredecessorScope,
     charter_id: Option<Uuid>,
 ) -> Result<Option<PreparedStamp<'a>>, WorkspaceError> {
-    source.check_syntax()?;
-    let mut roots = source
-        .doc
-        .actions
-        .iter()
-        .filter(|action| action.id == habit_id);
-    let root = roots
-        .next()
-        .filter(|root| root.parent_id.is_none())
-        .ok_or_else(|| {
-            WorkspaceError::Actions(format!(
-                "{} has no Habit root {habit_id}",
-                source.path.display()
-            ))
-        })?;
-    if roots.next().is_some() {
-        return Err(WorkspaceError::Actions(source.message(
-            source.range(habit_id),
-            "duplicate-uuid",
-            "Habit UUID is also used on another line",
-        )));
-    }
+    let root = source.root(habit_id)?;
     if root.state.is_terminal() {
         return Ok(None);
     }
@@ -299,12 +313,7 @@ fn validate_tree<'a>(
     for (index, action) in tree.iter().enumerate() {
         let source = location(index);
         let range = source.range(action.id);
-        if !source
-            .doc
-            .source_map
-            .get(&action.id)
-            .is_some_and(|meta| !meta.is_id_generated)
-        {
+        if !source.has_written_id(action.id) {
             issues.push(source.message(
                 range,
                 "habit-id-missing",

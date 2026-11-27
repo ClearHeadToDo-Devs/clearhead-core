@@ -41,7 +41,7 @@ syntax-only consumers, inline tests and incidental documentation matches.
 | Legacy calendars/templates | Core `workspace/calendar/{ics,expand,reconcile,sync_store}.rs`, `workspace/templates.rs`; CLI `filesystem/{calendar,templates}.rs`, `cli/template.rs` | Native Habit loading does not enter legacy Plan expansion. Template reads use the explicit template-data reader, not the executable-Action adapter. Existing manual template application and legacy calendars remain intact. |
 | CLI discovery | `filesystem/{discovery,mounts}.rs`, `environment_reader.rs`, `cli/{resolver,init,orient,debug,query}.rs` | Ordinary Action listings use the shared live predicate. Manifests include Habit-only owners and coalesce ordinary/Habit anchors without duplicate charters. Downstream workspace consumers see assembled native types. |
 | CLI source reads/writes | `filesystem/{action_files,mod,durability}.rs`, `cli/{mod,action,file,merge,plan,service}.rs` | Explicit Action APIs refuse Habit/template paths rather than lowering them as work. Formatting and lint also operate on source. The merge driver takes three standalone inputs, bypasses workspace discovery, and never calls an executable-Action API. The Action-only Plan-export file path refuses Habit input rather than exporting template children as work. |
-| CLI Habit delivery | `cli/habits.rs`, `filesystem/habits.rs` | `apply habits` reads native definitions and their selected templates; reads live/completed/archived rows and matching sidecars only as identity evidence; appends whole trees to ordinary Action anchors. No history is added to live reads. |
+| CLI Habit delivery | `cli/habits.rs`, `filesystem/habits.rs`, `filesystem/habits/fast_forward.rs` | `apply habits` reads native definitions and their selected templates; reads live/completed/archived rows and matching sidecars only as identity evidence; appends whole trees to ordinary Action anchors. `--fast-forward` uses the same evidence to write only exclusions in the selected Habit's sidecar. No history is added to live reads. |
 | CLI archive/doctor | `filesystem/{archive_charter,archive_facts,doctor}.rs`, `cli/charter.rs` | Charter lookup accepts the habits file. Known Habit file relocates byte for byte alongside its charter, before supporting-file discovery. The terminal Action sweep never consumes it. Completed-history facts remain Action-only. |
 | CLI publication/display | `export.rs`, `query/sparql/index.rs`, `display/{tree,detail}.rs`, `lib.rs`, `argparser.rs` | Consumers of native models / classified collections; no independent Habit-to-Action lowering. |
 | LSP | `lsp/{mod,providers,handlers}.rs` | Syntax ranges remain usable for all suffixes. Diagnostics use URI-aware file roles. Workspace diagnostics and navigation consume the assembled model. |
@@ -77,7 +77,9 @@ preview, bounded retries, refusal, live and archive dedup, and lineage after
 re-reading or archiving. Delivery publishes lineage before atomically replacing
 the Action file; a retry after only the sidecar was written sees no Action row
 and can still publish the tree. Legacy calendar sync does not project a native
-occurrence tree as one-off Plans.
+occurrence tree as one-off Plans. `fast_forward_habit` tests targeting, preview,
+retry, preserving live/history bytes and leaving the next slot unmaterialized
+until it is due.
 
 ## Guard and evidence
 

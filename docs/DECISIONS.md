@@ -16,6 +16,12 @@ not make catch-up an implicit side effect of sync, reads, or unrelated writes.
 **Trade-off:** the user must explicitly rerun the command when it reports a
 backlog, but can preview and use it without involving a calendar.
 
+`apply habits --fast-forward <habit>` explicitly skips one Habit's due,
+unmaterialized slots. Record exclusions for those specific slots rather than
+moving the recurrence anchor or keeping a cutoff. The next future slot is
+shown, not materialized early; existing occurrences and the rule are unchanged.
+An edited rule can still introduce earlier slots that were never excluded.
+
 ---
 
 ## Decision 7: Keep Authored Aliases When Stamping Habits

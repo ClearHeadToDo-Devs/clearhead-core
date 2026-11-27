@@ -78,7 +78,7 @@ Define a Habit in its charter's `<charter>.habits.actions` file. For example,
 put this line in `charters/next.habits.actions`, using a UUID unique to your Habit:
 
 ```text
-[ ] Weekly review @2026-11-30 R:FREQ=WEEKLY #01951111-0000-7000-8000-000000000011
+[ ] Weekly review =weekly-review @2026-11-30 R:FREQ=WEEKLY #01951111-0000-7000-8000-000000000011
 ```
 
 ```bash
@@ -97,6 +97,19 @@ The Habit and any template steps need explicit `#uuid` IDs.
 with date, floating, or fixed-offset anchors and matching `EXDATE`s. Named
 series zones, added calendar dates (`RDATE`), and pending calendar overrides
 are not supported by this command yet.
+
+To skip a backlog for just one Habit, use its alias or UUID:
+
+```bash
+clearhead apply habits --fast-forward weekly-review --dry-run
+clearhead apply habits --fast-forward weekly-review
+```
+
+Fast-forward records exclusions for slots that are already due but have no
+live or archived occurrence. It does not write any Actions or change the
+recurrence rule. It shows the next scheduled slot, if there is one; run normal
+`apply habits` once that slot is due to materialize it. The skipped slots are
+recorded as `EXDATE` entries under that Habit's UUID in the charter sidecar.
 
 ### Lifecycle results
 

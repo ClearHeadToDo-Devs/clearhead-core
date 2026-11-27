@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use chrono::{DateTime, FixedOffset};
 use uuid::Uuid;
 
-use crate::domain::habit_recurrence::arrived_text_slots;
+use crate::domain::habit_recurrence::text_slots;
 use crate::domain::habit_slots::{NativeSlot, SlotFrame, SlotKey, canonical_slot, occurrence_id};
 use crate::domain::time::{Bound, Precision};
 use crate::workspace::{WorkspaceError, predecessors::PredecessorScope};
@@ -75,9 +75,10 @@ pub fn plan_text_catch_up(
             &error,
         ))
     };
-    let slots = arrived_text_slots(anchor, &stamp.recurrence_rule, now)
+    let slots = text_slots(anchor, &stamp.recurrence_rule, now)
         .map_err(from_source)?
-        .map(|slot| slot.map_err(from_source));
+        .take_while(|(arrived, _)| *arrived)
+        .map(|(_, slot)| slot.map_err(from_source));
     select_batch(&input, &stamp, slots)
 }
 

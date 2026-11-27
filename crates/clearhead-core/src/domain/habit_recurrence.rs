@@ -52,11 +52,12 @@ fn wall_until(anchor: Bound, until: &str) -> Result<String, String> {
     Ok(format!("UNTIL={}", wall.format("%Y%m%dT%H%M%SZ")))
 }
 
-pub(crate) fn arrived_text_slots(
+/// Enumerate slots in order and flag whether each is already due.
+pub(crate) fn text_slots(
     anchor: Bound,
     rule: &str,
     now: &DateTime<FixedOffset>,
-) -> Result<impl Iterator<Item = Result<NativeSlot, String>> + use<>, String> {
+) -> Result<impl Iterator<Item = (bool, Result<NativeSlot, String>)> + use<>, String> {
     let recurrence = text_recurrence(anchor, rule)?;
     let label = move |wall: NaiveDateTime| match anchor.offset {
         Some(offset) => offset
@@ -78,6 +79,5 @@ pub(crate) fn arrived_text_slots(
     Ok(recurrence
         .into_iter()
         .map(|at| at.naive_utc())
-        .take_while(move |at| *at <= cutoff)
-        .map(move |at| canonical_slot(frame.clone(), &label(at))))
+        .map(move |at| (at <= cutoff, canonical_slot(frame.clone(), &label(at)))))
 }

@@ -1115,7 +1115,10 @@ fn dispatch(cli: &argparser::Cli, ctx: &CommandContext) -> anyhow::Result<()> {
             ),
         },
         Verb::Apply { target } => match target {
-            argparser::ApplyTarget::Habits { dry_run } => habits::run(ctx, *dry_run),
+            argparser::ApplyTarget::Habits {
+                dry_run,
+                fast_forward,
+            } => habits::run(ctx, *dry_run, fast_forward.as_deref()),
             argparser::ApplyTarget::Template {
                 name,
                 charter,

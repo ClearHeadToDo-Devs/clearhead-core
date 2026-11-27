@@ -1110,9 +1110,13 @@ pub enum ArchiveTarget {
 pub enum ApplyTarget {
     /// Materialize a batch of due occurrences from native Habit definitions
     Habits {
-        /// Preview catch-up without writing Actions or sidecars
+        /// Preview catch-up or fast-forward without writing Actions or sidecars
         #[arg(long)]
         dry_run: bool,
+
+        /// Skip all due, unmaterialized slots for one Habit (alias or UUID)
+        #[arg(long, value_name = "HABIT")]
+        fast_forward: Option<String>,
     },
     /// Instantiate a template into a charter's .actions file
     Template {
