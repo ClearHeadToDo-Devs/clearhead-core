@@ -2,6 +2,7 @@ use clearhead_cli::filesystem::templates::read_template_actions;
 use clearhead_core::workspace::{
     actions::format::{OutputFormat, format},
     habit_files::lint_action_file,
+    predecessors::PredecessorScope,
 };
 use std::{fs, path::Path};
 
@@ -18,7 +19,7 @@ fn habit_template_ids_reader_identifies_missing_steps_from_parser_records() {
     )
     .unwrap();
 
-    let doc = read_template_actions(&path).unwrap();
+    let doc = read_template_actions(&path, &PredecessorScope::default()).unwrap();
     assert_eq!(doc.actions.len(), 3);
     assert_eq!(doc.actions[0].id.to_string(), WRITTEN);
     for (index, action) in doc.actions.iter().enumerate() {
@@ -39,13 +40,14 @@ fn habit_template_ids_reader_written_ids_round_trip_unchanged() {
     let tmp = tempfile::tempdir().unwrap();
     let path = tmp.path().join("review.actions");
     fs::write(&path, format!("[ ] Written #{WRITTEN}\n")).unwrap();
-    let doc = read_template_actions(&path).unwrap();
+    let scope = PredecessorScope::default();
+    let doc = read_template_actions(&path, &scope).unwrap();
     fs::write(
         &path,
         format(&doc.actions, OutputFormat::Actions, None, None).unwrap(),
     )
     .unwrap();
-    let reread = read_template_actions(&path).unwrap();
+    let reread = read_template_actions(&path, &scope).unwrap();
     assert_eq!(reread.actions[0].id.to_string(), WRITTEN);
     assert!(!reread.source_map[&reread.actions[0].id].is_id_generated);
 }
@@ -55,5 +57,5 @@ fn habit_template_ids_reader_still_rejects_syntax_errors() {
     let tmp = tempfile::tempdir().unwrap();
     let path = tmp.path().join("review.actions");
     fs::write(&path, "not valid actions syntax !!!").unwrap();
-    assert!(read_template_actions(&path).is_err());
+    assert!(read_template_actions(&path, &PredecessorScope::default()).is_err());
 }

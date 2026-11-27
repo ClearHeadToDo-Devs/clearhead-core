@@ -22,6 +22,7 @@ pub mod manifest;
 pub mod markdown;
 pub mod mutate_actions;
 pub mod objective;
+pub mod predecessors;
 pub mod resource;
 pub mod selector;
 pub mod sidecar;

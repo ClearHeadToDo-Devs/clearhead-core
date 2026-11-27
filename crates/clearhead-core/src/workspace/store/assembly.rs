@@ -13,9 +13,7 @@ use super::pathing::{
     infer_parent_charter_name_for_workspace,
 };
 use crate::domain::{Charter, DomainModel, Objective, PredecessorRef};
-use crate::reference::{
-    Prefix, ReferenceEntity, ReferenceSelection, parse_prefix, select_reference_where,
-};
+use crate::reference::ReferenceTarget;
 use crate::workspace::actions::convert::from_actions_with_charter;
 use crate::workspace::actions::repository::SourcedAction;
 use crate::workspace::actions::{LintDiagnostic, LintSeverity, TrustedDocument};
@@ -24,6 +22,7 @@ use crate::workspace::charter::{
     CharterIdSource, MarkdownCharter, frontmatter_has_parent_key, implicit_charter, parse_charter,
 };
 use crate::workspace::objective::{objective_file_name, parse_objective};
+use crate::workspace::predecessors::PredecessorScope;
 use crate::workspace::resource::{
     MountId, MountInventory, MountReadEvidence, WorkspaceMounts, WorkspacePath,
 };
@@ -197,6 +196,7 @@ pub fn assemble_workspace(input: &WorkspaceAssemblyInput) -> Result<WorkspaceRea
         path_for_name.entry(name).or_insert(relative);
     }
 
+    let mut template_documents = Vec::new();
     for path in input.workspace_files().filter(|path| {
         path.as_str().ends_with(".actions")
             && crate::workspace::action_files::resource_role(Path::new(path.as_str()))
@@ -210,6 +210,7 @@ pub fn assemble_workspace(input: &WorkspaceAssemblyInput) -> Result<WorkspaceRea
             for diagnostic in crate::workspace::habit_files::lint_action_file(&doc, relative) {
                 findings.push(finding_from_lint_diagnostic(relative, diagnostic));
             }
+            template_documents.push((relative, doc));
         }
     }
 
@@ -443,7 +444,33 @@ pub fn assemble_workspace(input: &WorkspaceAssemblyInput) -> Result<WorkspaceRea
 
     attach_plans(input, &mut charters, &mut findings)?;
     let mut charters: Vec<_> = charters.into_values().collect();
-    resolve_predecessor_aliases(&mut charters, &mut findings);
+    let scope = PredecessorScope::new(&charters);
+    for charter in &charters {
+        if let Some(path) = &charter.actions_file {
+            for diagnostic in scope.lint_active(&charter.actions) {
+                findings.push(finding_from_lint_diagnostic(path, diagnostic));
+            }
+        }
+        if let Some(path) = &charter.habits_file {
+            let actions: Vec<_> = charter
+                .habits
+                .iter()
+                .flat_map(|habit| std::iter::once(&habit.definition).chain(&habit.children))
+                .cloned()
+                .collect();
+            for diagnostic in scope.lint_local(&actions, Some(charter.id), |id| {
+                charter.habit_sources.get(&id).map(|source| source.root)
+            }) {
+                findings.push(finding_from_lint_diagnostic(path, diagnostic));
+            }
+        }
+    }
+    for (path, doc) in template_documents {
+        for diagnostic in scope.lint_document(&doc) {
+            findings.push(finding_from_lint_diagnostic(path, diagnostic));
+        }
+    }
+    resolve_predecessors(&scope, &mut charters, &mut findings);
     let (objectives, objective_files): (Vec<_>, HashMap<_, _>) =
         assemble_objectives(input, &mut findings)
             .into_iter()
@@ -832,23 +859,17 @@ fn parent_hints(
 /// or charter it names (action_file_format.md, Predecessors): full UUID, then
 /// short UUID, then alias, with `a:` or `c:` choosing the kind. A reference
 /// that matches more than one at its strongest tier stays unresolved (W009).
-fn resolve_predecessor_aliases(charters: &mut [MarkdownCharter], findings: &mut Vec<Finding>) {
-    let targets: Vec<PredecessorTarget> = charters
-        .iter()
-        .flat_map(|charter| {
-            std::iter::once(PredecessorTarget::new(charter.id, &charter.alias, true)).chain(
-                charter.actions.iter().map(|sourced| {
-                    PredecessorTarget::new(sourced.action.id, &sourced.action.alias, false)
-                }),
-            )
-        })
-        .collect();
+fn resolve_predecessors(
+    scope: &PredecessorScope,
+    charters: &mut [MarkdownCharter],
+    findings: &mut Vec<Finding>,
+) {
     for charter in charters {
         let actions_file = charter.actions_file.clone().unwrap_or_default();
         for sourced in &mut charter.actions {
             let waiter = format!("action '{}'", sourced.action.name);
             for predecessor in sourced.action.predecessors.iter_mut().flatten() {
-                resolve_predecessor(&targets, predecessor, &waiter, &actions_file, findings);
+                resolve_predecessor(scope, predecessor, &waiter, &actions_file, findings);
             }
         }
         // A base wait resolves as `<` does (charters.md), reported at the document.
@@ -862,13 +883,13 @@ fn resolve_predecessor_aliases(charters: &mut [MarkdownCharter], findings: &mut 
             .iter_mut()
             .flat_map(|base| &mut base.predecessors)
         {
-            resolve_predecessor(&targets, predecessor, &waiter, &md_file, findings);
+            resolve_predecessor(scope, predecessor, &waiter, &md_file, findings);
         }
     }
 }
 
 fn resolve_predecessor(
-    targets: &[PredecessorTarget],
+    scope: &PredecessorScope,
     predecessor: &mut PredecessorRef,
     waiter: &str,
     path: &Path,
@@ -877,59 +898,20 @@ fn resolve_predecessor(
     if predecessor.resolved_uuid.is_some() {
         return;
     }
-    match select_predecessor(targets, &predecessor.raw_ref) {
-        ReferenceSelection::Unique { index, .. } => {
-            predecessor.resolved_uuid = Some(targets[index].id);
+    match scope.resolve(&predecessor.raw_ref) {
+        Ok(ReferenceTarget::Action(id) | ReferenceTarget::Charter(id)) => {
+            predecessor.resolved_uuid = Some(id);
         }
-        ReferenceSelection::Ambiguous { .. } => findings.push(Finding::warning(
+        Err(error) if error.is_ambiguous() => findings.push(Finding::warning(
             "ambiguous-predecessor",
             path,
             format!(
-                "{waiter} waits on '{}', which names more than one action or charter, so it waits on nothing; use c:, a: or a UUID",
+                "{waiter} waits on '{}', which names more than one action or charter, so it waits on nothing; use c:, a:, a path, or a UUID",
                 predecessor.raw_ref
             ),
         )),
-        ReferenceSelection::NotFound => {}
+        _ => {}
     }
-}
-
-/// An action or a charter a predecessor may name.
-struct PredecessorTarget {
-    id: Uuid,
-    alias: Option<String>,
-    is_charter: bool,
-}
-
-impl PredecessorTarget {
-    fn new(id: Uuid, alias: &Option<String>, is_charter: bool) -> Self {
-        Self {
-            id,
-            alias: alias.clone(),
-            is_charter,
-        }
-    }
-}
-
-impl ReferenceEntity for PredecessorTarget {
-    fn reference_id(&self) -> Uuid {
-        self.id
-    }
-
-    fn reference_alias(&self) -> Option<&str> {
-        self.alias.as_deref()
-    }
-}
-
-fn select_predecessor(targets: &[PredecessorTarget], raw: &str) -> ReferenceSelection {
-    let Ok((kind, reference)) = parse_prefix(raw.trim(), true) else {
-        return ReferenceSelection::NotFound;
-    };
-    select_reference_where(targets, reference, |target| match kind {
-        Some(Prefix::Charter) => target.is_charter,
-        Some(Prefix::Action) => !target.is_charter,
-        Some(Prefix::Plan) => false,
-        None => true,
-    })
 }
 
 #[cfg(test)]
@@ -1369,19 +1351,26 @@ mod tests {
 
     #[test]
     fn a_type_prefix_chooses_between_an_action_and_a_charter() {
-        let charter = Uuid::now_v7();
+        let mut charter = MarkdownCharter::from(implicit_charter("groceries"));
         let action = Uuid::now_v7();
-        let alias = Some("groceries".to_string());
-        let targets = [
-            PredecessorTarget::new(charter, &alias, true),
-            PredecessorTarget::new(action, &alias, false),
-        ];
-        let resolved = |raw: &str| match select_predecessor(&targets, raw) {
-            ReferenceSelection::Unique { index, .. } => Some(targets[index].id),
-            _ => None,
-        };
-        assert_eq!(resolved("groceries"), None);
-        assert_eq!(resolved("c:groceries"), Some(charter));
-        assert_eq!(resolved("a:groceries"), Some(action));
+        charter.actions.push(SourcedAction {
+            action: crate::domain::Action {
+                id: action,
+                alias: Some("groceries".into()),
+                ..Default::default()
+            },
+            source_metadata: None,
+        });
+        let id = charter.id;
+        let scope = PredecessorScope::new(&[charter]);
+        assert!(scope.resolve("groceries").unwrap_err().is_ambiguous());
+        assert_eq!(
+            scope.resolve("c:groceries").unwrap(),
+            ReferenceTarget::Charter(id)
+        );
+        assert_eq!(
+            scope.resolve("a:groceries").unwrap(),
+            ReferenceTarget::Action(action)
+        );
     }
 }

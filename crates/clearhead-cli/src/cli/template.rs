@@ -24,21 +24,23 @@ pub fn apply_template(
     };
 
     let charter_dir = actions_path.parent().unwrap_or(std::path::Path::new(""));
-    let data_root = clearhead_cli::filesystem::workspace_data_root(&ctx.data_dir);
+    let root = ctx.workspace_for_file(&actions_path);
+    let data_root = clearhead_cli::filesystem::workspace_data_root(&root);
 
     let tpl_path =
         clearhead_cli::filesystem::templates::resolve_template(charter_dir, &data_root, name)
             .context("Failed to resolve template")?
             .ok_or_else(|| anyhow::anyhow!("Template '{}' not found", name))?;
 
-    let tpl_acts = clearhead_cli::filesystem::templates::read_template_actions(&tpl_path)
+    let scope = clearhead_cli::filesystem::templates::read_template_scope(&root)?;
+    let tpl_acts = clearhead_cli::filesystem::templates::read_template_actions(&tpl_path, &scope)
         .with_context(|| {
-            format!(
-                "Failed to read template '{}' at {}",
-                name,
-                tpl_path.display(),
-            )
-        })?;
+        format!(
+            "Failed to read template '{}' at {}",
+            name,
+            tpl_path.display(),
+        )
+    })?;
 
     if tpl_acts.actions.is_empty() {
         anyhow::bail!("Template '{}' is empty", name);
@@ -56,17 +58,9 @@ pub fn apply_template(
         return Ok(());
     }
 
-    let mut existing = super::load_file_for_mutation(
-        &ctx.workspace_for_file(&actions_path),
-        &actions_path,
-        "apply template",
-    )?;
+    let mut existing = super::load_file_for_mutation(&root, &actions_path, "apply template")?;
     existing.extend(instantiated.iter().cloned());
-    super::save_file(
-        &ctx.workspace_for_file(&actions_path),
-        &actions_path,
-        &existing,
-    )?;
+    super::save_file(&root, &actions_path, &existing)?;
 
     info!(template = %name, count = instantiated.len(), path = %actions_path.display(), "Template applied");
     println!(

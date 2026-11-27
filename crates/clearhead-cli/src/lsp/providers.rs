@@ -64,7 +64,10 @@ pub fn compute_file_diagnostics(
 
 pub fn finding_to_lsp(finding: &Finding) -> Diagnostic {
     Diagnostic {
-        range: Range::new(Position::new(0, 0), Position::new(0, 0)),
+        range: finding
+            .range
+            .map(source_range_to_lsp_range)
+            .unwrap_or_default(),
         severity: Some(match finding.severity {
             FindingSeverity::Warning => DiagnosticSeverity::WARNING,
             FindingSeverity::Violation => DiagnosticSeverity::ERROR,

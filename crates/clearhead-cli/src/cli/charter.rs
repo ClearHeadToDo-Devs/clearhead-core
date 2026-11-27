@@ -459,16 +459,13 @@ pub fn add_charter(
         .replace('&', "and");
 
     // If a parent is specified, resolve it to find the correct workspace and target directory.
-    let (target_dir, data_root) = if let Some(parent_query) = parent {
+    let (target_dir, root) = if let Some(parent_query) = parent {
         let (parent_mc, ws_root) = resolve_charter_across_workspaces(ctx, parent_query)?;
-        (
-            sub_charter_dir(&ws_root, &parent_mc)?,
-            clearhead_cli::filesystem::workspace_data_root(&ws_root),
-        )
+        (sub_charter_dir(&ws_root, &parent_mc)?, ws_root)
     } else {
         (
             clearhead_cli::filesystem::charter_root(&ctx.data_dir),
-            clearhead_cli::filesystem::workspace_data_root(&ctx.data_dir),
+            ctx.data_dir.clone(),
         )
     };
 
@@ -480,11 +477,13 @@ pub fn add_charter(
 
     // Preflight the template before creating the charter directory, files or sidecar.
     let template_actions = if let Some(name) = template {
+        let data_root = clearhead_cli::filesystem::workspace_data_root(&root);
         let path =
             clearhead_cli::filesystem::templates::resolve_template(&target_dir, &data_root, name)
                 .context("Failed to resolve template")?
                 .ok_or_else(|| anyhow::anyhow!("Template '{}' not found", name))?;
-        let steps = clearhead_cli::filesystem::templates::read_template_actions(&path)
+        let scope = clearhead_cli::filesystem::templates::read_template_scope(&root)?;
+        let steps = clearhead_cli::filesystem::templates::read_template_actions(&path, &scope)
             .context("Failed to read template")?;
         Some((name, steps))
     } else {

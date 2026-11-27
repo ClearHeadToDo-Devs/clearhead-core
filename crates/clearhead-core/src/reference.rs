@@ -351,6 +351,21 @@ impl ReferenceEntity for ScopedCandidate<'_> {
     }
 }
 
+/// Additional candidates visible only while resolving a particular source (e.g. a template).
+#[derive(Clone, Copy, Default)]
+pub(crate) struct LocalActions<'a> {
+    pub actions: &'a [Action],
+    pub charter_id: Option<Uuid>,
+}
+
+impl<'a> LocalActions<'a> {
+    fn in_charter(self, id: Uuid) -> impl Iterator<Item = &'a Action> {
+        self.actions
+            .iter()
+            .filter(move |_| self.charter_id == Some(id))
+    }
+}
+
 /// Resolve a reference string to a typed [`ReferenceTarget`] within `model`.
 ///
 /// Accepts full UUIDs, short prefixes of at least four hex digits, aliases, and path-style
@@ -377,6 +392,15 @@ pub fn resolve_reference(
     input: &str,
     options: &ReferenceOptions,
 ) -> Result<ReferenceTarget, ReferenceError> {
+    resolve_reference_with_local_actions(model, input, options, LocalActions::default())
+}
+
+pub(crate) fn resolve_reference_with_local_actions(
+    model: &DomainModel,
+    input: &str,
+    options: &ReferenceOptions,
+    local: LocalActions<'_>,
+) -> Result<ReferenceTarget, ReferenceError> {
     let trimmed = input.trim();
     if trimmed.is_empty() {
         return Err(ReferenceError::empty());
@@ -390,7 +414,7 @@ pub fn resolve_reference(
             if segments.len() == 1 {
                 return resolve_charter_global(model, segments[0]);
             }
-            let target = resolve_path(model, &segments)?;
+            let target = resolve_path(model, &segments, local)?;
             match target {
                 ReferenceTarget::Charter(_) => Ok(target),
                 _ => Err(ReferenceError::type_mismatch(
@@ -402,7 +426,7 @@ pub fn resolve_reference(
             if segments.len() == 1 {
                 return resolve_plan_global(model, segments[0]);
             }
-            let target = resolve_path(model, &segments)?;
+            let target = resolve_path(model, &segments, local)?;
             match target {
                 ReferenceTarget::Plan(_) => Ok(target),
                 _ => Err(ReferenceError::type_mismatch(
@@ -412,9 +436,9 @@ pub fn resolve_reference(
         }
         Some(Prefix::Action) => {
             if segments.len() == 1 {
-                return resolve_action_global(model, segments[0]);
+                return resolve_action_global(model, segments[0], local);
             }
-            let target = resolve_path(model, &segments)?;
+            let target = resolve_path(model, &segments, local)?;
             match target {
                 ReferenceTarget::Action(_) => Ok(target),
                 _ => Err(ReferenceError::type_mismatch(
@@ -424,9 +448,9 @@ pub fn resolve_reference(
         }
         None => {
             if segments.len() == 1 {
-                return resolve_unscoped_single(model, segments[0]);
+                return resolve_unscoped_single(model, segments[0], local);
             }
-            resolve_path(model, &segments)
+            resolve_path(model, &segments, local)
         }
     }
 }
@@ -577,6 +601,7 @@ fn split_segments(path: &str) -> Result<Vec<&str>, ReferenceError> {
 fn resolve_unscoped_single(
     model: &DomainModel,
     segment: &str,
+    local: LocalActions<'_>,
 ) -> Result<ReferenceTarget, ReferenceError> {
     let mut candidates: Vec<ScopedCandidate<'_>> = model
         .charters
@@ -595,6 +620,7 @@ fn resolve_unscoped_single(
             .charters
             .iter()
             .flat_map(|charter| &charter.actions)
+            .chain(local.actions)
             .map(ScopedCandidate::Action),
     );
 
@@ -660,11 +686,13 @@ fn resolve_plan_global(
 fn resolve_action_global(
     model: &DomainModel,
     segment: &str,
+    local: LocalActions<'_>,
 ) -> Result<ReferenceTarget, ReferenceError> {
     let candidates: Vec<&Action> = model
         .charters
         .iter()
         .flat_map(|charter| &charter.actions)
+        .chain(local.actions)
         .collect();
 
     match select_reference(&candidates, segment) {
@@ -682,7 +710,11 @@ fn resolve_action_global(
     }
 }
 
-fn resolve_path(model: &DomainModel, segments: &[&str]) -> Result<ReferenceTarget, ReferenceError> {
+fn resolve_path(
+    model: &DomainModel,
+    segments: &[&str],
+    local: LocalActions<'_>,
+) -> Result<ReferenceTarget, ReferenceError> {
     let first = segments
         .first()
         .ok_or_else(|| ReferenceError::invalid_syntax("Reference path is empty"))?;
@@ -718,6 +750,7 @@ fn resolve_path(model: &DomainModel, segments: &[&str]) -> Result<ReferenceTarge
                     charter
                         .actions
                         .iter()
+                        .chain(local.in_charter(charter.id))
                         .filter(|action| action.parent_id.is_none())
                         .map(ScopedCandidate::Action),
                 );
@@ -770,6 +803,7 @@ fn resolve_path(model: &DomainModel, segments: &[&str]) -> Result<ReferenceTarge
                 let candidates: Vec<&Action> = charter
                     .actions
                     .iter()
+                    .chain(local.in_charter(charter.id))
                     .filter(|candidate| candidate.parent_id == Some(action.id))
                     .collect();
                 match select_reference(&candidates, segment) {

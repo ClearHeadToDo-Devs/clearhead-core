@@ -21,6 +21,21 @@ pub fn role_path(root: &Path, path: &Path) -> PathBuf {
         .unwrap_or_else(|_| PathBuf::from(path.file_name().unwrap_or_default()))
 }
 
+/// Map a scanned source to the path workspace findings use for it.
+pub(crate) fn workspace_lint_path(role_path: &Path) -> Option<&Path> {
+    use clearhead_core::workspace::action_files::{
+        ResourceRole, is_charter_action_file, resource_role,
+    };
+
+    if resource_role(role_path) == ResourceRole::Template {
+        Some(role_path)
+    } else if is_charter_action_file(role_path) {
+        role_path.strip_prefix("charters").ok()
+    } else {
+        None
+    }
+}
+
 pub fn read_actions_in(root: &Path, path: &Path) -> Result<ActionList, WorkspaceError> {
     clearhead_core::workspace::action_files::require_action_resource(&role_path(root, path))
         .map_err(WorkspaceError::Actions)?;

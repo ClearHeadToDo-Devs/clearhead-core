@@ -2,21 +2,33 @@
 
 use std::path::{Path, PathBuf};
 
-use clearhead_core::workspace::{WorkspaceError, habit_files::template_recurrence_diagnostics};
+use clearhead_core::workspace::{
+    WorkspaceError, habit_files::template_recurrence_diagnostics, predecessors::PredecessorScope,
+};
+
+pub fn read_template_scope(root: &Path) -> Result<PredecessorScope, WorkspaceError> {
+    Ok(PredecessorScope::new(
+        &super::read_workspace(root)?.charters,
+    ))
+}
 
 /// Read a template for generation, never through the executable-Action reader.
 ///
 /// Keep the parser's source map alongside the steps: `is_id_generated` distinguishes
 /// an ephemeral parsed id from a written id without trusting caller-supplied flags.
-/// Reject syntax errors and recurrence before the caller can generate Actions.
+/// Reject syntax errors, recurrence and ancestor waits before generation.
 pub fn read_template_actions(
     path: &Path,
+    scope: &PredecessorScope,
 ) -> Result<clearhead_core::ParsedDocument, WorkspaceError> {
     let source = std::fs::read_to_string(path)?;
     let doc = clearhead_core::parse_actions_with_mode(&source, clearhead_core::ParseMode::Strict)
         .map_err(|error| WorkspaceError::Actions(error.to_string()))?
         .document;
-    if let Some(diagnostic) = template_recurrence_diagnostics(&doc).next() {
+    if let Some(diagnostic) = template_recurrence_diagnostics(&doc)
+        .next()
+        .or_else(|| scope.lint_document(&doc).into_iter().next())
+    {
         return Err(WorkspaceError::Actions(format!(
             "{}:{}: {} [{}]",
             path.display(),

@@ -914,6 +914,9 @@ fn sync_plan_templates(
     workspace: &clearhead_core::workspace::Workspace,
     data_root: &Path,
 ) -> Result<Vec<SyncPlanTemplate>, WorkspaceError> {
+    let scope = std::cell::LazyCell::new(|| {
+        clearhead_core::workspace::predecessors::PredecessorScope::new(&workspace.charters)
+    });
     let mut templates = Vec::new();
     for charter in &workspace.charters {
         let Some(actions_file) = &charter.actions_file else {
@@ -935,7 +938,8 @@ fn sync_plan_templates(
             else {
                 continue;
             };
-            let steps = crate::filesystem::templates::read_template_actions(&template_path)?;
+            let steps =
+                crate::filesystem::templates::read_template_actions(&template_path, &scope)?;
             let generated_ids = steps.actions.iter().map(|_| Uuid::now_v7()).collect();
             templates.push(SyncPlanTemplate {
                 plan_id: plan.plan.id,

@@ -294,6 +294,28 @@ fn diagnostic_fixtures_pin_code_and_source_span() {
 }
 
 #[test]
+fn ancestor_dependency_fixtures_distinguish_an_ancestor_from_a_sibling() {
+    use clearhead_core::workspace::predecessors::PredecessorScope;
+
+    let dir = spec_dir().join("examples/linting/E009_dependency_on_an_ancestor");
+    let scope = PredecessorScope::default();
+    let lint = |name| {
+        let path = dir.join(format!("{name}.actions"));
+        let source = std::fs::read_to_string(&path).unwrap_or_else(|error| {
+            panic!("failed to read specification fixture {path:?}: {error}")
+        });
+        let doc = parse_document(&source).unwrap();
+        assert!(doc.syntax_errors.is_empty());
+        scope.lint_document(&doc)
+    };
+    let errors = lint("error");
+    assert_eq!(errors.len(), 1);
+    assert_eq!(errors[0].code, "E009");
+    assert_eq!(errors[0].range.start_row, 2);
+    assert!(lint("fixed").is_empty());
+}
+
+#[test]
 fn completed_tree_fixture_is_archive_ready() {
     let relative = "archive/completed_tree.actions";
     let actions = parse_actions(&fixture(relative)).unwrap();

@@ -135,7 +135,7 @@ fn fresh_init_charter_calendar_sync_stamps_into_the_real_charter() {
 }
 
 #[test]
-fn sync_calendar_refuses_template_recurrence_before_writing() {
+fn sync_calendar_refuses_invalid_templates_before_writing() {
     let env = TestEnv::new();
     env.write_actions("review.actions", "");
     let anchor = (Local::now() + chrono::Duration::minutes(1)).to_rfc3339();
@@ -155,20 +155,23 @@ fn sync_calendar_refuses_template_recurrence_before_writing() {
         ])
         .assert()
         .success();
-    env.write_text(
-        "templates/named.actions",
-        "[ ] Review\n  >[ ] Invalid step @2026-11-05 R:FREQ=DAILY\n",
-    );
-    let before = snapshot_tree(&env.data_dir);
-    env.command()
-        .args(["sync", "calendar"])
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("templates/named.actions:2"))
-        .stderr(predicate::str::contains("E002"));
-    assert_eq!(snapshot_tree(&env.data_dir), before);
+    let template = "templates/named.actions";
+    for (code, child) in [("E002", "@2026-11-05 R:FREQ=DAILY"), ("E009", "<scaffold")] {
+        env.write_text(
+            template,
+            &format!("[ ] Review =scaffold\n  >[ ] Invalid step {child}\n"),
+        );
+        let before = snapshot_tree(&env.data_dir);
+        env.command()
+            .args(["sync", "calendar"])
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains("templates/named.actions:2"))
+            .stderr(predicate::str::contains(code));
+        assert_eq!(snapshot_tree(&env.data_dir), before);
+    }
 
-    env.write_text("templates/named.actions", "[ ] Valid step\n");
+    env.write_text(template, "[ ] Valid step\n");
     env.command().args(["sync", "calendar"]).assert().success();
     let actions = fs::read_to_string(env.data_dir.join("charters/review.actions")).unwrap();
     assert!(actions.contains("Valid step"), "{actions}");

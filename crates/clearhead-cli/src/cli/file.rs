@@ -55,13 +55,15 @@ pub fn lint_file(ctx: &CommandContext, path: &Option<std::path::PathBuf>) -> any
         .map_err(|e| anyhow::anyhow!("Failed to parse document: {}", e))?;
 
     let mut results = clearhead_cli::lint_document(&parsed);
-    let role_path = input_file
+    let path = input_file
         .map(|path| path.as_path())
         .unwrap_or_else(|| std::path::Path::new("stdin.actions"));
-    for diagnostic in clearhead_core::workspace::habit_files::lint_action_file(
-        &parsed,
-        &crate::filesystem::action_files::role_path(&ctx.workspace_for_file(role_path), role_path),
-    ) {
+    let root = ctx.workspace_for_file(path);
+    let role = crate::filesystem::action_files::role_path(&root, path);
+    results
+        .errors
+        .extend(lint_ancestors(&parsed, &root, &role)?);
+    for diagnostic in clearhead_core::workspace::habit_files::lint_action_file(&parsed, &role) {
         match diagnostic.severity {
             clearhead_cli::LintSeverity::Error => results.errors.push(diagnostic),
             _ => results.warnings.push(diagnostic),
@@ -100,6 +102,40 @@ pub fn lint_file(ctx: &CommandContext, path: &Option<std::path::PathBuf>) -> any
         anyhow::bail!("Linting failed with errors");
     }
     Ok(())
+}
+
+fn lint_ancestors(
+    doc: &clearhead_core::ParsedDocument,
+    root: &std::path::Path,
+    role: &std::path::Path,
+) -> anyhow::Result<Vec<clearhead_core::workspace::actions::LintDiagnostic>> {
+    use clearhead_core::workspace::{actions::LintDiagnostic, predecessors::PredecessorScope};
+
+    if !doc.syntax_errors.is_empty() {
+        return Ok(Vec::new());
+    }
+    if let Some(relative) = crate::filesystem::action_files::workspace_lint_path(role) {
+        return Ok(crate::filesystem::read_workspace(root)?
+            .findings
+            .into_iter()
+            .filter(|finding| finding.code == "E009" && finding.path == relative)
+            .filter_map(|finding| {
+                Some(LintDiagnostic::error(
+                    "E009",
+                    finding.message,
+                    finding.range?,
+                ))
+            })
+            .collect());
+    }
+    // History and standalone inputs aren't in the active assembly. Check the
+    // supplied tree explicitly, with workspace candidates when it has an owner.
+    let scope = if role.starts_with("archive") || role.starts_with("charters") {
+        PredecessorScope::new(&crate::filesystem::read_workspace(root)?.charters)
+    } else {
+        PredecessorScope::default()
+    };
+    Ok(scope.lint_document(doc))
 }
 
 pub fn normalize_file(

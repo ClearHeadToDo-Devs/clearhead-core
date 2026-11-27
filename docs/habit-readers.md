@@ -53,8 +53,12 @@ syntax-only consumers, inline tests and incidental documentation matches.
 identifies ids absent from the written source. A generated UUID in `actions`
 alone is not evidence of a persisted identity. Before manual application, charter
 creation or legacy calendar expansion writes generated Actions, this reader
-rejects template recurrence (E002) with the file and line, using the same check
-as file lint and doctor. Missing written ids do not block these generation paths;
+rejects template recurrence (E002) and ancestor dependencies (E009) with the
+file and line. The ancestry check uses the same workspace reference rules as
+`doctor` and `lint file`: a step's own template adds candidates but display
+names and ambiguous references never resolve. The editor reports E009 from the
+saved workspace, not from a partial buffer. Missing written ids do not block
+these generation paths;
 `habit_files::lint_action_file` reports `habit-id-missing` with the step's source
 range. `habit_template_ids` integration tests in Core and CLI cover the report,
 reader records, written-id round trips and strict syntax rejection.

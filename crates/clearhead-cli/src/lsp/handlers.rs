@@ -122,6 +122,7 @@ impl LanguageServer for Backend {
                 emit_diff_telemetry(&diff, current, &file_path);
             }
             doc.last_saved_parsed = doc.parsed.clone();
+            doc.dirty = false;
         }
 
         // Stamp created timestamps in sidecar for any new actions (best-effort).

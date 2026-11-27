@@ -23,6 +23,7 @@ struct DocumentState {
     parsed: Option<ParsedDocument>,
     last_saved_parsed: Option<ParsedDocument>,
     workspace_diagnostics: Vec<Diagnostic>,
+    dirty: bool,
 }
 
 #[derive(Debug)]
@@ -43,7 +44,7 @@ impl Backend {
 
     /// Route a document URI to its workspace root.
     ///
-    /// Matches against the charter subtree of each known root (via prefix).
+    /// Matches the charter and template subtrees of each known workspace.
     /// Falls back to filesystem walk when workspace_roots is empty or unset —
     /// covers generic LSP clients that don't send workspaceFolders.
     fn workspace_for_uri(&self, uri: &Uri) -> Option<PathBuf> {
@@ -54,9 +55,11 @@ impl Backend {
         {
             let abs = std::fs::canonicalize(&file_path).unwrap_or_else(|_| file_path.clone());
             for root_path in roots.values() {
-                let charter_root = crate::filesystem::charter_root(root_path);
-                let abs_root = std::fs::canonicalize(&charter_root).unwrap_or(charter_root);
-                if abs.starts_with(&abs_root) {
+                let data_root = crate::filesystem::workspace_data_root(root_path);
+                let abs_root = std::fs::canonicalize(&data_root).unwrap_or(data_root);
+                if abs.strip_prefix(&abs_root).is_ok_and(|relative| {
+                    relative.starts_with("charters") || relative.starts_with("templates")
+                }) {
                     return Some(root_path.clone());
                 }
             }
@@ -73,8 +76,8 @@ impl Backend {
         let Some(file_path) = uri.to_file_path() else {
             return Vec::new();
         };
-        let charter_root = crate::filesystem::charter_root(&workspace_root);
-        let Ok(relative) = file_path.strip_prefix(&charter_root) else {
+        let role = crate::filesystem::action_files::role_path(&workspace_root, &file_path);
+        let Some(relative) = crate::filesystem::action_files::workspace_lint_path(&role) else {
             return Vec::new();
         };
         let Ok(read) = crate::filesystem::read_workspace(&workspace_root) else {
@@ -83,6 +86,11 @@ impl Backend {
 
         state_coherence_findings(&read.charters)
             .into_iter()
+            .chain(
+                read.findings
+                    .into_iter()
+                    .filter(|finding| finding.code == "E009"),
+            )
             .filter(|finding| finding.path == relative)
             .map(|finding| finding_to_lsp(&finding))
             .collect()
@@ -109,7 +117,10 @@ impl Backend {
                         )
                     })
                     .unwrap_or_default();
-                diagnostics.extend(workspace_diagnostics);
+                diagnostics.extend(saved_workspace_diagnostics(
+                    &workspace_diagnostics,
+                    document.dirty,
+                ));
                 diagnostics
             });
             if let Some(diagnostics) = diagnostics {
@@ -146,7 +157,10 @@ impl Backend {
                     })
                     .unwrap_or_else(|| (None, Vec::new()))
             };
-            diagnostics.extend(workspace_diagnostics.clone());
+            diagnostics.extend(saved_workspace_diagnostics(
+                &workspace_diagnostics,
+                !is_fresh_load,
+            ));
 
             self.documents.insert(
                 uri.clone(),
@@ -156,6 +170,7 @@ impl Backend {
                     parsed,
                     last_saved_parsed,
                     workspace_diagnostics,
+                    dirty: !is_fresh_load,
                 },
             );
 
@@ -172,6 +187,21 @@ impl Backend {
                 .await;
         }
     }
+}
+
+fn saved_workspace_diagnostics(
+    diagnostics: &[Diagnostic],
+    dirty: bool,
+) -> impl Iterator<Item = Diagnostic> {
+    // E009 uses the complete on-disk candidate set and byte ranges; don't attach
+    // its saved positions to an unsaved buffer.
+    diagnostics
+        .iter()
+        .filter(move |diagnostic| {
+            !dirty
+                || !matches!(&diagnostic.code, Some(NumberOrString::String(code)) if code == "E009")
+        })
+        .cloned()
 }
 
 pub async fn serve_stdio() {
@@ -218,7 +248,7 @@ mod tests {
         assert!(
             std::fs::write(
                 &child_path,
-                "[-] Doing work #01951111-0000-7000-0000-000000000042\n",
+                "[-] Doing work =work #01951111-0000-7000-0000-000000000042\n  >[ ] Child <work\n",
             )
             .is_ok()
         );
@@ -233,6 +263,14 @@ mod tests {
             panic!("fixture path should convert to URI");
         };
         let diagnostics = backend.workspace_diagnostics_for_uri(&uri);
+        let ancestor = diagnostics
+            .iter()
+            .find(|diagnostic| diagnostic.code == Some(NumberOrString::String("E009".into())))
+            .expect("saved wait on a parent should be reported");
+        assert_eq!(ancestor.range.start.line, 1);
+        assert_eq!(ancestor.severity, Some(DiagnosticSeverity::ERROR));
+        assert!(!saved_workspace_diagnostics(&diagnostics, true).any(|d| d.code == ancestor.code));
+
         let codes: Vec<_> = diagnostics
             .iter()
             .filter_map(|diagnostic| diagnostic.code.as_ref())
@@ -245,8 +283,7 @@ mod tests {
             "in-progress-action-under-inactive-charter".into()
         )));
         assert!(
-            diagnostics
-                .iter()
+            saved_workspace_diagnostics(&diagnostics, true)
                 .all(|diagnostic| diagnostic.severity == Some(DiagnosticSeverity::WARNING))
         );
     }

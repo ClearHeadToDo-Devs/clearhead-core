@@ -107,10 +107,7 @@ fn invalid_template_cannot_be_applied_or_used_to_create_a_charter() {
     let env = TestEnv::new();
     let existing = format!("[ ] Keep me #{ID}\n");
     env.write_actions("review.actions", &existing);
-    env.write_text(
-        "templates/named.actions",
-        "[ ] Review\n  >[ ] Invalid step @2026-11-05 R:FREQ=DAILY\n",
-    );
+    let template = "templates/named.actions";
     let target = env.data_dir.join("charters/review.actions");
     let apply = [
         "apply",
@@ -128,21 +125,27 @@ fn invalid_template_cannot_be_applied_or_used_to_create_a_charter() {
         "--template",
         "named",
     ];
-    for args in [&apply[..], &add[..]] {
-        for extra in [None, Some("--dry-run")] {
-            env.command()
-                .args(args)
-                .args(extra)
-                .assert()
-                .failure()
-                .stderr(predicates::str::contains("templates/named.actions:2"))
-                .stderr(predicates::str::contains("E002"));
-            assert_eq!(fs::read_to_string(&target).unwrap(), existing);
-            assert!(!env.data_dir.join("charters/review").exists());
+    for (code, child) in [("E002", "@2026-11-05 R:FREQ=DAILY"), ("E009", "<scaffold")] {
+        env.write_text(
+            template,
+            &format!("[ ] Review =scaffold\n  >[ ] Invalid step {child}\n"),
+        );
+        for args in [&apply[..], &add[..]] {
+            for extra in [None, Some("--dry-run")] {
+                env.command()
+                    .args(args)
+                    .args(extra)
+                    .assert()
+                    .failure()
+                    .stderr(predicates::str::contains("templates/named.actions:2"))
+                    .stderr(predicates::str::contains(code));
+                assert_eq!(fs::read_to_string(&target).unwrap(), existing);
+                assert!(!env.data_dir.join("charters/review").exists());
+            }
         }
     }
 
-    env.write_text("templates/named.actions", "[ ] Valid step\n");
+    env.write_text(template, "[ ] Valid step\n");
     env.command().args(apply).assert().success();
     env.command().args(add).assert().success();
     for path in [target, env.data_dir.join("charters/review/new.actions")] {
