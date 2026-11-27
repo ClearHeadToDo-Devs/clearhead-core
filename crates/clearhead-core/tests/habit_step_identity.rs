@@ -1,6 +1,7 @@
 use clearhead_core::domain::habit_slots::{SlotFrame, canonical_slot, occurrence_id, step_id};
 use clearhead_core::domain::{Action, ActionState, Charter};
 use clearhead_core::parse_document;
+#[cfg(feature = "formatting")]
 use clearhead_core::workspace::actions::{OutputFormat, format};
 use clearhead_core::workspace::charter::MarkdownCharter;
 use clearhead_core::workspace::habit_stamp::{StampSource, stamp_occurrence};
@@ -15,7 +16,7 @@ const HABITS: &str = "review.habits.actions";
 const TEMPLATE: &str = "templates/review.actions";
 
 #[test]
-fn stable_ids_and_sibling_links_survive_reorder_rename_and_round_trip() {
+fn stable_ids_and_sibling_links_survive_reorder_and_rename() {
     let doc = parse_document(&format!(
         "[-] Habit @2026-10-25 R:FREQ=DAILY #{HABIT}\n\
          >[ ] First =first #{FIRST}\n\
@@ -65,9 +66,12 @@ fn stable_ids_and_sibling_links_survive_reorder_rename_and_round_trip() {
     assert_eq!(actions[1].parent_id, Some(root));
     assert_eq!(actions[2].depends_on(), [first]);
     assert_eq!(actions[3].parent_id, Some(second));
-    let rendered = format(&actions.to_vec(), OutputFormat::Actions, None, None).unwrap();
-    let reread = parse_document(&rendered).unwrap();
-    assert_eq!(reread.actions[2].depends_on(), [first]);
+    #[cfg(feature = "formatting")]
+    {
+        let rendered = format(&actions.to_vec(), OutputFormat::Actions, None, None).unwrap();
+        let reread = parse_document(&rendered).unwrap();
+        assert_eq!(reread.actions[2].depends_on(), [first]);
+    }
 
     let mut existing = Vec::new();
     assert!(stamped.insert_into(&mut existing).unwrap());

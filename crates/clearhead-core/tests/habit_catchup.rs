@@ -3,6 +3,7 @@ use std::collections::HashSet;
 use clearhead_core::domain::ActionState;
 use clearhead_core::domain::habit_slots::{SlotFrame, canonical_slot, occurrence_id, step_id};
 use clearhead_core::parse_document;
+#[cfg(feature = "formatting")]
 use clearhead_core::workspace::actions::{OutputFormat, format};
 use clearhead_core::workspace::habit_stamp::{
     CatchUpInput, StampSource, StampedOccurrence, plan_catch_up, plan_text_catch_up,
@@ -15,7 +16,7 @@ const STEP: Uuid = uuid!("00000000-0000-0000-0000-000000000002");
 const SOURCE: &str = "charters/review.habits.actions";
 
 #[test]
-fn batches_resume_from_persisted_ids_without_losing_missed_slots() {
+fn batches_resume_from_observed_ids_without_losing_missed_slots() {
     let doc = parse_document(&format!(
         "[ ] Review @2026-11-23 R:FREQ=DAILY #{HABIT}\n>[ ] Clear inbox #{STEP}\n"
     ))
@@ -50,9 +51,15 @@ fn batches_resume_from_persisted_ids_without_losing_missed_slots() {
             .into_iter()
             .map(|action| action.id)
     };
-    let delivered_ids = |tree: &StampedOccurrence| {
-        let source = format(&tree.actions().to_vec(), OutputFormat::Actions, None, None).unwrap();
-        source_ids(&source)
+    let delivered_ids = |tree: &StampedOccurrence| -> Vec<Uuid> {
+        #[cfg(feature = "formatting")]
+        {
+            let source =
+                format(&tree.actions().to_vec(), OutputFormat::Actions, None, None).unwrap();
+            source_ids(&source).collect()
+        }
+        #[cfg(not(feature = "formatting"))]
+        tree.actions().iter().map(|action| action.id).collect()
     };
     let archived = format!("[x] Review %2026-11-23 #{}\n", id(0));
     // Monday is archived. Tuesday was excluded. Only Wed/Thu should be new.

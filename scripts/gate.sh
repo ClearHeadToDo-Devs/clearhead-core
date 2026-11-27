@@ -60,6 +60,7 @@ if [ "$fast" -eq 0 ]; then
     step "habit stamping and catch-up TZ=$zone" env TZ="$zone" \
       cargo test -p clearhead_core --test habit_slot_identity --test habit_step_identity --test habit_catchup
   done
+  step "read-only Core tests" cargo test -p clearhead_core --no-default-features --locked --quiet
   step "tests" cargo test --workspace --quiet
 fi
 
