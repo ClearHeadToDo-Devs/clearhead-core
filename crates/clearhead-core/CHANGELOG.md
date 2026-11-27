@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-27
+
+Included in the ClearHead 0.6.0 binary release. Specification v0.8.0 and registry grammar `=0.13.0` are unchanged.
+
+### Added
+
+- Native Habit stamping derives stable occurrence and template-step IDs, remaps internal waits, and rebases windows in the series frame. A bounded catch-up planner skips excluded, live, and archived slots without keeping a cursor.
+- Native sidecar lineage keeps the Habit UUID and original slot distinct from a legacy Plan link. Fast-forward records explicit slot exclusions rather than shifting the recurrence anchor.
+
+### Fixed
+
+- Refuse template-step recurrence and ancestor waits before generation. Read-only Core still runs Habit planning and identity tests without the optional formatter.
+
 ## [0.5.0] - 2026-11-26
 
 Included in the ClearHead 0.5.0 binary release. Declares specification v0.8.0 and uses registry tree-sitter-actions `=0.13.0`. Git conflict markers and some charter wait and `base` behavior implement parts of v0.9.0 ahead of adopting the full release.

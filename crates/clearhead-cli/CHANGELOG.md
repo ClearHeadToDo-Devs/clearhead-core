@@ -6,6 +6,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## Unreleased
 
+## 0.6.0 - 2026-11-27
+
+Ships Core 0.6.0. Specification v0.8.0 and grammar v0.13.0 stay pinned.
+
+### Added
+
+- `clearhead apply habits` materializes up to 100 due occurrence trees from text-authored Habits per run, skipping live and archived occurrences. `--dry-run` previews the batch; rerun if more slots are due.
+- `clearhead apply habits --fast-forward <habit>` records exclusions for one Habit's due, unmaterialized slots. It reports the next future slot without creating it early and leaves the rule and existing Actions unchanged.
+
+### Fixed
+
+- Habit and named-template validation refuses recurrence on template steps (E002) and dependencies on ancestors (E009) before generation.
+
+### Known gaps
+
+- Catch-up is explicit and separate from `sync calendar`. Native Habit calendar projection, named series zones, `RDATE`, and pending calendar overrides are not included.
+
 ## 0.5.0 - 2026-11-26
 
 Ships Core 0.5.0 and grammar v0.13.0. The declared specification and schema URLs are v0.8.0, with selected later behavior listed below.
