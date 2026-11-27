@@ -12,6 +12,7 @@
 
 pub mod diff;
 pub mod filter;
+pub(crate) mod habit_recurrence;
 pub mod habit_slots;
 pub mod time;
 pub mod update;
@@ -717,32 +718,18 @@ pub struct Habit {
 impl Habit {
     /// Validate publication invariants without changing source facts.
     pub fn validate(&self) -> std::result::Result<(), String> {
-        if self.recurrence_rule.trim().is_empty() {
-            return Err("Habit requires a recurrence rule".into());
-        }
-        let rule = self.recurrence_rule.trim().to_ascii_uppercase();
-        if rule.split(';').any(|part| part.starts_with("COUNT="))
-            && rule.split(';').any(|part| part.starts_with("UNTIL="))
-        {
-            return Err("Habit recurrence cannot combine COUNT and UNTIL".into());
-        }
-        let parsed = rule
-            .parse::<rrule::RRule<rrule::Unvalidated>>()
-            .map_err(|error| format!("invalid Habit recurrence: {error}"))?;
-        if let Some(planned) = self.definition.planned {
-            parsed
-                .validate(planned.start.at_in(&rrule::Tz::UTC))
-                .map_err(|error| format!("invalid Habit recurrence: {error}"))?;
-        }
+        let anchor = self
+            .definition
+            .planned
+            .ok_or("Habit requires a planned recurrence anchor")?
+            .start;
+        habit_recurrence::text_recurrence(anchor, &self.recurrence_rule)?;
         let closed = matches!(
             self.definition.state,
             ActionState::Completed | ActionState::Cancelled
         );
         if closed != self.definition.completed_at.is_some() {
             return Err("Habit requires a closed date exactly when completed or cancelled".into());
-        }
-        if self.definition.planned.is_none() {
-            return Err("Habit requires a planned recurrence anchor".into());
         }
         Ok(())
     }

@@ -53,6 +53,7 @@
 5 crates/clearhead-core/src/workspace/charter.rs
 7 crates/clearhead-core/src/workspace/habit_files.rs
 3 crates/clearhead-core/src/workspace/habit_stamp.rs
+1 crates/clearhead-core/src/workspace/habit_stamp/catch_up.rs
 1 crates/clearhead-core/src/workspace/init.rs
 7 crates/clearhead-core/src/workspace/mod.rs
 25 crates/clearhead-core/src/workspace/mutate_actions.rs

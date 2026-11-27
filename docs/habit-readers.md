@@ -35,7 +35,7 @@ syntax-only consumers, inline tests and incidental documentation matches.
 | Core file layer | `workspace/action_files.rs`, `charter.rs`, `sidecar.rs`, `store/load.rs`, `store/mod.rs` | Habits survive conversion to/from domain Charters, with their source locations. Habits share the ordinary anchor's sidecar; completed-history sidecars remain distinct. Workspace note logs are unioned by entity UUID independently of Action metadata, without lowering Habits to executable Actions. |
 | Core syntax | `workspace/actions/{parser,source,repository,format,lint,convert,merge,mod}.rs`, `lib.rs`, `schema_export.rs` | Syntax documents may contain Habit/template lines. Parsing, formatting and source merging are filename-neutral and preserve R:. Merging uses syntax UUIDs and nesting, not live workspace discovery or Habit lowering. Semantic assembly or `lint_action_file` supplies the file role. Schema export also retains the rule. |
 | Core mutation | `workspace/{mutate_actions,action_lifecycle,transaction}.rs` | Explicitly reject Habit/template resources as executable Action mutations. Ordinary R: survives insert/update/delete/close/move/transaction formatting. |
-| Core Habit stamping | `workspace/habit_stamp.rs` | Consumes already parsed Habit and optional named-template documents with their source maps. Validates the selected tree before stamping; only generated occurrence Actions enter the live tree. No file discovery, reads or writes. |
+| Core Habit stamping | `workspace/habit_stamp.rs`, `workspace/habit_stamp/catch_up.rs` | Consumes already parsed Habit and optional named-template documents with their source maps. Validates the selected tree before stamping. Plans bounded batches against live/history IDs supplied by the host; does not discover or write files. |
 | Core history | `workspace/{archive_actions,archive_facts,archive_charter}.rs`, `store/doctor.rs` | Action collections exclude Habits. Doctor knows Habit/step ids for duplicate, sidecar and note-ownership checks. Archived Habit definitions supply note locations but are excluded from archived Action state resolution. |
 | Core projections | `rdf/app.rs`, `schema_export.rs`, `reference.rs`, `domain/{mod,update,diff,filter}.rs` | Native Habits project as Habits, never Actions; template children are not published as executable nodes. Locations point to the habits file and root line. Domain-level action algorithms remain syntax/path independent. |
 | Legacy calendars/templates | Core `workspace/calendar/{ics,expand,reconcile,sync_store}.rs`, `workspace/templates.rs`; CLI `filesystem/{calendar,templates}.rs`, `cli/template.rs` | Native Habit loading does not enter legacy Plan expansion. Template reads use the explicit template-data reader, not the executable-Action adapter. Existing manual template application and legacy calendars remain intact. |
@@ -68,6 +68,10 @@ Native stamping also refuses missing written Habit and template-step IDs. It
 writes internal predecessor references as the stamped step UUIDs so they survive
 a file round trip. `habit_step_identity` covers inline and named source roles,
 file/line refusals, deterministic IDs, unchanged retry, and DST boundaries.
+`habit_catchup` exercises the batch budget, arrival cutoff in the text anchor's
+time frame, exclusions, archived IDs, and retries using re-parsed output. Batch
+planning never advances a cursor; the set of durable occurrences determines
+what the next run still needs. The planner is not yet called by CLI mutations.
 
 ## Guard and evidence
 

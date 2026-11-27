@@ -1,6 +1,9 @@
-//! Pure generation of one native Habit occurrence; no slot discovery or writes.
+//! Pure generation of native Habit occurrences; no slot discovery or writes.
 
+mod catch_up;
 mod schedule;
+
+pub use catch_up::{CatchUpBatch, CatchUpInput, plan_catch_up, plan_text_catch_up};
 
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
