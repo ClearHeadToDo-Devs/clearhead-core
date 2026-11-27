@@ -1,8 +1,9 @@
 #![allow(dead_code)]
 use assert_cmd::Command;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
+use std::ffi::OsStr;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tempfile::TempDir;
 
 /// Isolated environment with temp XDG directories for CLI integration tests.
@@ -103,7 +104,10 @@ impl TestEnv {
     }
 
     pub fn std_command(&self) -> std::process::Command {
-        let bin = assert_cmd::cargo::cargo_bin!("clearhead");
+        self.command_with_binary(assert_cmd::cargo::cargo_bin!("clearhead"))
+    }
+
+    pub fn command_with_binary(&self, bin: impl AsRef<OsStr>) -> std::process::Command {
         let mut cmd = std::process::Command::new(bin);
         cmd.env("XDG_CONFIG_HOME", self.config_dir.parent().unwrap());
         cmd.env("XDG_DATA_HOME", self.data_dir.parent().unwrap());
@@ -113,7 +117,31 @@ impl TestEnv {
     }
 }
 
-fn specification_examples_dir() -> PathBuf {
+pub type WorkspaceTree = BTreeMap<PathBuf, Option<Vec<u8>>>;
+
+/// Record directories and exact file bytes, with paths relative to the root.
+pub fn snapshot_tree(root: &Path) -> WorkspaceTree {
+    fn visit(root: &Path, path: &Path, snapshot: &mut WorkspaceTree) {
+        if !path.exists() {
+            return;
+        }
+        let relative = path.strip_prefix(root).unwrap().to_path_buf();
+        if path.is_dir() {
+            snapshot.insert(relative, None);
+            for child in fs::read_dir(path).unwrap() {
+                visit(root, &child.unwrap().path(), snapshot);
+            }
+        } else {
+            snapshot.insert(relative, Some(fs::read(path).unwrap()));
+        }
+    }
+
+    let mut snapshot = BTreeMap::new();
+    visit(root, root, &mut snapshot);
+    snapshot
+}
+
+pub fn specification_examples_dir() -> PathBuf {
     std::env::var("CLEARHEAD_SPEC_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|_| {

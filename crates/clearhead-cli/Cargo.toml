@@ -92,7 +92,7 @@ features = [
 [dev-dependencies]
 assert_cmd = "2.1"
 clap_mangen = "0.3"
-insta = { version = "1.45.1", features = ["filters", "redactions", "ron"] }
+insta = { version = "1.45.1", features = ["filters", "glob", "redactions", "ron"] }
 # Local schema validation for the spec-conformance suite; no HTTP/file
 # reference resolution or its async stack.
 jsonschema = { version = "0.18", default-features = false }

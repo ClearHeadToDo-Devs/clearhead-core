@@ -1,36 +1,8 @@
 mod common;
 use chrono::{Local, TimeZone};
-use common::TestEnv;
+use common::{TestEnv, snapshot_tree};
 use predicates::prelude::*;
-use std::collections::BTreeMap;
 use std::fs;
-use std::path::{Path, PathBuf};
-
-fn snapshot_tree(root: &Path) -> BTreeMap<PathBuf, Option<Vec<u8>>> {
-    fn visit(root: &Path, path: &Path, snapshot: &mut BTreeMap<PathBuf, Option<Vec<u8>>>) {
-        if !path.exists() {
-            return;
-        }
-        let relative = path.strip_prefix(root).unwrap().to_path_buf();
-        if path.is_dir() {
-            snapshot.insert(relative, None);
-            let mut children = fs::read_dir(path)
-                .unwrap()
-                .map(|entry| entry.unwrap().path())
-                .collect::<Vec<_>>();
-            children.sort();
-            for child in children {
-                visit(root, &child, snapshot);
-            }
-        } else {
-            snapshot.insert(relative, Some(fs::read(path).unwrap()));
-        }
-    }
-
-    let mut snapshot = BTreeMap::new();
-    visit(root, root, &mut snapshot);
-    snapshot
-}
 
 fn write_plans_sync_store(env: &TestEnv, action_id: &str, scheduled_at: &str) {
     write_plans_sync_store_for(env, &[action_id], scheduled_at);

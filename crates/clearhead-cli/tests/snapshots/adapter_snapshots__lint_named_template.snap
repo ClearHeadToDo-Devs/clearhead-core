@@ -1,0 +1,18 @@
+---
+source: crates/clearhead-cli/tests/adapter_snapshots.rs
+expression: review
+---
+fixture: specifications/examples/actions/habits/weekly-review.habits.actions
+command: clearhead lint file templates/weekly-review.actions
+exit code: 1
+
+stdout:
+templates/weekly-review.actions:1:1: ERROR: recurrence is not valid in a named template [E002]
+templates/weekly-review.actions:1:1: WARN: persist Habit and template-step ids before stamping [habit-id-missing]
+templates/weekly-review.actions:1:1: INFO: Action is missing a UUID. Use 'Hydrate Action' to add one. [missing-id]
+
+stderr:
+Error: Linting failed with errors
+
+workspace changes:
+(none)
