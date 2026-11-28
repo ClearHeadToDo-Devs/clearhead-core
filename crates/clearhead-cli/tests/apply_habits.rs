@@ -17,9 +17,21 @@ const ROOT: &str = "charters/review.actions";
 const SIDECAR: &str = "charters/.review.json";
 const DEFINITION: &str = "review.habits.actions";
 
-fn slot(day: &str) -> Uuid {
-    let key: SlotKey = format!("D:2026-11-{day}").parse().unwrap();
+fn occurrence_on(date: &str) -> Uuid {
+    let key: SlotKey = format!("D:{date}").parse().unwrap();
     occurrence_id(HABIT.parse().unwrap(), &key)
+}
+
+fn complete_and_archive(env: &TestEnv, id: Uuid) {
+    let id = id.to_string();
+    env.command()
+        .args(["complete", "action", &id, "--cascade"])
+        .assert()
+        .success();
+    env.command()
+        .args(["archive", "action", &id])
+        .assert()
+        .success();
 }
 
 #[test]
@@ -60,9 +72,9 @@ fn cli_preview_and_apply_preserve_source_and_hydrate_lineage() {
     let sidecar = fs::read_to_string(env.data_dir.join(SIDECAR)).unwrap();
     let model = load_domain_model(&env.data_dir).unwrap();
     let all_actions = model.all_actions();
-    for day in ["05", "06"] {
-        let key = format!("D:2020-11-{day}");
-        let id = occurrence_id(HABIT.parse().unwrap(), &key.parse().unwrap());
+    for date in ["2020-11-05", "2020-11-06"] {
+        let key = format!("D:{date}");
+        let id = occurrence_on(date);
         let root = all_actions.iter().find(|action| action.id == id).unwrap();
         let lineage = root.native_occurrence.as_ref().unwrap();
         assert_eq!(lineage.habit_id.to_string(), HABIT);
@@ -102,6 +114,7 @@ fn cli_preview_and_apply_preserve_source_and_hydrate_lineage() {
 #[test]
 fn bounded_replay_resumes_after_sidecar_only_delivery_and_skips_both_archive_locations() {
     let env = TestEnv::new();
+    let slot = |day| occurrence_on(&format!("2026-11-{day}"));
     env.write_actions(
         DEFINITION,
         &format!("[-] Review @2026-11-05 R:FREQ=DAILY;COUNT=6 #{HABIT}\n >[ ] Step #{STEP}\n"),
@@ -131,14 +144,7 @@ fn bounded_replay_resumes_after_sidecar_only_delivery_and_skips_both_archive_loc
     assert_eq!(fs::read_to_string(env.data_dir.join(ROOT)).unwrap(), saved);
 
     // Move a real occurrence tree and its metadata through the normal archive path.
-    env.command()
-        .args(["complete", "action", &slot("08").to_string(), "--cascade"])
-        .assert()
-        .success();
-    env.command()
-        .args(["archive", "action", &slot("08").to_string()])
-        .assert()
-        .success();
+    complete_and_archive(&env, slot("08"));
     let moved = env.data_dir.join("charters/review.completed.actions");
     let archived = fs::read_to_string(&moved).unwrap();
     let facts = clearhead_cli::filesystem::read_archived_action_facts(&env.data_dir).unwrap();
@@ -167,6 +173,105 @@ fn bounded_replay_resumes_after_sidecar_only_delivery_and_skips_both_archive_loc
         fs::read_to_string(env.data_dir.join("archive/nested/review.actions")).unwrap(),
         old
     );
+}
+
+#[test]
+fn habit_rule_history_preserves_live_and_archived_occurrences_after_edits() {
+    let env = TestEnv::new();
+    let template = "templates/review.actions";
+    let define = |schedule| {
+        env.write_actions(
+            DEFINITION,
+            &format!("[ ] Review $template: review$ {schedule} #{HABIT}\n"),
+        );
+    };
+    let apply = |count| {
+        env.command()
+            .args(["apply", "habits"])
+            .assert()
+            .success()
+            .stdout(contains(format!(
+                "Materialized {count} Habit occurrence(s)"
+            )));
+    };
+    let live_id = occurrence_on("2020-11-12");
+
+    define("@2020-11-05 R:FREQ=WEEKLY;COUNT=2");
+    env.write_text(template, &format!("[ ] Original checklist #{STEP}\n"));
+    apply(2);
+    complete_and_archive(&env, occurrence_on("2020-11-05"));
+    env.command()
+        .args([
+            "update",
+            "action",
+            &live_id.to_string(),
+            "--state",
+            "in-progress",
+        ])
+        .assert()
+        .success();
+    let archive_paths = [
+        "charters/review.completed.actions",
+        "charters/.review.completed.json",
+    ];
+    let read_archive = || archive_paths.map(|path| fs::read(env.data_dir.join(path)).unwrap());
+    let archived_before = read_archive();
+    let live_before = load_domain_model(&env.data_dir).unwrap();
+    let existing_actions = live_before.all_actions();
+    assert_eq!(existing_actions.len(), 2);
+    let existing_root = existing_actions
+        .iter()
+        .find(|action| action.id == live_id)
+        .unwrap();
+    assert_eq!(
+        existing_root.state,
+        clearhead_core::domain::ActionState::InProgress
+    );
+
+    // Keep the old slots in the new rule but introduce earlier arrived slots.
+    // Excluding the existing 12th must not remove its materialized tree.
+    define("@2020-11-04 R:FREQ=DAILY;BYDAY=WE,TH;COUNT=4");
+    env.write_text(template, &format!("[ ] Revised checklist #{STEP}\n"));
+    let exclusions = |dates: &str| {
+        let path = env.data_dir.join(SIDECAR);
+        let mut metadata: serde_json::Value =
+            serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        metadata["habits"] = serde_json::json!({
+            HABIT: { "frame": "DATE", "exdate": [format!("EXDATE;VALUE=DATE:{dates}")] }
+        });
+        fs::write(path, serde_json::to_vec(&metadata).unwrap()).unwrap();
+    };
+    exclusions("20201111,20201112");
+    apply(1); // the 4th, behind the original start
+    apply(0); // the 11th is still excluded
+    exclusions("20201112");
+    apply(1); // removing the exclusion makes the 11th due
+    let after_apply = snapshot_tree(&env.data_dir);
+    apply(0);
+    assert_eq!(snapshot_tree(&env.data_dir), after_apply);
+
+    assert_eq!(read_archive(), archived_before);
+    let model = load_domain_model(&env.data_dir).unwrap();
+    let actions = model.all_actions();
+    assert_eq!(actions.len(), 6); // the existing tree and exactly two new trees
+    for existing in existing_actions {
+        assert!(
+            actions.contains(&existing),
+            "changed existing Action {existing:?}"
+        );
+    }
+    for date in ["2020-11-04", "2020-11-11"] {
+        let root = actions
+            .iter()
+            .find(|action| action.id == occurrence_on(date))
+            .unwrap();
+        let lineage = root.native_occurrence.as_ref().unwrap();
+        assert_eq!(lineage.occurrence_key, format!("D:{date}"));
+        let child_id = step_id(root.id, STEP.parse().unwrap());
+        let step = actions.iter().find(|action| action.id == child_id).unwrap();
+        assert_eq!(step.parent_id, Some(root.id));
+        assert_eq!(step.name, "Revised checklist");
+    }
 }
 
 #[test]
